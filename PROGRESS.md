@@ -4,7 +4,8 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 2 — standalone deterministic simulator.
+Phase 2 cleanup — behavior-preserving compiled simulator decomposition before
+Phase 3 planning.
 
 ## Status
 
@@ -18,6 +19,9 @@ Phase 2 — standalone deterministic simulator.
 - [x] Clean build, wheel, test, naming, and dependency-isolation gates pass.
 - [x] Canonical Program, MemorySchedule, and ExecutionPlan schemas implemented.
 - [x] Stable lossless dense projections and frozen IR identity artifact added.
+- [x] Standalone integer-time simulator implemented in Python and C.
+- [x] Installed wheel selects the versioned compiled simulator without planner,
+  framework, model, or accelerator dependencies.
 
 ## Completed gates
 
@@ -46,6 +50,21 @@ Phase 2 — standalone deterministic simulator.
   programs and field-specific invalid-record cases.
 - Strict mypy, Ruff, isolated wheel installation, C warnings-as-errors, CTest,
   naming, and dependency-isolation gates pass.
+
+### Phase 2 behavior gate
+
+- Task dependencies, compute/communication/control resource lanes, H2D and D2H
+  lanes, workspace intervals, residency, ordered memory actions, physical
+  capacities, stalls, and detailed failures are replayed with integer bytes and
+  nanoseconds.
+- Python and C results match on focused overlap/concurrency cases, structured
+  capacity failures, large integer transfers, and Hypothesis-generated programs.
+- 64 randomized schedules exactly match the prior simulator in a separate
+  process for task/transfer intervals, host/device peaks, and makespan.
+- Compiled replay is deterministic across 1, 2, and 8 concurrent caller workers.
+- 83 Python tests pass; full source branch coverage is 94%.
+- C11 warnings-as-errors, ASan, UBSan, native canaries, Ruff, strict mypy,
+  naming, isolated wheel build/install, and compiled public-API smoke gates pass.
 
 ## Gate rule
 
