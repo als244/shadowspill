@@ -24,7 +24,7 @@ from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
 from .materialization import representative_cpu_inputs
 from .optimizer import OptimizerTaskArtifact, capture_optimizer
-from .partition import partition_training_capture
+from .partition import _TrainingGraphPairCache, partition_training_capture
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import PlannedTrainStep, PlanReport
 from .runtime_bridge import RuntimeBridge
@@ -84,19 +84,27 @@ def build_training(
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         fake_model = fake_cuda_model(model, fake_mode, device_index=0)
         with fake_mode:
-            captures = tuple(
-                capture_training_objective(
-                    fake_model,
-                    objective,
-                    fake_cuda_inputs(microbatch, fake_mode, device_index=0),
+            with timer.measure("objective_export"):
+                captures = tuple(
+                    capture_training_objective(
+                        fake_model,
+                        objective,
+                        fake_cuda_inputs(microbatch, fake_mode, device_index=0),
+                    )
+                    for microbatch in cpu_inputs
                 )
-                for microbatch in cpu_inputs
-            )
-            partitioned_captures = tuple(
-                partition_training_capture(capture, partition=partition)
-                for capture in captures
-            )
-        layout = lower_training_storage_layout(fake_model, captures)
+            with timer.measure("stage_partition_aot"):
+                graph_pair_cache = _TrainingGraphPairCache()
+                partitioned_captures = tuple(
+                    partition_training_capture(
+                        capture,
+                        partition=partition,
+                        graph_pair_cache=graph_pair_cache,
+                    )
+                    for capture in captures
+                )
+        with timer.measure("storage_layout_lowering"):
+            layout = lower_training_storage_layout(fake_model, captures)
 
     provisional_bridge = RuntimeBridge(installed.library, layout.program)
     state: TrainingMaterializedState | None = None
@@ -350,6 +358,11 @@ def build_training(
                         else int(not initial_cached.cache_hit)
                     )
                 ),
+                captured_stage_count=sum(
+                    len(capture.stages) for capture in partitioned_captures
+                ),
+                aot_graph_pair_cache_hits=graph_pair_cache.hits,
+                aot_graph_pair_cache_misses=graph_pair_cache.misses,
             )
             return PlannedTrainStep(
                 model, signatures, executor, state, optimizer, report
@@ -446,6 +459,9 @@ def _training_report(
     initial_execution_plan: Any = None,
     recomputation_cache_hits: int = 0,
     recomputation_cache_misses: int = 0,
+    captured_stage_count: int = 0,
+    aot_graph_pair_cache_hits: int = 0,
+    aot_graph_pair_cache_misses: int = 0,
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -474,6 +490,10 @@ def _training_report(
         recomputation_cache_hits=recomputation_cache_hits,
         recomputation_cache_misses=recomputation_cache_misses,
         fixed_slab_bytes=report.fixed_slab_bytes,
+        captured_stage_count=captured_stage_count,
+        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
+        aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
     )
 
 

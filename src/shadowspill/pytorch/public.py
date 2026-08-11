@@ -39,6 +39,10 @@ class PlanReport:
     recomputation_cache_hits: int = 0
     recomputation_cache_misses: int = 0
     fixed_slab_bytes: int = 0
+    captured_stage_count: int = 0
+    aot_unique_stage_abis: int = 0
+    aot_graph_pair_cache_hits: int = 0
+    aot_graph_pair_cache_misses: int = 0
 
     @property
     def predicted_device_peak_bytes(self) -> int:

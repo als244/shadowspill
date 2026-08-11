@@ -96,6 +96,10 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         host_budget=1 << 30,
     )
     assert training.plan_report.mode == "training"
+    assert training.plan_report.captured_stage_count == 4
+    assert training.plan_report.aot_unique_stage_abis == 4
+    assert training.plan_report.aot_graph_pair_cache_hits == 0
+    assert training.plan_report.aot_graph_pair_cache_misses == 4
     assert all(parameter.device.type == "cuda" for parameter in model.parameters())
     with pytest.raises(InputGuardError):
         training([[*steps[0][0][:-1], "changed"], steps[0][1]])

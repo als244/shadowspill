@@ -7,6 +7,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.pytorch.aot import capture_forward, capture_training
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.partition import (
+    _TrainingGraphPairCache,
     capture_forward_stages,
     capture_training_stages,
     partition_export,
@@ -72,6 +73,46 @@ def test_each_training_stage_has_save_and_recompute_vjp() -> None:
         stages[1].save_pair.forward.compatibility_digest
         == stages[2].save_pair.forward.compatibility_digest
     )
+
+
+def test_repeated_stage_aot_code_reuses_one_structural_capture() -> None:
+    model = _NestedRepeatedNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
+
+    def objective(
+        current: nn.Module, value: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.nn.functional.mse_loss(current(value), target)
+
+    with mode:
+        capture = capture_training(replica, objective, inputs)
+        partitioned = partition_export(capture.exported, capture.capture_module)
+        cache = _TrainingGraphPairCache()
+        stages = capture_training_stages(partitioned, graph_pair_cache=cache)
+
+    assert cache.misses == 3
+    assert cache.hits == 1
+    first_interior = stages[1].save_pair
+    second_interior = stages[2].save_pair
+    assert first_interior.forward.graph_module is second_interior.forward.graph_module
+    assert first_interior.backward.graph_module is second_interior.backward.graph_module
+    assert (
+        first_interior.forward.compatibility_digest
+        == second_interior.forward.compatibility_digest
+    )
+    first_storages = tuple(
+        value.untyped_storage()._cdata
+        for value in first_interior.forward.example_arguments
+        if isinstance(value, torch.Tensor)
+    )
+    second_storages = tuple(
+        value.untyped_storage()._cdata
+        for value in second_interior.forward.example_arguments
+        if isinstance(value, torch.Tensor)
+    )
+    assert first_storages != second_storages
 
 
 def test_whole_partition_is_one_stage() -> None:

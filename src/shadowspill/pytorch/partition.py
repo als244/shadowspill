@@ -71,6 +71,54 @@ class _StageRecorder(Interpreter):
         return output
 
 
+class _TrainingGraphPairCache:
+    """Reuse AOT graph code while preserving occurrence-specific storages."""
+
+    def __init__(self) -> None:
+        self._pairs: dict[
+            tuple[str, tuple[int, ...]], tuple[AotGraphPair, AotGraphPair]
+        ] = {}
+        self.hits = 0
+        self.misses = 0
+
+    def resolve(
+        self, example: StageExample, roots: tuple[int, ...]
+    ) -> tuple[AotGraphPair, AotGraphPair]:
+        stage_abi = GraphArtifact.capture(
+            kind="inference",
+            graph_module=example.graph_module,
+            example_inputs=example.inputs,
+        )
+        key = (stage_abi.compatibility_digest, roots)
+        existing = self._pairs.get(key)
+        if existing is None:
+            existing = (
+                capture_graph_pair(
+                    example.graph_module,
+                    example.inputs,
+                    original_output=example.output,
+                    recomputation=False,
+                    root_output_positions=roots,
+                ),
+                capture_graph_pair(
+                    example.graph_module,
+                    example.inputs,
+                    original_output=example.output,
+                    recomputation=True,
+                    root_output_positions=roots,
+                ),
+            )
+            self._pairs[key] = existing
+            self.misses += 1
+            return existing
+        self.hits += 1
+        save_pair, recompute_pair = existing
+        return (
+            _rebind_graph_pair(save_pair, example, roots),
+            _rebind_graph_pair(recompute_pair, example, roots),
+        )
+
+
 def partition_export(
     capture: ExportCapture, module: nn.Module, *, partition: str = "auto"
 ) -> PartitionedExport:
@@ -120,9 +168,12 @@ def partition_export(
 
 def capture_training_stages(
     partitioned: PartitionedExport,
+    *,
+    graph_pair_cache: _TrainingGraphPairCache | None = None,
 ) -> tuple[TrainingStage, ...]:
     """Differentiate every stage independently for save/recompute planning."""
 
+    cache = graph_pair_cache or _TrainingGraphPairCache()
     stages: list[TrainingStage] = []
     for index, example in enumerate(partitioned.stages):
         leaves, _ = tree_flatten(example.output)
@@ -138,31 +189,23 @@ def capture_training_stages(
         roots = (0,) if index == len(partitioned.stages) - 1 else differentiable
         if any(position not in differentiable for position in roots):
             raise CaptureError("terminal objective loss is not differentiable")
+        save_pair, recompute_pair = cache.resolve(example, roots)
         stages.append(
             TrainingStage(
                 example=example,
                 differentiable_output_indices=roots,
-                save_pair=capture_graph_pair(
-                    example.graph_module,
-                    example.inputs,
-                    original_output=example.output,
-                    recomputation=False,
-                    root_output_positions=roots,
-                ),
-                recompute_pair=capture_graph_pair(
-                    example.graph_module,
-                    example.inputs,
-                    original_output=example.output,
-                    recomputation=True,
-                    root_output_positions=roots,
-                ),
+                save_pair=save_pair,
+                recompute_pair=recompute_pair,
             )
         )
     return tuple(stages)
 
 
 def partition_training_capture(
-    capture: TrainingObjectiveCapture, *, partition: str = "auto"
+    capture: TrainingObjectiveCapture,
+    *,
+    partition: str = "auto",
+    graph_pair_cache: _TrainingGraphPairCache | None = None,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template."""
 
@@ -172,7 +215,70 @@ def partition_training_capture(
     return PartitionedTrainingCapture(
         training=capture,
         partitioned=partitioned,
-        stages=capture_training_stages(partitioned),
+        stages=capture_training_stages(
+            partitioned, graph_pair_cache=graph_pair_cache
+        ),
+    )
+
+
+def _rebind_graph_pair(
+    pair: AotGraphPair,
+    example: StageExample,
+    roots: tuple[int, ...],
+) -> AotGraphPair:
+    """Bind shared AOT code to one stage occurrence's FakeTensor storages."""
+
+    forward_arguments: list[torch.Tensor] = []
+    for position in pair.forward.tensor_argument_positions:
+        try:
+            value = example.inputs[position]
+        except IndexError as exc:
+            raise CaptureError(
+                "reused stage forward argument positions changed"
+            ) from exc
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError("reused stage tensor argument became static")
+        forward_arguments.append(value.detach())
+    if len(forward_arguments) != pair.forward.argument_count:
+        raise CaptureError("reused stage forward tensor argument count changed")
+    forward = GraphArtifact.capture(
+        kind="forward",
+        graph_module=pair.forward.graph_module,
+        example_inputs=tuple(forward_arguments),
+    )
+    if forward.compatibility_digest != pair.forward.compatibility_digest:
+        raise CaptureError("reused stage forward ABI differs from its representative")
+
+    with torch.no_grad():
+        forward_values, _ = tree_flatten(
+            forward.graph_module(*forward.example_arguments)
+        )
+    residuals = (
+        tuple(forward_values[-pair.saved_value_count :])
+        if pair.saved_value_count
+        else ()
+    )
+    tangents: list[torch.Tensor] = []
+    for position in roots:
+        try:
+            value = forward_values[position]
+        except IndexError as exc:
+            raise CaptureError("reused stage tangent position changed") from exc
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError("reused stage tangent output became static")
+        tangents.append(torch.ones_like(value))
+    backward = GraphArtifact.capture(
+        kind="backward",
+        graph_module=pair.backward.graph_module,
+        example_inputs=(*residuals, *tangents),
+    )
+    if backward.compatibility_digest != pair.backward.compatibility_digest:
+        raise CaptureError("reused stage backward ABI differs from its representative")
+    return AotGraphPair(
+        forward=forward,
+        backward=backward,
+        recomputation=pair.recomputation,
+        saved_value_count=pair.saved_value_count,
     )
 
 

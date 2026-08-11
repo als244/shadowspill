@@ -148,6 +148,14 @@ and excluded from workspace without promoting them into permanent runtime
 objects. Content-addressed profiling invokes this machinery once per structural
 ABI; a warm cache launches no compilation or profiling kernels.
 
+Repeated stage occurrences also reuse AOT graph code before compilation. The
+reuse key includes the canonical pre-AOT graph, guarded tensor geometry,
+storage offsets, argument alias groups, static inputs, and differentiable output
+roots. A reused graph pair is rebound to the occurrence's own FakeTensor
+storages, and both forward and backward artifact digests must match the
+representative. `PlanReport.captured_stage_count`, `aot_unique_stage_abis`, and
+the AOT graph-pair cache hit/miss counts expose this reduction directly.
+
 Structural task profiles and complete PressureFit selections are cached
 independently. `PlanReport.profile_cache_hits` and `profile_cache_misses`
 describe executable ABI measurements; `recomputation_cache_hits` and

@@ -777,3 +777,20 @@ the ignored internal progress log before this tracked summary is updated.
   alias-group vector for its tensor arguments. Both enter the compatibility
   digest. A focused regression distinguishes overlapping views from equal-shaped
   independent tensors before any graph-pair reuse is enabled.
+
+## 2026-08-11 — Structural AOT graph-pair reuse
+
+- Automatic training partitioning now captures each unique pre-AOT stage/root
+  ABI once. Repeated occurrences share graph code but receive newly constructed
+  forward/residual/tangent examples bound to their own FakeTensor storages. Both
+  rebound artifact digests must equal the representative before reuse.
+- The exact pure Qwen frontend produced 16 stage occurrences, 8 unique stage
+  ABIs, and 8 cache hits across its two heterogeneous shapes. PlanReport exposes
+  these counts. Fresh-process public CUDA training and focused partition/lowering
+  tests pass, including occurrence-specific parameter storage.
+- Frontend-only timing improved enough to expose the next limit but remains over
+  budget: 56.81 seconds for two objective exports, 68.82 seconds for stage AOT,
+  and 125.75 seconds total. Pure Qwen's Python token recurrence expands one
+  linear stage to 1,914--2,714 Export nodes and up to 9,013 backward nodes.
+  Deduplication cannot make that unique ABI cheap; a compact bounded operation
+  contract is required before repeating full qualification.
