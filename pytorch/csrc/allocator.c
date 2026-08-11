@@ -18,6 +18,7 @@ typedef struct ShadowSpillPytorchAdapterState {
     uint64_t record_stream_callbacks;
     uint64_t pointer_lookup_failures;
     uint64_t callback_failures;
+    ShadowSpillPytorchPhysicalAdmission admission;
     ShadowSpillPytorchAdapterFailure failure;
 } ShadowSpillPytorchAdapterState;
 
@@ -63,7 +64,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
 ) {
     if (config == NULL ||
         config->abi_version != SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION ||
-        config->device_ordinal < 0 || config->device_slab_bytes == 0U) {
+        config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
+        config->provider_headroom_bytes >= config->device_budget_bytes) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
@@ -86,9 +88,28 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
+    ShadowSpillCudaPhysicalMemory context_memory = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &context_memory) != 0) {
+        shadowspill_cuda_backend_destroy(cuda);
+        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    }
+    const uint64_t physical_granularity = 2U << 20U;
+    if (config->device_budget_bytes > context_memory.device_total_bytes ||
+        context_memory.process_bytes >
+            config->device_budget_bytes - config->provider_headroom_bytes) {
+        shadowspill_cuda_backend_destroy(cuda);
+        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+    }
+    uint64_t available = config->device_budget_bytes -
+        context_memory.process_bytes - config->provider_headroom_bytes;
+    uint64_t slab_bytes = available - available % physical_granularity;
+    if (slab_bytes == 0U) {
+        shadowspill_cuda_backend_destroy(cuda);
+        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+    }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = config->device_slab_bytes,
+        .device_slab_bytes = slab_bytes,
         .host_arena_bytes = config->host_arena_bytes,
         .minimum_alignment = capabilities.recommended_minimum_alignment,
         .progress_poll_nanoseconds = config->progress_poll_nanoseconds,
@@ -102,6 +123,13 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         shadowspill_cuda_backend_destroy(cuda);
         return status;
     }
+    ShadowSpillCudaPhysicalMemory bootstrap_memory = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &bootstrap_memory) != 0 ||
+        bootstrap_memory.process_bytes > config->device_budget_bytes) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_cuda_backend_destroy(cuda);
+        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+    }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime != NULL) {
         pthread_mutex_unlock(&adapter.mutex);
@@ -112,12 +140,57 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     adapter.cuda = cuda;
     adapter.runtime = runtime;
     adapter.device_ordinal = config->device_ordinal;
+    adapter.admission = (ShadowSpillPytorchPhysicalAdmission){
+        .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
+        .device_ordinal = config->device_ordinal,
+        .device_budget_bytes = config->device_budget_bytes,
+        .context_bytes = context_memory.process_bytes,
+        .provider_headroom_bytes = config->provider_headroom_bytes,
+        .slab_bytes = slab_bytes,
+        .bootstrap_process_bytes = bootstrap_memory.process_bytes,
+        .device_used_bytes = bootstrap_memory.device_used_bytes,
+        .device_total_bytes = bootstrap_memory.device_total_bytes,
+        .host_arena_bytes = config->host_arena_bytes,
+    };
     memset(&adapter.failure, 0, sizeof(adapter.failure));
     adapter.failure.device_ordinal = config->device_ordinal;
     adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_physical_admission(
+    ShadowSpillPytorchPhysicalAdmission *admission
+) {
+    if (admission == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    if (adapter.runtime == NULL) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    *admission = adapter.admission;
+    pthread_mutex_unlock(&adapter.mutex);
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_physical_memory(
+    ShadowSpillCudaPhysicalMemory *memory
+) {
+    if (memory == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    pthread_mutex_unlock(&adapter.mutex);
+    if (cuda == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    return shadowspill_cuda_physical_memory(cuda, memory) == 0
+        ? SHADOWSPILL_RUNTIME_OK
+        : SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(

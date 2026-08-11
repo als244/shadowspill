@@ -14,6 +14,8 @@ from shadowspill.pytorch._abi import (
     ObjectBinding,
     ObjectSnapshot,
     ObjectUpdate,
+    PhysicalAdmission,
+    PhysicalMemory,
     RuntimeAction,
     RuntimeFailure,
     RuntimeStatistics,
@@ -33,6 +35,8 @@ class _Function:
 
 class _Library:
     shadowspill_pytorch_adapter_capabilities = _Function()
+    shadowspill_pytorch_physical_admission = _Function()
+    shadowspill_pytorch_physical_memory = _Function()
     shadowspill_pytorch_allocator_bootstrap = _Function()
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
@@ -45,7 +49,7 @@ class _Library:
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
-    assert ctypes.sizeof(AdapterConfig) == 32
+    assert ctypes.sizeof(AdapterConfig) == 40
     assert ctypes.sizeof(AdapterCapabilities) == 16
     assert ctypes.sizeof(RuntimeStatistics) == 19 * 8
     assert ctypes.sizeof(CudaStatistics) == 16 * 8
@@ -56,12 +60,20 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 16
     assert ctypes.sizeof(ObjectSnapshot) == 72
+    assert ctypes.sizeof(PhysicalAdmission) == 72
+    assert ctypes.sizeof(PhysicalMemory) == 32
 
 
 def test_adapter_signatures_are_configured_together() -> None:
     library = _Library()
     configure_adapter_library(library)
     assert library.shadowspill_pytorch_adapter_capabilities.restype is ctypes.c_uint32
+    assert library.shadowspill_pytorch_physical_admission.argtypes == [
+        ctypes.POINTER(PhysicalAdmission)
+    ]
+    assert library.shadowspill_pytorch_physical_memory.argtypes == [
+        ctypes.POINTER(PhysicalMemory)
+    ]
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [
         ctypes.POINTER(AdapterConfig)
     ]
@@ -108,6 +120,33 @@ def test_installer_rejects_missing_library(tmp_path: Path) -> None:
         install_allocator(
             missing,
             device_ordinal=0,
-            device_slab_bytes=1,
+            device_budget_bytes=1,
+            provider_headroom_bytes=0,
             host_arena_bytes=0,
         )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"device_ordinal": -1}, "ordinal"),
+        ({"device_budget_bytes": 0}, "budget"),
+        ({"provider_headroom_bytes": -1}, "headroom"),
+        ({"provider_headroom_bytes": 1024}, "headroom"),
+        ({"host_arena_bytes": -1}, "host arena"),
+        ({"progress_poll_nanoseconds": -1}, "poll"),
+    ],
+)
+def test_installer_rejects_invalid_physical_configuration(
+    tmp_path: Path, overrides: dict[str, int], message: str
+) -> None:
+    arguments = {
+        "device_ordinal": 0,
+        "device_budget_bytes": 1024,
+        "provider_headroom_bytes": 0,
+        "host_arena_bytes": 0,
+        "progress_poll_nanoseconds": 0,
+    }
+    arguments.update(overrides)
+    with pytest.raises(AllocatorInstallError, match=message):
+        install_allocator(tmp_path / "missing.so", **arguments)

@@ -17,6 +17,14 @@ slab and host-arena admission before calling this internal installer. A later
 plan may reuse the installed runtime but cannot silently resize its physical
 reservation.
 
+Bootstrap accepts the physical device budget plus explicit provider headroom,
+not a requested slab size. Before allocating the slab, it measures the current
+process's CUDA-context bytes through the backend NVML ledger. The slab is the
+remaining budget rounded down to 2 MiB. Bootstrap then re-queries physical use
+and fails before allocator installation if the process exceeds the cap. The
+immutable bootstrap admission and current physical reading are available
+through the private adapter ABI for `PlanReport` and seal checks.
+
 Every callback is non-throwing. Allocation failure returns null through the
 ordinary PyTorch allocation path and latches the first structured runtime
 failure for diagnostics. PyTorch 2.13 may return an unmaterialized nonzero

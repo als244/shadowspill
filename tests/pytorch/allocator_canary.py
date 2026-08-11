@@ -14,6 +14,7 @@ from shadowspill.pytorch._abi import (
     AdapterStatistics,
     ObjectBinding,
     ObjectSnapshot,
+    PhysicalMemory,
     RuntimeAction,
 )
 from shadowspill.pytorch._allocator import install_allocator
@@ -26,7 +27,8 @@ def main() -> int:
     installed = install_allocator(
         adapter_path,
         device_ordinal=0,
-        device_slab_bytes=256 << 20,
+        device_budget_bytes=2 << 30,
+        provider_headroom_bytes=512 << 20,
         host_arena_bytes=16 << 20,
         progress_poll_nanoseconds=10_000,
     )
@@ -258,6 +260,13 @@ def main() -> int:
         or final_statistics.callback_failures != 0
     ):
         raise AssertionError("storage relocation caused an allocator callback failure")
+    physical = PhysicalMemory()
+    if int(library.shadowspill_pytorch_physical_memory(ctypes.byref(physical))) != 0:
+        raise AssertionError("physical memory query failed")
+    if physical.process_bytes > installed.admission.device_budget_bytes:
+        raise AssertionError("process exceeded the physical device cap")
+    if physical.process_bytes < installed.admission.slab_bytes:
+        raise AssertionError("physical ledger does not include the complete slab")
     return 0
 
 

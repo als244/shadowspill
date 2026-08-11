@@ -47,6 +47,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] Neutral physical admission computes explicit provider/workspace/host
   leeway and replays complete allocation lifetimes through the production slab
   policy without moving planner directives.
+- [x] PyTorch allocator bootstrap accepts a physical cap, measures context
+  bytes before slab creation, derives the slab internally, and rejects any
+  bootstrap whose per-process NVML reading exceeds the cap.
 
 ## Completed gates
 

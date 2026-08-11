@@ -84,7 +84,8 @@ def main() -> int:
     installed = install_allocator(
         adapter_path,
         device_ordinal=0,
-        device_slab_bytes=384 << 20,
+        device_budget_bytes=2 << 30,
+        provider_headroom_bytes=512 << 20,
         host_arena_bytes=256 << 20,
         progress_poll_nanoseconds=10_000,
     )

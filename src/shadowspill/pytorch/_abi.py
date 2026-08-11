@@ -5,16 +5,41 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 1
+ADAPTER_ABI_VERSION: Final = 2
 
 
 class AdapterConfig(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("device_ordinal", ctypes.c_int32),
-        ("device_slab_bytes", ctypes.c_uint64),
+        ("device_budget_bytes", ctypes.c_uint64),
+        ("provider_headroom_bytes", ctypes.c_uint64),
         ("host_arena_bytes", ctypes.c_uint64),
         ("progress_poll_nanoseconds", ctypes.c_uint64),
+    ]
+
+
+class PhysicalAdmission(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("device_ordinal", ctypes.c_int32),
+        ("device_budget_bytes", ctypes.c_uint64),
+        ("context_bytes", ctypes.c_uint64),
+        ("provider_headroom_bytes", ctypes.c_uint64),
+        ("slab_bytes", ctypes.c_uint64),
+        ("bootstrap_process_bytes", ctypes.c_uint64),
+        ("device_used_bytes", ctypes.c_uint64),
+        ("device_total_bytes", ctypes.c_uint64),
+        ("host_arena_bytes", ctypes.c_uint64),
+    ]
+
+
+class PhysicalMemory(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("process_bytes", ctypes.c_uint64),
+        ("device_used_bytes", ctypes.c_uint64),
+        ("device_total_bytes", ctypes.c_uint64),
     ]
 
 
@@ -155,6 +180,14 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(AdapterCapabilities)
     ]
     library.shadowspill_pytorch_adapter_capabilities.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_physical_admission.argtypes = [
+        ctypes.POINTER(PhysicalAdmission)
+    ]
+    library.shadowspill_pytorch_physical_admission.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_physical_memory.argtypes = [
+        ctypes.POINTER(PhysicalMemory)
+    ]
+    library.shadowspill_pytorch_physical_memory.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_bootstrap.argtypes = [
         ctypes.POINTER(AdapterConfig)
     ]

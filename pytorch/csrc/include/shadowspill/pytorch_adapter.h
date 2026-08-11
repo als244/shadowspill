@@ -17,15 +17,29 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
     int32_t device_ordinal;
-    uint64_t device_slab_bytes;
+    uint64_t device_budget_bytes;
+    uint64_t provider_headroom_bytes;
     uint64_t host_arena_bytes;
     uint64_t progress_poll_nanoseconds;
 } ShadowSpillPytorchAdapterConfig;
+
+typedef struct ShadowSpillPytorchPhysicalAdmission {
+    uint32_t abi_version;
+    int32_t device_ordinal;
+    uint64_t device_budget_bytes;
+    uint64_t context_bytes;
+    uint64_t provider_headroom_bytes;
+    uint64_t slab_bytes;
+    uint64_t bootstrap_process_bytes;
+    uint64_t device_used_bytes;
+    uint64_t device_total_bytes;
+    uint64_t host_arena_bytes;
+} ShadowSpillPytorchPhysicalAdmission;
 
 typedef struct ShadowSpillPytorchAdapterCapabilities {
     uint32_t abi_version;
@@ -70,6 +84,16 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_adapter_capabilities(
     ShadowSpillPytorchAdapterCapabilities *capabilities
 );
+
+/* Copies immutable bootstrap admission and physical-accounting evidence. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_physical_admission(
+    ShadowSpillPytorchPhysicalAdmission *admission
+);
+
+/* Queries current per-process physical use for seal/diagnostic boundaries. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_statistics(

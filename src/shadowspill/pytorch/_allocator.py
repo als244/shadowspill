@@ -13,6 +13,8 @@ from ._abi import (
     ADAPTER_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
+    PhysicalAdmission,
+    PhysicalMemory,
     configure_adapter_library,
 )
 
@@ -28,6 +30,7 @@ class InstalledAllocator:
     library: Any
     allocator: Any
     path: Path
+    admission: PhysicalAdmission
 
 
 _installed: InstalledAllocator | None = None
@@ -48,7 +51,8 @@ def install_allocator(
     library_path: str | Path,
     *,
     device_ordinal: int,
-    device_slab_bytes: int,
+    device_budget_bytes: int,
+    provider_headroom_bytes: int,
     host_arena_bytes: int,
     progress_poll_nanoseconds: int = 100_000,
 ) -> InstalledAllocator:
@@ -62,6 +66,18 @@ def install_allocator(
     global _installed
     if _installed is not None:
         raise AllocatorInstallError("ShadowSpill's allocator is already installed")
+    if device_ordinal < 0:
+        raise AllocatorInstallError("device ordinal must be non-negative")
+    if device_budget_bytes <= 0:
+        raise AllocatorInstallError("device budget must be positive")
+    if provider_headroom_bytes < 0 or provider_headroom_bytes >= device_budget_bytes:
+        raise AllocatorInstallError(
+            "provider headroom must be non-negative and smaller than device budget"
+        )
+    if host_arena_bytes < 0:
+        raise AllocatorInstallError("host arena bytes must be non-negative")
+    if progress_poll_nanoseconds < 0:
+        raise AllocatorInstallError("progress poll interval must be non-negative")
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
         raise AllocatorInstallError(f"PyTorch adapter does not exist: {path}")
@@ -98,7 +114,8 @@ def install_allocator(
     config = AdapterConfig(
         abi_version=ADAPTER_ABI_VERSION,
         device_ordinal=device_ordinal,
-        device_slab_bytes=device_slab_bytes,
+        device_budget_bytes=device_budget_bytes,
+        provider_headroom_bytes=provider_headroom_bytes,
         host_arena_bytes=host_arena_bytes,
         progress_poll_nanoseconds=progress_poll_nanoseconds,
     )
@@ -107,6 +124,27 @@ def install_allocator(
         raise AllocatorInstallError(
             f"ShadowSpill runtime bootstrap failed with status {status}"
         )
+    admission = PhysicalAdmission()
+    status = int(
+        library.shadowspill_pytorch_physical_admission(ctypes.byref(admission))
+    )
+    if (
+        status != 0
+        or admission.abi_version != ADAPTER_ABI_VERSION
+        or admission.device_budget_bytes != device_budget_bytes
+        or admission.provider_headroom_bytes != provider_headroom_bytes
+        or admission.slab_bytes == 0
+    ):
+        raise AllocatorInstallError("physical admission handshake failed")
+    physical = PhysicalMemory()
+    status = int(library.shadowspill_pytorch_physical_memory(ctypes.byref(physical)))
+    if status != 0 or physical.process_bytes > device_budget_bytes:
+        raise AllocatorInstallError("bootstrap exceeds the physical device budget")
     cuda.memory.change_current_allocator(allocator)
-    _installed = InstalledAllocator(library=library, allocator=allocator, path=path)
+    _installed = InstalledAllocator(
+        library=library,
+        allocator=allocator,
+        path=path,
+        admission=admission,
+    )
     return _installed

@@ -19,7 +19,8 @@ def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
         device_ordinal=0,
-        device_slab_bytes=64 << 20,
+        device_budget_bytes=1 << 30,
+        provider_headroom_bytes=512 << 20,
         host_arena_bytes=1 << 20,
         progress_poll_nanoseconds=10_000,
     )
@@ -36,7 +37,7 @@ def main() -> int:
         raise AssertionError("adapter lost the requested allocation size")
     if failure.runtime.status != NO_PROGRESS:
         raise AssertionError("adapter did not preserve the runtime's first cause")
-    if failure.runtime.free_bytes != 64 << 20:
+    if failure.runtime.free_bytes != installed.admission.slab_bytes:
         raise AssertionError("diagnostic free-space accounting is incorrect")
     return 0
 
