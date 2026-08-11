@@ -808,3 +808,7 @@ the ignored internal progress log before this tracked summary is updated.
   from 56.81 to 8.57 seconds and stage AOT from 68.82 to 8.00 seconds. The
   largest backward graph fell from 9,013 to 722 nodes while structural reuse
   remained 8 unique ABIs and 8 hits.
+- The first full compiled profile rejected the backward fake kernel because it
+  promised input-preserving strides while the explicit VJP returned contiguous
+  gradients. Real and fake outputs now declare contiguous layouts explicitly,
+  and `torch.library.opcheck` guards the complete operation contract.

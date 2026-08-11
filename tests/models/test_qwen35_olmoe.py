@@ -73,6 +73,18 @@ def test_qwen_delta_rule_bounded_operation_matches_reference_vjp() -> None:
         )
 
 
+def test_qwen_delta_rule_passes_pytorch_operation_contract_checks() -> None:
+    torch.manual_seed(31)
+    arguments = (
+        torch.randn(1, 3, 2, 4, requires_grad=True),
+        torch.randn(1, 3, 2, 4, requires_grad=True),
+        torch.randn(1, 3, 4, 3, requires_grad=True),
+        torch.sigmoid(torch.randn(1, 3, 4)).requires_grad_(),
+        (-torch.rand(1, 3, 4)).requires_grad_(),
+    )
+    torch.library.opcheck(_delta_rule, arguments)
+
+
 def test_tiny_olmoe_auxiliary_loss_reaches_router() -> None:
     config = OLMoEConfig(2, 32, 4, 4, 8, 4, 2, 16, 97, max_seq_len=16)
     model = OLMoE(config)

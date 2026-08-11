@@ -246,11 +246,11 @@ def _delta_rule_backward_reference(
         batch, sequence, key_heads, repeat, key_width
     ).sum(dim=3)
     return (
-        query_gradient.to(query.dtype),
-        key_gradient.to(key.dtype),
-        value_gradient.to(value.dtype),
-        beta_gradient.to(beta.dtype),
-        decay_gradient.to(decay.dtype),
+        query_gradient.to(query.dtype).contiguous(),
+        key_gradient.to(key.dtype).contiguous(),
+        value_gradient.to(value.dtype).contiguous(),
+        beta_gradient.to(beta.dtype).contiguous(),
+        decay_gradient.to(decay.dtype).contiguous(),
     )
 
 
@@ -304,11 +304,11 @@ def _delta_rule_backward_fake(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     del gradient
     return (
-        torch.empty_like(query),
-        torch.empty_like(key),
-        torch.empty_like(value),
-        torch.empty_like(beta),
-        torch.empty_like(decay),
+        torch.empty(query.shape, dtype=query.dtype, device=query.device),
+        torch.empty(key.shape, dtype=key.dtype, device=key.device),
+        torch.empty(value.shape, dtype=value.dtype, device=value.device),
+        torch.empty(beta.shape, dtype=beta.dtype, device=beta.device),
+        torch.empty(decay.shape, dtype=decay.dtype, device=decay.device),
     )
 
 
