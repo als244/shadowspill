@@ -235,7 +235,10 @@ def replay_slab_timeline(
                     free_range_evidence=evidence,
                 )
             if event.planned:
-                aligned, index, leading, _available = min(candidates)
+                aligned, index, leading, _available = min(
+                    candidates,
+                    key=lambda candidate: (candidate[3], candidate[0]),
+                )
             else:
                 aligned, index, leading, _available = min(
                     candidates,

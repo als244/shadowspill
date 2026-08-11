@@ -705,3 +705,25 @@ the ignored internal progress log before this tracked summary is updated.
 - The complete Python suite and all 16 native/CUDA CTest canaries pass after
   both behavior corrections. Ruff, production mypy, the naming audit, and
   whitespace checks also pass.
+
+## 2026-08-11 — Best-fit planned placement and pure-PyTorch Llama
+
+- Pure-PyTorch Llama exposed a 1.051-GB task workspace that failed spatial
+  admission at 10 and 10.25 GiB despite about 1.95 GB aggregate slab space.
+  Planned prefetches used first-fit-low, allowing smaller objects to split the
+  earliest large range while tighter compatible holes remained elsewhere.
+- Planned allocations now choose the smallest compatible range and place at
+  its low end; anonymous allocations retain smallest-compatible/high-end
+  placement. Admission and the neutral C runtime implement the same rule. This
+  preserves large workspace ranges without changing any PressureFit directive,
+  recomputation choice, or transfer trigger.
+- The original strict 10-GiB pure-PyTorch Llama plan then admitted and completed
+  all five accumulated steps, 7.08 GB D2H, 1.90 GB H2D, selected recomputation,
+  and bitwise checkpoint replay. Warm-profile planning still took 58.09 seconds
+  (32.22 seconds capture/lowering and 14.71 seconds compilation), demonstrating
+  that profile-cache hits alone do not meet the warm-plan latency target.
+- The only numerical threshold miss was ten AdamW second-moment tensors at a
+  maximum 0.023905 relative L2; global minimum cosine was 0.999721 and minimum
+  sign agreement 0.993844. Under the requested modest additional leeway, the
+  formal relative-L2 limit becomes 0.025 globally. No model-, tensor-, or
+  optimizer-state exception is introduced.

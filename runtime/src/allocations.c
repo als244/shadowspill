@@ -82,7 +82,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     }
     uint64_t offset = 0U;
     int range_status = plan_owned
-        ? shadowspill_range_allocate(
+        ? shadowspill_range_allocate_best_fit_low(
             &runtime->device_ranges, charged, alignment, &offset
         )
         : shadowspill_range_allocate_best_fit_high(

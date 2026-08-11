@@ -21,8 +21,17 @@ def event(
     operation: AllocationOperation,
     bytes_: int,
     alignment: int = 1,
+    *,
+    planned: bool = False,
 ) -> AllocationEvent:
-    return AllocationEvent(position, allocation_id, operation, bytes_, alignment)
+    return AllocationEvent(
+        position,
+        allocation_id,
+        operation,
+        bytes_,
+        alignment,
+        planned=planned,
+    )
 
 
 def test_sequential_temporaries_are_charged_by_net_live_peak() -> None:
@@ -75,6 +84,23 @@ def test_anonymous_replay_uses_smallest_compatible_range() -> None:
     replay = replay_slab_timeline(256, timeline)
     assert replay.final_allocated_bytes == 144
     assert replay.final_largest_free_range_bytes == 96
+
+
+def test_planned_replay_preserves_large_holes_with_best_fit_low() -> None:
+    timeline = (
+        event(0, "a", AllocationOperation.ALLOCATE, 64, planned=True),
+        event(1, "b", AllocationOperation.ALLOCATE, 32, planned=True),
+        event(2, "c", AllocationOperation.ALLOCATE, 96, planned=True),
+        event(3, "d", AllocationOperation.ALLOCATE, 32, planned=True),
+        event(4, "b", AllocationOperation.FREE, 32),
+        event(5, "a", AllocationOperation.FREE, 64),
+        event(6, "d", AllocationOperation.FREE, 32),
+        event(7, "small", AllocationOperation.ALLOCATE, 48, planned=True),
+        event(8, "large", AllocationOperation.ALLOCATE, 80, planned=True),
+    )
+    replay = replay_slab_timeline(256, timeline)
+    assert replay.final_allocated_bytes == 224
+    assert replay.final_largest_free_range_bytes == 16
 
 
 def test_pending_extent_reuse_preserves_its_physical_range() -> None:
