@@ -209,6 +209,30 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_register_object(
 );
 
 /*
+ * Copies one exact object payload into its existing host backing before device
+ * materialization. The object must be HOST_ONLY with no device allocation.
+ * Source is borrowed for the call and may be NULL only for a zero-size object.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_host_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    const void *source,
+    uint64_t bytes
+);
+
+/*
+ * Copies one exact, current HOST_ONLY payload into caller-owned memory. This
+ * function does not wait for transfers; callers first use wait_idle or an
+ * equivalent lifecycle boundary. Destination may be NULL only for zero size.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_host_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    void *destination,
+    uint64_t bytes
+);
+
+/*
  * Promotes an ordinary live allocation to plan ownership. The allocation must
  * cover the object and may be bound only once. Object identity survives later
  * address and generation changes.

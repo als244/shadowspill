@@ -22,6 +22,13 @@ allocation, residency generation, authoritative/device/host versions, host
 backing, and readiness event. Tensor views are deliberately absent: a frontend
 maps every view of an alias group to this one record.
 
+Frontends populate initial pinned backing with
+`shadowspill_write_host_object` before device materialization. After an
+explicit terminal writeback and idle boundary, `shadowspill_read_host_object`
+copies current bytes into ordinary caller-owned CPU storage. Both operations
+require exact object size and a `HOST_ONLY` state, so neither can race an
+asynchronous transfer.
+
 ## Task protocol
 
 `shadowspill_before_task` deduplicates input object identities, validates their

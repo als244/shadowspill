@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
@@ -65,8 +66,28 @@ int main(void) {
         .initially_host_resident = 1U,
     };
     ShadowSpillAllocation first_generation = {0};
+    unsigned char original_payload[128];
+    unsigned char restored_payload[128] = {0};
+    for (uint32_t index = 0U; index < 128U; ++index) {
+        original_payload[index] = (unsigned char)(index ^ 0x5aU);
+    }
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_write_host_object(
+            runtime,
+            object.object_id,
+            original_payload,
+            sizeof(original_payload)
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_read_host_object(
+            runtime,
+            object.object_id,
+            restored_payload,
+            sizeof(restored_payload)
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        memcmp(
+            original_payload, restored_payload, sizeof(original_payload)
+        ) != 0 ||
         shadowspill_allocate(runtime, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(

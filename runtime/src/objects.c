@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 ShadowSpillObjectRecord *shadowspill_find_object(
     ShadowSpillRuntime *runtime,
@@ -64,6 +65,80 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->next = runtime->objects;
     runtime->objects = created;
     ++runtime->registered_objects;
+
+done:
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_write_host_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    const void *source,
+    uint64_t bytes
+) {
+    if (runtime == NULL || bytes > SIZE_MAX ||
+        (bytes != 0U && source == NULL)) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (object == NULL || bytes != object->size_bytes ||
+        !object->has_host_range ||
+        object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+        object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    if (bytes != 0U) {
+        memcpy(
+            (unsigned char *)runtime->host_arena + object->host_offset,
+            source,
+            (size_t)bytes
+        );
+    }
+    object->host_current = 1U;
+    object->host_version = object->authoritative_version;
+
+done:
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_read_host_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    void *destination,
+    uint64_t bytes
+) {
+    if (runtime == NULL || bytes > SIZE_MAX ||
+        (bytes != 0U && destination == NULL)) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (object == NULL || bytes != object->size_bytes ||
+        !object->has_host_range || !object->host_current ||
+        object->host_version != object->authoritative_version ||
+        object->residency != SHADOWSPILL_OBJECT_HOST_ONLY) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    if (bytes != 0U) {
+        memcpy(
+            destination,
+            (unsigned char *)runtime->host_arena + object->host_offset,
+            (size_t)bytes
+        );
+    }
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
