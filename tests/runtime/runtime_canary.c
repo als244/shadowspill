@@ -169,6 +169,7 @@ int main(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         bindings[0].pointer == first_generation.pointer ||
         bindings[0].pointer != bindings[1].pointer ||
+        (uintptr_t)bindings[0].pointer >= (uintptr_t)blocker.pointer ||
         bindings[0].generation <= first_generation.generation ||
         bindings[0].authoritative_version != 5U) {
         return EXIT_FAILURE;

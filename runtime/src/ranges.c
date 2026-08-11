@@ -13,6 +13,50 @@ static int align_up(uint64_t value, uint64_t alignment, uint64_t *result) {
     return 0;
 }
 
+static uint64_t align_down(uint64_t value, uint64_t alignment) {
+    return value - value % alignment;
+}
+
+static int allocate_from_range(
+    ShadowSpillRangeAllocator *allocator,
+    ShadowSpillRange *selected,
+    ShadowSpillRange *previous,
+    uint64_t aligned,
+    uint64_t bytes,
+    uint64_t *offset
+) {
+    uint64_t leading = aligned - selected->offset;
+    uint64_t trailing = selected->bytes - leading - bytes;
+    if (leading != 0U && trailing != 0U) {
+        ShadowSpillRange *tail = calloc(1U, sizeof(*tail));
+        if (tail == NULL) {
+            return -1;
+        }
+        tail->offset = aligned + bytes;
+        tail->bytes = trailing;
+        tail->next = selected->next;
+        selected->bytes = leading;
+        selected->next = tail;
+    } else if (leading != 0U) {
+        selected->bytes = leading;
+    } else if (trailing != 0U) {
+        selected->offset = aligned + bytes;
+        selected->bytes = trailing;
+    } else if (previous == NULL) {
+        allocator->free_ranges = selected->next;
+        free(selected);
+    } else {
+        previous->next = selected->next;
+        free(selected);
+    }
+    allocator->allocated += bytes;
+    if (allocator->allocated > allocator->peak_allocated) {
+        allocator->peak_allocated = allocator->allocated;
+    }
+    *offset = aligned;
+    return 0;
+}
+
 int shadowspill_range_initialize(
     ShadowSpillRangeAllocator *allocator,
     uint64_t capacity
@@ -103,10 +147,6 @@ int shadowspill_range_allocate(
     uint64_t alignment,
     uint64_t *offset
 ) {
-    ShadowSpillRange *best = NULL;
-    ShadowSpillRange *best_previous = NULL;
-    uint64_t best_aligned = 0U;
-    uint64_t best_waste = UINT64_MAX;
     ShadowSpillRange *previous = NULL;
     for (ShadowSpillRange *range = allocator->free_ranges; range != NULL;
          range = range->next) {
@@ -121,50 +161,51 @@ int shadowspill_range_allocate(
             previous = range;
             continue;
         }
-        uint64_t waste = range->bytes - leading - bytes;
-        if (best == NULL || waste < best_waste ||
-            (waste == best_waste && aligned < best_aligned)) {
-            best = range;
-            best_previous = previous;
-            best_aligned = aligned;
-            best_waste = waste;
+        return allocate_from_range(
+            allocator, range, previous, aligned, bytes, offset
+        );
+    }
+    return 1;
+}
+
+int shadowspill_range_allocate_high(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t *offset
+) {
+    ShadowSpillRange *selected = NULL;
+    ShadowSpillRange *selected_previous = NULL;
+    uint64_t selected_aligned = 0U;
+    ShadowSpillRange *previous = NULL;
+    for (ShadowSpillRange *range = allocator->free_ranges; range != NULL;
+         range = range->next) {
+        uint64_t end = range->offset + range->bytes;
+        if (bytes > range->bytes || end < range->offset) {
+            previous = range;
+            continue;
         }
+        uint64_t aligned = align_down(end - bytes, alignment);
+        if (aligned < range->offset) {
+            previous = range;
+            continue;
+        }
+        selected = range;
+        selected_previous = previous;
+        selected_aligned = aligned;
         previous = range;
     }
-    if (best == NULL) {
+    if (selected == NULL) {
         return 1;
     }
-
-    uint64_t leading = best_aligned - best->offset;
-    uint64_t trailing = best->bytes - leading - bytes;
-    if (leading != 0U && trailing != 0U) {
-        ShadowSpillRange *tail = calloc(1U, sizeof(*tail));
-        if (tail == NULL) {
-            return -1;
-        }
-        tail->offset = best_aligned + bytes;
-        tail->bytes = trailing;
-        tail->next = best->next;
-        best->bytes = leading;
-        best->next = tail;
-    } else if (leading != 0U) {
-        best->bytes = leading;
-    } else if (trailing != 0U) {
-        best->offset = best_aligned + bytes;
-        best->bytes = trailing;
-    } else if (best_previous == NULL) {
-        allocator->free_ranges = best->next;
-        free(best);
-    } else {
-        best_previous->next = best->next;
-        free(best);
-    }
-    allocator->allocated += bytes;
-    if (allocator->allocated > allocator->peak_allocated) {
-        allocator->peak_allocated = allocator->allocated;
-    }
-    *offset = best_aligned;
-    return 0;
+    return allocate_from_range(
+        allocator,
+        selected,
+        selected_previous,
+        selected_aligned,
+        bytes,
+        offset
+    );
 }
 
 int shadowspill_range_free(

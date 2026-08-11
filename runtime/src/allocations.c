@@ -73,9 +73,13 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
         alignment = runtime->minimum_alignment;
     }
     uint64_t offset = 0U;
-    int range_status = shadowspill_range_allocate(
-        &runtime->device_ranges, charged, alignment, &offset
-    );
+    int range_status = plan_owned
+        ? shadowspill_range_allocate(
+            &runtime->device_ranges, charged, alignment, &offset
+        )
+        : shadowspill_range_allocate_high(
+            &runtime->device_ranges, charged, alignment, &offset
+        );
     if (range_status > 0) {
         return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
     }

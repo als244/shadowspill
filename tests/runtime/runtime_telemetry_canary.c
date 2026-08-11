@@ -106,7 +106,8 @@ static int ordered_task_capture(void) {
         }
     }
     if (!failed &&
-        (events[0].slab_offset != events[2].slab_offset ||
+        (events[0].slab_offset + events[0].charged_bytes != 256U ||
+         events[2].slab_offset + events[2].charged_bytes != 256U ||
          events[0].category != SHADOWSPILL_ALLOCATION_ANONYMOUS ||
          events[3].category != SHADOWSPILL_ALLOCATION_PLANNED_OBJECT)) {
         failed = 1;

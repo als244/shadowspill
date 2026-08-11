@@ -501,6 +501,21 @@ Phase 8 — public forward and training callables.
   transition before task execution. That reduced-plan transition remains a
   separate runtime bug and is not being conflated with exact-scale slab
   fragmentation.
+- Device ranges now use a general two-ended allocation policy: planned
+  prefetches pack from low addresses and ordinary framework allocations pack
+  from high addresses. This introduces no operation/size special case, extra
+  copy, or schedule change. The exact task-71 allocation then succeeded, and a
+  complete 1.18B two-microbatch training step executed in 0.439 seconds
+  including an explicit final stream synchronization.
+- Parallelizing complete policy candidates was corrected to keep each
+  selection context and its caches single-owner. Automatic parallel selection
+  nevertheless regressed exact PressureFit from 161.18 to 176.39 seconds and
+  total planning to 202.46 seconds because remaining Python work is GIL-bound;
+  public training therefore remains serial until the complete hot loop moves
+  into the compiled planner.
+- The second exact invocation reached an `after_task` plan violation. Thus the
+  spatial allocation fix passes one full mathematical step, but multi-step
+  correctness remains failed pending terminal-state/reset diagnosis.
 
 ## Gate rule
 

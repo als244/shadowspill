@@ -32,6 +32,7 @@ class AllocationEvent:
     operation: AllocationOperation
     bytes: int
     alignment: int = 256
+    planned: bool = False
 
     def __post_init__(self) -> None:
         if self.position < 0:
@@ -44,6 +45,8 @@ class AllocationEvent:
             raise ValueError("allocation event bytes must be positive")
         if self.alignment <= 0:
             raise ValueError("allocation event alignment must be positive")
+        if not isinstance(self.planned, bool):
+            raise TypeError("allocation event planned flag must be boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +138,7 @@ def _insert_and_coalesce(
 def replay_slab_timeline(
     slab_bytes: int, events: tuple[AllocationEvent, ...]
 ) -> SlabReplay:
-    """Replay the production best-fit policy and reject spatial infeasibility."""
+    """Replay the production two-ended policy and reject spatial infeasibility."""
 
     if slab_bytes < 0:
         raise ValueError("slab bytes must be non-negative")
@@ -152,13 +155,22 @@ def replay_slab_timeline(
         if event.operation is AllocationOperation.ALLOCATE:
             if event.allocation_id in live:
                 raise ValueError(f"allocation {event.allocation_id!r} is already live")
-            candidates: list[tuple[int, int, int, int]] = []
+            candidates: list[tuple[int, int, int]] = []
             for index, (offset, available) in enumerate(ranges):
-                aligned = _round_up(offset, event.alignment)
+                if event.planned:
+                    aligned = _round_up(offset, event.alignment)
+                elif event.bytes <= available:
+                    aligned = (
+                        offset
+                        + available
+                        - event.bytes
+                        - (offset + available - event.bytes) % event.alignment
+                    )
+                else:
+                    continue
                 leading = aligned - offset
                 if leading <= available and event.bytes <= available - leading:
-                    waste = available - leading - event.bytes
-                    candidates.append((waste, aligned, index, leading))
+                    candidates.append((aligned, index, leading))
             if not candidates:
                 free_bytes = sum(bytes_ for _, bytes_ in ranges)
                 largest = max((bytes_ for _, bytes_ in ranges), default=0)
@@ -173,7 +185,9 @@ def replay_slab_timeline(
                     free_bytes=free_bytes,
                     largest_free_range_bytes=largest,
                 )
-            _, aligned, index, leading = min(candidates)
+            aligned, index, leading = (
+                min(candidates) if event.planned else max(candidates)
+            )
             offset, available = ranges.pop(index)
             trailing = available - leading - event.bytes
             if leading:
