@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import inspect
+import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -34,20 +36,85 @@ class OptimizerTensorBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class OpaqueOptimizerArtifact:
+    """One eager optimizer task with a deterministic structural identity."""
+
+    optimizer_type: str
+    compatibility_digest: str
+    optimizer: torch.optim.Optimizer = field(repr=False, compare=False)
+
+    @classmethod
+    def capture(
+        cls,
+        optimizer: torch.optim.Optimizer,
+        bindings: tuple[OptimizerTensorBinding, ...],
+    ) -> OpaqueOptimizerArtifact:
+        optimizer_type = f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
+        step = inspect.unwrap(type(optimizer).step)
+        code = getattr(step, "__code__", None)
+        code_identity = (
+            None
+            if code is None
+            else {
+                "bytecode": code.co_code.hex(),
+                "constants": tuple(repr(value) for value in code.co_consts),
+                "names": code.co_names,
+            }
+        )
+        identity = {
+            "kind": "opaque_optimizer",
+            "optimizer_type": optimizer_type,
+            "step": code_identity,
+            "bindings": [
+                {
+                    "name": binding.name,
+                    "role": binding.role.value,
+                    "mutable": binding.mutable,
+                    "spillable": binding.spillable,
+                    "shape": tuple(binding.tensor.shape),
+                    "stride": tuple(binding.tensor.stride()),
+                    "dtype": str(binding.tensor.dtype),
+                    "device": binding.tensor.device.type,
+                }
+                for binding in bindings
+            ],
+            "groups": [
+                _optimizer_value_identity(
+                    {key: value for key, value in group.items() if key != "params"}
+                )
+                for group in optimizer.param_groups
+            ],
+            "torch": torch.__version__,
+            "cuda": torch.version.cuda,
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        return cls(
+            optimizer_type,
+            hashlib.sha256(encoded.encode()).hexdigest(),
+            optimizer,
+        )
+
+
+OptimizerTaskArtifact = GraphArtifact | OpaqueOptimizerArtifact
+
+
+@dataclass(frozen=True, slots=True)
 class OptimizerCapture:
     """First/recurrent optimizer task semantics and explicit tensor inventory."""
 
     optimizer_type: str
     first_step_is_opaque: bool
     created_state_names: tuple[str, ...]
-    recurrent: GraphArtifact | None
+    recurrent: OptimizerTaskArtifact | None
     bindings: tuple[OptimizerTensorBinding, ...]
     mutation_names: tuple[str, ...]
     opaque_reason: str | None = None
 
     @property
     def recurrent_is_opaque(self) -> bool:
-        return self.recurrent is None
+        return self.recurrent is None or isinstance(
+            self.recurrent, OpaqueOptimizerArtifact
+        )
 
 
 def capture_optimizer(
@@ -182,6 +249,7 @@ def capture_optimizer(
     snapshots = {
         id(binding.tensor): binding.tensor.detach().clone() for binding in bindings
     }
+    grad_enabled = torch.is_grad_enabled()
     try:
         graph_module = _export_optimizer_graph(sandbox)
         _restore_binding_values(bindings, snapshots)
@@ -193,17 +261,20 @@ def capture_optimizer(
         )
     except BaseException as exc:
         _restore_binding_values(bindings, snapshots)
+        opaque_artifact = OpaqueOptimizerArtifact.capture(sandbox, bindings)
         return OptimizerCapture(
             optimizer_type=optimizer_type,
             first_step_is_opaque=first_step_is_opaque,
             created_state_names=created_state_names,
-            recurrent=None,
+            recurrent=opaque_artifact,
             bindings=bindings,
             mutation_names=tuple(
                 binding.name for binding in bindings if binding.mutable
             ),
             opaque_reason=f"recurrent optimizer graph is opaque: {exc}",
         )
+    finally:
+        torch.set_grad_enabled(grad_enabled)
     mutations = tuple(binding.name for binding in bindings if binding.mutable)
     return OptimizerCapture(
         optimizer_type=optimizer_type,
@@ -354,6 +425,90 @@ def _map_optimizer_tensors(value: Any, convert: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_map_optimizer_tensors(item, convert) for item in value)
     return copy.deepcopy(value)
+
+
+def materialize_opaque_optimizer(
+    artifact: OpaqueOptimizerArtifact, *, device_ordinal: int
+) -> torch.optim.Optimizer:
+    """Build an isolated real-CUDA optimizer used only for task profiling."""
+
+    optimizer = _copy_optimizer(artifact.optimizer)
+    parameters = _optimizer_parameters(optimizer)
+    replacements: dict[int, torch.Tensor] = {}
+    device = torch.device("cuda", device_ordinal)
+
+    def real_tensor(value: torch.Tensor, *, parameter: bool = False) -> torch.Tensor:
+        existing = replacements.get(id(value))
+        if existing is not None:
+            return existing
+        if value.layout is not torch.strided:
+            raise CaptureError("opaque optimizer profiling requires strided tensors")
+        if isinstance(value, torch._subclasses.fake_tensor.FakeTensor):
+            raise CaptureError("opaque optimizer profiling requires concrete state")
+        with torch.no_grad():
+            raw = torch.empty_strided(
+                tuple(value.shape),
+                tuple(value.stride()),
+                dtype=value.dtype,
+                device=device,
+            )
+            raw.copy_(value)
+            result: torch.Tensor
+            if parameter:
+                result = torch.nn.Parameter(raw, requires_grad=value.requires_grad)
+            else:
+                result = raw.requires_grad_(value.requires_grad)
+        replacements[id(value)] = result
+        return result
+
+    real_parameters: dict[int, torch.nn.Parameter] = {}
+    for value in parameters:
+        converted = real_tensor(value, parameter=True)
+        if not isinstance(converted, torch.nn.Parameter):
+            raise AssertionError("parameter conversion changed tensor type")
+        if value.grad is not None:
+            converted.grad = real_tensor(value.grad)
+        real_parameters[id(value)] = converted
+    for group in optimizer.param_groups:
+        group["params"] = [real_parameters[id(value)] for value in group["params"]]
+
+    converted_state: defaultdict[torch.Tensor, dict[str, Any]] = defaultdict(dict)
+    for parameter, value in optimizer.state.items():
+        real_parameter = real_parameters.get(id(parameter))
+        if real_parameter is None:
+            raise CaptureError("optimizer state is keyed by an unknown parameter")
+        converted = _map_optimizer_tensors(value, real_tensor)
+        if not isinstance(converted, dict):
+            raise CaptureError("per-parameter optimizer state must be a mapping")
+        converted_state[real_parameter] = converted
+    optimizer.state = converted_state
+    return optimizer
+
+
+def _optimizer_value_identity(value: Any) -> Any:
+    """Serialize bounded optimizer options without retaining framework values."""
+
+    if isinstance(value, torch.Tensor):
+        return {
+            "tensor": {
+                "shape": tuple(value.shape),
+                "stride": tuple(value.stride()),
+                "dtype": str(value.dtype),
+                "device": value.device.type,
+            }
+        }
+    if isinstance(value, Mapping):
+        return {
+            str(key): _optimizer_value_identity(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, tuple):
+        return {"tuple": [_optimizer_value_identity(item) for item in value]}
+    if isinstance(value, list):
+        return {"list": [_optimizer_value_identity(item) for item in value]}
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    return {"type": type(value).__qualname__, "value": repr(value)}
 
 
 def _tensor_leaves(

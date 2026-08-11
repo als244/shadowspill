@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan
+from shadowspill.pytorch import optimizer as optimizer_module
 
 
 class _TrainingNetwork(nn.Module):
@@ -18,6 +19,23 @@ class _TrainingNetwork(nn.Module):
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return self.second(torch.relu(self.first(value)))
+
+
+class _OpaqueSgd(torch.optim.Optimizer):
+    def __init__(self, parameters: object, *, lr: float) -> None:
+        super().__init__(parameters, {"lr": lr})
+
+    @torch.no_grad()
+    def step(self, closure: object = None) -> None:
+        del closure
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is not None:
+                    state = self.state[parameter]
+                    if not state:
+                        state["momentum"] = torch.zeros_like(parameter)
+                    state["momentum"].mul_(0.9).add_(parameter.grad)
+                    parameter.add_(state["momentum"], alpha=-group["lr"])
 
 
 def _training_objective(
@@ -195,3 +213,41 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
 
     training.close()
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
+
+
+@pytest.mark.cuda
+def test_public_training_profiles_bounded_opaque_optimizer(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
+        pytest.skip("the built PyTorch adapter was not provided")
+    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+
+    def reject_graph(_optimizer: torch.optim.Optimizer) -> torch.fx.GraphModule:
+        raise RuntimeError("optimizer graph intentionally unavailable")
+
+    monkeypatch.setattr(optimizer_module, "_export_optimizer_graph", reject_graph)
+    torch.manual_seed(81)
+    model = _TrainingNetwork()
+    reference = _TrainingNetwork()
+    reference.load_state_dict(model.state_dict())
+    examples = [[torch.randn(2, 6), torch.randn(2, 3), "opaque"]]
+    values = [[torch.randn(2, 6), torch.randn(2, 3), "opaque"]]
+    reference_optimizer = _OpaqueSgd(reference.parameters(), lr=0.02)
+    expected = _training_objective(reference, *values[0])
+    expected.loss.backward()
+    reference_optimizer.step()
+
+    training = plan(
+        model,
+        objective=_training_objective,
+        opt=partial(_OpaqueSgd, lr=0.02),
+        example_inputs=examples,
+        device_budget=2 << 30,
+        host_budget=1 << 30,
+    )
+    actual = training(values)
+    torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
+    training.close()
+    for planned, eager in zip(model.parameters(), reference.parameters(), strict=True):
+        torch.testing.assert_close(planned, eager)

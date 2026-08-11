@@ -33,6 +33,7 @@ from .contracts import CaptureError
 from .lowering import RegistrationBinding, TensorSlot, _TensorInventory
 from .optimizer import (
     OptimizerCapture,
+    OptimizerTaskArtifact,
     OptimizerTensorRole,
 )
 from .partition import PartitionedTrainingCapture, TrainingStage
@@ -69,7 +70,7 @@ class TrainingTaskEntrypoint:
     phase: str
     microbatch: int | None
     variant: str | None
-    artifact: GraphArtifact | None
+    artifact: GraphArtifact | OptimizerTaskArtifact | None
     input_slots: tuple[TensorSlot, ...]
     output_slots: tuple[TensorSlot, ...]
     gradient_output_slots: tuple[TensorSlot, ...] = ()
@@ -158,7 +159,7 @@ def lower_partitioned_training_program(
     if not captures:
         raise CaptureError("partitioned training lowering requires a microbatch")
     if optimizer.recurrent is None:
-        raise CaptureError("partitioned training requires a graphable optimizer")
+        raise CaptureError("partitioned training requires a bounded optimizer task")
     if optimizer_phase not in {"initial", "recurrent"}:
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     device_id = f"cuda_{device_ordinal}"
@@ -175,7 +176,9 @@ def lower_partitioned_training_program(
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
 
-    def profile_id(artifact: GraphArtifact, extra_workspace: int = 0) -> str:
+    def profile_id(
+        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
+    ) -> str:
         measurement = measurements.get(artifact.compatibility_digest)
         if measurement is None:
             raise CaptureError(
@@ -624,7 +627,7 @@ def lower_training_program(
     if not captures:
         raise CaptureError("training lowering requires at least one microbatch")
     if optimizer.recurrent is None:
-        raise CaptureError("initial training lowering requires a graphable optimizer")
+        raise CaptureError("training lowering requires a bounded optimizer task")
     if optimizer_phase not in {"initial", "recurrent"}:
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     device_id = f"cuda_{device_ordinal}"
@@ -640,7 +643,9 @@ def lower_training_program(
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
 
-    def profile_id(artifact: GraphArtifact, extra_workspace: int = 0) -> str:
+    def profile_id(
+        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
+    ) -> str:
         measurement = measurements.get(artifact.compatibility_digest)
         if measurement is None:
             raise CaptureError(

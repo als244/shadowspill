@@ -26,9 +26,10 @@ idempotent, preserves Parameter objects and ties, restores host-authoritative
 bytes, and unregisters plan objects. Caller-retained outputs remain valid after
 close because they are no longer plan-owned.
 
-The current training capture and optimizer boundaries are implemented, but the
-public `plan()` executor is not yet released. The package does not advertise a
-partial training callable.
+The public `plan()` callable composes every fixed microbatch position into
+forward, objective, backward, and gradient-accumulation tasks followed by one
+optimizer update. It preserves the original model and optimizer checkpoint
+schema and restores CPU storage on deterministic close.
 
 ## Fixed input contract
 
@@ -94,12 +95,21 @@ task when it creates Python or tensor state. Once the state structure is stable,
 parameters, gradients, tensor state, and tensor-valued group options are lifted
 into an explicit recurrent graph when PyTorch can represent the update.
 
-An optimizer whose Python behavior cannot be copied or represented as a graph
-remains a bounded, profiled opaque task. This preserves generality without
-claiming that unknown workspace or external device allocations are free. The
-runtime executes lifted optimizer graphs under `torch.no_grad()`, matching the
-ordinary `Optimizer.step()` mutation contract. ShadowSpill contains no `mlops`
-import; an externally supplied optimized optimizer uses this same boundary.
+An optimizer whose valid Python update cannot be represented as a graph remains
+a bounded, profiled opaque task. ShadowSpill materializes an isolated CUDA copy
+of its standard parameter/state inventory, measures the eager update through
+the same allocator telemetry, and feeds that structural profile to PressureFit.
+Steady-state execution still calls the user's ordinary `Optimizer.step()` under
+the annotated task boundary. An optimizer that cannot be copied or whose state
+cannot be discovered is rejected before a training step; unknown workspace is
+never treated as free.
+
+CUDA-only registered optimizer operations use the same generic path. When CPU
+discovery constructs lazy state and then rejects its kernel, the copied standard
+optimizer inventory is converted to FakeTensor CUDA values and the recurrent
+update is captured through each operation's fake/meta contract. ShadowSpill
+contains no `mlops` import; an externally supplied optimized optimizer uses this
+boundary without a provider-specific branch.
 
 ## Compilation and profiling
 

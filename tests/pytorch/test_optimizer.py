@@ -156,6 +156,20 @@ class _SubclassStateOptimizer(_CustomOptimizer):
                     )
 
 
+class _DataDependentOptimizer(torch.optim.Optimizer):
+    def __init__(self, parameters: object) -> None:
+        super().__init__(parameters, {"lr": 0.1})
+
+    @torch.no_grad()
+    def step(self, closure: object = None) -> None:
+        del closure
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is not None:
+                    scale = float(parameter.grad.flatten()[0].item())
+                    parameter.add_(parameter.grad, alpha=-group["lr"] * scale)
+
+
 def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     parameter = torch.nn.Parameter(torch.ones(4))
     parameter.grad = torch.full_like(parameter, 2)
@@ -164,6 +178,24 @@ def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     assert not captured.first_step_is_opaque
     assert captured.recurrent is not None
     assert "aten.add_.Tensor" in captured.recurrent.operator_targets
+
+
+def test_valid_data_dependent_optimizer_becomes_bounded_opaque_task() -> None:
+    parameter = torch.nn.Parameter(torch.ones(4))
+    parameter.grad = torch.full_like(parameter, 2)
+    first = capture_optimizer(
+        {"parameter": parameter}, _DataDependentOptimizer([parameter])
+    )
+    second = capture_optimizer(
+        {"parameter": parameter}, _DataDependentOptimizer([parameter])
+    )
+
+    assert first.recurrent_is_opaque
+    assert first.recurrent is not None
+    assert first.recurrent.compatibility_digest == second.recurrent.compatibility_digest
+    assert "data-dependent" in (first.opaque_reason or "")
+    assert torch.is_grad_enabled()
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
 def test_optimizer_copy_preserves_subclass_state_omitted_by_base_protocol() -> None:
@@ -211,6 +243,16 @@ class _FailingOptimizer(_CustomOptimizer):
         raise RuntimeError("step disabled")
 
 
+class _FailingAfterStateOptimizer(_CustomOptimizer):
+    @torch.no_grad()
+    def step(self, closure: object = None) -> None:
+        del closure
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                self.state[parameter]["buffer"] = torch.zeros_like(parameter)
+        raise RuntimeError("kernel unavailable")
+
+
 def test_opaque_fallbacks_preserve_the_original_optimizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -239,3 +281,31 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     assert opaque_graph.bindings[1].name == "gradient.parameter"
     torch.testing.assert_close(opaque_graph.bindings[1].tensor, torch.ones(4))
     assert "recurrent optimizer graph is opaque" in (opaque_graph.opaque_reason or "")
+
+    def fail_fake(*arguments: object) -> object:
+        del arguments
+        raise RuntimeError("fake inventory disabled")
+
+    monkeypatch.setattr(optimizer_module, "_fake_cuda_optimizer", fail_fake)
+    failed_fake = capture_optimizer(
+        {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
+    )
+    assert failed_fake.recurrent is None
+    assert "fake CUDA inventory failed" in (failed_fake.opaque_reason or "")
+
+
+def test_optimizer_option_identity_covers_bounded_containers() -> None:
+    marker = object()
+    identity = optimizer_module._optimizer_value_identity(
+        {
+            "tensor": torch.ones(2),
+            "tuple": (1, None),
+            "list": [True, "value"],
+            "object": marker,
+        }
+    )
+
+    assert identity["tensor"]["tensor"]["shape"] == (2,)
+    assert identity["tuple"] == {"tuple": [1, None]}
+    assert identity["list"] == {"list": [True, "value"]}
+    assert identity["object"]["type"] == "object"

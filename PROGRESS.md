@@ -347,6 +347,21 @@ Phase 8 — public forward and training callables.
   state, two accumulated microbatches, checkpoint serialization, reload, and
   CPU restoration. The original optimizer and model remain unmodified by the
   discovery pass.
+- Valid eager optimizer updates that Dynamo cannot graph are admitted as
+  deterministic bounded task artifacts. A private real-CUDA sandbox is warmed
+  and measured once through the same event and allocation telemetry used for
+  compiled graphs; PressureFit receives the measured runtime and workspace,
+  while steady-state execution calls the user's ordinary `Optimizer.step()`
+  inside the exact annotated boundary.
+- A Dynamo failure inside a `@no_grad` optimizer exposed a PyTorch compiler-state
+  leak that disabled gradients for later AOT captures in the same thread.
+  Optimizer capture now restores the caller's grad-mode bit on every success or
+  failure exit. A public forced-opaque optimizer passes numerical parity and CPU
+  lifecycle restoration.
+- The complete milestone gate passes 190 Python tests at 90.08% branch
+  coverage, all 16 production native/CUDA canaries, Ruff, strict mypy, and the
+  naming audit. Neutral ASan and UBSan canaries pass; GCC TSan canaries pass
+  with ASLR disabled so its fixed shadow address is available on this host.
 
 ## Gate rule
 

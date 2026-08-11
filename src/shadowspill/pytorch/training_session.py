@@ -122,7 +122,7 @@ def build_training(
             state.restore_cuda_placeholders_after_optimizer_capture()
             if optimizer_capture.recurrent is None:
                 raise PlanningError(
-                    "the optimizer recurrent update is opaque: "
+                    "the optimizer state/update cannot be bounded: "
                     f"{optimizer_capture.opaque_reason}"
                 )
 

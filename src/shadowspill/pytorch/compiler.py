@@ -23,7 +23,8 @@ from ._telemetry import (
 )
 from .capture import GraphArtifact
 from .contracts import CaptureError
-from .profiling import ProfileEnvironment, TaskMeasurement
+from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
+from .profiling import ProfilableArtifact, ProfileEnvironment, TaskMeasurement
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,10 +159,20 @@ class CudaTaskProfiler:
         self._next_task_id = 1 << 62
         self._executables: dict[str, CompiledTask] = {}
 
-    def measure(self, artifact: GraphArtifact) -> TaskMeasurement:
-        """Compile once, then measure calibrated time and one exact live set."""
+    def measure(self, artifact: ProfilableArtifact) -> TaskMeasurement:
+        """Measure one compiled graph or bounded eager optimizer task."""
+
+        if isinstance(artifact, OpaqueOptimizerArtifact):
+            return self._measure_opaque_optimizer(artifact)
+        if not isinstance(artifact, GraphArtifact):
+            raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
 
         executable = self._compiled(artifact)
+        return self._measure_callable(executable)
+
+    def _measure_callable(self, executable: Callable[[], object]) -> TaskMeasurement:
+        """Measure a warmed no-argument task through the allocator boundary."""
+
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
         for _ in range(self._warmups):
@@ -189,13 +200,38 @@ class CudaTaskProfiler:
             provenance="cuda-events+shadowspill-allocation-telemetry",
         )
 
+    def _measure_opaque_optimizer(
+        self, artifact: OpaqueOptimizerArtifact
+    ) -> TaskMeasurement:
+        optimizer = materialize_opaque_optimizer(
+            artifact, device_ordinal=self._device_ordinal
+        )
+
+        def update(
+            profiled_optimizer: torch.optim.Optimizer = optimizer,
+        ) -> object:
+            with torch.no_grad():
+                return profiled_optimizer.step()
+
+        measurement = self._measure_callable(update)
+        del update
+        del optimizer
+        gc.collect()
+        return measurement
+
     def take_functions(
-        self, artifacts: Sequence[GraphArtifact]
+        self, artifacts: Sequence[ProfilableArtifact]
     ) -> dict[str, Callable[..., object]]:
         """Transfer unique compiled entrypoints while releasing examples."""
 
         result: dict[str, Callable[..., object]] = {}
         for artifact in artifacts:
+            if isinstance(artifact, OpaqueOptimizerArtifact):
+                continue
+            if not isinstance(artifact, GraphArtifact):
+                raise TypeError(
+                    f"unsupported executable artifact {type(artifact).__name__}"
+                )
             digest = artifact.compatibility_digest
             if digest in result:
                 continue
@@ -217,7 +253,7 @@ class CudaTaskProfiler:
         return executable
 
     def _measure_workspace(
-        self, executable: CompiledTask, stream: torch.cuda.Stream
+        self, executable: Callable[[], object], stream: torch.cuda.Stream
     ) -> Any:
         task_id = self._next_task_id
         self._next_task_id += 1

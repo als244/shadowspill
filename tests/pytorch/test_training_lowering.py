@@ -321,7 +321,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
             optimizer_capture,
             optimizer_phase="unknown",  # type: ignore[arg-type]
         )
-    with pytest.raises(CaptureError, match="graphable optimizer"):
+    with pytest.raises(CaptureError, match="bounded optimizer task"):
         lower_partitioned_training_program(
             model,
             (capture,),

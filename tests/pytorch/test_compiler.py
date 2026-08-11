@@ -208,3 +208,43 @@ def test_profiler_rejects_empty_calibration(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         CudaTaskProfiler(object(), device_ordinal=0, **options)
+
+
+def test_profiler_rejects_unknown_artifact_protocol() -> None:
+    class _Unknown:
+        compatibility_digest = "unknown"
+
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    artifact = _Unknown()
+    with pytest.raises(TypeError, match="unsupported profiling artifact"):
+        profiler.measure(artifact)
+    with pytest.raises(TypeError, match="unsupported executable artifact"):
+        profiler.take_functions((artifact,))
+
+
+def test_compiler_function_transfer_deduplicates_structural_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.pytorch import compiler as compiler_module
+
+    artifact = _artifact()
+    calls: list[str] = []
+
+    def compile_once(value: GraphArtifact, *, device_ordinal: int) -> CompiledTask:
+        calls.append(value.compatibility_digest)
+        assert device_ordinal == 0
+        return CompiledTask(value, lambda *arguments: arguments, ())
+
+    monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    functions = profiler.take_functions((artifact, artifact))
+    assert tuple(functions) == (artifact.compatibility_digest,)
+    assert calls == [artifact.compatibility_digest]
+
+    profiler._compiled(artifact)
+    profiler._compiled(artifact)
+    assert calls == [artifact.compatibility_digest, artifact.compatibility_digest]

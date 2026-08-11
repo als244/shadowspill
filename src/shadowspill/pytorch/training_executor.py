@@ -12,6 +12,7 @@ from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
+from .capture import GraphArtifact
 from .optimizer import current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge, actions_by_task
 from .training_lowering import LoweredTrainingProgram, TrainingTaskEntrypoint
@@ -224,7 +225,7 @@ class TrainingExecutor:
         task: TaskSpec,
     ) -> tuple[torch.Tensor, ...]:
         artifact = entrypoint.artifact
-        if artifact is None:
+        if not isinstance(artifact, GraphArtifact):
             raise RuntimeError("graph task has no captured artifact")
         function = self._functions[artifact.compatibility_digest]
         stream = torch.cuda.current_stream()

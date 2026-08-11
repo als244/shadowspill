@@ -10,10 +10,16 @@ from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-
-from .capture import GraphArtifact
+from typing import Protocol
 
 PROFILE_SCHEMA = "shadowspill.pytorch.profile/v1"
+
+
+class ProfilableArtifact(Protocol):
+    """Minimal identity shared by compiled graphs and bounded eager tasks."""
+
+    @property
+    def compatibility_digest(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,10 +174,10 @@ class ProfileCache:
 
 
 def profile_unique_artifacts(
-    artifacts: Iterable[GraphArtifact],
+    artifacts: Iterable[ProfilableArtifact],
     *,
     environment: ProfileEnvironment,
-    measure: Callable[[GraphArtifact], TaskMeasurement],
+    measure: Callable[[ProfilableArtifact], TaskMeasurement],
     cache: ProfileCache,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
@@ -179,7 +185,7 @@ def profile_unique_artifacts(
     sequence = tuple(artifacts)
     by_key: dict[str, list[int]] = {}
     key_objects: dict[str, ProfileKey] = {}
-    representatives: dict[str, GraphArtifact] = {}
+    representatives: dict[str, ProfilableArtifact] = {}
     for position, artifact in enumerate(sequence):
         key = ProfileKey(artifact.compatibility_digest, environment)
         by_key.setdefault(key.digest, []).append(position)
