@@ -151,6 +151,10 @@ ShadowSpillAllocationRecord *shadowspill_find_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t allocation_id
 );
+ShadowSpillAllocationRecord *shadowspill_find_allocation_by_pointer(
+    ShadowSpillRuntime *runtime,
+    const void *pointer
+);
 ShadowSpillObjectRecord *shadowspill_find_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id

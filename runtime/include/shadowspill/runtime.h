@@ -181,6 +181,18 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_allocate(
 );
 
 /*
+ * Resolves an exact live slab address to its allocation identity and current
+ * generation. This read-only lookup exists for framework allocator callbacks
+ * whose free/record-stream protocols carry an address rather than an ID.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_for_pointer(
+    ShadowSpillRuntime *runtime,
+    const void *pointer,
+    ShadowSpillAllocation *allocation
+);
+
+/*
  * Performs logical free immediately. Physical reuse waits for events recorded
  * on the supplied stream and every stream previously passed to record_stream.
  * Plan-owned allocations ignore framework logical free until a plan action

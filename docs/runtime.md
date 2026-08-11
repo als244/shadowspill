@@ -17,6 +17,11 @@ events complete. If a request cannot fit, it blocks only while a retirement,
 release, or offload can create a suitable range. Otherwise it returns a
 structured no-progress OOM.
 
+Allocation IDs are authoritative. Framework protocols that carry only an
+address resolve it through `shadowspill_allocation_for_pointer`, which returns
+the exact live ID and generation. Released and logically freed addresses never
+resolve, even if their numerical range is later reused by a newer generation.
+
 An object record represents one complete alias group. It tracks the current
 allocation, residency generation, authoritative/device/host versions, host
 backing, and readiness event. Tensor views are deliberately absent: a frontend

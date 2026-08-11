@@ -24,6 +24,19 @@ ShadowSpillAllocationRecord *shadowspill_find_allocation(
     return NULL;
 }
 
+ShadowSpillAllocationRecord *shadowspill_find_allocation_by_pointer(
+    ShadowSpillRuntime *runtime,
+    const void *pointer
+) {
+    for (ShadowSpillAllocationRecord *record = runtime->allocations;
+         record != NULL; record = record->next) {
+        if (record->pointer == pointer && !record->logical_freed) {
+            return record;
+        }
+    }
+    return NULL;
+}
+
 static int has_release_source(const ShadowSpillRuntime *runtime) {
     if (runtime->pending_retirements != 0U) {
         return 1;
@@ -157,6 +170,32 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     }
     pthread_mutex_unlock(&runtime->mutex);
     return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_allocation_for_pointer(
+    ShadowSpillRuntime *runtime,
+    const void *pointer,
+    ShadowSpillAllocation *allocation
+) {
+    if (runtime == NULL || pointer == NULL || allocation == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillAllocationRecord *record =
+        shadowspill_find_allocation_by_pointer(runtime, pointer);
+    if (record == NULL) {
+        pthread_mutex_unlock(&runtime->mutex);
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    *allocation = (ShadowSpillAllocation){
+        .allocation_id = record->allocation_id,
+        .generation = record->generation,
+        .requested_bytes = record->requested_bytes,
+        .charged_bytes = record->charged_bytes,
+        .pointer = record->pointer,
+    };
+    pthread_mutex_unlock(&runtime->mutex);
+    return SHADOWSPILL_RUNTIME_OK;
 }
 
 static int append_stream(

@@ -36,9 +36,15 @@ int main(void) {
         return EXIT_FAILURE;
     }
     ShadowSpillAllocation allocation = {0};
+    ShadowSpillAllocation resolved = {0};
     if (shadowspill_allocate(runtime, 128U, 16U, compute, &allocation) !=
         SHADOWSPILL_RUNTIME_OK || allocation.pointer == NULL ||
-        allocation.charged_bytes != 128U) {
+        allocation.charged_bytes != 128U ||
+        shadowspill_allocation_for_pointer(
+            runtime, allocation.pointer, &resolved
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        resolved.allocation_id != allocation.allocation_id ||
+        resolved.generation != allocation.generation) {
         return EXIT_FAILURE;
     }
     if (shadowspill_record_stream(runtime, allocation.allocation_id, compute) !=
@@ -47,6 +53,11 @@ int main(void) {
         shadowspill_free(runtime, allocation.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    if (shadowspill_allocation_for_pointer(
+            runtime, allocation.pointer, &resolved
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
         return EXIT_FAILURE;
     }
     ShadowSpillRuntimeStatistics statistics = {0};
