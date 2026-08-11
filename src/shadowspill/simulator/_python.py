@@ -464,6 +464,7 @@ class _Simulator:
             state = self.alias_state[alias_id]
             state.device_ready = True
             state.device_version += 1
+            state.host_ready = False
         for mutation in task.mutations:
             alias_id = self.object_alias[mutation.object_id]
             state = self.alias_state[alias_id]

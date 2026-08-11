@@ -77,6 +77,10 @@ Phase 3 — deterministic PressureFit and recomputation planning.
 - Fresh separate Clang ASan and UBSan builds pass both native canaries and the
   compiled Python differential suite. This avoids an intermittent GCC 13 ASan
   signal-handler loop observed even around a trivial canary on this host.
+- Static schedule validation and both simulators now model simultaneous
+  retained-host/device copies and invalidate retained host contents after
+  output writes. Stale host generations cannot source a prefetch or satisfy
+  final residency; the behavior has dedicated Python and public-C canaries.
 
 ## Gate rule
 

@@ -196,6 +196,7 @@ int shadowspill_complete_task(
         uint32_t alias = program->output_aliases[index];
         work->aliases[alias].device_ready = 1U;
         work->aliases[alias].device_version += 1U;
+        work->aliases[alias].host_ready = 0U;
     }
     uint32_t mutation_begin = program->mutation_offsets[task];
     uint32_t mutation_end = program->mutation_offsets[task + 1U];

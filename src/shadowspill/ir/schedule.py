@@ -188,14 +188,25 @@ class MemorySchedule:
         alias_ids = {group.alias_group_id for group in program.alias_groups}
         object_alias = {item.object_id: item.alias_group_id for item in program.objects}
 
-        states: dict[str, MemoryLocation] = {}
+        alias_by_id = {group.alias_group_id: group for group in program.alias_groups}
+        device_resident: set[str] = set()
+        host_resident = {
+            group.alias_group_id
+            for group in program.alias_groups
+            if group.retain_host_backing
+        }
+        host_current = set(host_resident)
         for index, residency in enumerate(self.initial_residency):
             require(
                 residency.alias_group_id in alias_ids,
                 f"schedule.initial_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
             )
-            states[residency.alias_group_id] = residency.location
+            if residency.location is MemoryLocation.DEVICE:
+                device_resident.add(residency.alias_group_id)
+            else:
+                host_resident.add(residency.alias_group_id)
+                host_current.add(residency.alias_group_id)
 
         actions_by_task: dict[str, list[tuple[int, MemoryAction]]] = {}
         previous_trigger = -1
@@ -226,32 +237,53 @@ class MemorySchedule:
             for object_id in task.inputs:
                 alias_id = object_alias[object_id]
                 require(
-                    states.get(alias_id) is MemoryLocation.DEVICE,
+                    alias_id in device_resident,
                     f"schedule.task[{task.task_id}].inputs",
                     f"alias group {alias_id!r} is not device resident",
                 )
             for object_id in task.outputs:
-                states[object_alias[object_id]] = MemoryLocation.DEVICE
+                alias_id = object_alias[object_id]
+                device_resident.add(alias_id)
+                host_current.discard(alias_id)
+            for mutation in task.mutations:
+                host_current.discard(object_alias[mutation.object_id])
             for action_index, action in actions_by_task.get(task.task_id, []):
                 path = f"schedule.actions[{action_index}]"
-                current = states.get(action.alias_group_id)
+                alias_id = action.alias_group_id
                 if action.kind is MemoryActionKind.RELEASE:
-                    require(current is not None, path, "cannot release absent storage")
-                    del states[action.alias_group_id]
+                    require(
+                        alias_id in device_resident,
+                        path,
+                        "release requires device residency",
+                    )
+                    device_resident.remove(alias_id)
+                    if not alias_by_id[alias_id].retain_host_backing:
+                        host_resident.discard(alias_id)
+                        host_current.discard(alias_id)
                 elif action.kind is MemoryActionKind.OFFLOAD:
                     require(
-                        current is MemoryLocation.DEVICE,
+                        alias_id in device_resident,
                         path,
                         "offload requires device residency",
                     )
-                    states[action.alias_group_id] = MemoryLocation.HOST
+                    host_resident.add(alias_id)
+                    host_current.add(alias_id)
+                    device_resident.remove(alias_id)
                 else:
                     require(
-                        current is MemoryLocation.HOST,
+                        alias_id in host_resident and alias_id in host_current,
                         path,
-                        "prefetch requires host residency",
+                        "prefetch requires current host residency",
                     )
-                    states[action.alias_group_id] = MemoryLocation.DEVICE
+                    require(
+                        alias_id not in device_resident,
+                        path,
+                        "prefetch requires absent device residency",
+                    )
+                    device_resident.add(alias_id)
+                    if not alias_by_id[alias_id].retain_host_backing:
+                        host_resident.remove(alias_id)
+                        host_current.remove(alias_id)
 
         for index, residency in enumerate(self.final_residency):
             require(
@@ -259,10 +291,18 @@ class MemorySchedule:
                 f"schedule.final_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
             )
+            if residency.location is MemoryLocation.DEVICE:
+                reached = residency.alias_group_id in device_resident
+            else:
+                reached = (
+                    residency.alias_group_id in host_resident
+                    and residency.alias_group_id in host_current
+                )
             require(
-                states.get(residency.alias_group_id) is residency.location,
+                reached,
                 f"schedule.final_residency[{index}]",
-                f"required {residency.location.value} residency was not reached",
+                f"required current {residency.location.value} residency "
+                "was not reached",
             )
 
 
