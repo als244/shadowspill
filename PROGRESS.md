@@ -92,6 +92,10 @@ Phase 8 — public forward and training callables.
 - [x] Capture inventories retain their FakeTensor storages until lowering ends,
   preventing reclaimed StorageImpl identities from aliasing unrelated residual
   extents across save/recompute variants.
+- [x] Two heterogeneous microbatch objective pairs now lower into one canonical
+  accumulated Program with mutually exclusive save/recompute task pairs,
+  persistent gradient identities, functional accumulation mutations, and one
+  final optimizer task accepted by PressureFit and the simulator.
 
 ## Completed gates
 
