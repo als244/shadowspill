@@ -129,12 +129,12 @@ def build_training(
                 )
 
         artifact_by_digest: dict[str, OptimizerTaskArtifact] = {
-                artifact.compatibility_digest: artifact
-                for capture in partitioned_captures
-                for stage in capture.stages
-                for pair in (stage.save_pair, stage.recompute_pair)
-                for artifact in (pair.forward, pair.backward)
-            }
+            artifact.compatibility_digest: artifact
+            for capture in partitioned_captures
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        }
         for optimizer_task in optimizer_capture.recurrent_tasks:
             artifact_by_digest[optimizer_task.artifact.compatibility_digest] = (
                 optimizer_task.artifact
@@ -271,9 +271,7 @@ def build_training(
                 optimizer_state_preinitialized=(
                     optimizer_capture.initialized_state_dict is not None
                 ),
-                optimizer_state_was_lazy=bool(
-                    optimizer_capture.created_state_names
-                ),
+                optimizer_state_was_lazy=bool(optimizer_capture.created_state_names),
             )
             report = _training_report(
                 tuple(signature.digest for signature in signatures),

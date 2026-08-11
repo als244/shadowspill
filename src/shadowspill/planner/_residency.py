@@ -536,6 +536,7 @@ def reduce_pressure(
                 required_bytes=used,
                 capacity_bytes=facts.object_capacity_by_device[device_id],
             )
+
         def score(cut: Cut) -> tuple[int, ...]:
             if score_cache is None:
                 return _cut_score(facts, config, cut, score_kind)
@@ -584,9 +585,7 @@ def extend_interval_entries(
             alias_spans = list(spans[alias])
             alias_spans[span_index] = Span(candidate_start, span.end)
             spans[alias] = tuple(alias_spans)
-            proposed = ResidencyPlan(
-                tuple(spans), current.anchors
-            )
+            proposed = ResidencyPlan(tuple(spans), current.anchors)
             device_id = facts.alias_devices[alias]
             task = candidate_start + 1
             reserved = (

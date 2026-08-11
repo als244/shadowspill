@@ -275,11 +275,7 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
         {object_id for task in recurrent_tasks for object_id in task.inputs}
     )
     assert created.issubset(
-        {
-            mutation.object_id
-            for task in recurrent_tasks
-            for mutation in task.mutations
-        }
+        {mutation.object_id for task in recurrent_tasks for mutation in task.mutations}
     )
 
 

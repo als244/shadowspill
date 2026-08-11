@@ -47,9 +47,12 @@ def test_recurrent_graph_matches_standard_optimizer(
             else:
                 assert value == expected
     assert captured.recurrent is not None
-    assert next(
-        binding for binding in captured.bindings if binding.name == "weight"
-    ).tensor.device.type == "cuda"
+    assert (
+        next(
+            binding for binding in captured.bindings if binding.name == "weight"
+        ).tensor.device.type
+        == "cuda"
+    )
     assert all(
         binding.tensor.device.type == "cuda"
         for binding in captured.bindings
@@ -142,11 +145,14 @@ def test_cuda_only_discovery_inventories_every_parameter(
     }
     assert captured.created_state_names == tuple(sorted(state_names))
     assert captured.recurrent is not None
-    assert sum(
-        node.op == "call_function"
-        and str(node.target) == "mlops.master_adamw_.default"
-        for node in captured.recurrent.graph_module.graph.nodes
-    ) == 2
+    assert (
+        sum(
+            node.op == "call_function"
+            and str(node.target) == "mlops.master_adamw_.default"
+            for node in captured.recurrent.graph_module.graph.nodes
+        )
+        == 2
+    )
     assert len(captured.recurrent_tasks) == 2
     assert {
         next(

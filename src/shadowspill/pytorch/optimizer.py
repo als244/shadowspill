@@ -282,9 +282,7 @@ def capture_optimizer(
                 OptimizerTask(
                     hook_artifact,
                     tuple(binding.name for binding in hook_bindings),
-                    tuple(
-                        binding.name for binding in hook_bindings if binding.mutable
-                    ),
+                    tuple(binding.name for binding in hook_bindings if binding.mutable),
                 ),
             ),
             bindings=hook_bindings,
@@ -306,9 +304,7 @@ def capture_optimizer(
             _export_optimizer_graph(sandbox)
         except BaseException as exc:
             _restore_binding_values(probe_bindings, probe_snapshots)
-            opaque_artifact = OpaqueOptimizerArtifact.capture(
-                sandbox, probe_bindings
-            )
+            opaque_artifact = OpaqueOptimizerArtifact.capture(sandbox, probe_bindings)
             return OptimizerCapture(
                 optimizer_type=optimizer_type,
                 first_step_is_opaque=first_step_is_opaque,
@@ -334,9 +330,7 @@ def capture_optimizer(
         finally:
             torch.set_grad_enabled(probe_grad_enabled)
         _restore_binding_values(probe_bindings, probe_snapshots)
-        sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
-            sandbox, name_by_sandbox_id
-        )
+        sandbox, name_by_sandbox_id = _fake_cuda_optimizer(sandbox, name_by_sandbox_id)
 
     bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
     snapshots = {
@@ -586,15 +580,11 @@ def _complete_failed_state_discovery(
 
 
 def _require_unchanged_discovery_parameters(
-    snapshots: tuple[
-        tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...
-    ],
+    snapshots: tuple[tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...],
 ) -> None:
     for parameter, value, _gradient in snapshots:
         if not torch.equal(parameter, value):
-            raise CaptureError(
-                "optimizer discovery failed after mutating a parameter"
-            )
+            raise CaptureError("optimizer discovery failed after mutating a parameter")
 
 
 def _map_optimizer_tensors(value: Any, convert: Any) -> Any:
