@@ -80,6 +80,7 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
                     64,
                 ),
             ),
+            persistent_extent_bytes=(32,),
         )
 
     cache = ProfileCache(tmp_path)
@@ -94,6 +95,7 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
     assert cold.cache_misses == 1
     assert len(calls) == 1
     assert len(cold.measurements) == 6
+    assert cold.fixed_slab_bytes == 32
 
     warm = profile_unique_artifacts(
         artifacts,
@@ -104,6 +106,7 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
     assert warm.cache_hits == 1
     assert warm.cache_misses == 0
     assert warm.measurements == cold.measurements
+    assert warm.fixed_slab_bytes == 32
 
 
 def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:

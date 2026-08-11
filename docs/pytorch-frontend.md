@@ -91,6 +91,18 @@ are complete: schema, fake/meta implementation, alias and mutation declaration,
 and—when differentiated—an autograd implementation. ShadowSpill does not
 special-case operation libraries.
 
+Compiled task entrypoints execute with dispatcher autograd disabled. Training
+already contains the explicit AOTAutograd forward/backward programs, and
+forward-only mode intentionally captures no backward. This prevents registered
+custom operations from creating a second hidden autograd context and
+saved-tensor lifetime outside the canonical Program.
+
+Structural profiling also audits allocations retained by provider code or
+custom operations. Retention is accepted only when repeated isolated calls
+reach a stable logical-live-byte baseline; its observed high-water is reserved
+from the slab and reported as fixed slab use. Continued growth is rejected as
+an unbounded operation contract rather than hidden inside workspace leeway.
+
 ## Optimizers
 
 Optimizer capture has no class allowlist. The optimizer created by the caller's

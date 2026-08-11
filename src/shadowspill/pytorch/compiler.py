@@ -14,8 +14,9 @@ import torch
 from torch._inductor.compile_fx import compile_fx
 from torch.utils._pytree import tree_flatten
 
-from ._abi import Allocation
+from ._abi import AdapterStatistics, Allocation
 from ._telemetry import (
+    AllocationTelemetryError,
     read_allocation_telemetry,
     start_allocation_telemetry,
     stop_allocation_telemetry,
@@ -36,17 +37,11 @@ class CompiledTask:
     example_arguments: tuple[object, ...]
 
     def __call__(self) -> object:
-        context = torch.no_grad() if self.artifact.kind == "optimizer" else _null()
-        with context:
+        # GraphArtifact training derivatives are explicit AOT forward/backward
+        # programs. Letting dispatcher autograd wrap a registered custom op
+        # here would create a second, hidden saved-tensor lifetime.
+        with torch.no_grad():
             return self.function(*self.example_arguments)
-
-
-class _null:
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, *exc: object) -> None:
-        del exc
 
 
 def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvironment:
@@ -174,6 +169,13 @@ class CudaTaskProfiler:
         digest = artifact.compatibility_digest
         try:
             measurement = self._measure_callable(executable)
+        except AllocationTelemetryError as exc:
+            self._executables.pop(digest, None)
+            raise AllocationTelemetryError(
+                "allocator trace is incomplete for structural ABI "
+                f"{digest} ({artifact.kind}; operators="
+                f"{artifact.operator_targets}): {exc}"
+            ) from exc
         except BaseException:
             self._executables.pop(digest, None)
             raise
@@ -193,8 +195,13 @@ class CudaTaskProfiler:
 
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
+        persistent_baseline = self._requested_allocated_bytes()
+        persistent_high_water = persistent_baseline
         for _ in range(self._warmups):
             self._discard_output(executable())
+            persistent_high_water = max(
+                persistent_high_water, self._requested_allocated_bytes()
+            )
         stream.synchronize()
         samples: list[int] = []
         event_factory: Any = torch.cuda.Event
@@ -208,16 +215,80 @@ class CudaTaskProfiler:
             samples.append(max(0, round(start.elapsed_time(finish) * 1_000_000)))
             del output
             gc.collect()
-        workspace = self._measure_workspace(executable, stream)
+            persistent_high_water = max(
+                persistent_high_water, self._requested_allocated_bytes()
+            )
+        workspace, persistent_high_water = self._audit_workspace_retention(
+            executable,
+            stream,
+            persistent_high_water=persistent_high_water,
+        )
+        fixed_bytes = max(0, persistent_high_water - persistent_baseline)
+        # A shared provider cache may already be populated by another ABI.
+        # Preserve at least this task's observed rotating live set so every
+        # cached measurement remains independently conservative.
+        fixed_bytes = max(fixed_bytes, sum(workspace.persistent_extent_bytes))
+        fixed_extents = () if fixed_bytes == 0 else (fixed_bytes,)
         return TaskMeasurement(
             runtime_ns=round(statistics.median(samples)),
             workspace_requested_bytes=workspace.peak_requested_bytes,
             workspace_charged_bytes=workspace.peak_charged_bytes,
             workspace_extent_bytes=workspace.peak_extent_bytes,
             samples_ns=tuple(samples),
-            provenance="cuda-events+shadowspill-allocation-telemetry",
+            provenance=(
+                "cuda-events+shadowspill-allocation-telemetry"
+                + ("+bounded-retention-audit" if fixed_extents else "")
+            ),
             allocation_trace=workspace.allocation_trace,
+            persistent_extent_bytes=fixed_extents,
         )
+
+    def _audit_workspace_retention(
+        self,
+        executable: Callable[[], object],
+        stream: torch.cuda.Stream,
+        *,
+        persistent_high_water: int,
+        maximum_iterations: int = 16,
+    ) -> tuple[Any, int]:
+        """Distinguish bounded provider caches from unbounded task leakage."""
+
+        previous = self._requested_allocated_bytes()
+        stable_observations = 0
+        workspace: Any | None = None
+        for _ in range(maximum_iterations):
+            workspace = self._measure_workspace(executable, stream)
+            current = self._requested_allocated_bytes()
+            persistent_high_water = max(persistent_high_water, current)
+            if not workspace.persistent_extent_bytes:
+                return workspace, persistent_high_water
+            if current == previous:
+                stable_observations += 1
+            else:
+                stable_observations = 0
+            if stable_observations >= 2:
+                return workspace, persistent_high_water
+            previous = current
+        if workspace is None:
+            raise AssertionError("workspace retention audit did not execute")
+        raise AllocationTelemetryError(
+            "task retains anonymous allocations without reaching a bounded "
+            f"live-byte baseline after {maximum_iterations} invocations; "
+            f"latest={workspace.persistent_extent_bytes}"
+        )
+
+    def _requested_allocated_bytes(self) -> int:
+        statistics = AdapterStatistics()
+        status = int(
+            self._library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(statistics)
+            )
+        )
+        if status != 0:
+            raise AllocationTelemetryError(
+                f"allocator statistics failed during profiling with status {status}"
+            )
+        return int(statistics.runtime.requested_allocated_bytes)
 
     def _measure_opaque_optimizer(
         self, artifact: OpaqueOptimizerArtifact

@@ -144,6 +144,7 @@ def build_forward(
             int(installed.admission.slab_bytes),
             workspace_reserve,
             profiles.measurements,
+            fixed_slab_bytes=profiles.fixed_slab_bytes,
         )
         simulation_config = SimulationConfig.single_device(
             "cuda_0",
@@ -184,7 +185,9 @@ def build_forward(
             slab_replay = replay_selected_schedule(
                 selected,
                 measurements,
-                slab_bytes=int(installed.admission.slab_bytes),
+                slab_bytes=(
+                    int(installed.admission.slab_bytes) - profiles.fixed_slab_bytes
+                ),
                 output_bindings=output_bindings_for_entrypoints(
                     selected.program.selected_tasks(selected.selections),
                     lowered.entrypoints,
@@ -379,17 +382,27 @@ def _reconcile_host_arena(
 
 
 def _simulation_capacity(
-    slab_bytes: int, workspace_reserve: int, measurements: Sequence[Any]
+    slab_bytes: int,
+    workspace_reserve: int,
+    measurements: Sequence[Any],
+    *,
+    fixed_slab_bytes: int = 0,
 ) -> int:
-    if workspace_reserve > slab_bytes:
+    usable_slab = slab_bytes - fixed_slab_bytes
+    if fixed_slab_bytes < 0 or usable_slab < 0:
+        raise PlanningError(
+            "fixed provider allocations exceed the admitted slab: "
+            f"slab={slab_bytes}, fixed={fixed_slab_bytes}"
+        )
+    if workspace_reserve > usable_slab:
         raise PlanningError(
             "the admitted slab is smaller than the workspace reserve: "
-            f"slab={slab_bytes}, reserve={workspace_reserve}"
+            f"usable_slab={usable_slab}, reserve={workspace_reserve}"
         )
     maximum_workspace = max(
         (item.workspace_charged_bytes for item in measurements), default=0
     )
-    return slab_bytes - workspace_reserve + maximum_workspace
+    return usable_slab - workspace_reserve + maximum_workspace
 
 
 def _seal_physical_budget(installed: InstalledAllocator) -> None:
@@ -471,6 +484,7 @@ def _forward_report(
         phase_timings_ns=(*timings, ("total", elapsed)),
         recomputation_cache_hits=int(recomputation_cache_hit),
         recomputation_cache_misses=int(not recomputation_cache_hit),
+        fixed_slab_bytes=profiles.fixed_slab_bytes,
     )
 
 

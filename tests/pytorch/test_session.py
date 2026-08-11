@@ -51,6 +51,12 @@ def test_workspace_and_environment_helpers_are_explicit(
     assert _simulation_capacity(1 << 30, 512 << 20, (measurement,)) == (
         (512 << 20) + 100
     )
+    assert _simulation_capacity(
+        1 << 30,
+        512 << 20,
+        (measurement,),
+        fixed_slab_bytes=32,
+    ) == (512 << 20) + 68
     with pytest.raises(PlanningError, match="smaller"):
         _simulation_capacity(1, 2, ())
     monkeypatch.delenv("SHADOWSPILL_TEST_INTEGER", raising=False)

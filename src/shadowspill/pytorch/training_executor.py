@@ -284,7 +284,10 @@ class TrainingExecutor:
             arguments = list(artifact.example_arguments)
             for slot in entrypoint.input_slots:
                 arguments[slot.leaf_index] = self._state.object_tensors[slot.object_id]
-            raw = function(*arguments)
+            # AOTAutograd already produced the explicit derivative program.
+            # Dispatcher autograd here would duplicate custom-op saved state.
+            with torch.no_grad():
+                raw = function(*arguments)
             leaves, _ = tree_flatten(raw)
             if entrypoint.phase == "forward":
                 outputs = tuple(

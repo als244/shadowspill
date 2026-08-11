@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v4"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v7"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -117,7 +117,12 @@ class ProfileEnvironment:
 
 @dataclass(frozen=True, slots=True)
 class TaskMeasurement:
-    """Calibrated task time and exact allocator behavior for one ABI."""
+    """Calibrated task time and allocator behavior for one structural ABI.
+
+    ``persistent_extent_bytes`` is a conservative slab reserve for bounded
+    provider or custom-operation state discovered by repeated-task auditing.
+    It is not part of the task-local workspace timeline.
+    """
 
     runtime_ns: int
     workspace_requested_bytes: int
@@ -126,6 +131,7 @@ class TaskMeasurement:
     samples_ns: tuple[int, ...]
     provenance: str
     allocation_trace: tuple[TaskAllocationEvent, ...] = ()
+    persistent_extent_bytes: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         values = (
@@ -134,6 +140,7 @@ class TaskMeasurement:
             self.workspace_charged_bytes,
             *self.workspace_extent_bytes,
             *self.samples_ns,
+            *self.persistent_extent_bytes,
         )
         if any(value < 0 for value in values):
             raise ValueError("profile measurements must be non-negative")
@@ -191,6 +198,7 @@ class TaskMeasurement:
             "samples_ns": list(self.samples_ns),
             "provenance": self.provenance,
             "allocation_trace": [event.to_dict() for event in self.allocation_trace],
+            "persistent_extent_bytes": list(self.persistent_extent_bytes),
         }
 
     @classmethod
@@ -210,6 +218,9 @@ class TaskMeasurement:
                 allocation_trace=tuple(
                     TaskAllocationEvent.from_dict(item)
                     for item in value["allocation_trace"]
+                ),
+                persistent_extent_bytes=tuple(
+                    int(item) for item in value["persistent_extent_bytes"]
                 ),
             )
         except (KeyError, TypeError) as exc:
@@ -240,6 +251,7 @@ class ProfilingResult:
     unique_keys: int
     cache_hits: int
     cache_misses: int
+    fixed_slab_bytes: int
 
 
 class ProfileCache:
@@ -311,6 +323,7 @@ def profile_unique_artifacts(
     results: list[TaskMeasurement | None] = [None] * len(sequence)
     hits = 0
     misses = 0
+    fixed_slab_bytes = 0
     for digest in sorted(by_key):
         key = key_objects[digest]
         measurement = cache.read(key)
@@ -320,6 +333,7 @@ def profile_unique_artifacts(
             misses += 1
         else:
             hits += 1
+        fixed_slab_bytes += sum(measurement.persistent_extent_bytes)
         for position in by_key[digest]:
             results[position] = measurement
     if any(measurement is None for measurement in results):
@@ -331,4 +345,5 @@ def profile_unique_artifacts(
         unique_keys=len(by_key),
         cache_hits=hits,
         cache_misses=misses,
+        fixed_slab_bytes=fixed_slab_bytes,
     )

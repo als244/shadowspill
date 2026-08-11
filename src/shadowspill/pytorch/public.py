@@ -38,6 +38,7 @@ class PlanReport:
     initial_execution_plan: ExecutionPlan | None = None
     recomputation_cache_hits: int = 0
     recomputation_cache_misses: int = 0
+    fixed_slab_bytes: int = 0
 
     @property
     def predicted_device_peak_bytes(self) -> int:

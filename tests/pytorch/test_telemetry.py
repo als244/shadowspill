@@ -70,6 +70,20 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
     assert profile.allocation_trace[0].output_leaf_indices == (0,)
 
 
+def test_workspace_classifies_unbound_live_allocation_as_persistent() -> None:
+    events = (
+        _event(0, 10, AllocationEventKind.CREATED, 128),
+        _event(1, 11, AllocationEventKind.CREATED, 32),
+        _event(2, 10, AllocationEventKind.LOGICAL_FREED, 128),
+    )
+    profile = summarize_task_workspace(events, task_id=7)
+    assert profile.peak_requested_bytes == 128
+    assert profile.peak_charged_bytes == 128
+    assert profile.persistent_allocation_ids == (11,)
+    assert profile.persistent_extent_bytes == (32,)
+    assert all(event.allocation_ordinal == 0 for event in profile.allocation_trace)
+
+
 def test_workspace_ignores_other_tasks_and_unknown_prior_release() -> None:
     events = (
         _event(0, 1, AllocationEventKind.LOGICAL_FREED, 64),

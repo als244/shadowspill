@@ -193,6 +193,7 @@ def build_training(
                     int(installed.admission.slab_bytes),
                     workspace_reserve,
                     profiles.measurements,
+                    fixed_slab_bytes=profiles.fixed_slab_bytes,
                 ),
                 host_capacity_bytes=host_budget,
                 h2d_bandwidth_bytes_per_second=24 << 30,
@@ -240,7 +241,10 @@ def build_training(
                     replay_selected_schedule(
                         recurrent_selected,
                         measurements,
-                        slab_bytes=int(installed.admission.slab_bytes),
+                        slab_bytes=(
+                            int(installed.admission.slab_bytes)
+                            - profiles.fixed_slab_bytes
+                        ),
                         output_bindings=output_bindings_for_entrypoints(
                             recurrent_selected.program.selected_tasks(
                                 recurrent_selected.selections
@@ -258,7 +262,10 @@ def build_training(
                         replay_selected_schedule(
                             initial_selected,
                             measurements,
-                            slab_bytes=int(installed.admission.slab_bytes),
+                            slab_bytes=(
+                                int(installed.admission.slab_bytes)
+                                - profiles.fixed_slab_bytes
+                            ),
                             output_bindings=output_bindings_for_entrypoints(
                                 initial_selected.program.selected_tasks(
                                     initial_selected.selections
@@ -466,6 +473,7 @@ def _training_report(
         initial_execution_plan=initial_execution_plan,
         recomputation_cache_hits=recomputation_cache_hits,
         recomputation_cache_misses=recomputation_cache_misses,
+        fixed_slab_bytes=report.fixed_slab_bytes,
     )
 
 

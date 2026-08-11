@@ -62,6 +62,8 @@ class TaskWorkspaceProfile:
     output_allocation_ids: tuple[int, ...]
     events: tuple[CapturedAllocationEvent, ...]
     allocation_trace: tuple[TaskAllocationEvent, ...]
+    persistent_allocation_ids: tuple[int, ...] = ()
+    persistent_extent_bytes: tuple[int, ...] = ()
 
 
 def start_allocation_telemetry(library: Any, *, capacity: int) -> None:
@@ -159,6 +161,18 @@ def summarize_task_workspace(
     }
     output_leaves = dict(output_allocation_leaves or {})
     outputs = set(output_leaves)
+    allocation_trace, persistent_ids = _normalize_task_allocation_trace(
+        selected,
+        output_leaves=output_leaves,
+        retained_allocation_ids=promoted,
+    )
+    persistent = set(persistent_ids)
+    persistent_extents = tuple(
+        event.charged_bytes
+        for event in selected
+        if event.kind is AllocationEventKind.CREATED
+        and event.allocation_id in persistent
+    )
     live: dict[int, tuple[int, int]] = {}
     peak_requested = 0
     peak_charged = 0
@@ -166,6 +180,8 @@ def summarize_task_workspace(
     for event in selected:
         if event.kind is AllocationEventKind.CREATED:
             if event.allocation_id in promoted or event.allocation_id in outputs:
+                continue
+            if event.allocation_id in persistent:
                 continue
             if event.allocation_id in live:
                 raise AllocationTelemetryError(
@@ -183,11 +199,6 @@ def summarize_task_workspace(
             peak_requested = requested
             peak_charged = charged
             peak_extents = tuple(sorted(item[1] for item in live.values()))
-    allocation_trace = _normalize_task_allocation_trace(
-        selected,
-        output_leaves=output_leaves,
-        retained_allocation_ids=promoted,
-    )
     return TaskWorkspaceProfile(
         task_id=task_id,
         peak_requested_bytes=peak_requested,
@@ -197,6 +208,8 @@ def summarize_task_workspace(
         output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
         allocation_trace=allocation_trace,
+        persistent_allocation_ids=persistent_ids,
+        persistent_extent_bytes=persistent_extents,
     )
 
 
@@ -205,7 +218,7 @@ def _normalize_task_allocation_trace(
     *,
     output_leaves: Mapping[int, tuple[int, ...]],
     retained_allocation_ids: set[int],
-) -> tuple[TaskAllocationEvent, ...]:
+) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
     """Replace process allocation IDs with stable task-local ordinals."""
 
     ordinal_by_id: dict[int, int] = {}
@@ -288,20 +301,13 @@ def _normalize_task_allocation_trace(
         if allocation_id in ordinal_by_id
     }
     unexpected = live - output_ordinals - retained_ordinals
-    if unexpected:
-        retained = [
-            (
-                event.allocation_ordinal,
-                event.requested_bytes,
-                event.charged_bytes,
-                event.output_leaf_indices,
-            )
-            for event in trace
-            if event.operation is TaskAllocationOperation.ALLOCATE
-            and event.allocation_ordinal in live
-        ]
-        raise AllocationTelemetryError(
-            "task allocator trace retains non-output allocations: "
-            f"{sorted(unexpected)}; retained={retained}"
-        )
-    return tuple(trace)
+    allocation_id_by_ordinal = {
+        ordinal: allocation_id for allocation_id, ordinal in ordinal_by_id.items()
+    }
+    persistent_ids = tuple(
+        allocation_id_by_ordinal[ordinal] for ordinal in sorted(unexpected)
+    )
+    filtered = tuple(
+        event for event in trace if event.allocation_ordinal not in unexpected
+    )
+    return filtered, persistent_ids

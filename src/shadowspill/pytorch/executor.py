@@ -60,7 +60,10 @@ class _ExecutingStage(nn.Module):
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = binding.generation
 
-            output = self._function(*arguments)
+            # Forward-only execution has no captured backward. Avoid creating
+            # hidden dispatcher-autograd contexts across planned task bounds.
+            with torch.no_grad():
+                output = self._function(*arguments)
             output_leaves, _ = tree_flatten(output)
             produced: set[str] = set()
             for slot in self._entrypoint.output_slots:

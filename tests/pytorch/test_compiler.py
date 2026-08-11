@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch._abi import Allocation
+from shadowspill.pytorch._telemetry import AllocationTelemetryError
 from shadowspill.pytorch.capture import GraphArtifact
 from shadowspill.pytorch.compiler import (
     CompiledTask,
@@ -35,6 +36,20 @@ def _artifact(kind: str = "inference") -> GraphArtifact:
         graph_module=torch.fx.symbolic_trace(_Add()),
         example_inputs=inputs,
     )
+
+
+def test_compiled_task_disables_dispatcher_autograd() -> None:
+    observed: list[bool] = []
+    executable = CompiledTask(
+        _artifact("forward"),
+        lambda: observed.append(torch.is_grad_enabled()),
+        (),
+    )
+
+    with torch.enable_grad():
+        executable()
+
+    assert observed == [False]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -85,8 +100,11 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
         peak_charged_bytes=256,
         peak_extent_bytes=(256,),
         allocation_trace=(),
+        persistent_allocation_ids=(),
+        persistent_extent_bytes=(),
     )
     monkeypatch.setattr(profiler, "_measure_workspace", lambda task, stream: workspace)
+    monkeypatch.setattr(profiler, "_requested_allocated_bytes", lambda: 0)
     measurement = profiler.measure(_artifact())
     assert measurement.runtime_ns >= 0
     assert len(measurement.samples_ns) == 2
@@ -213,6 +231,52 @@ def test_profiler_rejects_empty_calibration(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         CudaTaskProfiler(object(), device_ordinal=0, **options)
+
+
+def test_retention_audit_accepts_a_stable_live_byte_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    workspace = SimpleNamespace(persistent_extent_bytes=(32,))
+    measurements = iter((100, 132, 132, 132))
+    monkeypatch.setattr(
+        profiler, "_requested_allocated_bytes", lambda: next(measurements)
+    )
+    monkeypatch.setattr(
+        profiler, "_measure_workspace", lambda executable, stream: workspace
+    )
+    captured, high_water = profiler._audit_workspace_retention(
+        lambda: None,
+        object(),  # type: ignore[arg-type]
+        persistent_high_water=100,
+    )
+    assert captured is workspace
+    assert high_water == 132
+
+
+def test_retention_audit_rejects_unbounded_growth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    workspace = SimpleNamespace(persistent_extent_bytes=(32,))
+    measurements = iter((100, 132, 164, 196))
+    monkeypatch.setattr(
+        profiler, "_requested_allocated_bytes", lambda: next(measurements)
+    )
+    monkeypatch.setattr(
+        profiler, "_measure_workspace", lambda executable, stream: workspace
+    )
+    with pytest.raises(AllocationTelemetryError, match="without reaching"):
+        profiler._audit_workspace_retention(
+            lambda: None,
+            object(),  # type: ignore[arg-type]
+            persistent_high_water=100,
+            maximum_iterations=3,
+        )
 
 
 def test_profiler_rejects_unknown_artifact_protocol() -> None:
