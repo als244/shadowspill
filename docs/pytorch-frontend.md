@@ -30,6 +30,22 @@ only the scalar objective is differentiated. Structural graph identities use
 operator targets, tensor geometry, calling convention, and the pinned
 Torch/CUDA implementation identity, not task ordinal or microbatch position.
 
+`partition="auto"` discovers outer containers with repeated sibling module
+types and splits the functional Export graph at those child boundaries. Nested
+repeated groups, such as experts inside one repeated transformer block, stay in
+their owning outer block. Prologue operations join the first stage and epilogue
+operations join the last. If there is no repeated structure, the complete
+graph is one legal stage. Opaque operations and data dependencies remain
+ordinary FX edges; partitioning does not rewrite their semantics.
+
+Each split stage receives its own save/recompute VJP. Profile keys canonicalize
+FX dataflow without placeholder, node, layer, or task names. Tensor geometry,
+gradient requirements, static arguments, operators, compiler/provider identity,
+Torch/CUDA version, and device capability remain semantic. Thus identical
+interior layers share one profile, while a first layer that does not return an
+input gradient or a last layer containing the objective correctly remains a
+different ABI.
+
 PyTorch 2.13 AOTAutograd may initialize CUDA provider state even when its model
 and examples are FakeTensors. Public planning therefore installs ShadowSpill's
 allocator before entering Export/AOT capture. Calling the private capture

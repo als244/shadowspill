@@ -62,6 +62,11 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
 - [x] Fixed-shape tensor/static guards, storage-free CUDA model replicas, strict
   Export, objective schemas, and save/recompute AOTAutograd graph pairs work
   for ordinary ATen and unrelated registered custom operations.
+- [x] Model-independent automatic partitioning finds outer repeated blocks,
+  retains nested experts inside each block, differentiates stages independently,
+  and keys profiling by structural ABI rather than layer/task position.
+- [x] Atomic content-addressed profile caching scatters one unique measurement
+  to all matching task positions; a warm cache invokes no measurement kernels.
 
 ## Completed gates
 

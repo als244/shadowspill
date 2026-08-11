@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import torch
 from torch.fx import GraphModule
+from torch.fx.node import Node
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from .contracts import ObjectiveError, ObjectiveResult
@@ -83,7 +84,7 @@ class GraphArtifact:
         outputs, _ = tree_flatten(output_node.args[0])
         identity = {
             "kind": kind,
-            "graph": str(graph_module.graph),
+            "graph": _canonical_graph(graph_module),
             "inputs": [geometry.identity() for geometry in tensor_inputs],
             "argument_count": len(example_inputs),
             "output_count": len(outputs),
@@ -101,6 +102,42 @@ class GraphArtifact:
             operator_targets=operators,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
         )
+
+
+def _canonical_graph(graph_module: GraphModule) -> list[dict[str, object]]:
+    """Describe FX semantics without task-, layer-, or node-ordinal names."""
+
+    identities: dict[Node, int] = {}
+    result: list[dict[str, object]] = []
+    for node in graph_module.graph.nodes:
+        identities[node] = len(identities)
+        item: dict[str, object] = {"op": node.op}
+        if node.op not in {"placeholder", "output"}:
+            item["target"] = str(node.target)
+        if node.op != "placeholder":
+            item["args"] = _canonical_argument(node.args, identities)
+            item["kwargs"] = _canonical_argument(node.kwargs, identities)
+        result.append(item)
+    return result
+
+
+def _canonical_argument(value: object, identities: dict[Node, int]) -> object:
+    if isinstance(value, Node):
+        return {"node": identities[value]}
+    if isinstance(value, tuple):
+        return {"tuple": [_canonical_argument(item, identities) for item in value]}
+    if isinstance(value, list):
+        return {"list": [_canonical_argument(item, identities) for item in value]}
+    if isinstance(value, dict):
+        return {
+            "dict": [
+                (str(key), _canonical_argument(item, identities))
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            ]
+        }
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return {"type": type(value).__qualname__, "value": str(value)}
 
 
 @dataclass(frozen=True, slots=True)

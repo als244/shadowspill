@@ -38,6 +38,7 @@ class TrainingCapture:
     """Objective schema and save/recompute AOT alternatives for one ABI."""
 
     exported: ExportCapture
+    capture_module: nn.Module
     objective_schema: ObjectiveSchema
     save_pair: AotGraphPair
     recompute_pair: AotGraphPair
@@ -113,11 +114,13 @@ def capture_training(
     )
     del probe_loss
     schema = capture_objective_schema(probe_metrics)
-    exported = _export(_ObjectiveModule(model, objective, schema), microbatch)
+    capture_module = _ObjectiveModule(model, objective, schema)
+    exported = _export(capture_module, microbatch)
     save_pair = _capture_pair(exported, recomputation=False)
     recompute_pair = _capture_pair(exported, recomputation=True)
     return TrainingCapture(
         exported=exported,
+        capture_module=capture_module,
         objective_schema=schema,
         save_pair=save_pair,
         recompute_pair=recompute_pair,
@@ -135,6 +138,26 @@ def inference_artifact(capture: ExportCapture) -> GraphArtifact:
 
 
 def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPair:
+    eager_output = capture.exported_program.graph_module(*capture.flat_inputs)
+    return capture_graph_pair(
+        capture.exported_program.graph_module,
+        capture.flat_inputs,
+        original_output=eager_output,
+        recomputation=recomputation,
+        root_output_positions=(capture.user_output_indices[0],),
+    )
+
+
+def capture_graph_pair(
+    graph_module: torch.fx.GraphModule,
+    inputs: Sequence[object],
+    *,
+    original_output: object,
+    recomputation: bool,
+    root_output_positions: tuple[int, ...] | None = None,
+) -> AotGraphPair:
+    """Differentiate one functional graph with a flat tensor/static ABI."""
+
     captured: dict[str, GraphArtifact] = {}
 
     def forward_compiler(
@@ -161,32 +184,42 @@ def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPai
         aot: Any = aot_function
         if recomputation:
             compiled = aot(
-                capture.exported_program.graph_module,
+                graph_module,
                 fw_compiler=forward_compiler,
                 bw_compiler=backward_compiler,
                 partition_fn=min_cut_rematerialization_partition,
             )
         else:
             compiled = aot(
-                capture.exported_program.graph_module,
+                graph_module,
                 fw_compiler=forward_compiler,
                 bw_compiler=backward_compiler,
             )
-        outputs = compiled(*capture.flat_inputs)
-        output_values = (
-            tuple(outputs) if isinstance(outputs, (tuple, list)) else (outputs,)
-        )
-        loss = output_values[capture.user_output_indices[0]]
+        outputs = compiled(*inputs)
+        output_values, _ = tree_flatten(outputs)
+        if root_output_positions is None:
+            roots = tuple(
+                value
+                for value in output_values
+                if isinstance(value, torch.Tensor)
+                and value.requires_grad
+                and (value.is_floating_point() or value.is_complex())
+            )
+        else:
+            roots = tuple(output_values[index] for index in root_output_positions)
+        if not roots:
+            raise CaptureError("training stage has no differentiable output")
         differentiable_inputs = tuple(
             value
-            for value in capture.flat_inputs
+            for value in inputs
             if isinstance(value, torch.Tensor) and value.requires_grad
         )
         if not differentiable_inputs:
             raise CaptureError("training graph has no differentiable inputs or state")
         torch.autograd.grad(
-            loss,
+            roots,
             differentiable_inputs,
+            grad_outputs=tuple(torch.ones_like(root) for root in roots),
             allow_unused=True,
             materialize_grads=True,
         )
@@ -197,7 +230,7 @@ def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPai
         raise CaptureError(f"AOTAutograd {mode} capture failed: {exc}") from exc
     if set(captured) != {"forward", "backward"}:
         raise CaptureError("AOTAutograd did not emit a complete graph pair")
-    original_output_count = len(capture.exported_program.graph_signature.output_specs)
+    original_output_count = len(tree_flatten(original_output)[0])
     saved = max(0, captured["forward"].output_count - original_output_count)
     return AotGraphPair(
         forward=captured["forward"],

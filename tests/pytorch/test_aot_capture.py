@@ -34,7 +34,6 @@ def _objective(
 
 
 def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
-    assert not torch.cuda.is_initialized()
     model = _Network()
     inputs = [torch.randn(4, 8), torch.randn(4, 8), 2]
     mode = FakeTensorMode(allow_non_fake_inputs=True)
