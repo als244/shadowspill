@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -45,6 +46,15 @@ class GradientBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class OptimizerObjectBinding:
+    name: str
+    object_id: str
+    role: OptimizerTensorRole
+    mutable: bool
+    created_on_first_step: bool
+
+
+@dataclass(frozen=True, slots=True)
 class FixedTensorBinding:
     """Frontend-owned constant tensor input required by a captured task."""
 
@@ -74,6 +84,7 @@ class LoweredTrainingProgram:
     root_input_slots: tuple[tuple[TensorSlot, ...], ...]
     entrypoints: tuple[TrainingTaskEntrypoint, ...]
     gradients: tuple[GradientBinding, ...]
+    optimizer_objects: tuple[OptimizerObjectBinding, ...]
     fixed_tensors: tuple[FixedTensorBinding, ...]
     optimizer_task_id: str
 
@@ -127,6 +138,7 @@ def lower_training_program(
     optimizer: OptimizerCapture,
     *,
     device_ordinal: int = 0,
+    optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
 ) -> LoweredTrainingProgram:
     """Compose microbatch graph-pair alternatives and one optimizer mutation."""
 
@@ -134,15 +146,8 @@ def lower_training_program(
         raise CaptureError("training lowering requires at least one microbatch")
     if optimizer.recurrent is None:
         raise CaptureError("initial training lowering requires a graphable optimizer")
-    state_bindings = tuple(
-        item
-        for item in optimizer.bindings
-        if item.role in {OptimizerTensorRole.STATE, OptimizerTensorRole.HYPERPARAMETER}
-    )
-    if state_bindings:
-        raise CaptureError(
-            "stateful optimizer lowering requires the initial/recurrent plan pair"
-        )
+    if optimizer_phase not in {"initial", "recurrent"}:
+        raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     device_id = f"cuda_{device_ordinal}"
     inventory = _TensorInventory(device_id=device_id)
     registrations, parameter_objects = _register_model(model, inventory)
@@ -151,6 +156,7 @@ def lower_training_program(
     gradient_by_parameter = {
         item.parameter_object_id: item.gradient_object_id for item in gradients
     }
+    optimizer_objects = _register_optimizer_objects(optimizer, inventory, gradients)
 
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
@@ -323,8 +329,27 @@ def lower_training_program(
         )
 
     optimizer_task_id = f"task_{len(tasks):06d}"
-    optimizer_inputs = tuple(item.parameter_object_id for item in gradients) + tuple(
-        item.gradient_object_id for item in gradients
+    optimizer_inputs = (
+        tuple(item.parameter_object_id for item in gradients)
+        + tuple(item.gradient_object_id for item in gradients)
+        + tuple(
+            item.object_id
+            for item in optimizer_objects
+            if optimizer_phase == "recurrent" or not item.created_on_first_step
+        )
+    )
+    optimizer_outputs = tuple(
+        item.object_id
+        for item in optimizer_objects
+        if optimizer_phase == "initial" and item.created_on_first_step
+    )
+    optimizer_mutations = tuple(
+        MutationSpec(item.parameter_object_id) for item in gradients
+    ) + tuple(
+        MutationSpec(item.object_id)
+        for item in optimizer_objects
+        if item.mutable
+        and (optimizer_phase == "recurrent" or not item.created_on_first_step)
     )
     tasks.append(
         TaskSpec(
@@ -333,9 +358,8 @@ def lower_training_program(
             profile_id(optimizer.recurrent),
             dependencies=tuple(all_backward_ids),
             inputs=optimizer_inputs,
-            mutations=tuple(
-                MutationSpec(item.parameter_object_id) for item in gradients
-            ),
+            outputs=optimizer_outputs,
+            mutations=optimizer_mutations,
             phase="optimizer",
         )
     )
@@ -379,6 +403,14 @@ def lower_training_program(
         for values in public_objects_by_position.values()
         for object_id in values
     }
+    optimizer_aliases = {
+        next(
+            item.alias_group_id
+            for item in objects
+            if item.object_id == binding.object_id
+        )
+        for binding in optimizer_objects
+    }
     initial_residency = tuple(
         ResidencySpec(item.alias_group_id, MemoryLocation.HOST)
         for item in alias_groups
@@ -392,7 +424,8 @@ def lower_training_program(
             else MemoryLocation.HOST,
         )
         for item in alias_groups
-        if item.alias_group_id in parameter_aliases | input_aliases | public_aliases
+        if item.alias_group_id
+        in parameter_aliases | input_aliases | public_aliases | optimizer_aliases
     )
     program = Program(
         devices=(DeviceSpec(device_id, "process_0", "cuda", device_ordinal),),
@@ -410,6 +443,7 @@ def lower_training_program(
         root_slots,
         tuple(entrypoints),
         gradients,
+        optimizer_objects,
         tuple(fixed_tensors.values()),
         optimizer_task_id,
     )
@@ -489,6 +523,48 @@ def _register_gradients(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
         )
         results.append(GradientBinding(name, parameter_id, gradient_id))
+    return tuple(results)
+
+
+def _register_optimizer_objects(
+    optimizer: OptimizerCapture,
+    inventory: _TensorInventory,
+    gradients: tuple[GradientBinding, ...],
+) -> tuple[OptimizerObjectBinding, ...]:
+    parameter_names = {item.parameter_name for item in gradients}
+    gradient_names = {f"gradient.{item.parameter_name}" for item in gradients}
+    created = set(optimizer.created_state_names)
+    results: list[OptimizerObjectBinding] = []
+    for binding in optimizer.bindings:
+        if binding.role is OptimizerTensorRole.PARAMETER:
+            if binding.name not in parameter_names:
+                raise CaptureError(
+                    f"optimizer parameter {binding.name!r} has no model binding"
+                )
+            continue
+        if binding.role is OptimizerTensorRole.GRADIENT:
+            if binding.name not in gradient_names:
+                raise CaptureError(
+                    f"optimizer gradient {binding.name!r} has no planned gradient"
+                )
+            continue
+        if not binding.spillable:
+            continue
+        object_id = inventory.add(
+            binding.tensor,
+            role=ObjectRole.OPTIMIZER_STATE,
+            persistence=Persistence.CHECKPOINT,
+            retain_host_backing=True,
+        )
+        results.append(
+            OptimizerObjectBinding(
+                binding.name,
+                object_id,
+                binding.role,
+                binding.mutable,
+                binding.name in created,
+            )
+        )
     return tuple(results)
 
 
@@ -628,6 +704,7 @@ __all__ = [
     "FixedTensorBinding",
     "GradientBinding",
     "LoweredTrainingProgram",
+    "OptimizerObjectBinding",
     "TrainingStorageLayout",
     "TrainingTaskEntrypoint",
     "lower_training_program",

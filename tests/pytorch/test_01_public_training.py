@@ -133,3 +133,65 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         training(steps[0])
     with pytest.raises(RuntimeError, match="closed"):
         training.__enter__()
+
+
+@pytest.mark.cuda
+def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
+    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
+        pytest.skip("the built PyTorch adapter was not provided")
+    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    torch.manual_seed(73)
+    model = _TrainingNetwork()
+    examples = [
+        [torch.randn(2, 6), torch.randn(2, 3), "left"],
+        [torch.randn(4, 6), torch.randn(4, 3), "right"],
+    ]
+    torch.manual_seed(74)
+    first_inputs = [
+        [torch.randn(2, 6), torch.randn(2, 3), "left"],
+        [torch.randn(4, 6), torch.randn(4, 3), "right"],
+    ]
+    torch.manual_seed(75)
+    second_inputs = [
+        [torch.randn(2, 6), torch.randn(2, 3), "left"],
+        [torch.randn(4, 6), torch.randn(4, 3), "right"],
+    ]
+    training = plan(
+        model,
+        objective=_training_objective,
+        opt=partial(torch.optim.AdamW, lr=0.003, foreach=False),
+        example_inputs=examples,
+        device_budget=2 << 30,
+        host_budget=1 << 30,
+    )
+    assert training.plan_report.initial_execution_plan is not None
+    empty_state = training.state_dict()
+    assert empty_state["optimizer"]["state"] == {}
+    training.load_state_dict(empty_state)
+
+    training(first_inputs)
+    checkpoint = training.state_dict()
+    optimizer = checkpoint["optimizer"]
+    assert isinstance(optimizer, dict)
+    assert all(
+        not isinstance(value, torch.Tensor) or value.device.type == "cpu"
+        for parameter_state in optimizer["state"].values()
+        for value in parameter_state.values()
+    )
+    training(second_inputs)
+    uninterrupted = training.state_dict()
+    training.load_state_dict(checkpoint)
+    training(second_inputs)
+    replayed = training.state_dict()
+    assert all(
+        torch.equal(value, replayed["model"][name])
+        for name, value in uninterrupted["model"].items()
+    )
+    for parameter_id, parameter_state in uninterrupted["optimizer"]["state"].items():
+        for name, value in parameter_state.items():
+            other = replayed["optimizer"]["state"][parameter_id][name]
+            if isinstance(value, torch.Tensor):
+                assert torch.equal(value, other)
+
+    training.close()
+    assert all(parameter.device.type == "cpu" for parameter in model.parameters())

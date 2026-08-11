@@ -29,6 +29,7 @@ class OptimizerTensorBinding:
     role: OptimizerTensorRole
     tensor: torch.Tensor
     mutable: bool
+    spillable: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +190,17 @@ def capture_optimizer(
     )
 
 
+def current_optimizer_bindings(
+    named_parameters: Mapping[str, torch.nn.Parameter],
+    optimizer: torch.optim.Optimizer,
+) -> tuple[OptimizerTensorBinding, ...]:
+    """Describe current optimizer tensors with capture-stable names."""
+
+    canonical = _canonical_parameters(named_parameters)
+    name_by_id = {id(parameter): name for name, parameter in canonical.items()}
+    return _tensor_bindings(optimizer, name_by_id, require_gradients=False)
+
+
 def _canonical_parameters(
     named_parameters: Mapping[str, torch.nn.Parameter],
 ) -> dict[str, torch.nn.Parameter]:
@@ -263,7 +275,10 @@ def _state_structure(
 
 
 def _tensor_bindings(
-    optimizer: torch.optim.Optimizer, name_by_id: Mapping[int, str]
+    optimizer: torch.optim.Optimizer,
+    name_by_id: Mapping[int, str],
+    *,
+    require_gradients: bool = True,
 ) -> tuple[OptimizerTensorBinding, ...]:
     bindings: list[OptimizerTensorBinding] = []
     seen: set[int] = set()
@@ -274,7 +289,20 @@ def _tensor_bindings(
         if id(tensor) in seen:
             return
         seen.add(id(tensor))
-        bindings.append(OptimizerTensorBinding(name, role, tensor, mutable))
+        # Scalar optimizer control values are deliberately not spill objects.
+        # PyTorch optimizers may keep them on the CPU (ordinary AdamW) or on the
+        # accelerator (capturable/custom optimizers).  In either case their
+        # bounded footprint belongs to task/provider admission, while tensor
+        # state such as moments remains fully planned and budgeted.
+        spillable = (
+            role
+            in {
+                OptimizerTensorRole.PARAMETER,
+                OptimizerTensorRole.GRADIENT,
+            }
+            or tensor.ndim != 0
+        )
+        bindings.append(OptimizerTensorBinding(name, role, tensor, mutable, spillable))
 
     for parameter in _optimizer_parameters(optimizer):
         name = name_by_id.get(id(parameter))
@@ -282,8 +310,15 @@ def _tensor_bindings(
             continue
         add(name, OptimizerTensorRole.PARAMETER, parameter, True)
         if parameter.grad is None:
-            raise CaptureError(f"optimizer capture has no gradient for {name!r}")
-        add(f"gradient.{name}", OptimizerTensorRole.GRADIENT, parameter.grad, False)
+            if require_gradients:
+                raise CaptureError(f"optimizer capture has no gradient for {name!r}")
+        else:
+            add(
+                f"gradient.{name}",
+                OptimizerTensorRole.GRADIENT,
+                parameter.grad,
+                False,
+            )
         for path, tensor in _tensor_leaves(optimizer.state.get(parameter, {})):
             add(f"optimizer.{name}.{path}", OptimizerTensorRole.STATE, tensor, True)
     for group_index, group in enumerate(optimizer.param_groups):

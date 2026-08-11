@@ -93,27 +93,17 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 ]
             )
 
-        reference_optimizer = torch.optim.SGD(
-            reference.parameters(), lr=0.03, foreach=False
+        reference_optimizer = torch.optim.AdamW(
+            reference.parameters(), lr=0.003, foreach=False
         )
-        reference_losses: list[tuple[torch.Tensor, ...]] = []
-        for microbatches in steps:
-            reference_optimizer.zero_grad(set_to_none=True)
-            losses: list[torch.Tensor] = []
-            for value, target, label in microbatches:
-                result = _objective(reference, value, target, label)
-                result.loss.backward()
-                losses.append(result.loss.detach())
-            reference_optimizer.step()
-            reference_losses.append(tuple(losses))
 
-        constructed: list[torch.optim.SGD] = []
+        constructed: list[torch.optim.AdamW] = []
         optimizer_calls: list[int] = []
 
         def optimizer_factory(
             parameters: Iterable[torch.nn.Parameter],
-        ) -> torch.optim.SGD:
-            optimizer = torch.optim.SGD(parameters, lr=0.03, foreach=False)
+        ) -> torch.optim.AdamW:
+            optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
             constructed.append(optimizer)
 
             def count_actual_step(
@@ -137,6 +127,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
         )
         if len(constructed) != 1:
             raise AssertionError("optimizer factory was not invoked exactly once")
+        if planned.plan_report.initial_execution_plan is None:
+            raise AssertionError("lazy AdamW state has no initial execution plan")
         active = planned.plan_report.execution_plan.program.selected_tasks(
             planned.plan_report.execution_plan.selections
         )
@@ -151,12 +143,17 @@ def main(arguments: Iterable[str] | None = None) -> int:
 
         checkpoint: dict[str, object] | None = None
         for step, microbatches in enumerate(steps):
+            reference_optimizer.zero_grad(set_to_none=True)
+            reference_losses: list[torch.Tensor] = []
+            for value, target, label in microbatches:
+                result = _objective(reference, value, target, label)
+                result.loss.backward()
+                reference_losses.append(result.loss.detach())
+            reference_optimizer.step()
             actual = planned(microbatches)
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
                 raise AssertionError("StepResult has the wrong logical step")
-            for loss, expected in zip(
-                actual.objectives, reference_losses[step], strict=True
-            ):
+            for loss, expected in zip(actual.objectives, reference_losses, strict=True):
                 torch.testing.assert_close(loss.cpu(), expected, rtol=2e-5, atol=2e-6)
             if tuple(metric["label"] for metric in actual.metrics) != (
                 "short",
@@ -175,6 +172,13 @@ def main(arguments: Iterable[str] | None = None) -> int:
         _assert_bitwise(uninterrupted, replayed)
         if len(optimizer_calls) != 7:
             raise AssertionError("checkpoint replay did not run one update per call")
+        optimizer_state = planned.state_dict()["optimizer"]
+        if not isinstance(optimizer_state, dict):
+            raise AssertionError("optimizer checkpoint is not a mapping")
+        for parameter_state in optimizer_state["state"].values():
+            for value in parameter_state.values():
+                if isinstance(value, torch.Tensor) and value.device.type != "cpu":
+                    raise AssertionError("optimizer checkpoint retained CUDA storage")
 
         planned.close()
         planned.close()
@@ -182,6 +186,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training replaced a Parameter object")
         if any(parameter.device.type != "cpu" for parameter in model.parameters()):
             raise AssertionError("training close did not restore CPU state")
+        closed_optimizer = planned.state_dict()["optimizer"]
+        for parameter_state in closed_optimizer["state"].values():
+            for value in parameter_state.values():
+                if isinstance(value, torch.Tensor) and value.device.type != "cpu":
+                    raise AssertionError("close did not restore optimizer state to CPU")
         for actual, expected in zip(
             model.parameters(), reference.parameters(), strict=True
         ):

@@ -35,6 +35,7 @@ class PlanReport:
     profile_cache_misses: int
     profiling_provenance: tuple[str, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
+    initial_execution_plan: ExecutionPlan | None = None
 
     @property
     def predicted_device_peak_bytes(self) -> int:
@@ -159,7 +160,9 @@ class PlannedTrainStep:
             model_state = self._state.state_dict()
         return {
             "model": model_state,
-            "optimizer": self._optimizer.state_dict(),
+            "optimizer": self._optimizer.state_dict()
+            if self._closed
+            else self._executor.optimizer_state_dict(),
             "step": self._step,
         }
 
@@ -178,7 +181,8 @@ class PlannedTrainStep:
         if isinstance(step, bool) or not isinstance(step, int) or step < 0:
             raise TypeError("training checkpoint step must be non-negative")
         self._state.load_model_state(model_state)
-        self._optimizer.load_state_dict(dict(optimizer_state))
+        initialized = self._executor.load_optimizer_state(optimizer_state)
+        self._executor.set_optimizer_state_initialized(initialized)
         self._step = step
 
     def close(self) -> None:
@@ -186,6 +190,7 @@ class PlannedTrainStep:
             return
         for parameter in self._model.parameters():
             parameter.grad = None
+        self._executor.restore_optimizer_cpu()
         self._state.restore_cpu_and_unregister()
         self._closed = True
 

@@ -280,11 +280,35 @@ Phase 8 — public forward and training callables.
   two heterogeneous microbatches, exact optimizer-call count, string metadata,
   tensor/static metrics, bitwise checkpoint replay, Parameter identity, CPU
   restoration, one slab, one pinned arena, and zero allocator callback errors.
-- Sixteen CTests and 176 Python tests pass at 90.01% branch coverage. ASan,
-  UBSan, and ThreadSanitizer pass all neutral-runtime canaries.
-- Stateful lazy optimizers still require the planned initial/recurrent
-  optimizer-state transition and are not accepted yet; the present numerical
-  gate uses graphable state-free SGD.
+- Lazy optimizer state now has two independently simulated immutable schedules:
+  the initial update produces state objects, while recurrent updates consume
+  and mutate those same dense identities. The executor selects the initial
+  schedule only while state is absent and never moves either schedule's
+  PressureFit directives.
+- Spillable optimizer tensor state is promoted into planned object ownership at
+  first creation, follows ordinary offload/prefetch generations thereafter,
+  and is synchronously exposed as CPU storage only for checkpoint or close.
+  Loading an empty checkpoint restores the initial phase; loading populated
+  state adopts newly constructed CUDA tensors and writes them into retained
+  host backing before the next recurrent invocation.
+- Scalar optimizer control tensors remain bounded ordinary task allocations.
+  This covers both PyTorch AdamW's intentionally CPU-resident step counters and
+  custom/capturable device counters without pretending a host scalar is a
+  spillable accelerator object. Large tensor state remains fully planned.
+- An optimizer-profiling defect was isolated and committed separately: Inductor
+  examples for intrinsically no-grad optimizer mutations must be detached.
+  Otherwise AOTAutograd constructs an invalid mutation epilogue for
+  heterogeneous parameter shapes.
+- The fresh-process canary now uses ordinary lazy-state AdamW for five steps,
+  two heterogeneous microbatches, step-three bitwise checkpoint replay, and
+  CPU optimizer restoration. The Python public suite retains the state-free
+  SGD gate and adds the same initial/recurrent AdamW lifecycle.
+- Sixteen CTests and 179 Python tests pass; the complete coverage gate is above
+  its required 90% threshold after exercising both optimizer phases. ASan,
+  UBSan, and ThreadSanitizer continue to pass all neutral-runtime canaries.
+- Remaining qualification work is planning-time pinned-host reconciliation for
+  large optimizer state, opaque optimizer task admission, external mlops AdamW,
+  and the approximately-1B/full-model gates.
 
 ## Gate rule
 

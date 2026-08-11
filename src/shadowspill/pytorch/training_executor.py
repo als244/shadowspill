@@ -2,17 +2,39 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any
+import copy
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, cast
 
 import torch
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
+from .optimizer import current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge, actions_by_task
 from .training_lowering import LoweredTrainingProgram, TrainingTaskEntrypoint
 from .training_materialization import TrainingMaterializedState
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanRun:
+    lowered: LoweredTrainingProgram
+    plan: ExecutionPlan
+    actions: Mapping[str, tuple[MemoryAction, ...]]
+    tasks: dict[str, TaskSpec]
+    entrypoints: tuple[TrainingTaskEntrypoint, ...]
+    initial_device_aliases: tuple[str, ...]
+    public_by_microbatch: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TensorLayout:
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    storage_offset: int
+    dtype: torch.dtype
 
 
 class TrainingExecutor:
@@ -20,64 +42,63 @@ class TrainingExecutor:
 
     def __init__(
         self,
-        lowered: LoweredTrainingProgram,
-        plan: ExecutionPlan,
+        initial: tuple[LoweredTrainingProgram, ExecutionPlan] | None,
+        recurrent: tuple[LoweredTrainingProgram, ExecutionPlan],
         bridge: RuntimeBridge,
         state: TrainingMaterializedState,
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
     ) -> None:
-        self._lowered = lowered
-        self._plan = plan
         self._bridge = bridge
         self._state = state
         self._functions = functions
         self.optimizer = optimizer
-        self._actions = actions_by_task(plan.schedule.actions)
-        self._tasks = {
-            item.task_id: item for item in plan.program.selected_tasks(plan.selections)
-        }
-        self._entrypoints = tuple(
-            item for item in lowered.entrypoints if item.task_id in self._tasks
-        )
+        self._initial = None if initial is None else self._prepare(*initial)
+        self._recurrent = self._prepare(*recurrent)
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
-            for item in lowered.gradients
+            for item in recurrent[0].gradients
             for model_parameter in (state.model.get_parameter(item.parameter_name),)
         }
-        self._initial_device_aliases = tuple(
-            item.alias_group_id
-            for item in plan.schedule.initial_residency
-            if item.location.value == "device"
-        )
-        self._public_by_microbatch = self._public_outputs()
         self._invocations = 0
+        self._optimizer_state_initialized = initial is None
+        self._optimizer_size_by_alias = {
+            item.alias_group_id: item.size_bytes
+            for item in self._recurrent.plan.program.alias_groups
+        }
 
     def __call__(
         self, inputs: Sequence[Sequence[Any]]
     ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
+        run = (
+            self._initial
+            if self._initial is not None and not self._optimizer_state_initialized
+            else self._recurrent
+        )
+        if run is None:
+            raise AssertionError("initial optimizer plan is unavailable")
         self._state.refresh_inputs(inputs)
         self._bridge.submit_initial_actions(
             tuple(
                 MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-                for alias_id in self._initial_device_aliases
+                for alias_id in run.initial_device_aliases
             ),
             task_number=(1 << 60) + self._invocations,
         )
         public_tensors: dict[int, tuple[torch.Tensor, ...]] = {}
-        for entrypoint in self._entrypoints:
-            task = self._tasks[entrypoint.task_id]
+        for entrypoint in run.entrypoints:
+            task = run.tasks[entrypoint.task_id]
             if entrypoint.phase == "optimizer":
-                self._execute_optimizer(task)
+                self._execute_optimizer(run, task)
                 continue
-            outputs = self._execute_graph(entrypoint, task)
+            outputs = self._execute_graph(run, entrypoint, task)
             if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
                 public_tensors[entrypoint.microbatch] = outputs[
                     : entrypoint.public_output_count
                 ]
         ordered = tuple(public_tensors[index] for index in range(len(public_tensors)))
         aliases = tuple(
-            alias_id for values in self._public_by_microbatch for alias_id in values
+            alias_id for values in run.public_by_microbatch for alias_id in values
         )
         tensors = tuple(tensor for values in ordered for tensor in values)
         bindings = self._bridge.acquire_for_caller(
@@ -101,8 +122,104 @@ class TrainingExecutor:
         self._invocations += 1
         return tuple(losses), tuple(metrics)
 
+    @property
+    def optimizer_state_initialized(self) -> bool:
+        return self._optimizer_state_initialized
+
+    def set_optimizer_state_initialized(self, value: bool) -> None:
+        """Select the recurrent plan after a checkpoint restores lazy state."""
+
+        if value and self._initial is None:
+            self._optimizer_state_initialized = True
+            return
+        self._optimizer_state_initialized = value
+
+    def optimizer_state_dict(self) -> dict[str, object]:
+        """Synchronously snapshot optimizer state without stale CUDA pointers."""
+
+        exposed = self._expose_optimizer_state_cpu()
+        try:
+            raw = self.optimizer.state_dict()
+            return cast(
+                dict[str, object],
+                tree_map(
+                    lambda value: (
+                        value.detach().cpu().clone()
+                        if isinstance(value, torch.Tensor)
+                        else copy.deepcopy(value)
+                    ),
+                    raw,
+                ),
+            )
+        finally:
+            self._restore_optimizer_host_only(exposed)
+
+    def load_optimizer_state(self, value: Mapping[str, object]) -> bool:
+        """Load ordinary optimizer state, then adopt spillable CUDA tensors."""
+
+        self._bridge.wait_idle()
+        self.optimizer.load_state_dict(copy.deepcopy(dict(value)))
+        current = self._current_optimizer_bindings()
+        planned = self._recurrent.lowered.optimizer_objects
+        present = {item.name for item in planned if item.name in current}
+        required_created = {item.name for item in planned if item.created_on_first_step}
+        if present and present != {item.name for item in planned}:
+            missing = sorted({item.name for item in planned} - present)
+            raise RuntimeError(
+                f"optimizer checkpoint has incomplete planned state: {missing}"
+            )
+        initialized = not required_created or required_created.issubset(present)
+        if not initialized:
+            aliases = tuple(
+                self._bridge.alias_for_object(item.object_id) for item in planned
+            )
+            self._bridge.unregister(aliases)
+            for item in planned:
+                alias_id = self._bridge.alias_for_object(item.object_id)
+                self._state.object_store.pop(alias_id, None)
+                self._state.generations.pop(alias_id, None)
+                self._state.object_tensors.pop(item.object_id, None)
+            self._optimizer_state_initialized = False
+            return False
+
+        bound: list[tuple[str, torch.Tensor, int]] = []
+        for item in planned:
+            tensor = current[item.name].tensor
+            if not tensor.is_cuda:
+                raise RuntimeError(
+                    f"spillable optimizer state {item.name!r} restored on "
+                    f"{tensor.device.type}, not the accelerator"
+                )
+            alias_id = self._bridge.alias_for_object(item.object_id)
+            binding = self._bridge.promote_output(alias_id, tensor)
+            self._bridge.rebind(tensor, alias_id, binding)
+            self._state.object_store[alias_id] = tensor
+            self._state.object_tensors[item.object_id] = tensor
+            self._state.generations[alias_id] = binding.generation
+            bound.append((alias_id, tensor, binding.generation))
+        actions: list[MemoryAction] = []
+        for alias_id, tensor, generation in bound:
+            self._bridge.dematerialize(tensor, alias_id, generation)
+            actions.append(
+                MemoryAction("task_000000", alias_id, MemoryActionKind.OFFLOAD)
+            )
+        self._bridge.submit_initial_actions(
+            tuple(actions), task_number=(1 << 58) + self._invocations
+        )
+        self._bridge.wait_idle()
+        self._optimizer_state_initialized = True
+        return True
+
+    def restore_optimizer_cpu(self) -> None:
+        """Leave live optimizer state backed by ordinary CPU storage."""
+
+        self._expose_optimizer_state_cpu()
+
     def _execute_graph(
-        self, entrypoint: TrainingTaskEntrypoint, task: TaskSpec
+        self,
+        run: _PlanRun,
+        entrypoint: TrainingTaskEntrypoint,
+        task: TaskSpec,
     ) -> tuple[torch.Tensor, ...]:
         artifact = entrypoint.artifact
         if artifact is None:
@@ -142,12 +259,12 @@ class TrainingExecutor:
                 self._accumulate_gradients(entrypoint, leaves)
                 outputs = ()
 
-            self._dematerialize_actions(task.task_id)
+            self._dematerialize_actions(run, task.task_id)
             self._bridge.after_task(
                 task.task_id,
                 stream,
                 task.mutations,
-                self._actions.get(task.task_id, ()),
+                run.actions.get(task.task_id, ()),
             )
             task_open = False
             return outputs
@@ -201,7 +318,7 @@ class TrainingExecutor:
         if destinations:
             torch._foreach_add_(destinations, contributions)
 
-    def _execute_optimizer(self, task: TaskSpec) -> None:
+    def _execute_optimizer(self, run: _PlanRun, task: TaskSpec) -> None:
         stream = torch.cuda.current_stream()
         aliases = tuple(
             dict.fromkeys(
@@ -220,12 +337,15 @@ class TrainingExecutor:
                 self._state.generations[alias_id] = binding.generation
             with torch.no_grad():
                 self.optimizer.step()
-            self._dematerialize_actions(task.task_id)
+            if not self._optimizer_state_initialized:
+                self._bind_created_optimizer_state(run.lowered)
+                self._optimizer_state_initialized = True
+            self._dematerialize_actions(run, task.task_id)
             self._bridge.after_task(
                 task.task_id,
                 stream,
                 task.mutations,
-                self._actions.get(task.task_id, ()),
+                run.actions.get(task.task_id, ()),
             )
             task_open = False
             for parameter in self._gradients.values():
@@ -233,7 +353,7 @@ class TrainingExecutor:
             for alias_id in self._gradients:
                 self._state.object_store.pop(alias_id, None)
                 self._state.generations.pop(alias_id, None)
-            for gradient_binding in self._lowered.gradients:
+            for gradient_binding in run.lowered.gradients:
                 self._state.object_tensors.pop(
                     gradient_binding.gradient_object_id, None
                 )
@@ -242,8 +362,117 @@ class TrainingExecutor:
                 self._bridge.abort_task()
             raise
 
-    def _dematerialize_actions(self, task_id: str) -> None:
-        for action in self._actions.get(task_id, ()):
+    def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
+        current = self._current_optimizer_bindings()
+        produced: set[str] = set()
+        for item in lowered.optimizer_objects:
+            if not item.created_on_first_step:
+                continue
+            actual = current.get(item.name)
+            if actual is None:
+                raise RuntimeError(
+                    f"optimizer did not create planned state {item.name!r}"
+                )
+            tensor = actual.tensor
+            if not tensor.is_cuda:
+                raise RuntimeError(
+                    f"spillable optimizer state {item.name!r} was created on "
+                    f"{tensor.device.type}, not the accelerator"
+                )
+            alias_id = self._bridge.alias_for_object(item.object_id)
+            if alias_id not in produced:
+                binding = self._bridge.promote_output(alias_id, tensor)
+                self._bridge.rebind(tensor, alias_id, binding)
+                self._state.object_store[alias_id] = tensor
+                self._state.generations[alias_id] = binding.generation
+                produced.add(alias_id)
+            self._state.object_tensors[item.object_id] = tensor
+
+    def _current_optimizer_bindings(self) -> dict[str, Any]:
+        return {
+            item.name: item
+            for item in current_optimizer_bindings(
+                dict(self._state.model.named_parameters()), self.optimizer
+            )
+        }
+
+    def _expose_optimizer_state_cpu(
+        self,
+    ) -> tuple[tuple[str, torch.Tensor, _TensorLayout], ...]:
+        self._bridge.wait_idle()
+        current = self._current_optimizer_bindings()
+        exposed: list[tuple[str, torch.Tensor, _TensorLayout]] = []
+        owners: dict[str, torch.Tensor] = {}
+        for item in self._recurrent.lowered.optimizer_objects:
+            actual = current.get(item.name)
+            if actual is None:
+                continue
+            tensor = actual.tensor
+            alias_id = self._bridge.alias_for_object(item.object_id)
+            owner = owners.get(alias_id)
+            if owner is None:
+                owner = torch.empty(
+                    self._optimizer_size_by_alias[alias_id],
+                    dtype=torch.uint8,
+                    device="cpu",
+                )
+                self._bridge.read_host_tensor(alias_id, owner)
+                owners[alias_id] = owner
+            layout = _TensorLayout(
+                tuple(tensor.shape),
+                tuple(tensor.stride()),
+                int(tensor.storage_offset()),
+                tensor.dtype,
+            )
+            tensor.data = self._view(owner, layout)
+            exposed.append((alias_id, tensor, layout))
+        return tuple(exposed)
+
+    def _restore_optimizer_host_only(
+        self, exposed: tuple[tuple[str, torch.Tensor, _TensorLayout], ...]
+    ) -> None:
+        if not exposed:
+            return
+        owners: dict[str, torch.Tensor] = {}
+        released: set[str] = set()
+        actions: list[MemoryAction] = []
+        for alias_id, tensor, layout in exposed:
+            owner = owners.get(alias_id)
+            if owner is None:
+                owner = torch.empty(
+                    self._optimizer_size_by_alias[alias_id],
+                    dtype=torch.uint8,
+                    device=self._state.device,
+                )
+                owners[alias_id] = owner
+            tensor.data = self._view(owner, layout)
+            if alias_id in released:
+                continue
+            binding = self._bridge.bind_registered_tensor(alias_id, owner)
+            self._bridge.rebind(tensor, alias_id, binding)
+            self._state.object_store[alias_id] = tensor
+            self._state.generations[alias_id] = binding.generation
+            self._bridge.dematerialize(tensor, alias_id, binding.generation)
+            actions.append(
+                MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE)
+            )
+            released.add(alias_id)
+        self._bridge.submit_initial_actions(
+            tuple(actions), task_number=(1 << 57) + self._invocations
+        )
+        self._bridge.wait_idle()
+
+    @staticmethod
+    def _view(owner: torch.Tensor, layout: _TensorLayout) -> torch.Tensor:
+        return torch.empty(0, dtype=layout.dtype, device=owner.device).set_(
+            owner.untyped_storage(),
+            layout.storage_offset,
+            layout.shape,
+            layout.stride,
+        )
+
+    def _dematerialize_actions(self, run: _PlanRun, task_id: str) -> None:
+        for action in run.actions.get(task_id, ()):
             if action.kind not in {MemoryActionKind.RELEASE, MemoryActionKind.OFFLOAD}:
                 continue
             alias_id = action.alias_group_id
@@ -253,9 +482,34 @@ class TrainingExecutor:
                 raise RuntimeError(f"action references unbound object {alias_id!r}")
             self._bridge.dematerialize(tensor, alias_id, generation)
 
-    def _public_outputs(self) -> tuple[tuple[str, ...], ...]:
+    def _prepare(
+        self, lowered: LoweredTrainingProgram, plan: ExecutionPlan
+    ) -> _PlanRun:
+        tasks = {
+            item.task_id: item for item in plan.program.selected_tasks(plan.selections)
+        }
+        entrypoints = tuple(
+            item for item in lowered.entrypoints if item.task_id in tasks
+        )
+        return _PlanRun(
+            lowered=lowered,
+            plan=plan,
+            actions=actions_by_task(plan.schedule.actions),
+            tasks=tasks,
+            entrypoints=entrypoints,
+            initial_device_aliases=tuple(
+                item.alias_group_id
+                for item in plan.schedule.initial_residency
+                if item.location.value == "device"
+            ),
+            public_by_microbatch=self._public_outputs(entrypoints),
+        )
+
+    def _public_outputs(
+        self, entrypoints: tuple[TrainingTaskEntrypoint, ...]
+    ) -> tuple[tuple[str, ...], ...]:
         result: dict[int, tuple[str, ...]] = {}
-        for entrypoint in self._entrypoints:
+        for entrypoint in entrypoints:
             if entrypoint.phase != "forward" or entrypoint.microbatch is None:
                 continue
             result[entrypoint.microbatch] = tuple(

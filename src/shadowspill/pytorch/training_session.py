@@ -151,10 +151,22 @@ def build_training(
                     artifacts, profiles.measurements, strict=True
                 )
             }
-            lowered = lower_training_program(
-                fake_model, captures, measurements, optimizer_capture
+            initial_lowered = lower_training_program(
+                fake_model,
+                captures,
+                measurements,
+                optimizer_capture,
+                optimizer_phase="initial",
             )
-            _verify_provisional_layout(layout, lowered)
+            recurrent_lowered = lower_training_program(
+                fake_model,
+                captures,
+                measurements,
+                optimizer_capture,
+                optimizer_phase="recurrent",
+            )
+            _verify_provisional_layout(layout, recurrent_lowered)
+            _verify_optimizer_phase_identity(initial_lowered, recurrent_lowered)
             workspace_reserve = _workspace_reserve(profiles.measurements)
             simulation_config = SimulationConfig.single_device(
                 "cuda_0",
@@ -170,11 +182,24 @@ def build_training(
                 d2h_latency_ns=5_000,
             )
         with timer.measure("pressurefit_simulation"):
-            selected = pressurefit(
-                lowered.program,
-                initial_residency=lowered.initial_residency,
-                final_residency=lowered.final_residency,
+            recurrent_selected = pressurefit(
+                recurrent_lowered.program,
+                initial_residency=recurrent_lowered.initial_residency,
+                final_residency=recurrent_lowered.final_residency,
                 config=simulation_config,
+            )
+            needs_initial_plan = any(
+                item.created_on_first_step for item in initial_lowered.optimizer_objects
+            )
+            initial_selected = (
+                pressurefit(
+                    initial_lowered.program,
+                    initial_residency=initial_lowered.initial_residency,
+                    final_residency=initial_lowered.final_residency,
+                    config=simulation_config,
+                )
+                if needs_initial_plan
+                else None
             )
         admission = PhysicalAdmission(
             device_budget_bytes=device_budget,
@@ -185,37 +210,31 @@ def build_training(
             workspace_reserve_bytes=workspace_reserve,
             host_reservation_bytes=int(installed.admission.host_arena_bytes),
         )
-        selected_ids = {
-            task.task_id for task in lowered.program.selected_tasks(selected.selections)
-        }
-        active_entrypoints = tuple(
-            item for item in lowered.entrypoints if item.task_id in selected_ids
+        recurrent_plan = _execution_plan(
+            recurrent_lowered,
+            recurrent_selected,
+            optimizer_capture.optimizer_type,
+            admission,
         )
-        execution_plan = selected.to_execution_plan(
-            entrypoints=tuple(
-                EntrypointSpec(
-                    item.task_id,
-                    f"entrypoint_{index:06d}",
-                    "pytorch_inductor"
-                    if item.phase != "optimizer"
-                    else "pytorch_optimizer",
-                    item.artifact.compatibility_digest
-                    if item.artifact is not None
-                    else optimizer_capture.optimizer_type,
-                )
-                for index, item in enumerate(active_entrypoints)
-            ),
-            admission=admission,
+        initial_plan = (
+            _execution_plan(
+                initial_lowered,
+                initial_selected,
+                optimizer_capture.optimizer_type,
+                admission,
+            )
+            if initial_selected is not None
+            else None
         )
-        final_bridge = RuntimeBridge(installed.library, execution_plan.program)
+        final_bridge = RuntimeBridge(installed.library, recurrent_plan.program)
         with timer.measure("plan_adoption"):
-            state.adopt_execution_plan(final_bridge, lowered)
+            state.adopt_execution_plan(final_bridge, recurrent_lowered)
         with timer.measure("physical_sealing"):
             _seal_physical_budget(installed)
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
-                lowered,
-                execution_plan,
+                None if initial_plan is None else (initial_lowered, initial_plan),
+                (recurrent_lowered, recurrent_plan),
                 final_bridge,
                 state,
                 functions,
@@ -223,10 +242,11 @@ def build_training(
             )
             report = _training_report(
                 tuple(signature.digest for signature in signatures),
-                execution_plan,
+                recurrent_plan,
                 profiles,
                 tuple(timer.values),
                 started,
+                initial_execution_plan=initial_plan,
             )
             return PlannedTrainStep(
                 model, signatures, executor, state, optimizer, report
@@ -276,12 +296,51 @@ def _verify_provisional_layout(layout: Any, lowered: Any) -> None:
         )
 
 
+def _verify_optimizer_phase_identity(initial: Any, recurrent: Any) -> None:
+    if initial.program.alias_groups != recurrent.program.alias_groups or (
+        initial.program.objects != recurrent.program.objects
+    ):
+        raise PlanningError("optimizer phases changed storage identities")
+
+
+def _execution_plan(
+    lowered: Any,
+    selected: Any,
+    optimizer_type: str,
+    admission: PhysicalAdmission,
+) -> Any:
+    selected_ids = {
+        task.task_id for task in lowered.program.selected_tasks(selected.selections)
+    }
+    active_entrypoints = tuple(
+        item for item in lowered.entrypoints if item.task_id in selected_ids
+    )
+    return selected.to_execution_plan(
+        entrypoints=tuple(
+            EntrypointSpec(
+                item.task_id,
+                f"entrypoint_{index:06d}",
+                "pytorch_inductor"
+                if item.phase != "optimizer"
+                else "pytorch_optimizer",
+                item.artifact.compatibility_digest
+                if item.artifact is not None
+                else optimizer_type,
+            )
+            for index, item in enumerate(active_entrypoints)
+        ),
+        admission=admission,
+    )
+
+
 def _training_report(
     signature_digests: tuple[str, ...],
     execution_plan: Any,
     profiles: Any,
     timings: tuple[tuple[str, int], ...],
     started: int,
+    *,
+    initial_execution_plan: Any = None,
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -306,6 +365,7 @@ def _training_report(
         profile_cache_misses=report.profile_cache_misses,
         profiling_provenance=report.profiling_provenance,
         phase_timings_ns=report.phase_timings_ns,
+        initial_execution_plan=initial_execution_plan,
     )
 
 

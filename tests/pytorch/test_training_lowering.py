@@ -182,3 +182,69 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
         for object_id in task.outputs
     }
     assert parameter_aliases.isdisjoint(produced_aliases)
+
+
+def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
+    real_model = _Model()
+    optimizer = torch.optim.AdamW(real_model.parameters(), lr=0.01, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    assert optimizer_capture.first_step_is_opaque
+    assert optimizer_capture.recurrent is not None
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        captures = (
+            capture_training(
+                model,
+                _objective,
+                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+            ),
+        )
+    artifacts = (
+        *(
+            artifact
+            for capture in captures
+            for pair in (capture.save_pair, capture.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+    )
+    measurements = {
+        artifact.compatibility_digest: TaskMeasurement(
+            100, 10, 10, (10,), (100,), "unit-test"
+        )
+        for artifact in artifacts
+    }
+    initial = lower_training_program(
+        model,
+        captures,
+        measurements,
+        optimizer_capture,
+        optimizer_phase="initial",
+    )
+    recurrent = lower_training_program(
+        model,
+        captures,
+        measurements,
+        optimizer_capture,
+        optimizer_phase="recurrent",
+    )
+    assert initial.optimizer_objects
+    assert initial.program.objects == recurrent.program.objects
+    initial_task = initial.program.tasks[-1]
+    recurrent_task = recurrent.program.tasks[-1]
+    created = {
+        item.object_id
+        for item in initial.optimizer_objects
+        if item.created_on_first_step
+    }
+    assert created == set(initial_task.outputs)
+    assert created.isdisjoint(initial_task.inputs)
+    assert created.issubset(recurrent_task.inputs)
+    assert created.issubset(
+        {mutation.object_id for mutation in recurrent_task.mutations}
+    )
