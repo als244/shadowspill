@@ -1,0 +1,26 @@
+# Numerical qualification
+
+Run the five-step, two-microbatch gate in fresh eager and planned processes:
+
+```bash
+python -m qualification.numerical.run run llama3 qualification/results/numerical
+```
+
+Pure PyTorch is the default and formal numerical authority. The optional
+external implementation is selected explicitly:
+
+```bash
+python -m qualification.numerical.run run llama3 qualification/results/numerical \
+  --model-implementation mlops
+```
+
+Both modes use `mlops.optim.AdamW`; the model implementation changes only the
+forward/backward operation provider. Results and large eager checkpoints are
+written beneath the gitignored `qualification/results/` tree with a
+`pytorch_` or `mlops_` filename prefix.
+
+The command verifies five optimizer updates, two heterogeneous accumulated
+microbatches per update, a step-three checkpoint followed by bitwise replay,
+real D2H/H2D traffic, selected recomputation, numerical tolerances, and the
+physical device cap. The JSON artifact records all tolerances and planning
+phase timings used for that run.
