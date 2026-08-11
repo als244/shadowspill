@@ -103,6 +103,23 @@ class _CustomOptimizer(torch.optim.Optimizer):
                     parameter.add_(parameter.grad, alpha=-group["scale"])
 
 
+class _SubclassStateOptimizer(_CustomOptimizer):
+    def __init__(self, parameters: object) -> None:
+        super().__init__(parameters)
+        self.required_subclass_state = 2.0
+
+    @torch.no_grad()
+    def step(self, closure: object = None) -> None:
+        del closure
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is not None:
+                    parameter.add_(
+                        parameter.grad,
+                        alpha=-group["scale"] * self.required_subclass_state,
+                    )
+
+
 def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     parameter = torch.nn.Parameter(torch.ones(4))
     parameter.grad = torch.full_like(parameter, 2)
@@ -111,6 +128,15 @@ def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     assert not captured.first_step_is_opaque
     assert captured.recurrent is not None
     assert "aten.add_.Tensor" in captured.recurrent.operator_targets
+
+
+def test_optimizer_copy_preserves_subclass_state_omitted_by_base_protocol() -> None:
+    parameter = torch.nn.Parameter(torch.ones(4))
+    parameter.grad = torch.ones_like(parameter)
+    captured = capture_optimizer(
+        {"parameter": parameter}, _SubclassStateOptimizer([parameter])
+    )
+    assert captured.recurrent is not None
 
 
 def test_parameter_coverage_mismatch_is_rejected() -> None:

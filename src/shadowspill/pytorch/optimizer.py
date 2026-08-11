@@ -83,7 +83,7 @@ def capture_optimizer(
         )
     optimizer_type = f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
     try:
-        sandbox = copy.deepcopy(optimizer)
+        sandbox = _copy_optimizer(optimizer)
     except BaseException as exc:
         return OptimizerCapture(
             optimizer_type=optimizer_type,
@@ -215,6 +215,19 @@ def _canonical_parameters(
             result[name] = parameter
             seen.add(id(parameter))
     return result
+
+
+def _copy_optimizer(optimizer: torch.optim.Optimizer) -> torch.optim.Optimizer:
+    """Copy complete subclass state without Optimizer.__getstate__ truncation."""
+
+    copied = copy.deepcopy(optimizer)
+    if copied.__dict__.keys() == optimizer.__dict__.keys():
+        return copied
+    copied = object.__new__(type(optimizer))
+    copied.__dict__ = copy.deepcopy(optimizer.__dict__)
+    if not isinstance(copied, torch.optim.Optimizer):
+        raise TypeError("copied optimizer changed its base type")
+    return copied
 
 
 def _optimizer_parameters(
