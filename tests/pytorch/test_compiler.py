@@ -18,6 +18,7 @@ from shadowspill.pytorch.compiler import (
     profile_environment,
 )
 from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.optimizer import capture_optimizer
 
 
 class _Add(nn.Module):
@@ -53,6 +54,21 @@ def test_materialization_preserves_storage_alias_and_compiles() -> None:
     output = executable()
     assert isinstance(output, torch.Tensor)
     torch.testing.assert_close(output, torch.zeros_like(output))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
+    model = nn.Sequential(nn.Linear(6, 10), nn.Linear(10, 3))
+    optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
+    for parameter in model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    captured = capture_optimizer(dict(model.named_parameters()), optimizer)
+    assert captured.recurrent is not None
+
+    executable = compile_artifact(captured.recurrent, device_ordinal=0)
+    outputs = executable()
+    assert isinstance(outputs, (tuple, list))
+    assert len(outputs) == len(captured.mutation_names)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

@@ -114,6 +114,15 @@ def compile_artifact(
         else representative_arguments,
         device_ordinal=device_ordinal,
     )
+    if artifact.kind == "optimizer":
+        # Optimizer updates are intrinsically no-grad mutations.  Preserving a
+        # Parameter example's requires-grad bit makes compile_fx introduce an
+        # AOTAutograd mutation epilogue that is neither part of the optimizer
+        # ABI nor valid for heterogeneous parameter shapes.
+        examples = tuple(
+            value.detach() if isinstance(value, torch.Tensor) else value
+            for value in examples
+        )
     try:
         graph_module = copy.deepcopy(artifact.graph_module)
         compiler: Any = compile_fx
