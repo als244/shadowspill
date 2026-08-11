@@ -9,7 +9,7 @@ from pathlib import Path
 
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 NO_INDEX = (1 << 32) - 1
 
 
@@ -42,6 +42,55 @@ class CSelectionResult(ctypes.Structure):
         ("candidate_results", ctypes.POINTER(CCandidateResult)),
         ("candidate_result_capacity", ctypes.c_uint32),
         ("candidate_result_count", ctypes.c_uint32),
+    ]
+
+
+class CResidencyProblem(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("alias_count", ctypes.c_uint32),
+        ("boundary_count", ctypes.c_uint32),
+        ("device_count", ctypes.c_uint32),
+        ("alias_size_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
+        ("alias_retain_host", ctypes.POINTER(ctypes.c_uint8)),
+        ("initial_location", ctypes.POINTER(ctypes.c_int8)),
+        ("final_location", ctypes.POINTER(ctypes.c_int8)),
+        ("anchors", ctypes.POINTER(ctypes.c_uint8)),
+        ("productions", ctypes.POINTER(ctypes.c_uint8)),
+        ("latest_access_task", ctypes.POINTER(ctypes.c_uint32)),
+        ("output_reservations", ctypes.POINTER(ctypes.c_uint8)),
+        ("write_prefix", ctypes.POINTER(ctypes.c_uint8)),
+        ("first_input_task", ctypes.POINTER(ctypes.c_uint32)),
+        ("h2d_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("d2h_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("task_ideal_end_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("device_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
+    ]
+
+
+class CResidencyOptions(ctypes.Structure):
+    _fields_ = [
+        ("minimize_transfer", ctypes.c_uint8),
+        ("prefetch_headroom", ctypes.c_uint8),
+        ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
+        ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
+        ("extra_pressure_bytes", ctypes.POINTER(ctypes.c_uint64)),
+    ]
+
+
+class CResidencyResult(ctypes.Structure):
+    _fields_ = [
+        ("status", ctypes.c_uint32),
+        ("error_device", ctypes.c_uint32),
+        ("error_boundary", ctypes.c_int32),
+        ("required_bytes", ctypes.c_uint64),
+        ("capacity_bytes", ctypes.c_uint64),
+        ("resident", ctypes.POINTER(ctypes.c_uint8)),
+        ("resident_capacity", ctypes.c_uint64),
+        ("breaks", ctypes.POINTER(ctypes.c_uint8)),
+        ("break_capacity", ctypes.c_uint64),
     ]
 
 
@@ -86,6 +135,12 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CSelectionResult),
     ]
     library.shadowspill_select_plan.restype = ctypes.c_uint32
+    library.shadowspill_reduce_residency.argtypes = [
+        ctypes.POINTER(CResidencyProblem),
+        ctypes.POINTER(CResidencyOptions),
+        ctypes.POINTER(CResidencyResult),
+    ]
+    library.shadowspill_reduce_residency.restype = ctypes.c_uint32
     library.shadowspill_planner_status_string.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_status_string.restype = ctypes.c_char_p
     return library
@@ -96,6 +151,9 @@ __all__ = [
     "NO_INDEX",
     "CCandidateResult",
     "CPlanCandidate",
+    "CResidencyOptions",
+    "CResidencyProblem",
+    "CResidencyResult",
     "CSelectionResult",
     "load_planner_library",
     "planner_library_path",

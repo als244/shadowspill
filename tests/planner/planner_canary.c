@@ -89,5 +89,89 @@ int main(void) {
         candidate_results[1].makespan_ns != 100U) {
         return EXIT_FAILURE;
     }
+
+    const uint64_t alias_sizes[] = {64U, 64U};
+    const uint32_t alias_devices[] = {0U, 0U};
+    const uint8_t retain_host[] = {1U, 1U};
+    const int8_t initial_locations[] = {0, 1};
+    const int8_t final_locations[] = {-1, -1};
+    const uint8_t anchors[] = {
+        1U, 0U, 1U,
+        0U, 1U, 0U,
+    };
+    const uint8_t empty_cells[] = {
+        0U, 0U, 0U,
+        0U, 0U, 0U,
+    };
+    const uint32_t latest_access[] = {
+        SHADOWSPILL_PLANNER_NO_INDEX,
+        SHADOWSPILL_PLANNER_NO_INDEX,
+        SHADOWSPILL_PLANNER_NO_INDEX,
+        SHADOWSPILL_PLANNER_NO_INDEX,
+        1U,
+        SHADOWSPILL_PLANNER_NO_INDEX,
+    };
+    const uint32_t first_input_tasks[] = {0U, 1U};
+    const uint64_t transfer_runtimes[] = {1U, 1U};
+    const uint64_t task_ends[] = {10U, 20U};
+    const uint64_t capacities[] = {64U};
+    const uint32_t priorities[] = {0U};
+    const uint8_t seed_resident[] = {
+        1U, 1U, 1U,
+        0U, 1U, 0U,
+    };
+    const uint8_t seed_breaks[] = {0U, 0U, 0U, 0U, 0U, 0U};
+    const uint64_t extra_pressure[] = {0U, 0U, 0U};
+    uint8_t reduced_resident[6] = {0};
+    uint8_t reduced_breaks[6] = {0};
+    const ShadowSpillResidencyProblem residency_problem = {
+        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .alias_count = 2U,
+        .boundary_count = 3U,
+        .device_count = 1U,
+        .alias_size_bytes = alias_sizes,
+        .alias_device = alias_devices,
+        .alias_retain_host = retain_host,
+        .initial_location = initial_locations,
+        .final_location = final_locations,
+        .anchors = anchors,
+        .productions = empty_cells,
+        .latest_access_task = latest_access,
+        .output_reservations = empty_cells,
+        .write_prefix = empty_cells,
+        .first_input_task = first_input_tasks,
+        .h2d_runtime_ns = transfer_runtimes,
+        .d2h_runtime_ns = transfer_runtimes,
+        .task_ideal_end_ns = task_ends,
+        .device_capacity_bytes = capacities,
+        .device_priority = priorities,
+    };
+    const ShadowSpillResidencyOptions residency_options = {
+        .seed_resident = seed_resident,
+        .seed_breaks = seed_breaks,
+        .extra_pressure_bytes = extra_pressure,
+    };
+    ShadowSpillResidencyResult residency_result = {
+        .resident = reduced_resident,
+        .resident_capacity = 6U,
+        .breaks = reduced_breaks,
+        .break_capacity = 6U,
+    };
+    if (shadowspill_reduce_residency(
+            &residency_problem,
+            &residency_options,
+            &residency_result
+        ) != SHADOWSPILL_PLANNER_OK) {
+        return EXIT_FAILURE;
+    }
+    const uint8_t expected_resident[] = {
+        1U, 0U, 1U,
+        0U, 1U, 0U,
+    };
+    for (uint32_t index = 0U; index < 6U; ++index) {
+        if (reduced_resident[index] != expected_resident[index]) {
+            return EXIT_FAILURE;
+        }
+    }
     return EXIT_SUCCESS;
 }

@@ -63,6 +63,7 @@ install(
 add_library(
   shadowspill_planner
   SHARED
+  planner/src/residency.c
   planner/src/selector.c
   planner/src/status.c
 )

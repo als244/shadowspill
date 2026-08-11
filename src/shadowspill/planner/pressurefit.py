@@ -27,6 +27,12 @@ from shadowspill.simulator._compiled import (
 )
 
 from ._actions import emit_schedule
+from ._capi import planner_library_path
+from ._dense_residency import (
+    CompiledResidencyTemplate,
+    compile_residency_template,
+    reduce_residency_compiled,
+)
 from ._facts import PlanningFacts, build_facts
 from ._residency import (
     Cut,
@@ -52,6 +58,7 @@ class _SelectionContext:
     facts: PlanningFacts
     seed: ResidencyPlan
     compiled_template: CompiledSimulationTemplate | None
+    compiled_residency: CompiledResidencyTemplate | None
     cut_scores: dict[tuple[Cut, str], tuple[int, ...]] = field(
         default_factory=dict,
         compare=False,
@@ -286,14 +293,22 @@ def _evaluate_candidate(
                 else None
             )
             if residency is None:
-                residency = reduce_pressure(
-                    facts,
-                    config,
-                    seed,
-                    spec.strategy,
-                    extra_pressure=extra_pressure,
-                    score_cache=spec.context.cut_scores,
-                )
+                if spec.context.compiled_residency is not None:
+                    residency = reduce_residency_compiled(
+                        spec.context.compiled_residency,
+                        seed,
+                        spec.strategy,
+                        extra_pressure=extra_pressure,
+                    )
+                else:
+                    residency = reduce_pressure(
+                        facts,
+                        config,
+                        seed,
+                        spec.strategy,
+                        extra_pressure=extra_pressure,
+                        score_cache=spec.context.cut_scores,
+                    )
                 if not extra_pressure:
                     spec.context.residency_plans[spec.strategy] = residency
             if spec.prefetch_rule == "interval-entry":
@@ -410,7 +425,8 @@ def _build_contexts(
 ) -> tuple[_SelectionContext, ...]:
     contexts: list[_SelectionContext] = []
     failures: list[PressureFitInfeasibleError] = []
-    compiled_available = simulator_library_path() is not None
+    compiled_simulator_available = simulator_library_path() is not None
+    compiled_planner_available = planner_library_path() is not None
     for selections in _selection_portfolio(program):
         try:
             facts = build_facts(
@@ -444,7 +460,12 @@ def _build_contexts(
                         config,
                         selected_tasks=facts.tasks,
                     )
-                    if compiled_available
+                    if compiled_simulator_available
+                    else None
+                ),
+                (
+                    compile_residency_template(facts, config)
+                    if compiled_planner_available
                     else None
                 ),
             )

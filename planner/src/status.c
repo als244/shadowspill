@@ -18,6 +18,8 @@ const char *shadowspill_planner_status_string(ShadowSpillPlannerStatus status) {
             return "no simulator-valid candidate";
         case SHADOWSPILL_PLANNER_INTERNAL_ERROR:
             return "planner internal error";
+        case SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE:
+            return "analytic residency is infeasible";
     }
     return "unknown planner status";
 }

@@ -442,6 +442,22 @@ Phase 8 — public forward and training callables.
   and cached cut scores preserve all frozen schedules but do not meet the
   latency gate. The remaining dense candidate/repair loop must execute in the
   compiled planner; reducing the portfolio or changing directives is rejected.
+- PressureFit's analytic residency reducer now has a framework-neutral dense C
+  implementation in `libshadowspill_planner.so`. It preserves the Python
+  policy's boundary pressure, output reservation, cut legality, score ordering,
+  repair-pressure, and infeasibility semantics; schedule emission and every
+  selected transfer trigger remain unchanged. A permanent 192-case differential
+  matrix plus frozen schedule artifacts gates production use.
+- The first dense decode dropped greedy-placement anchors while retaining the
+  same visible spans. That representation difference could have changed later
+  interval extension, so it was rejected and fixed before production wiring;
+  decoded plans now retain the exact seed anchors. At 901 tasks and 1,504 alias
+  groups, the compiled reduction is 5.1x faster than the Python reference with
+  an identical plan. Exact-scale end-to-end replanning remains the required
+  latency measurement.
+- The compiled-residency milestone gate passes all 16 native/CUDA/PyTorch
+  canaries and 398 Python tests with five expected skips, plus Ruff, strict
+  mypy, and the production naming audit.
 
 ## Gate rule
 
