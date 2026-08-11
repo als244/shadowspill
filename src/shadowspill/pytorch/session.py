@@ -21,7 +21,13 @@ from shadowspill.planner import pressurefit
 from shadowspill.simulator import SimulationConfig
 
 from ._abi import AdapterStatistics
-from ._allocator import InstalledAllocator, install_allocator, installed_allocator
+from ._allocator import (
+    AllocatorInstallError,
+    InstalledAllocator,
+    install_allocator,
+    installed_allocator,
+    resize_host_arena,
+)
 from .aot import capture_forward
 from .compiler import CudaTaskProfiler, profile_environment
 from .contracts import PlanningError
@@ -133,7 +139,7 @@ def build_forward(
         simulation_config = SimulationConfig.single_device(
             "cuda_0",
             device_capacity_bytes=simulation_capacity,
-            host_capacity_bytes=int(installed.admission.host_arena_bytes),
+            host_capacity_bytes=host_budget,
             h2d_bandwidth_bytes_per_second=_positive_environment_integer(
                 "SHADOWSPILL_H2D_BANDWIDTH_BYTES_PER_SECOND", 24 << 30
             ),
@@ -154,6 +160,13 @@ def build_forward(
             initial_residency=lowered.initial_residency,
             final_residency=lowered.final_residency,
             config=simulation_config,
+        )
+
+    with timer.measure("host_admission"):
+        _reconcile_host_arena(
+            installed,
+            predicted_host_peak=selected.simulation.host_peak_bytes,
+            host_budget=host_budget,
         )
 
     admission = PhysicalAdmission(
@@ -311,6 +324,29 @@ def _workspace_reserve(measurements: Sequence[Any]) -> int:
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
     requested = max(_WORKSPACE_RESERVE_MINIMUM, (peak * 5 + 3) // 4)
     return _round_up(requested, _DEVICE_ALIGNMENT)
+
+
+def _reconcile_host_arena(
+    installed: InstalledAllocator,
+    *,
+    predicted_host_peak: int,
+    host_budget: int,
+) -> None:
+    if predicted_host_peak < 0:
+        raise PlanningError("predicted host peak must be non-negative")
+    requested = _round_up(
+        predicted_host_peak + max(_HOST_LEEWAY_MINIMUM, predicted_host_peak // 10),
+        _HOST_ALIGNMENT,
+    )
+    requested = max(requested, int(installed.admission.host_arena_bytes))
+    try:
+        resize_host_arena(
+            installed,
+            host_arena_bytes=requested,
+            host_budget_bytes=host_budget,
+        )
+    except AllocatorInstallError as exc:
+        raise PlanningError(str(exc)) from exc
 
 
 def _simulation_capacity(

@@ -1,8 +1,10 @@
 #include "internal.h"
 
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
     return backend != NULL &&
@@ -211,6 +213,71 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntimeStatus status = runtime->failure.status == 0U
         ? SHADOWSPILL_RUNTIME_OK
         : (ShadowSpillRuntimeStatus)runtime->failure.status;
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena(
+    ShadowSpillRuntime *runtime,
+    uint64_t host_arena_bytes
+) {
+    if (runtime == NULL || host_arena_bytes > SIZE_MAX) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    status = shadowspill_current_status_locked(runtime);
+    uint64_t current_bytes = runtime->host_ranges.capacity;
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (runtime->closing || runtime->queued_actions != 0U ||
+        runtime->pending_retirements != 0U) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    if (host_arena_bytes < current_bytes) {
+        status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        goto done;
+    }
+    if (host_arena_bytes == current_bytes) {
+        goto done;
+    }
+
+    void *replacement = NULL;
+    if (runtime->backend.allocate_host(
+            runtime->backend.context, host_arena_bytes, &replacement
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        goto done;
+    }
+    if (current_bytes != 0U) {
+        memcpy(replacement, runtime->host_arena, (size_t)current_bytes);
+    }
+    ShadowSpillRangeAllocator ranges = {0};
+    if (shadowspill_range_clone_extended(
+            &runtime->host_ranges, host_arena_bytes, &ranges
+        ) != 0) {
+        (void)runtime->backend.free_host(runtime->backend.context, replacement);
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto done;
+    }
+    if (runtime->host_arena != NULL && runtime->backend.free_host(
+            runtime->backend.context, runtime->host_arena
+        ) != 0) {
+        shadowspill_range_destroy(&ranges);
+        (void)runtime->backend.free_host(runtime->backend.context, replacement);
+        status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        goto done;
+    }
+    runtime->host_arena = replacement;
+    shadowspill_range_destroy(&runtime->host_ranges);
+    runtime->host_ranges = ranges;
+
+done:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }

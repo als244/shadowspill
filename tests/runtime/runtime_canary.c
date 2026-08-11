@@ -111,6 +111,23 @@ int main(void) {
         memcmp(
             original_payload, restored_payload, sizeof(original_payload)
         ) != 0 ||
+        shadowspill_runtime_resize_host_arena(runtime, 512U) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_resize_host_arena(runtime, 255U) !=
+            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+        shadowspill_read_host_object(
+            runtime,
+            object.object_id,
+            restored_payload,
+            sizeof(restored_payload)
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        memcmp(
+            original_payload, restored_payload, sizeof(original_payload)
+        ) != 0 ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.host_arena_bytes != 512U ||
+        statistics.host_allocated_bytes != 128U ||
         shadowspill_allocate(runtime, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(

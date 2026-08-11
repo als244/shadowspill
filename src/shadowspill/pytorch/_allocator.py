@@ -42,6 +42,40 @@ def installed_allocator() -> InstalledAllocator | None:
     return _installed
 
 
+def resize_host_arena(
+    installed: InstalledAllocator, *, host_arena_bytes: int, host_budget_bytes: int
+) -> None:
+    """Grow pinned backing during planning without exceeding the public cap."""
+
+    current = int(installed.admission.host_arena_bytes)
+    if host_arena_bytes < current:
+        raise AllocatorInstallError("pinned host arena cannot shrink")
+    if host_arena_bytes == current:
+        return
+    if host_arena_bytes > host_budget_bytes or current + host_arena_bytes > (
+        host_budget_bytes
+    ):
+        raise AllocatorInstallError(
+            "planning-time pinned arena replacement exceeds host_budget"
+        )
+    status = int(
+        installed.library.shadowspill_pytorch_resize_host_arena(host_arena_bytes)
+    )
+    if status != 0:
+        raise AllocatorInstallError(
+            f"pinned host arena growth failed with status {status}"
+        )
+    admission = PhysicalAdmission()
+    status = int(
+        installed.library.shadowspill_pytorch_physical_admission(
+            ctypes.byref(admission)
+        )
+    )
+    if status != 0 or int(admission.host_arena_bytes) != host_arena_bytes:
+        raise AllocatorInstallError("pinned host arena admission was not updated")
+    installed.admission.host_arena_bytes = admission.host_arena_bytes
+
+
 def _function_pointer(library: Any, name: str) -> int:
     try:
         symbol = getattr(library, name)

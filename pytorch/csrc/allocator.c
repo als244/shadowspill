@@ -355,6 +355,29 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_wait_idle(void) {
     return shadowspill_runtime_wait_idle(runtime);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_resize_host_arena(
+    uint64_t host_arena_bytes
+) {
+    pthread_mutex_lock(&adapter.mutex);
+    if (adapter.runtime == NULL) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    if (adapter.physical_budget_sealed ||
+        host_arena_bytes < adapter.admission.host_arena_bytes) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_resize_host_arena(
+        adapter.runtime, host_arena_bytes
+    );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        adapter.admission.host_arena_bytes = host_arena_bytes;
+    }
+    pthread_mutex_unlock(&adapter.mutex);
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_start(
     uint64_t capacity
 ) {

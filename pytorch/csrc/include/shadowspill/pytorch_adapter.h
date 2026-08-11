@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 9U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 10U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -125,6 +125,14 @@ shadowspill_pytorch_allocator_failure(
 /* Explicitly synchronizing qualification/checkpoint helper. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_wait_idle(void);
+
+/*
+ * Planning-only pinned-host growth before physical sealing. Existing payloads
+ * and object offsets are preserved. The caller must admit the brief overlap of
+ * old and replacement arenas within its public host budget.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_resize_host_arena(uint64_t host_arena_bytes);
 
 /* Bounded task-scoped allocation telemetry used by structural profiling. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus

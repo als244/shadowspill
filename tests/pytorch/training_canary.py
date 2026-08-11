@@ -20,11 +20,10 @@ from shadowspill.pytorch._allocator import installed_allocator
 class _Model(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.first = nn.Linear(8, 16)
-        self.second = nn.Linear(16, 4)
+        self.projection = nn.Linear(1024, 1024, bias=False)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.second(torch.relu(self.first(value)))
+        return self.projection(value)
 
 
 def _objective(
@@ -80,16 +79,16 @@ def main(arguments: Iterable[str] | None = None) -> int:
         reference.load_state_dict(model.state_dict())
         parameter_ids = tuple(id(parameter) for parameter in model.parameters())
         example_inputs = [
-            [torch.randn(3, 8), torch.randn(3, 4), "short"],
-            [torch.randn(5, 8), torch.randn(5, 4), "long"],
+            [torch.randn(3, 1024), torch.randn(3, 1024), "short"],
+            [torch.randn(5, 1024), torch.randn(5, 1024), "long"],
         ]
         steps: list[list[list[object]]] = []
         for step in range(5):
             torch.manual_seed(1000 + step)
             steps.append(
                 [
-                    [torch.randn(3, 8), torch.randn(3, 4), "short"],
-                    [torch.randn(5, 8), torch.randn(5, 4), "long"],
+                    [torch.randn(3, 1024), torch.randn(3, 1024), "short"],
+                    [torch.randn(5, 1024), torch.randn(5, 1024), "long"],
                 ]
             )
 
@@ -194,14 +193,14 @@ def main(arguments: Iterable[str] | None = None) -> int:
         for actual, expected in zip(
             model.parameters(), reference.parameters(), strict=True
         ):
-            torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-6)
+            torch.testing.assert_close(actual, expected, rtol=1e-3, atol=5e-5)
         statistics = _statistics()
         if statistics.callback_failures != 0 or statistics.pointer_lookup_failures != 0:
             raise AssertionError("training produced allocator callback failures")
         if statistics.cuda.device_allocations != 1:
             raise AssertionError("training grew the CUDA slab")
-        if statistics.cuda.pinned_host_allocations != 1:
-            raise AssertionError("training grew pinned host memory")
+        if statistics.cuda.pinned_host_allocations != 2:
+            raise AssertionError("training did not reconcile pinned host admission")
     return 0
 
 

@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 5U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 6U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -379,6 +379,19 @@ shadowspill_allocation_telemetry_read(
 /* Explicitly synchronizing test/checkpoint helper; returns first failure. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
+);
+
+/*
+ * Planning-only growth of the one pinned-host arena. The runtime must be idle;
+ * existing object offsets and payloads are preserved. The backend host pointer
+ * is CPU-addressable by contract. Shrinkage is rejected. This operation owns
+ * both arenas briefly, so callers must include that transient in host-budget
+ * admission. It is forbidden after frontend physical admission is sealed.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_resize_host_arena(
+    ShadowSpillRuntime *runtime,
+    uint64_t host_arena_bytes
 );
 
 /* Copies a lock-consistent telemetry snapshot into caller-owned storage. */

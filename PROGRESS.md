@@ -306,9 +306,23 @@ Phase 8 — public forward and training callables.
 - Sixteen CTests and 179 Python tests pass; the complete coverage gate is above
   its required 90% threshold after exercising both optimizer phases. ASan,
   UBSan, and ThreadSanitizer continue to pass all neutral-runtime canaries.
-- Remaining qualification work is planning-time pinned-host reconciliation for
-  large optimizer state, opaque optimizer task admission, external mlops AdamW,
-  and the approximately-1B/full-model gates.
+- Planning now runs PressureFit against the public host cap, computes the larger
+  of the initial/recurrent predicted host peaks, adds documented leeway, and
+  grows the pinned arena exactly once before sealing when optimizer state makes
+  the provisional model/input estimate insufficient. Existing host offsets and
+  payloads survive replacement.
+- Runtime ABI v6 and PyTorch adapter ABI v10 expose this planning-only growth.
+  Shrinkage and post-seal growth fail; Python also requires old plus replacement
+  arenas to fit simultaneously under `host_budget`, so reconciliation cannot
+  create a transient hidden pinned-memory overage.
+- The stateful CUDA canary now uses a 1024-square AdamW parameter, proves two
+  pinned allocations (bootstrap plus reconciliation), then passes five steps,
+  bitwise checkpoint replay, and CPU restoration. Native ASan, UBSan, and TSan
+  pass after the arena-preservation change. All 181 Python tests pass the
+  90.02% branch-coverage gate.
+- Remaining qualification work is opaque optimizer task admission, external
+  mlops AdamW, stage-partitioned training, and the approximately-1B/full-model
+  gates.
 
 ## Gate rule
 

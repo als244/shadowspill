@@ -25,8 +25,10 @@ from shadowspill.pytorch._abi import (
 )
 from shadowspill.pytorch._allocator import (
     AllocatorInstallError,
+    InstalledAllocator,
     _function_pointer,
     install_allocator,
+    resize_host_arena,
 )
 
 
@@ -45,6 +47,7 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
+    shadowspill_pytorch_resize_host_arena = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
@@ -104,6 +107,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_resize_host_arena.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
         ctypes.c_uint64
     ]
@@ -167,6 +171,36 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint32,
     ]
     assert library.shadowspill_pytorch_abort_task_range.argtypes == []
+
+
+def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:
+    class _ResizeLibrary:
+        host_bytes = 16
+
+        def shadowspill_pytorch_resize_host_arena(self, value: int) -> int:
+            self.host_bytes = value
+            return 0
+
+        def shadowspill_pytorch_physical_admission(self, output: object) -> int:
+            admission = ctypes.cast(output, ctypes.POINTER(PhysicalAdmission))[0]
+            admission.host_arena_bytes = self.host_bytes
+            return 0
+
+    admission = PhysicalAdmission()
+    admission.host_arena_bytes = 16
+    installed = InstalledAllocator(
+        library=_ResizeLibrary(),
+        allocator=object(),
+        path=Path("/adapter"),
+        admission=admission,
+    )
+    resize_host_arena(installed, host_arena_bytes=32, host_budget_bytes=64)
+    assert installed.admission.host_arena_bytes == 32
+    resize_host_arena(installed, host_arena_bytes=32, host_budget_bytes=64)
+    with pytest.raises(AllocatorInstallError, match="shrink"):
+        resize_host_arena(installed, host_arena_bytes=31, host_budget_bytes=64)
+    with pytest.raises(AllocatorInstallError, match="exceeds"):
+        resize_host_arena(installed, host_arena_bytes=40, host_budget_bytes=64)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:

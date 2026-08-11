@@ -18,7 +18,7 @@ from shadowspill.pytorch._abi import (
     PhysicalMemory,
     RuntimeAction,
 )
-from shadowspill.pytorch._allocator import install_allocator
+from shadowspill.pytorch._allocator import install_allocator, resize_host_arena
 
 
 def main() -> int:
@@ -33,6 +33,9 @@ def main() -> int:
         host_arena_bytes=16 << 20,
         progress_poll_nanoseconds=10_000,
     )
+    resize_host_arena(installed, host_arena_bytes=32 << 20, host_budget_bytes=64 << 20)
+    if installed.admission.host_arena_bytes != 32 << 20:
+        raise AssertionError("planning-time host admission did not grow")
     capabilities = AdapterCapabilities()
     installed.library.shadowspill_pytorch_adapter_capabilities(
         ctypes.byref(capabilities)
@@ -421,6 +424,8 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
+    if int(library.shadowspill_pytorch_resize_host_arena(48 << 20)) == 0:
+        raise AssertionError("sealed adapter accepted pinned-host growth")
     if sealed_statistics.physical_checks < 3:
         raise AssertionError("adapter did not record physical reconciliation")
     if (

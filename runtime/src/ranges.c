@@ -32,6 +32,61 @@ int shadowspill_range_initialize(
     return 0;
 }
 
+int shadowspill_range_clone_extended(
+    const ShadowSpillRangeAllocator *source,
+    uint64_t capacity,
+    ShadowSpillRangeAllocator *destination
+) {
+    if (source == NULL || destination == NULL || capacity < source->capacity) {
+        return -1;
+    }
+    *destination = (ShadowSpillRangeAllocator){
+        .capacity = capacity,
+        .allocated = source->allocated,
+        .peak_allocated = source->peak_allocated,
+    };
+    ShadowSpillRange **tail = &destination->free_ranges;
+    for (const ShadowSpillRange *range = source->free_ranges; range != NULL;
+         range = range->next) {
+        ShadowSpillRange *copy = calloc(1U, sizeof(*copy));
+        if (copy == NULL) {
+            shadowspill_range_destroy(destination);
+            return -1;
+        }
+        copy->offset = range->offset;
+        copy->bytes = range->bytes;
+        *tail = copy;
+        tail = &copy->next;
+    }
+    if (capacity == source->capacity) {
+        return 0;
+    }
+    uint64_t extension = capacity - source->capacity;
+    ShadowSpillRange *last = destination->free_ranges;
+    if (last != NULL) {
+        while (last->next != NULL) {
+            last = last->next;
+        }
+    }
+    if (last != NULL && last->offset + last->bytes == source->capacity) {
+        last->bytes += extension;
+        return 0;
+    }
+    ShadowSpillRange *created = calloc(1U, sizeof(*created));
+    if (created == NULL) {
+        shadowspill_range_destroy(destination);
+        return -1;
+    }
+    created->offset = source->capacity;
+    created->bytes = extension;
+    if (last == NULL) {
+        destination->free_ranges = created;
+    } else {
+        last->next = created;
+    }
+    return 0;
+}
+
 void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator) {
     ShadowSpillRange *range = allocator->free_ranges;
     while (range != NULL) {

@@ -31,6 +31,7 @@ from .session import (
     _forward_report,
     _host_arena_estimate,
     _PhaseTimer,
+    _reconcile_host_arena,
     _seal_physical_budget,
     _simulation_capacity,
     _workspace_reserve,
@@ -175,7 +176,7 @@ def build_training(
                     workspace_reserve,
                     profiles.measurements,
                 ),
-                host_capacity_bytes=int(installed.admission.host_arena_bytes),
+                host_capacity_bytes=host_budget,
                 h2d_bandwidth_bytes_per_second=24 << 30,
                 d2h_bandwidth_bytes_per_second=24 << 30,
                 h2d_latency_ns=5_000,
@@ -200,6 +201,17 @@ def build_training(
                 )
                 if needs_initial_plan
                 else None
+            )
+        with timer.measure("host_admission"):
+            _reconcile_host_arena(
+                installed,
+                predicted_host_peak=max(
+                    recurrent_selected.simulation.host_peak_bytes,
+                    0
+                    if initial_selected is None
+                    else initial_selected.simulation.host_peak_bytes,
+                ),
+                host_budget=host_budget,
             )
         admission = PhysicalAdmission(
             device_budget_bytes=device_budget,

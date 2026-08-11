@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 9
+ADAPTER_ABI_VERSION: Final = 10
 
 
 class AdapterConfig(ctypes.Structure):
@@ -225,6 +225,8 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_physical_memory.restype = ctypes.c_uint32
     library.shadowspill_pytorch_seal_physical_budget.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_seal_physical_budget.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_resize_host_arena.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_resize_host_arena.restype = ctypes.c_uint32
     library.shadowspill_pytorch_check_physical_budget.argtypes = []
     library.shadowspill_pytorch_check_physical_budget.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_bootstrap.argtypes = [

@@ -31,7 +31,8 @@ typedef enum ShadowSpillTransferKind {
  * The runtime copies this table but borrows context, which must outlive it.
  * Device and host allocations are owned by the runtime after a successful
  * allocate call and are returned exactly once through the matching free call.
- * Created streams and events follow the same ownership rule.
+ * Host allocations must be directly CPU-addressable for their complete byte
+ * extent. Created streams and events follow the same ownership rule.
  *
  * copy_async, record_event, and wait_event enqueue work without synchronizing
  * the host. Memory passed to copy_async must remain valid through the recorded

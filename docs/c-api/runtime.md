@@ -6,7 +6,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The ABI is version 5. All public functions return an enum status except
+The ABI is version 6. All public functions return an enum status except
 idempotent destroy functions and read-only mock controls. Call
 `shadowspill_runtime_abi_version()` and validate the backend ABI before creating
 a runtime.
@@ -28,6 +28,12 @@ prefetch destination under allocator pressure.
 tests, checkpoints, and lifecycle boundaries. `shadowspill_runtime_close` is
 also synchronizing and idempotent; it rejects new work, drains or preserves the
 first failure, joins the worker, and frees all runtime-owned resources.
+
+`shadowspill_runtime_resize_host_arena` is a planning-only, explicitly idle
+operation. It grows the pinned-host arena while preserving all object offsets
+and payloads. Shrinkage is rejected. The backend briefly owns both old and new
+arenas, so the frontend must admit that overlap under its public host budget;
+the PyTorch adapter forbids growth after physical sealing.
 
 ## Ownership
 

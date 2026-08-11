@@ -142,6 +142,11 @@ int shadowspill_range_initialize(
     ShadowSpillRangeAllocator *allocator,
     uint64_t capacity
 );
+int shadowspill_range_clone_extended(
+    const ShadowSpillRangeAllocator *source,
+    uint64_t capacity,
+    ShadowSpillRangeAllocator *destination
+);
 void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator);
 int shadowspill_range_allocate(
     ShadowSpillRangeAllocator *allocator,
