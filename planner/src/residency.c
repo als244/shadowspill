@@ -188,6 +188,9 @@ static uint32_t collect_cuts(
     const ShadowSpillResidencyProblem *problem,
     const uint8_t *resident,
     const uint8_t *breaks,
+    const uint32_t *first_required,
+    const int32_t *gap_start,
+    const int32_t *gap_end,
     uint32_t device,
     int32_t boundary,
     ResidencyCut *cuts
@@ -198,67 +201,45 @@ static uint32_t collect_cuts(
         if (problem->alias_device[alias] != device) {
             continue;
         }
-        uint32_t span_start = 0U;
-        uint32_t span_end = 0U;
-        if (!find_span(
-                resident,
-                breaks,
-                alias,
-                problem->boundary_count,
-                boundary_index,
-                &span_start,
-                &span_end
-            )) {
+        uint64_t position = cell(
+            alias,
+            problem->boundary_count,
+            boundary_index
+        );
+        if (resident[position] == 0U) {
             continue;
         }
-        if (span_start == 0U && problem->initial_location[alias] == 1 &&
+        if (resident[cell(alias, problem->boundary_count, 0U)] != 0U &&
+            problem->initial_location[alias] == 1 &&
             problem->anchors[cell(alias, problem->boundary_count, 0U)] == 0U) {
-            uint32_t first_required = UINT32_MAX;
-            for (uint32_t index = 1U; index < problem->boundary_count; ++index) {
-                if (problem->anchors[cell(alias, problem->boundary_count, index)] !=
-                    0U) {
-                    first_required = index;
-                    break;
-                }
-            }
-            if (first_required != UINT32_MAX &&
-                boundary_index < first_required) {
+            if (first_required[alias] != UINT32_MAX &&
+                boundary_index < first_required[alias]) {
                 cuts[count++] = (ResidencyCut){
                     .alias = alias,
                     .start = -1,
-                    .end = (int32_t)first_required - 2,
+                    .end = (int32_t)first_required[alias] - 2,
                 };
                 continue;
             }
         }
 
-        uint64_t position = cell(alias, problem->boundary_count, boundary_index);
         int32_t start = boundary;
         int32_t end = boundary;
         if (problem->anchors[position] == 0U) {
-            uint32_t left = boundary_index;
-            while (left > span_start &&
-                   problem->anchors[cell(
-                       alias,
-                       problem->boundary_count,
-                       left - 1U
-                   )] == 0U) {
-                --left;
+            start = gap_start[position];
+            end = gap_end[position];
+            if (start == INT32_MIN) {
+                continue;
             }
-            uint32_t right = boundary_index;
-            while (right < span_end &&
-                   problem->anchors[cell(
-                       alias,
-                       problem->boundary_count,
-                       right + 1U
-                   )] == 0U) {
-                ++right;
-            }
-            start = (int32_t)left - 1;
-            end = (int32_t)right - 1;
         } else {
             uint32_t latest = problem->latest_access_task[position];
-            int can_split = boundary_index < span_end &&
+            int connected_after = boundary_index + 1U < problem->boundary_count &&
+                resident[cell(
+                    alias,
+                    problem->boundary_count,
+                    boundary_index + 1U
+                )] != 0U && breaks[position] == 0U;
+            int can_split = connected_after &&
                 (latest == UINT32_MAX || (int32_t)latest <= boundary);
             if (!can_split) {
                 continue;
@@ -276,6 +257,69 @@ static uint32_t collect_cuts(
         };
     }
     return count;
+}
+
+static void build_cut_geometry(
+    const ShadowSpillResidencyProblem *problem,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    uint32_t *first_required,
+    int32_t *gap_start,
+    int32_t *gap_end
+) {
+    uint32_t count = problem->boundary_count;
+    uint64_t cells = (uint64_t)problem->alias_count * count;
+    for (uint64_t position = 0U; position < cells; ++position) {
+        gap_start[position] = INT32_MIN;
+        gap_end[position] = INT32_MIN;
+    }
+    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
+        first_required[alias] = UINT32_MAX;
+        for (uint32_t index = 1U; index < count; ++index) {
+            if (problem->anchors[cell(alias, count, index)] != 0U) {
+                first_required[alias] = index;
+                break;
+            }
+        }
+
+        uint32_t index = 0U;
+        while (index < count) {
+            uint32_t span_start = 0U;
+            uint32_t span_end = 0U;
+            if (!find_span(
+                    resident,
+                    breaks,
+                    alias,
+                    count,
+                    index,
+                    &span_start,
+                    &span_end
+                )) {
+                ++index;
+                continue;
+            }
+            uint32_t cursor = span_start;
+            while (cursor <= span_end) {
+                if (problem->anchors[cell(alias, count, cursor)] != 0U) {
+                    ++cursor;
+                    continue;
+                }
+                uint32_t run_start = cursor;
+                while (cursor < span_end &&
+                       problem->anchors[cell(alias, count, cursor + 1U)] == 0U) {
+                    ++cursor;
+                }
+                uint32_t run_end = cursor;
+                for (uint32_t value = run_start; value <= run_end; ++value) {
+                    uint64_t position = cell(alias, count, value);
+                    gap_start[position] = (int32_t)run_start - 1;
+                    gap_end[position] = (int32_t)run_end - 1;
+                }
+                ++cursor;
+            }
+            index = span_end + 1U;
+        }
+    }
 }
 
 static void apply_cut(
@@ -351,14 +395,33 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
     uint8_t *before = calloc(problem->boundary_count, sizeof(*before));
     uint8_t *after = calloc(problem->boundary_count, sizeof(*after));
     ResidencyCut *cuts = calloc(problem->alias_count, sizeof(*cuts));
-    if (pressure == NULL || before == NULL || after == NULL || cuts == NULL) {
+    uint32_t *first_required = calloc(
+        problem->alias_count,
+        sizeof(*first_required)
+    );
+    int32_t *gap_start = calloc(cells, sizeof(*gap_start));
+    int32_t *gap_end = calloc(cells, sizeof(*gap_end));
+    if (pressure == NULL || before == NULL || after == NULL || cuts == NULL ||
+        first_required == NULL || gap_start == NULL || gap_end == NULL) {
         free(pressure);
         free(before);
         free(after);
         free(cuts);
+        free(first_required);
+        free(gap_start);
+        free(gap_end);
         result->status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
         return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
     }
+
+    build_cut_geometry(
+        problem,
+        result->resident,
+        result->breaks,
+        first_required,
+        gap_start,
+        gap_end
+    );
 
     for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
         alias_contribution(
@@ -415,6 +478,9 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             free(before);
             free(after);
             free(cuts);
+            free(first_required);
+            free(gap_start);
+            free(gap_end);
             result->status = SHADOWSPILL_PLANNER_OK;
             return SHADOWSPILL_PLANNER_OK;
         }
@@ -424,6 +490,9 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             problem,
             result->resident,
             result->breaks,
+            first_required,
+            gap_start,
+            gap_end,
             selected_device,
             boundary_value,
             cuts
@@ -439,6 +508,9 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             free(before);
             free(after);
             free(cuts);
+            free(first_required);
+            free(gap_start);
+            free(gap_end);
             return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
         }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from shadowspill.ir import (
@@ -102,13 +103,14 @@ def _latest_trigger_at_or_before(
     latest: int,
     target_time_ns: int,
 ) -> int:
-    chosen = earliest
-    for trigger in range(earliest, latest + 1):
-        if _ideal_trigger_time(facts, trigger) <= target_time_ns:
-            chosen = trigger
-        else:
-            break
-    return chosen
+    lower = max(earliest, 0)
+    insertion = bisect_right(
+        facts.task_ideal_end_ns,
+        target_time_ns,
+        lo=lower,
+        hi=latest + 1,
+    )
+    return max(earliest, insertion - 1)
 
 
 def _packed_triggers(
@@ -166,10 +168,7 @@ def _fit_clamped_triggers(
         device_id: [dict[int, int]() for _ in range(len(facts.tasks))]
         for device_id in facts.object_capacity_by_device
     }
-    used = {
-        device_id: list(values)
-        for device_id, values in base_pressure.items()
-    }
+    used = {device_id: list(values) for device_id, values in base_pressure.items()}
 
     def add_active(reload: Reload, trigger: int) -> None:
         device_id = facts.alias_devices[reload.alias]

@@ -59,11 +59,7 @@ def test_compiled_reducer_matches_python_reference(
         InitialPlacement.GREEDY,
         initial_capacity_by_device=facts.object_capacity_by_device,
     )
-    extra = (
-        {("cuda_0", max(0, layers - 1)): 33}
-        if with_repair_pressure
-        else None
-    )
+    extra = {("cuda_0", max(0, layers - 1)): 33} if with_repair_pressure else None
 
     def reduce_python() -> object:
         return reduce_pressure(
@@ -76,7 +72,7 @@ def test_compiled_reducer_matches_python_reference(
 
     def reduce_compiled() -> object:
         return reduce_residency_compiled(
-            compile_residency_template(facts, selected_config),
+            compile_residency_template(facts, selected_config, seed),
             seed,
             strategy,
             extra_pressure=extra,

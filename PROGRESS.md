@@ -458,6 +458,31 @@ Phase 8 — public forward and training callables.
 - The compiled-residency milestone gate passes all 16 native/CUDA/PyTorch
   canaries and 398 Python tests with five expected skips, plus Ruff, strict
   mypy, and the production naming audit.
+- The first exact 1.180B rerun with the compiled reducer still required 415.51
+  seconds to plan, versus 429.99 seconds before it. The translation preserved
+  policy but retained an alias-by-boundary scan inside every cut search, so the
+  latency gate remains failed. The next optimization indexes fixed legal-cut
+  geometry and performs only constant-time eligibility checks per alias.
+- Legal prefix, gap, and split cut geometry is now preindexed once per dense
+  residency problem. Semantic residency, interval, emitted-schedule, and
+  simulator-outcome caches eliminate repeated work across policy candidates
+  without changing the candidate portfolio or any directive. On a synthetic
+  451-task program, unique simulator calls fell from 184 to 13 and planning
+  fell from about 4.7 seconds to 1.5 seconds.
+- The resulting exact 1.180B Llama plan took 187.65 seconds: 12.99 seconds for
+  capture/lowering, 4.80 seconds for compilation, and 161.76 seconds for
+  PressureFit/simulation. It retained 24 recomputation selections, 159 tasks,
+  1,447 memory actions, the 6.25-GiB predicted device peak, and a 0.385943-second
+  simulated makespan. This is a 2.2x planner improvement over the preceding
+  exact run, but still fails the 90-second total and 60-second planning gates.
+- The first exact steady-state call then exposed an independent runtime issue
+  in the large vocabulary-head task: an anonymous roughly 501-MiB `zeros_like`
+  allocation produced a tensor with no storage. The allocator already latches
+  no-progress diagnostics, but the pluggable callback's null return is surfaced
+  by PyTorch only at the later tensor access. The next behavior-only milestone
+  will translate that latched failure at the task boundary and distinguish
+  insufficient total capacity from contiguous-range fragmentation before any
+  admission or allocator policy is changed.
 
 ## Gate rule
 

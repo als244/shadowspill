@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -21,9 +22,11 @@ from shadowspill.simulator import (
 )
 from shadowspill.simulator._capi import simulator_library_path
 from shadowspill.simulator._compiled import (
+    CompiledSimulationSummary,
     CompiledSimulationTemplate,
     compile_simulation_template,
     simulate_compiled_template,
+    simulate_compiled_template_summary,
 )
 
 from ._actions import emit_schedule
@@ -64,16 +67,67 @@ class _SelectionContext:
         compare=False,
         repr=False,
     )
-    residency_plans: dict[str, ResidencyPlan] = field(
+    residency_plans: dict[
+        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
+    ] = field(
         default_factory=dict,
         compare=False,
         repr=False,
     )
-    interval_plans: dict[str, ResidencyPlan] = field(
+    interval_plans: dict[
+        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
+    ] = field(
         default_factory=dict,
         compare=False,
         repr=False,
     )
+    schedule_cache: dict[tuple[ResidencyPlan, str, bool, bool], MemorySchedule] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+    simulation_cache: dict[
+        MemorySchedule,
+        SimulationResult | CompiledSimulationSummary | _CachedSimulationFailure,
+    ] = field(default_factory=dict, compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedSimulationFailure:
+    message: str
+    kind: str
+    time_ns: int
+    task_id: str | None
+    alias_group_ids: tuple[str, ...]
+    location: str | None
+    capacity_bytes: int | None
+    used_bytes: int | None
+    requested_bytes: int | None
+
+    @classmethod
+    def from_error(cls, error: SimulationInfeasibleError) -> _CachedSimulationFailure:
+        return cls(
+            str(error),
+            error.kind,
+            error.time_ns,
+            error.task_id,
+            error.alias_group_ids,
+            error.location,
+            error.capacity_bytes,
+            error.used_bytes,
+            error.requested_bytes,
+        )
+
+    def to_error(self) -> SimulationInfeasibleError:
+        return SimulationInfeasibleError(
+            self.message,
+            kind=self.kind,
+            time_ns=self.time_ns,
+            task_id=self.task_id,
+            alias_group_ids=self.alias_group_ids,
+            location=self.location,
+            capacity_bytes=self.capacity_bytes,
+            used_bytes=self.used_bytes,
+            requested_bytes=self.requested_bytes,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +149,7 @@ class _CandidateOutcome:
     spec: _CandidateSpec
     diagnostic: CandidateDiagnostic
     schedule: MemorySchedule | None = None
-    simulation: SimulationResult | None = None
+    simulation: SimulationResult | CompiledSimulationSummary | None = None
 
 
 def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
@@ -193,13 +247,6 @@ def _delay_prefetch(
 ) -> MemorySchedule | None:
     if error.kind not in {"prefetch-device-capacity", "task-device-capacity"}:
         return None
-    object_alias = {
-        item.object_id: item.alias_group_id for item in facts.program.objects
-    }
-    consumers: dict[str, list[int]] = {alias_id: [] for alias_id in facts.alias_ids}
-    for task_index, task in enumerate(facts.tasks):
-        for alias_id in {object_alias[object_id] for object_id in task.inputs}:
-            consumers[alias_id].append(task_index)
     failing_task = (
         facts.task_index.get(error.task_id) if error.task_id is not None else None
     )
@@ -226,16 +273,19 @@ def _delay_prefetch(
             and trigger >= failing_task
         ):
             continue
-        future_consumers = [
-            task for task in consumers[action.alias_group_id] if task > trigger
-        ]
-        latest = min(future_consumers) - 1 if future_consumers else facts.last_boundary
+        alias = facts.alias_index[action.alias_group_id]
+        consumers = facts.input_tasks[alias]
+        next_consumer = bisect_right(consumers, trigger)
+        latest = (
+            consumers[next_consumer] - 1
+            if next_consumer < len(consumers)
+            else facts.last_boundary
+        )
         target = trigger + 1
         if failing_task is not None and error.kind == "task-device-capacity":
             target = max(target, failing_task)
         if target > latest:
             continue
-        alias = facts.alias_index[action.alias_group_id]
         candidates.append((-facts.alias_sizes[alias], -trigger, action_index, target))
     if not candidates:
         return None
@@ -287,11 +337,14 @@ def _evaluate_candidate(
     repairs = 0
     while True:
         try:
-            residency = (
-                spec.context.residency_plans.get(spec.strategy)
-                if not extra_pressure
-                else None
+            pressure_key = tuple(
+                sorted(
+                    (device_id, boundary, value)
+                    for (device_id, boundary), value in extra_pressure.items()
+                )
             )
+            residency_key = (spec.strategy, pressure_key)
+            residency = spec.context.residency_plans.get(residency_key)
             if residency is None:
                 if spec.context.compiled_residency is not None:
                     residency = reduce_residency_compiled(
@@ -309,27 +362,31 @@ def _evaluate_candidate(
                         extra_pressure=extra_pressure,
                         score_cache=spec.context.cut_scores,
                     )
-                if not extra_pressure:
-                    spec.context.residency_plans[spec.strategy] = residency
+                spec.context.residency_plans[residency_key] = residency
             if spec.prefetch_rule == "interval-entry":
-                extended = (
-                    spec.context.interval_plans.get(spec.strategy)
-                    if not extra_pressure
-                    else None
-                )
+                extended = spec.context.interval_plans.get(residency_key)
                 if extended is None:
                     extended = extend_interval_entries(facts, residency)
-                    if not extra_pressure:
-                        spec.context.interval_plans[spec.strategy] = extended
+                    spec.context.interval_plans[residency_key] = extended
                 residency = extended
-            schedule = emit_schedule(
-                facts,
-                config,
+            prefetch_headroom = spec.strategy.startswith("headroom")
+            schedule_key = (
                 residency,
                 spec.prefetch_rule,
-                coalesced=spec.coalesced,
-                prefetch_headroom=spec.strategy.startswith("headroom"),
+                spec.coalesced,
+                prefetch_headroom,
             )
+            schedule = spec.context.schedule_cache.get(schedule_key)
+            if schedule is None:
+                schedule = emit_schedule(
+                    facts,
+                    config,
+                    residency,
+                    spec.prefetch_rule,
+                    coalesced=spec.coalesced,
+                    prefetch_headroom=prefetch_headroom,
+                )
+                spec.context.schedule_cache[schedule_key] = schedule
         except PressureFitInfeasibleError as error:
             return _CandidateOutcome(
                 spec,
@@ -355,16 +412,31 @@ def _evaluate_candidate(
         restart_reduction = False
         while True:
             try:
-                simulation = (
-                    simulate_compiled_template(spec.context.compiled_template, schedule)
-                    if spec.context.compiled_template is not None
-                    else simulate(
-                        facts.program,
-                        schedule,
-                        selections=facts.selections,
-                        config=config,
-                    )
-                )
+                cached_simulation = spec.context.simulation_cache.get(schedule)
+                if isinstance(cached_simulation, _CachedSimulationFailure):
+                    raise cached_simulation.to_error()
+                if cached_simulation is None:
+                    try:
+                        cached_simulation = (
+                            simulate_compiled_template_summary(
+                                spec.context.compiled_template,
+                                schedule,
+                            )
+                            if spec.context.compiled_template is not None
+                            else simulate(
+                                facts.program,
+                                schedule,
+                                selections=facts.selections,
+                                config=config,
+                            )
+                        )
+                    except SimulationInfeasibleError as error:
+                        spec.context.simulation_cache[schedule] = (
+                            _CachedSimulationFailure.from_error(error)
+                        )
+                        raise
+                    spec.context.simulation_cache[schedule] = cached_simulation
+                simulation = cached_simulation
             except SimulationInfeasibleError as error:
                 if repairs < options.max_repair_attempts:
                     delayed = _delay_prefetch(facts, schedule, error)
@@ -440,19 +512,20 @@ def _build_contexts(
         except PressureFitInfeasibleError as error:
             failures.append(error)
             continue
+        seed = seed_residency(
+            facts,
+            config,
+            options.initial_placement,
+            # Initial placement is a property of the program and public
+            # capacity, not a later strategy's speculative headroom.
+            initial_capacity_by_device=facts.object_capacity_by_device,
+        )
         contexts.append(
             _SelectionContext(
                 selections,
                 _selection_id(selections),
                 facts,
-                seed_residency(
-                    facts,
-                    config,
-                    options.initial_placement,
-                    # Initial placement is a property of the program and public
-                    # capacity, not a later strategy's speculative headroom.
-                    initial_capacity_by_device=facts.object_capacity_by_device,
-                ),
+                seed,
                 (
                     compile_simulation_template(
                         program,
@@ -464,7 +537,7 @@ def _build_contexts(
                     else None
                 ),
                 (
-                    compile_residency_template(facts, config)
+                    compile_residency_template(facts, config, seed)
                     if compiled_planner_available
                     else None
                 ),
@@ -578,12 +651,22 @@ def pressurefit(
     )
     assert best.schedule is not None
     assert best.simulation is not None
+    final_simulation = (
+        simulate_compiled_template(
+            best.spec.context.compiled_template,
+            best.schedule,
+        )
+        if isinstance(best.simulation, CompiledSimulationSummary)
+        and best.spec.context.compiled_template is not None
+        else best.simulation
+    )
+    assert isinstance(final_simulation, SimulationResult)
     diagnostics = PressureFitDiagnostics(
         selected_candidate_id=best.spec.candidate_id,
         selected_selection_id=best.spec.context.selection_id,
         candidate_count=len(outcomes),
         valid_candidate_count=len(valid),
-        selected_makespan_ns=best.simulation.makespan_ns,
+        selected_makespan_ns=final_simulation.makespan_ns,
         candidates=tuple(outcome.diagnostic for outcome in outcomes),
     )
     return PressureFitResult(
@@ -593,7 +676,7 @@ def pressurefit(
         simulation_config=config,
         schedule=best.schedule,
         selections=best.spec.context.selections,
-        simulation=best.simulation,
+        simulation=final_simulation,
         diagnostics=diagnostics,
     )
 

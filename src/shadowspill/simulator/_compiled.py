@@ -125,6 +125,13 @@ class CompiledSimulationTemplate:
     task_resources: tuple[tuple[ResourceKind, int], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CompiledSimulationSummary:
+    """Selection-only result that avoids materializing interval records."""
+
+    makespan_ns: int
+
+
 def compile_simulation_template(
     program: Program,
     selections: tuple[RecomputationSelection, ...],
@@ -149,9 +156,7 @@ def compile_simulation_template(
     }
     profiles = {item.profile_id: item for item in program.profiles}
     tasks = (
-        program.selected_tasks(selections)
-        if selected_tasks is None
-        else selected_tasks
+        program.selected_tasks(selections) if selected_tasks is None else selected_tasks
     )
     task_ids = tuple(item.task_id for item in tasks)
     task_index = {value: index for index, value in enumerate(task_ids)}
@@ -297,14 +302,10 @@ def _bind_schedule(
     """Bind candidate-only arrays to one immutable compiled topology."""
 
     action_tasks = _u32_array(
-        tuple(
-            template.task_index[item.trigger_task_id] for item in schedule.actions
-        )
+        tuple(template.task_index[item.trigger_task_id] for item in schedule.actions)
     )
     action_aliases = _u32_array(
-        tuple(
-            template.alias_index[item.alias_group_id] for item in schedule.actions
-        )
+        tuple(template.alias_index[item.alias_group_id] for item in schedule.actions)
     )
     action_kinds = _u8_array(
         tuple(_ACTION_CODE[item.kind] for item in schedule.actions)
@@ -430,10 +431,29 @@ def simulate_compiled_template(
     return _simulate_projection(_bind_schedule(template, schedule), schedule)
 
 
-def _simulate_projection(
+def simulate_compiled_template_summary(
+    template: CompiledSimulationTemplate,
+    schedule: MemorySchedule,
+) -> CompiledSimulationSummary:
+    """Replay a candidate without decoding its detailed interval report."""
+
+    projection = _bind_schedule(template, schedule)
+    _task_buffer, _transfer_buffer, _peak_buffer, result = _run_projection(
+        projection,
+        schedule,
+    )
+    return CompiledSimulationSummary(int(result.makespan_ns))
+
+
+def _run_projection(
     projection: _Projection,
     schedule: MemorySchedule,
-) -> SimulationResult:
+) -> tuple[
+    ctypes.Array[CTaskInterval],
+    ctypes.Array[CTransferInterval],
+    ctypes.Array[CDevicePeak],
+    CResult,
+]:
     task_buffer = (CTaskInterval * max(1, len(projection.task_ids)))()
     transfer_buffer = (CTransferInterval * max(1, len(schedule.actions)))()
     peak_buffer = (CDevicePeak * len(projection.device_ids))()
@@ -454,6 +474,17 @@ def _simulate_projection(
     )
     if status != 0:
         _raise_error(status, result, projection)
+    return task_buffer, transfer_buffer, peak_buffer, result
+
+
+def _simulate_projection(
+    projection: _Projection,
+    schedule: MemorySchedule,
+) -> SimulationResult:
+    task_buffer, transfer_buffer, peak_buffer, result = _run_projection(
+        projection,
+        schedule,
+    )
     task_intervals = tuple(
         TaskInterval(
             task_id=projection.task_ids[item.task],
@@ -517,8 +548,10 @@ def _simulate_projection(
 
 
 __all__ = [
+    "CompiledSimulationSummary",
     "CompiledSimulationTemplate",
     "compile_simulation_template",
     "simulate_compiled",
     "simulate_compiled_template",
+    "simulate_compiled_template_summary",
 ]

@@ -34,6 +34,7 @@ class PlanningFacts:
     production_boundaries: tuple[frozenset[int], ...]
     write_boundaries: tuple[tuple[int, ...], ...]
     output_reservations: tuple[tuple[int, ...], ...]
+    input_tasks: tuple[tuple[int, ...], ...]
     first_input_tasks: tuple[int, ...]
     object_capacity_by_device: dict[str, int]
     task_ideal_end_ns: tuple[int, ...]
@@ -100,6 +101,7 @@ def build_facts(
     productions: list[set[int]] = [set() for _ in aliases]
     writes: list[set[int]] = [set() for _ in aliases]
     reservations: list[tuple[int, ...]] = []
+    consumers: list[list[int]] = [[] for _ in aliases]
     produced_aliases: set[int] = set()
 
     for alias_id, location in initial.items():
@@ -117,6 +119,8 @@ def build_facts(
         for alias_number in input_aliases | mutation_aliases:
             anchor_sets[alias_number].add(index - 1)
             accesses[alias_number].add((index - 1, index))
+        for alias_number in input_aliases:
+            consumers[alias_number].append(index)
         for alias_number in output_aliases:
             anchor_sets[alias_number].add(index)
             accesses[alias_number].add((index, index))
@@ -188,6 +192,7 @@ def build_facts(
         production_boundaries=tuple(frozenset(values) for values in productions),
         write_boundaries=tuple(tuple(sorted(values)) for values in writes),
         output_reservations=tuple(reservations),
+        input_tasks=tuple(tuple(values) for values in consumers),
         first_input_tasks=tuple(
             min(
                 (task for boundary, task in values if boundary == task - 1),

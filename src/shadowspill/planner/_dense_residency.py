@@ -24,6 +24,8 @@ from .model import PressureFitInfeasibleError
 
 def _array(ctype: Any, values: list[int]) -> Any:
     array_type = ctype * max(1, len(values))
+    if ctype is ctypes.c_uint8 and values:
+        return array_type.from_buffer_copy(bytes(values))
     return array_type(*values) if values else array_type()
 
 
@@ -35,11 +37,15 @@ class CompiledResidencyTemplate:
     buffers: tuple[object, ...]
     facts: PlanningFacts
     device_ids: tuple[str, ...]
+    seed: ResidencyPlan
+    seed_resident: Any
+    seed_breaks: Any
 
 
 def compile_residency_template(
     facts: PlanningFacts,
     config: SimulationConfig,
+    seed: ResidencyPlan,
 ) -> CompiledResidencyTemplate:
     alias_count = len(facts.alias_ids)
     boundary_count = len(facts.tasks) + 1
@@ -146,6 +152,13 @@ def compile_residency_template(
             [device_priority_by_id[value] for value in device_ids],
         )
     )
+    seed_resident_values, seed_break_values = _project_plan(
+        seed,
+        alias_count=alias_count,
+        boundary_count=boundary_count,
+    )
+    seed_resident = keep(_array(ctypes.c_uint8, seed_resident_values))
+    seed_breaks = keep(_array(ctypes.c_uint8, seed_break_values))
     problem = CResidencyProblem(
         abi_version=ABI_VERSION,
         alias_count=alias_count,
@@ -168,7 +181,15 @@ def compile_residency_template(
         device_capacity_bytes=capacities,
         device_priority=priorities,
     )
-    return CompiledResidencyTemplate(problem, tuple(buffers), facts, device_ids)
+    return CompiledResidencyTemplate(
+        problem,
+        tuple(buffers),
+        facts,
+        device_ids,
+        seed,
+        seed_resident,
+        seed_breaks,
+    )
 
 
 def _project_plan(
@@ -227,34 +248,30 @@ def reduce_residency_compiled(
 ) -> ResidencyPlan:
     alias_count = int(template.problem.alias_count)
     boundary_count = int(template.problem.boundary_count)
-    resident_values, break_values = _project_plan(
-        seed,
-        alias_count=alias_count,
-        boundary_count=boundary_count,
-    )
-    seed_resident = _array(ctypes.c_uint8, resident_values)
-    seed_breaks = _array(ctypes.c_uint8, break_values)
-    extras = [0] * (len(template.device_ids) * boundary_count)
+    if seed != template.seed:
+        raise ValueError("compiled residency template received a different seed")
+    cell_count = alias_count * boundary_count
+    extra_count = len(template.device_ids) * boundary_count
+    extra_buffer = (ctypes.c_uint64 * max(1, extra_count))()
     device_index = {
         device_id: index for index, device_id in enumerate(template.device_ids)
     }
     for (device_id, boundary), value in (extra_pressure or {}).items():
-        extras[device_index[device_id] * boundary_count + boundary + 1] = value
-    extra_buffer = _array(ctypes.c_uint64, extras)
-    output_resident = _array(ctypes.c_uint8, [0] * len(resident_values))
-    output_breaks = _array(ctypes.c_uint8, [0] * len(break_values))
+        extra_buffer[device_index[device_id] * boundary_count + boundary + 1] = value
+    output_resident = (ctypes.c_uint8 * max(1, cell_count))()
+    output_breaks = (ctypes.c_uint8 * max(1, cell_count))()
     options = CResidencyOptions(
         minimize_transfer=int(strategy.endswith("transfer")),
         prefetch_headroom=int(strategy.startswith("headroom")),
-        seed_resident=seed_resident,
-        seed_breaks=seed_breaks,
+        seed_resident=template.seed_resident,
+        seed_breaks=template.seed_breaks,
         extra_pressure_bytes=extra_buffer,
     )
     result = CResidencyResult(
         resident=output_resident,
-        resident_capacity=len(resident_values),
+        resident_capacity=cell_count,
         breaks=output_breaks,
-        break_capacity=len(break_values),
+        break_capacity=cell_count,
     )
     status = int(
         load_planner_library().shadowspill_reduce_residency(
