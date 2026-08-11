@@ -110,6 +110,7 @@ class AdmissionError(ValueError):
         position: int | None = None,
         free_bytes: int | None = None,
         largest_free_range_bytes: int | None = None,
+        free_range_evidence: tuple[tuple[int, int, str | None, str | None], ...] = (),
     ) -> None:
         super().__init__(message)
         self.kind = kind
@@ -118,6 +119,40 @@ class AdmissionError(ValueError):
         self.position = position
         self.free_bytes = free_bytes
         self.largest_free_range_bytes = largest_free_range_bytes
+        self.free_range_evidence = free_range_evidence
+
+
+def _free_range_evidence(
+    ranges: list[tuple[int, int]],
+    live: dict[str, tuple[int, int]],
+) -> tuple[tuple[int, int, str | None, str | None], ...]:
+    """Describe the live allocations immediately bordering largest holes."""
+
+    live_by_offset = sorted(
+        (offset, bytes_, allocation_id)
+        for allocation_id, (offset, bytes_) in live.items()
+    )
+    evidence: list[tuple[int, int, str | None, str | None]] = []
+    for offset, bytes_ in sorted(ranges, key=lambda item: (-item[1], item[0]))[:4]:
+        end = offset + bytes_
+        left = next(
+            (
+                allocation_id
+                for live_offset, live_bytes, allocation_id in reversed(live_by_offset)
+                if live_offset + live_bytes == offset
+            ),
+            None,
+        )
+        right = next(
+            (
+                allocation_id
+                for live_offset, _live_bytes, allocation_id in live_by_offset
+                if live_offset == end
+            ),
+            None,
+        )
+        evidence.append((offset, bytes_, left, right))
+    return tuple(evidence)
 
 
 def _insert_and_coalesce(
@@ -174,16 +209,19 @@ def replay_slab_timeline(
             if not candidates:
                 free_bytes = sum(bytes_ for _, bytes_ in ranges)
                 largest = max((bytes_ for _, bytes_ in ranges), default=0)
+                evidence = _free_range_evidence(ranges, live)
                 raise AdmissionError(
                     f"allocation {event.allocation_id!r} needs {event.bytes} bytes "
                     f"at position {event.position}, but the slab has {free_bytes} "
-                    f"free bytes and a {largest}-byte largest range",
+                    f"free bytes and a {largest}-byte largest range; "
+                    f"largest holes (offset, bytes, left, right)={evidence}",
                     kind="slab_fragmentation",
                     required_bytes=event.bytes,
                     capacity_bytes=slab_bytes,
                     position=event.position,
                     free_bytes=free_bytes,
                     largest_free_range_bytes=largest,
+                    free_range_evidence=evidence,
                 )
             if event.planned:
                 aligned, index, leading, _available = min(candidates)

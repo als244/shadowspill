@@ -55,6 +55,10 @@ def test_spatial_replay_reports_fragmentation_not_only_total_free() -> None:
     assert captured.value.free_bytes == 64
     assert captured.value.largest_free_range_bytes == 32
     assert captured.value.position == 5
+    assert captured.value.free_range_evidence == (
+        (0, 32, None, "middle"),
+        (64, 32, "middle", None),
+    )
 
 
 def test_anonymous_replay_uses_smallest_compatible_range() -> None:

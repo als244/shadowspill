@@ -13,11 +13,12 @@ class _Network(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.layers = nn.ModuleList([nn.Linear(128, 128, bias=False) for _ in range(2)])
+        self.register_buffer("runtime_scale", torch.tensor(1.0), persistent=False)
 
     def forward(self, value: torch.Tensor, width: int) -> tuple[torch.Tensor, ...]:
         for layer in self.layers:
             value = torch.relu(layer(value))
-        return (value[:, :width],)
+        return (value[:, :width] * self.runtime_scale,)
 
 
 @pytest.mark.cuda
@@ -48,6 +49,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     )
 
     snapshot = planned.state_dict()
+    assert "runtime_scale" not in snapshot
     planned.load_state_dict(
         {name: torch.zeros_like(value) for name, value in snapshot.items()}
     )

@@ -37,6 +37,14 @@ fragmentation even when aggregate free bytes appear sufficient. Sequential
 temporaries contribute their net simultaneously-live peak, not allocation
 volume.
 
+Simulator workspace is a scalar capacity charge, while slab admission requires
+the physical extent multiset. Structural allocator telemetry supplies task
+temporary extents. Frontend work performed inside a task boundary but outside
+the compiled graph must also declare its individual extents; ShadowSpill never
+turns an aggregate byte charge into one fictitious contiguous allocation. For
+gradient accumulation, each returned per-parameter contribution remains one
+extent even though the simulator charges their sum.
+
 There is no hidden layout allowance. An operation with unbounded direct device
 allocation is rejected during planning. Unexpected steady-state physical
 growth latches a runtime failure rather than silently exceeding the cap.

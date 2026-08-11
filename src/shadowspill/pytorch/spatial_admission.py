@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill.ir import MemoryActionKind, MemoryLocation
+from shadowspill.ir import MemoryActionKind, MemoryLocation, TaskSpec
 from shadowspill.planner import PressureFitResult
 from shadowspill.runtime import (
     AllocationEvent,
@@ -56,6 +56,7 @@ def replay_selected_schedule(
         item.alias_group_id: max(1, item.size_bytes) for item in program.alias_groups
     }
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
+    object_size = {item.object_id: item.size_bytes for item in program.objects}
     profile_by_id = {item.profile_id: item for item in program.profiles}
     task_by_id = {
         item.task_id: item for item in program.selected_tasks(selected.selections)
@@ -105,12 +106,12 @@ def replay_selected_schedule(
                 "spatial admission lacks task measurement "
                 f"{profile.compatibility_digest!r}"
             ) from exc
-        extents = list(measurement.workspace_extent_bytes)
-        unclassified = profile.workspace_bytes - sum(extents)
-        if unclassified < 0:
-            raise ValueError("profile workspace extents exceed charged workspace")
-        if unclassified:
-            extents.append(unclassified)
+        extents = _task_workspace_extents(
+            task,
+            profile.workspace_bytes,
+            measurement,
+            object_size,
+        )
         for ordinal, bytes_ in enumerate(extents):
             identity = f"workspace:{task_id}:{ordinal}"
             append(
@@ -225,6 +226,30 @@ def replay_selected_schedule(
                 )
             )
     return replay_slab_timeline(slab_bytes, tuple(allocation_events))
+
+
+def _task_workspace_extents(
+    task: TaskSpec,
+    workspace_bytes: int,
+    measurement: TaskMeasurement,
+    object_size: Mapping[str, int],
+) -> tuple[int, ...]:
+    """Recover physical extents hidden behind a scalar simulator charge."""
+
+    extents = measurement.workspace_extent_bytes
+    unclassified = workspace_bytes - sum(extents)
+    if unclassified < 0:
+        raise ValueError("profile workspace extents exceed charged workspace")
+    if not unclassified:
+        return extents
+    contribution_extents = tuple(object_size[item.object_id] for item in task.mutations)
+    if sum(contribution_extents) != unclassified:
+        raise ValueError(
+            "task workspace has no complete physical extent distribution: "
+            f"task={task.task_id}, "
+            f"unclassified={unclassified}, mutations={sum(contribution_extents)}"
+        )
+    return (*extents, *contribution_extents)
 
 
 __all__ = ["replay_selected_schedule"]

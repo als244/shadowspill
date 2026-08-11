@@ -17,9 +17,10 @@ class _TrainingNetwork(nn.Module):
         super().__init__()
         self.first = nn.Linear(6, 10)
         self.second = nn.Linear(10, 3)
+        self.register_buffer("runtime_scale", torch.tensor(1.0), persistent=False)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.second(torch.relu(self.first(value)))
+        return self.second(torch.relu(self.first(value))) * self.runtime_scale
 
 
 class _OpaqueSgd(torch.optim.Optimizer):
@@ -107,6 +108,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         torch.testing.assert_close(actual.cpu(), expected, rtol=2e-5, atol=2e-6)
 
     checkpoint = training.state_dict()
+    assert "runtime_scale" not in checkpoint["model"]
     with pytest.raises(RuntimeError, match="keys differ"):
         training.load_state_dict({})
     with pytest.raises(TypeError, match="mappings"):

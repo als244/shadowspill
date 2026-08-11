@@ -250,6 +250,7 @@ def lower_forward_program(
     device_id = f"cuda_{device_ordinal}"
     inventory = _TensorInventory(device_id=device_id)
     registrations: list[RegistrationBinding] = []
+    checkpoint_names = set(model.state_dict())
     for name, parameter in model.named_parameters(remove_duplicate=False):
         object_id = inventory.add(
             parameter,
@@ -267,7 +268,9 @@ def lower_forward_program(
         object_id = inventory.add(
             buffer,
             role=ObjectRole.BUFFER,
-            persistence=Persistence.CHECKPOINT,
+            persistence=(
+                Persistence.CHECKPOINT if name in checkpoint_names else Persistence.RUN
+            ),
             retain_host_backing=True,
         )
         registrations.append(RegistrationBinding(name, object_id, False))

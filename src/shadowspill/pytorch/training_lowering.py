@@ -948,6 +948,7 @@ def _register_model(
 ) -> tuple[tuple[RegistrationBinding, ...], dict[tuple[int, int], str]]:
     registrations: list[RegistrationBinding] = []
     parameter_objects: dict[tuple[int, int], str] = {}
+    checkpoint_names = set(model.state_dict())
     for name, parameter in model.named_parameters(remove_duplicate=False):
         object_id = inventory.add(
             parameter,
@@ -963,7 +964,9 @@ def _register_model(
         object_id = inventory.add(
             buffer,
             role=ObjectRole.BUFFER,
-            persistence=Persistence.CHECKPOINT,
+            persistence=(
+                Persistence.CHECKPOINT if name in checkpoint_names else Persistence.RUN
+            ),
             retain_host_backing=True,
         )
         registrations.append(RegistrationBinding(name, object_id, False))

@@ -26,6 +26,12 @@ idempotent, preserves Parameter objects and ties, restores host-authoritative
 bytes, and unregisters plan objects. Caller-retained outputs remain valid after
 close because they are no longer plan-owned.
 
+Registered buffers marked `persistent=False` remain runtime-owned and are
+restored on close, but they are omitted from checkpoints and are not required
+by `load_state_dict()`, matching ordinary PyTorch. Loading a checkpoint first
+preserves the current bytes of every non-persistent registration and then
+overwrites only checkpoint-persistent entries.
+
 The public `plan()` callable composes every fixed microbatch position into
 forward, objective, backward, and gradient-accumulation tasks followed by one
 optimizer update. It preserves the original model and optimizer checkpoint

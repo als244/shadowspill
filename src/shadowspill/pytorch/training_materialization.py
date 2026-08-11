@@ -258,10 +258,15 @@ class TrainingMaterializedState:
         expected = set(self._state_names)
         if set(state) != expected:
             raise RuntimeError("model state_dict keys differ")
-        self.bridge.wait_idle()
-        owners = self._empty_model_aliases()
+        owners = self._read_model_aliases()
         for item in self._registrations():
+            if item.binding.name not in expected:
+                continue
             source = state[item.binding.name]
+            if not isinstance(source, torch.Tensor):
+                raise TypeError(
+                    f"model state entry {item.binding.name!r} must be a tensor"
+                )
             destination = self._cpu_view(
                 owners[self.bridge.alias_for_object(item.binding.object_id)],
                 item.tensor,
@@ -270,7 +275,7 @@ class TrainingMaterializedState:
                 raise RuntimeError(
                     f"model state entry {item.binding.name!r} has incompatible geometry"
                 )
-            destination.copy_(source.detach().cpu())
+            destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
             self.bridge.write_host_tensor(alias_id, owner)
 

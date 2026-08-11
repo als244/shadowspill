@@ -583,6 +583,28 @@ Phase 9 — model-scale numerical qualification and allocator diagnosis.
   8.86 ms cold to 0.84 ms warm with identical scheduling inputs. The complete
   Python suite, all 16 CTest canaries, Ruff, strict mypy, naming, and whitespace
   gates pass.
+- The recurring exact-scale 634,400,768-byte fragmentation failure was a
+  physical-replay bug, not a real allocator request. Training lowering charges
+  the sum of per-parameter gradient contributions as task workspace for the
+  simulator; admission had reconstructed that scalar sum as one contiguous
+  extent. It now preserves the measured task extents plus each mutated
+  gradient object's actual extent. No simulator byte, PressureFit selection,
+  or action changed.
+- With corrected geometry, exact 1.180B Llama at a strict 10-GiB cap admitted
+  159 tasks and all 965 selected actions, including 7.08 GB D2H, 1.17 GB H2D,
+  and eleven selected recomputation stages. Five two-microbatch steps completed
+  in 0.482/0.337/0.337/0.350/0.350 seconds. Restoring the step-three checkpoint
+  reproduced steps four and five bitwise for losses and the complete
+  model/optimizer digest, then closed cleanly.
+- Exact checkpoint replay exposed that non-persistent PyTorch buffers were
+  incorrectly required by `load_state_dict()`. Forward and training now retain
+  those runtime buffers while loading only ordinary state-dict names; lowering
+  marks them `RUN`, not `CHECKPOINT`. CUDA lifecycle regressions cover this.
+- The matching eager external-mlops run used identical CPU-generated inputs.
+  Step-one objectives were bitwise equal; later objectives stayed within
+  sub-percent BF16 relative drift except one 9.5e-4 step-five loss whose
+  1.3e-5 absolute difference is 1.36% relative. Full per-tensor parameter and
+  optimizer-state metrics remain the next numerical gate.
 
 ## Gate rule
 

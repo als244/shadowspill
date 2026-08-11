@@ -162,8 +162,7 @@ class MaterializedForwardState:
             raise RuntimeError(
                 f"state_dict keys differ: missing={missing}, unexpected={unexpected}"
             )
-        self.bridge.wait_idle()
-        owners = self._empty_model_aliases()
+        owners = self._read_model_aliases()
         for item in self._registrations():
             name = item.binding.name
             if name not in expected:
