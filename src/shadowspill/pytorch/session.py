@@ -41,7 +41,10 @@ from .partition import capture_forward_stages, partition_export
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import PlannedForward, PlanReport
 from .runtime_bridge import RuntimeBridge
-from .spatial_admission import replay_selected_schedule
+from .spatial_admission import (
+    output_bindings_for_entrypoints,
+    replay_selected_schedule,
+)
 
 _MIB = 1 << 20
 _PROVIDER_HEADROOM = 512 * _MIB
@@ -182,6 +185,14 @@ def build_forward(
                 selected,
                 measurements,
                 slab_bytes=int(installed.admission.slab_bytes),
+                output_bindings=output_bindings_for_entrypoints(
+                    selected.program.selected_tasks(selected.selections),
+                    lowered.entrypoints,
+                    {
+                        item.object_id: item.alias_group_id
+                        for item in selected.program.objects
+                    },
+                ),
             )
         except AdmissionError as exc:
             raise PlanningError(f"slab spatial admission failed: {exc}") from exc

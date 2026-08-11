@@ -225,6 +225,24 @@ static int dispatch_prefetch_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
+    for (ShadowSpillQueuedAction *earlier = runtime->action_head;
+         earlier != NULL && earlier != action; earlier = earlier->next) {
+        if (earlier->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            return 0;
+        }
+    }
+    int trigger_complete = 0;
+    if (event_complete_locked(
+            runtime,
+            action->fence->event,
+            action->object->object_id,
+            &trigger_complete
+        ) != 0) {
+        return -1;
+    }
+    if (!trigger_complete) {
+        return 0;
+    }
     ShadowSpillObjectRecord *object = action->object;
     ShadowSpillAllocationRecord *allocation = NULL;
     ShadowSpillRuntimeStatus allocation_status = shadowspill_allocate_locked(

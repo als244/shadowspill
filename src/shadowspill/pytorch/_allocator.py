@@ -11,6 +11,7 @@ import torch
 
 from ._abi import (
     ADAPTER_ABI_VERSION,
+    RUNTIME_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
     PhysicalAdmission,
@@ -134,7 +135,11 @@ def install_allocator(
     status = int(
         library.shadowspill_pytorch_adapter_capabilities(ctypes.byref(capabilities))
     )
-    if status != 0 or capabilities.abi_version != ADAPTER_ABI_VERSION:
+    if (
+        status != 0
+        or capabilities.abi_version != ADAPTER_ABI_VERSION
+        or capabilities.runtime_abi_version != RUNTIME_ABI_VERSION
+    ):
         raise AllocatorInstallError("PyTorch adapter capability/ABI validation failed")
     allocator: Any = cuda.memory.CUDAPluggableAllocator(
         str(path),

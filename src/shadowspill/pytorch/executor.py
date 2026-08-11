@@ -160,6 +160,10 @@ class ForwardExecutor:
         self._invocations = 0
 
     def __call__(self, arguments: Sequence[object]) -> object:
+        if self._invocations:
+            # Forward v1 is also non-cyclic: begin only after the preceding
+            # invocation reaches its declared terminal residency.
+            self._bridge.wait_idle()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
             self._initial_prefetch_action(alias_id)

@@ -38,7 +38,10 @@ from .session import (
     _simulation_capacity,
     _workspace_reserve,
 )
-from .spatial_admission import replay_selected_schedule
+from .spatial_admission import (
+    output_bindings_for_entrypoints,
+    replay_selected_schedule,
+)
 from .training_executor import TrainingExecutor
 from .training_lowering import (
     lower_partitioned_training_program,
@@ -238,6 +241,16 @@ def build_training(
                         recurrent_selected,
                         measurements,
                         slab_bytes=int(installed.admission.slab_bytes),
+                        output_bindings=output_bindings_for_entrypoints(
+                            recurrent_selected.program.selected_tasks(
+                                recurrent_selected.selections
+                            ),
+                            recurrent_lowered.entrypoints,
+                            {
+                                item.object_id: item.alias_group_id
+                                for item in recurrent_selected.program.objects
+                            },
+                        ),
                     )
                 ]
                 if initial_selected is not None:
@@ -246,6 +259,16 @@ def build_training(
                             initial_selected,
                             measurements,
                             slab_bytes=int(installed.admission.slab_bytes),
+                            output_bindings=output_bindings_for_entrypoints(
+                                initial_selected.program.selected_tasks(
+                                    initial_selected.selections
+                                ),
+                                initial_lowered.entrypoints,
+                                {
+                                    item.object_id: item.alias_group_id
+                                    for item in initial_selected.program.objects
+                                },
+                            ),
                         )
                     )
             except AdmissionError as exc:

@@ -13,6 +13,8 @@ from shadowspill.pytorch.partition import capture_forward_stages, partition_expo
 from shadowspill.pytorch.profiling import (
     ProfileCache,
     ProfileEnvironment,
+    TaskAllocationEvent,
+    TaskAllocationOperation,
     TaskMeasurement,
     profile_unique_artifacts,
 )
@@ -64,6 +66,20 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
             workspace_extent_bytes=(64,),
             samples_ns=(90, 100, 110),
             provenance="unit-test",
+            allocation_trace=(
+                TaskAllocationEvent(
+                    0,
+                    TaskAllocationOperation.ALLOCATE,
+                    64,
+                    64,
+                ),
+                TaskAllocationEvent(
+                    0,
+                    TaskAllocationOperation.FREE,
+                    64,
+                    64,
+                ),
+            ),
         )
 
     cache = ProfileCache(tmp_path)

@@ -64,6 +64,8 @@ void shadowspill_append_allocation_event_locked(
     uint64_t task_id = shadowspill_current_task_id(runtime);
     if (kind == SHADOWSPILL_ALLOCATION_CREATED) {
         task_id = allocation->origin_task_id;
+    } else if (kind == SHADOWSPILL_ALLOCATION_LOGICAL_FREED) {
+        task_id = allocation->origin_task_id;
     } else if (kind == SHADOWSPILL_ALLOCATION_RELEASED) {
         task_id = allocation->release_task_id;
     }

@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 6U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 7U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -56,6 +56,7 @@ typedef enum ShadowSpillAllocationEventKind {
     SHADOWSPILL_ALLOCATION_CREATED = 0,
     SHADOWSPILL_ALLOCATION_RELEASED = 1,
     SHADOWSPILL_ALLOCATION_PROMOTED = 2,
+    SHADOWSPILL_ALLOCATION_LOGICAL_FREED = 3,
 } ShadowSpillAllocationEventKind;
 
 typedef enum ShadowSpillAllocationCategory {
@@ -224,10 +225,11 @@ shadowspill_allocation_for_pointer(
 );
 
 /*
- * Performs logical free immediately. Physical reuse waits for events recorded
- * on the supplied stream and every stream previously passed to record_stream.
- * Plan-owned allocations ignore framework logical free until a plan action
- * releases or offloads the owning object.
+ * Performs logical free immediately. A later allocation on the sole recorded
+ * stream may reuse the whole pending block by adding its retirement event as a
+ * stream dependency. Global and background-transfer reuse waits for every
+ * recorded stream to retire. Plan-owned allocations ignore framework logical
+ * free until a plan action releases or offloads the owning object.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_free(
     ShadowSpillRuntime *runtime,

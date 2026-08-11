@@ -1,5 +1,8 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
@@ -48,6 +51,80 @@ static void fixture_destroy(Fixture *fixture) {
         );
     }
     shadowspill_mock_backend_destroy(fixture->mock);
+}
+
+static void sleep_milliseconds(uint64_t milliseconds) {
+    const struct timespec delay = {
+        .tv_sec = (time_t)(milliseconds / 1000U),
+        .tv_nsec = (long)((milliseconds % 1000U) * 1000000U),
+    };
+    (void)nanosleep(&delay, NULL);
+}
+
+static int prefetch_admission_follows_transfer_timeline(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .h2d_delay_nanoseconds = 100000000U,
+        .event_delay_nanoseconds = 50000000U,
+    };
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 128U,
+        .host_arena_bytes = 128U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 100000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig configured = runtime_config;
+    configured.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&configured, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+    const ShadowSpillObjectDescription objects[] = {
+        {.object_id = 1U, .size_bytes = 32U, .initially_host_resident = 1U},
+        {.object_id = 2U, .size_bytes = 32U, .initially_host_resident = 1U},
+    };
+    const ShadowSpillRuntimeAction actions[] = {
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+    };
+    int failed = shadowspill_register_object(runtime, &objects[0]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &objects[1]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, actions, 2U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    sleep_milliseconds(5U);
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.live_allocations != 0U ||
+        statistics.transfers_to_device != 0U;
+    sleep_milliseconds(60U);
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.live_allocations != 1U ||
+        statistics.transfers_to_device != 1U;
+    failed = failed || shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.live_allocations != 2U ||
+        statistics.transfers_to_device != 2U;
+    shadowspill_runtime_destroy(runtime);
+    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
 }
 
 static int invalid_action(
@@ -344,7 +421,8 @@ int main(void) {
             invalid_before_task(0U) == 0 &&
             invalid_before_task(1U) == 0 && duplicate_action() == 0 &&
             output_allocation_handoff() == 0 &&
-            valid_transition_paths() == 0
+            valid_transition_paths() == 0 &&
+            prefetch_admission_follows_transfer_timeline() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

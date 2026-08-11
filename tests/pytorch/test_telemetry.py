@@ -23,6 +23,8 @@ def _event(
     *,
     task_id: int = 7,
     category: AllocationCategory = AllocationCategory.ANONYMOUS,
+    slab_offset: int = 0,
+    charged_bytes: int | None = None,
 ) -> CapturedAllocationEvent:
     return CapturedAllocationEvent(
         sequence=sequence,
@@ -30,8 +32,8 @@ def _event(
         allocation_id=allocation_id,
         generation=allocation_id,
         requested_bytes=bytes_,
-        charged_bytes=max(bytes_, 1),
-        slab_offset=0,
+        charged_bytes=max(bytes_, 1) if charged_bytes is None else charged_bytes,
+        slab_offset=slab_offset,
         kind=kind,
         category=category,
     )
@@ -40,11 +42,11 @@ def _event(
 def test_workspace_uses_live_peak_and_excludes_promoted_outputs() -> None:
     events = (
         _event(0, 1, AllocationEventKind.CREATED, 64),
-        _event(1, 1, AllocationEventKind.RELEASED, 64),
+        _event(1, 1, AllocationEventKind.LOGICAL_FREED, 64),
         _event(2, 2, AllocationEventKind.CREATED, 96),
         _event(3, 3, AllocationEventKind.CREATED, 32),
         _event(4, 3, AllocationEventKind.PROMOTED, 32),
-        _event(5, 2, AllocationEventKind.RELEASED, 96),
+        _event(5, 2, AllocationEventKind.LOGICAL_FREED, 96),
     )
     profile = summarize_task_workspace(events, task_id=7)
     assert profile.peak_requested_bytes == 96
@@ -58,19 +60,69 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
     events = (
         _event(0, 10, AllocationEventKind.CREATED, 128),
         _event(1, 11, AllocationEventKind.CREATED, 64),
-        _event(2, 11, AllocationEventKind.RELEASED, 64),
+        _event(2, 11, AllocationEventKind.LOGICAL_FREED, 64),
     )
-    profile = summarize_task_workspace(events, task_id=7, output_allocation_ids=(10,))
+    profile = summarize_task_workspace(
+        events, task_id=7, output_allocation_leaves={10: (0,)}
+    )
     assert profile.peak_charged_bytes == 64
     assert profile.output_allocation_ids == (10,)
+    assert profile.allocation_trace[0].output_leaf_indices == (0,)
 
 
 def test_workspace_ignores_other_tasks_and_unknown_prior_release() -> None:
     events = (
-        _event(0, 1, AllocationEventKind.RELEASED, 64),
+        _event(0, 1, AllocationEventKind.LOGICAL_FREED, 64),
         _event(1, 2, AllocationEventKind.CREATED, 48, task_id=8),
     )
     assert summarize_task_workspace(events, task_id=7).peak_charged_bytes == 0
+
+
+def test_trace_identifies_same_stream_cached_extent_reuse() -> None:
+    events = (
+        _event(0, 1, AllocationEventKind.CREATED, 64, slab_offset=128),
+        _event(1, 1, AllocationEventKind.LOGICAL_FREED, 64, slab_offset=128),
+        _event(2, 2, AllocationEventKind.CREATED, 64, slab_offset=128),
+        _event(3, 2, AllocationEventKind.LOGICAL_FREED, 64, slab_offset=128),
+    )
+    profile = summarize_task_workspace(events, task_id=7)
+    assert profile.allocation_trace[2].reuses_ordinal == 0
+    assert profile.allocation_trace[2].charged_bytes == 64
+
+
+def test_trace_treats_a_split_cached_extent_as_an_ordinary_suballocation() -> None:
+    events = (
+        _event(0, 1, AllocationEventKind.CREATED, 64, slab_offset=128),
+        _event(1, 1, AllocationEventKind.LOGICAL_FREED, 64, slab_offset=128),
+        _event(2, 2, AllocationEventKind.CREATED, 48, slab_offset=128),
+        _event(
+            3,
+            1,
+            AllocationEventKind.RELEASED,
+            0,
+            slab_offset=176,
+            charged_bytes=16,
+        ),
+        _event(4, 2, AllocationEventKind.LOGICAL_FREED, 48, slab_offset=128),
+    )
+    profile = summarize_task_workspace(events, task_id=7)
+    assert profile.allocation_trace[2].reuses_ordinal is None
+    assert profile.allocation_trace[2].charged_bytes == 48
+
+
+def test_physical_release_breaks_cached_extent_reuse() -> None:
+    events = (
+        _event(0, 1, AllocationEventKind.CREATED, 64, slab_offset=128),
+        _event(1, 1, AllocationEventKind.LOGICAL_FREED, 64, slab_offset=128),
+        _event(2, 1, AllocationEventKind.RELEASED, 64, slab_offset=128),
+        _event(3, 2, AllocationEventKind.CREATED, 64, slab_offset=128),
+    )
+    profile = summarize_task_workspace(
+        events,
+        task_id=7,
+        output_allocation_leaves={2: (0,)},
+    )
+    assert profile.allocation_trace[2].reuses_ordinal is None
 
 
 class _ReadFunction:

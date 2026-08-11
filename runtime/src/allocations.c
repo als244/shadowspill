@@ -11,6 +11,14 @@ static int stream_equal(
     return memcmp(&left, &right, sizeof(left)) == 0;
 }
 
+static void free_stream_records(ShadowSpillStreamRecord *streams) {
+    while (streams != NULL) {
+        ShadowSpillStreamRecord *next = streams->next;
+        free(streams);
+        streams = next;
+    }
+}
+
 ShadowSpillAllocationRecord *shadowspill_find_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t allocation_id
@@ -133,6 +141,172 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
+static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillBackendStream stream,
+    uint64_t origin_task_id,
+    ShadowSpillAllocationRecord **record
+) {
+    const uint64_t required = bytes == 0U ? 1U : bytes;
+    if (alignment < runtime->minimum_alignment) {
+        alignment = runtime->minimum_alignment;
+    }
+    ShadowSpillAllocationRecord *selected = NULL;
+    for (ShadowSpillAllocationRecord *candidate = runtime->allocations;
+         candidate != NULL; candidate = candidate->next) {
+        if (!candidate->logical_freed || candidate->pointer == NULL ||
+            candidate->retirement_events == NULL ||
+            candidate->ever_plan_owned || candidate->charged_bytes < required ||
+            candidate->offset % alignment != 0U) {
+            continue;
+        }
+        int stream_compatible = 1;
+        for (ShadowSpillStreamRecord *used = candidate->streams;
+             used != NULL; used = used->next) {
+            if (!stream_equal(used->stream, stream)) {
+                stream_compatible = 0;
+                break;
+            }
+        }
+        if (!stream_compatible) {
+            continue;
+        }
+        if (selected == NULL ||
+            candidate->charged_bytes < selected->charged_bytes ||
+            (candidate->charged_bytes == selected->charged_bytes &&
+             candidate->offset > selected->offset)) {
+            selected = candidate;
+        }
+    }
+    if (selected == NULL) {
+        *record = NULL;
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    ShadowSpillAllocationRecord *split = NULL;
+    if (selected->charged_bytes > required) {
+        split = calloc(1U, sizeof(*split));
+        if (split == NULL) {
+            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        }
+    }
+    for (ShadowSpillEventRecord *event = selected->retirement_events;
+         event != NULL; event = event->next) {
+        if (runtime->backend.wait_event(
+                runtime->backend.context, stream, event->event
+            ) != 0) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                selected->allocation_id,
+                bytes
+            );
+            free(split);
+            return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        }
+    }
+    if (split != NULL) {
+        const uint64_t allocation_offset = selected->offset;
+        runtime->requested_allocated_bytes -= selected->requested_bytes;
+        selected->requested_bytes = 0U;
+        selected->charged_bytes -= required;
+        selected->offset += required;
+        selected->pointer =
+            (void *)((unsigned char *)runtime->device_slab + selected->offset);
+
+        split->allocation_id = runtime->next_allocation_id++;
+        split->generation = runtime->next_generation++;
+        split->requested_bytes = bytes;
+        split->charged_bytes = required;
+        split->offset = allocation_offset;
+        split->origin_task_id = origin_task_id;
+        split->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->pointer =
+            (void *)((unsigned char *)runtime->device_slab + allocation_offset);
+        split->next = runtime->allocations;
+        runtime->allocations = split;
+        runtime->requested_allocated_bytes += bytes;
+        if (runtime->requested_allocated_bytes >
+            runtime->peak_requested_allocated_bytes) {
+            runtime->peak_requested_allocated_bytes =
+                runtime->requested_allocated_bytes;
+        }
+        ++runtime->live_allocations;
+        shadowspill_append_allocation_event_locked(
+            runtime,
+            split,
+            SHADOWSPILL_ALLOCATION_CREATED,
+            SHADOWSPILL_ALLOCATION_ANONYMOUS
+        );
+        *record = split;
+        return runtime->failure.status == SHADOWSPILL_RUNTIME_OK
+            ? SHADOWSPILL_RUNTIME_OK
+            : (ShadowSpillRuntimeStatus)runtime->failure.status;
+    }
+    ShadowSpillEventRecord *event = selected->retirement_events;
+    selected->retirement_events = NULL;
+    int destroy_failed = 0;
+    while (event != NULL) {
+        ShadowSpillEventRecord *next = event->next;
+        if (runtime->backend.destroy_event(
+                runtime->backend.context, event->event
+            ) != 0) {
+            destroy_failed = 1;
+        }
+        free(event);
+        event = next;
+    }
+    if (runtime->pending_retirements != 0U) {
+        --runtime->pending_retirements;
+    }
+    if (destroy_failed) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            selected->allocation_id,
+            bytes
+        );
+        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    }
+    runtime->requested_allocated_bytes -= selected->requested_bytes;
+    free_stream_records(selected->streams);
+    selected->streams = NULL;
+    selected->allocation_id = runtime->next_allocation_id++;
+    selected->generation = runtime->next_generation++;
+    selected->requested_bytes = bytes;
+    selected->origin_task_id = origin_task_id;
+    selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->logical_freed = 0;
+    selected->framework_free_seen = 0;
+    selected->plan_owned = 0;
+    selected->ever_plan_owned = 0;
+    runtime->requested_allocated_bytes += bytes;
+    if (runtime->requested_allocated_bytes >
+        runtime->peak_requested_allocated_bytes) {
+        runtime->peak_requested_allocated_bytes =
+            runtime->requested_allocated_bytes;
+    }
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        selected,
+        SHADOWSPILL_ALLOCATION_CREATED,
+        SHADOWSPILL_ALLOCATION_ANONYMOUS
+    );
+    *record = selected;
+    return runtime->failure.status == SHADOWSPILL_RUNTIME_OK
+        ? SHADOWSPILL_RUNTIME_OK
+        : (ShadowSpillRuntimeStatus)runtime->failure.status;
+}
+
 void shadowspill_release_allocation_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillAllocationRecord *allocation
@@ -178,7 +352,6 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     ShadowSpillBackendStream stream,
     ShadowSpillAllocation *allocation
 ) {
-    (void)stream;
     if (runtime == NULL || allocation == NULL || alignment == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
@@ -186,14 +359,24 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     while (status == SHADOWSPILL_RUNTIME_OK) {
         ShadowSpillAllocationRecord *record = NULL;
-        status = shadowspill_allocate_locked(
+        status = reuse_pending_allocation_locked(
             runtime,
             bytes,
             alignment,
-            0,
+            stream,
             shadowspill_current_task_id(runtime),
             &record
         );
+        if (status == SHADOWSPILL_RUNTIME_OK && record == NULL) {
+            status = shadowspill_allocate_locked(
+                runtime,
+                bytes,
+                alignment,
+                0,
+                shadowspill_current_task_id(runtime),
+                &record
+            );
+        }
         if (status == SHADOWSPILL_RUNTIME_OK) {
             *allocation = (ShadowSpillAllocation){
                 .allocation_id = record->allocation_id,
@@ -353,23 +536,6 @@ ShadowSpillRuntimeStatus shadowspill_free(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    int same_stream_only = 1;
-    for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
-         item = item->next) {
-        if (!stream_equal(item->stream, stream)) {
-            same_stream_only = 0;
-            break;
-        }
-    }
-    if (same_stream_only) {
-        allocation->release_task_id = shadowspill_current_task_id(runtime);
-        allocation->logical_freed = 1;
-        shadowspill_release_allocation_locked(runtime, allocation);
-        status = runtime->failure.status == SHADOWSPILL_RUNTIME_OK
-            ? SHADOWSPILL_RUNTIME_OK
-            : (ShadowSpillRuntimeStatus)runtime->failure.status;
-        goto done;
-    }
     ShadowSpillEventRecord *events = NULL;
     for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
          item = item->next) {
@@ -402,8 +568,17 @@ ShadowSpillRuntimeStatus shadowspill_free(
     allocation->retirement_events = events;
     allocation->release_task_id = shadowspill_current_task_id(runtime);
     allocation->logical_freed = 1;
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        allocation,
+        SHADOWSPILL_ALLOCATION_LOGICAL_FREED,
+        SHADOWSPILL_ALLOCATION_ANONYMOUS
+    );
     ++runtime->pending_retirements;
     pthread_cond_broadcast(&runtime->condition);
+    if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
+        status = (ShadowSpillRuntimeStatus)runtime->failure.status;
+    }
 
 done:
     pthread_mutex_unlock(&runtime->mutex);

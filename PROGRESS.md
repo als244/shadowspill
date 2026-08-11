@@ -611,3 +611,43 @@ Phase 9 — model-scale numerical qualification and allocator diagnosis.
 No later phase is declared active until the current phase passes all of its
 tests and is committed. Unexpected findings and design changes are recorded in
 the ignored internal progress log before this tracked summary is updated.
+
+## 2026-08-11 — Stream-safe anonymous reuse and exact Llama qualification
+
+- Task profiling now preserves the ordered allocator callback trace and maps
+  returned tensor storage to output leaves. Spatial admission replays those
+  concrete lifetimes rather than a sorted peak-extent multiset. Logical free
+  has its own telemetry transition; asynchronous physical release remains
+  separate and is not mistaken for the tensor lifetime.
+- The progress worker had leased every queued H2D destination as soon as Python
+  submitted the actions. The simulator leases at transfer start, after the
+  annotated trigger and earlier H2D work. The worker now preserves prefetch
+  queue order, waits for the trigger event before admission, and has at most one
+  H2D allocation/copy in flight. No directive or trigger moved.
+- A random AdamW scalar-step mismatch exposed a cross-stream use-after-free:
+  ordinary same-stream logical free returned the range to the global slab, so
+  the H2D worker could overwrite it before compute reached the free. Every
+  ordinary free now records retirement events. Only an allocation on the sole
+  recorded stream may reuse a pending block; background and other-stream reuse
+  wait for physical retirement.
+- Whole-block cached reuse was safe but caused severe internal fragmentation:
+  task 72 reused a 525,336,576-byte block for an 8,192-byte request and carried
+  that charge through a chain of small temporaries. A later 525,336,576-byte
+  gradient then failed despite adequate aggregate capacity. Cached reuse now
+  splits the requested aligned prefix; the unused suffix retains the original
+  retirement events and remains unavailable to transfer streams until safe.
+- Exact 1.180B Llama passed twice at a strict 10-GiB cap with two heterogeneous
+  microbatches, five steps, real D2H/H2D, eleven recomputation selections, and
+  two optimizer parameter groups. All 111 AdamW counters were exactly 3 at the
+  checkpoint and 5 after uninterrupted and replayed execution. Replay was
+  bitwise; minimum cosine was 0.999749, maximum relative L2 was 0.01263, and
+  minimum sign agreement was 0.99463.
+- Cold planning was 117.45 seconds: 68.31 seconds for 30 cold ABI profiles and
+  27.44 seconds for uncached recomputation selection. Warm planning was 26.65
+  seconds with a 3.9-ms profile-cache phase and 26.7-ms selection-cache phase.
+  Warm steps were 0.392–0.445 seconds against a 0.375-second simulator. The
+  numerical gate passes; cold profiling and the remaining runtime/simulator
+  gap remain explicit performance work.
+- All 16 native/CUDA CTest canaries, the complete Python suite, Ruff, and strict
+  mypy pass after the correction. Runtime ABI is 7, adapter ABI is 11, and the
+  structural-profile schema is v4 so unsafe cached traces cannot be consumed.

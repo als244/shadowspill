@@ -21,6 +21,7 @@ def _round_up(value: int, granularity: int) -> int:
 class AllocationOperation(StrEnum):
     ALLOCATE = "allocate"
     FREE = "free"
+    REUSE = "reuse"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class AllocationEvent:
     bytes: int
     alignment: int = 256
     planned: bool = False
+    source_allocation_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.position < 0:
@@ -47,6 +49,15 @@ class AllocationEvent:
             raise ValueError("allocation event alignment must be positive")
         if not isinstance(self.planned, bool):
             raise TypeError("allocation event planned flag must be boolean")
+        if self.operation is AllocationOperation.REUSE:
+            if not self.source_allocation_id:
+                raise ValueError("reuse event requires a source allocation ID")
+            if self.source_allocation_id == self.allocation_id:
+                raise ValueError("reuse source and destination must differ")
+            if self.planned:
+                raise ValueError("planned allocations cannot reuse pending extents")
+        elif self.source_allocation_id is not None:
+            raise ValueError("only reuse events accept a source allocation ID")
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +251,20 @@ def replay_slab_timeline(
             live[event.allocation_id] = (aligned, event.bytes)
             allocated += event.bytes
             peak_allocated = max(peak_allocated, allocated)
+        elif event.operation is AllocationOperation.REUSE:
+            if event.allocation_id in live:
+                raise ValueError(f"allocation {event.allocation_id!r} is already live")
+            source = live.pop(event.source_allocation_id or "", None)
+            if source is None:
+                raise ValueError(
+                    f"reuse source {event.source_allocation_id!r} is not live"
+                )
+            if source[1] != event.bytes:
+                raise ValueError(
+                    f"reuse for {event.allocation_id!r} has {event.bytes} bytes; "
+                    f"source has {source[1]}"
+                )
+            live[event.allocation_id] = source
         else:
             allocation = live.pop(event.allocation_id, None)
             if allocation is None:

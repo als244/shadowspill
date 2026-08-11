@@ -84,6 +84,7 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
         peak_requested_bytes=64,
         peak_charged_bytes=256,
         peak_extent_bytes=(256,),
+        allocation_trace=(),
     )
     monkeypatch.setattr(profiler, "_measure_workspace", lambda task, stream: workspace)
     measurement = profiler.measure(_artifact())
@@ -182,7 +183,9 @@ def test_output_allocation_lookup_is_exact() -> None:
         _Lookup(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     tensor = torch.empty(4, device="cuda")
-    assert profiler._output_allocation_ids((tensor, tensor.view(2, 2))) == (91,)
+    assert profiler._output_allocation_leaves((tensor, tensor.view(2, 2))) == {
+        91: (0, 1)
+    }
 
     class _Missing:
         @staticmethod
@@ -194,7 +197,7 @@ def test_output_allocation_lookup_is_exact() -> None:
         _Missing(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     with pytest.raises(CaptureError, match="outside"):
-        missing._output_allocation_ids(tensor)
+        missing._output_allocation_leaves(tensor)
 
 
 @pytest.mark.parametrize(

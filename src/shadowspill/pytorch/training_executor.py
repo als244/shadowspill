@@ -79,6 +79,11 @@ class TrainingExecutor:
     def __call__(
         self, inputs: Sequence[Sequence[Any]]
     ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
+        if self._invocations:
+            # V1 plans have a fresh terminal state. Preserve asynchronous
+            # StepResult construction, but do not accidentally overlap the
+            # next invocation with terminal transfers from the prior plan.
+            self._bridge.wait_idle()
         run = (
             self._initial
             if self._initial is not None and not self._optimizer_state_initialized

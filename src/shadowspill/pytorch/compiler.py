@@ -216,6 +216,7 @@ class CudaTaskProfiler:
             workspace_extent_bytes=workspace.peak_extent_bytes,
             samples_ns=tuple(samples),
             provenance="cuda-events+shadowspill-allocation-telemetry",
+            allocation_trace=workspace.allocation_trace,
         )
 
     def _measure_opaque_optimizer(
@@ -297,7 +298,9 @@ class CudaTaskProfiler:
             if status != 0:
                 raise CaptureError(f"profiling after_task failed with status {status}")
             stream.synchronize()
-            output_ids = self._output_allocation_ids(output)
+            output_allocations = self._output_allocation_leaves(output)
+            output = None
+            gc.collect()
         except BaseException:
             if task_open:
                 self._library.shadowspill_pytorch_abort_task_range()
@@ -305,17 +308,16 @@ class CudaTaskProfiler:
         finally:
             stop_allocation_telemetry(self._library)
         events = read_allocation_telemetry(self._library)
-        self._discard_output(output)
         return summarize_task_workspace(
             events,
             task_id=task_id,
-            output_allocation_ids=output_ids,
+            output_allocation_leaves=output_allocations,
         )
 
-    def _output_allocation_ids(self, output: object) -> tuple[int, ...]:
-        allocation_ids: set[int] = set()
+    def _output_allocation_leaves(self, output: object) -> dict[int, tuple[int, ...]]:
+        leaves_by_allocation: dict[int, list[int]] = {}
         leaves, _ = tree_flatten(output)
-        for leaf in leaves:
+        for leaf_index, leaf in enumerate(leaves):
             if not isinstance(leaf, torch.Tensor) or not leaf.is_cuda:
                 continue
             address = leaf.untyped_storage().data_ptr()
@@ -331,8 +333,13 @@ class CudaTaskProfiler:
                 raise CaptureError(
                     "compiled task returned storage outside the ShadowSpill slab"
                 )
-            allocation_ids.add(allocation.allocation_id)
-        return tuple(sorted(allocation_ids))
+            leaves_by_allocation.setdefault(allocation.allocation_id, []).append(
+                leaf_index
+            )
+        return {
+            allocation_id: tuple(indices)
+            for allocation_id, indices in leaves_by_allocation.items()
+        }
 
     @staticmethod
     def _discard_output(output: object) -> None:

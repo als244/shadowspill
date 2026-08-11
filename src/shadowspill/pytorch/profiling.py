@@ -9,10 +9,81 @@ import tempfile
 from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v1"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v4"
+
+
+class TaskAllocationOperation(StrEnum):
+    """One physical transition in a profiled task's allocator trace."""
+
+    ALLOCATE = "allocate"
+    FREE = "free"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskAllocationEvent:
+    """Task-local allocation event with stable identities and output leaves."""
+
+    allocation_ordinal: int
+    operation: TaskAllocationOperation
+    requested_bytes: int
+    charged_bytes: int
+    output_leaf_indices: tuple[int, ...] = ()
+    reuses_ordinal: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.allocation_ordinal < 0:
+            raise ValueError("task allocation ordinal must be non-negative")
+        if not isinstance(self.operation, TaskAllocationOperation):
+            raise TypeError("task allocation operation has an invalid type")
+        if self.requested_bytes < 0 or self.charged_bytes <= 0:
+            raise ValueError("task allocation sizes are invalid")
+        if any(index < 0 for index in self.output_leaf_indices):
+            raise ValueError("task output leaf indices must be non-negative")
+        if len(set(self.output_leaf_indices)) != len(self.output_leaf_indices):
+            raise ValueError("task output leaf indices must be unique")
+        if self.reuses_ordinal is not None:
+            if self.operation is not TaskAllocationOperation.ALLOCATE:
+                raise ValueError("only an allocation may reuse a retired extent")
+            if self.reuses_ordinal < 0:
+                raise ValueError("reused task allocation ordinal must be non-negative")
+            if self.reuses_ordinal == self.allocation_ordinal:
+                raise ValueError("task allocation cannot reuse itself")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "allocation_ordinal": self.allocation_ordinal,
+            "operation": self.operation.value,
+            "requested_bytes": self.requested_bytes,
+            "charged_bytes": self.charged_bytes,
+            "output_leaf_indices": list(self.output_leaf_indices),
+            "reuses_ordinal": self.reuses_ordinal,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> TaskAllocationEvent:
+        if not isinstance(value, dict):
+            raise ValueError("cached allocation event must be an object")
+        try:
+            return cls(
+                allocation_ordinal=int(value["allocation_ordinal"]),
+                operation=TaskAllocationOperation(str(value["operation"])),
+                requested_bytes=int(value["requested_bytes"]),
+                charged_bytes=int(value["charged_bytes"]),
+                output_leaf_indices=tuple(
+                    int(item) for item in value["output_leaf_indices"]
+                ),
+                reuses_ordinal=(
+                    None
+                    if value["reuses_ordinal"] is None
+                    else int(value["reuses_ordinal"])
+                ),
+            )
+        except (KeyError, TypeError) as exc:
+            raise ValueError("cached allocation event has an invalid schema") from exc
 
 
 class ProfilableArtifact(Protocol):
@@ -46,7 +117,7 @@ class ProfileEnvironment:
 
 @dataclass(frozen=True, slots=True)
 class TaskMeasurement:
-    """Calibrated task time and exact anonymous workspace live set."""
+    """Calibrated task time and exact allocator behavior for one ABI."""
 
     runtime_ns: int
     workspace_requested_bytes: int
@@ -54,6 +125,7 @@ class TaskMeasurement:
     workspace_extent_bytes: tuple[int, ...]
     samples_ns: tuple[int, ...]
     provenance: str
+    allocation_trace: tuple[TaskAllocationEvent, ...] = ()
 
     def __post_init__(self) -> None:
         values = (
@@ -69,6 +141,46 @@ class TaskMeasurement:
             raise ValueError("profile measurement requires at least one sample")
         if not self.provenance:
             raise ValueError("profile provenance must be non-empty")
+        self._validate_allocation_trace()
+
+    def _validate_allocation_trace(self) -> None:
+        live: dict[int, tuple[int, int]] = {}
+        retired: dict[int, tuple[int, int]] = {}
+        reused: set[int] = set()
+        output_leaves: set[int] = set()
+        for event in self.allocation_trace:
+            if event.operation is TaskAllocationOperation.ALLOCATE:
+                if event.allocation_ordinal in live:
+                    raise ValueError(
+                        "task allocation trace creates an allocation twice"
+                    )
+                if output_leaves.intersection(event.output_leaf_indices):
+                    raise ValueError("task allocation trace binds an output leaf twice")
+                if event.reuses_ordinal is not None:
+                    sizes = retired.get(event.reuses_ordinal)
+                    if sizes is None or event.reuses_ordinal in reused:
+                        raise ValueError(
+                            "task allocation trace reuses an unavailable extent"
+                        )
+                    if sizes[1] != event.charged_bytes:
+                        raise ValueError(
+                            "task allocation trace changes a reused physical extent"
+                        )
+                    reused.add(event.reuses_ordinal)
+                live[event.allocation_ordinal] = (
+                    event.requested_bytes,
+                    event.charged_bytes,
+                )
+                output_leaves.update(event.output_leaf_indices)
+                continue
+            sizes = live.pop(event.allocation_ordinal, None)
+            if sizes is None:
+                raise ValueError("task allocation trace frees an unknown allocation")
+            if sizes != (event.requested_bytes, event.charged_bytes):
+                raise ValueError(
+                    "task allocation trace changes allocation size on free"
+                )
+            retired[event.allocation_ordinal] = sizes
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +190,7 @@ class TaskMeasurement:
             "workspace_extent_bytes": list(self.workspace_extent_bytes),
             "samples_ns": list(self.samples_ns),
             "provenance": self.provenance,
+            "allocation_trace": [event.to_dict() for event in self.allocation_trace],
         }
 
     @classmethod
@@ -94,6 +207,10 @@ class TaskMeasurement:
                 ),
                 samples_ns=tuple(int(item) for item in value["samples_ns"]),
                 provenance=str(value["provenance"]),
+                allocation_trace=tuple(
+                    TaskAllocationEvent.from_dict(item)
+                    for item in value["allocation_trace"]
+                ),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task measurement has an invalid schema") from exc

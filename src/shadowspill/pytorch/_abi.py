@@ -5,7 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 10
+ADAPTER_ABI_VERSION: Final = 11
+RUNTIME_ABI_VERSION: Final = 7
 
 
 class AdapterConfig(ctypes.Structure):

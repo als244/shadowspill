@@ -47,7 +47,10 @@ static int best_fit_preserves_largest_range(void) {
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.largest_free_range_bytes != 96U;
+        allocations[4].pointer != allocations[0].pointer ||
+        statistics.largest_free_range_bytes != 32U ||
+        allocations[4].charged_bytes != 48U ||
+        statistics.pending_retirements != 3U;
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);

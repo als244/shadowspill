@@ -77,6 +77,44 @@ def test_anonymous_replay_uses_smallest_compatible_range() -> None:
     assert replay.final_largest_free_range_bytes == 96
 
 
+def test_pending_extent_reuse_preserves_its_physical_range() -> None:
+    replay = replay_slab_timeline(
+        128,
+        (
+            event(0, "cached", AllocationOperation.ALLOCATE, 64),
+            AllocationEvent(
+                1,
+                "replacement",
+                AllocationOperation.REUSE,
+                64,
+                alignment=1,
+                source_allocation_id="cached",
+            ),
+            event(2, "replacement", AllocationOperation.FREE, 64),
+        ),
+    )
+    assert replay.peak_allocated_bytes == 64
+    assert replay.final_allocated_bytes == 0
+    assert replay.final_largest_free_range_bytes == 128
+
+
+def test_pending_extent_reuse_requires_a_live_size_matched_source() -> None:
+    with pytest.raises(ValueError, match="not live"):
+        replay_slab_timeline(
+            128,
+            (
+                AllocationEvent(
+                    0,
+                    "replacement",
+                    AllocationOperation.REUSE,
+                    64,
+                    alignment=1,
+                    source_allocation_id="missing",
+                ),
+            ),
+        )
+
+
 def test_physical_admission_exposes_every_subtraction() -> None:
     admission, replay = admit_physical_budget(
         device_budget_bytes=4 * GIB,
