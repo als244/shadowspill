@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import pytest
+import torch
+import torch.nn as nn
+from torch._subclasses.fake_tensor import FakeTensorMode
+
+from shadowspill.pytorch import ObjectiveError, ObjectiveResult
+from shadowspill.pytorch.aot import (
+    capture_forward,
+    capture_training,
+    inference_artifact,
+)
+from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+
+
+class _Network(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = nn.Linear(8, 32)
+        self.second = nn.Linear(32, 8)
+
+    def forward(self, inputs: torch.Tensor, scale: int) -> torch.Tensor:
+        hidden = torch.nn.functional.gelu(self.first(inputs))
+        return self.second(hidden) * scale
+
+
+def _objective(
+    model: nn.Module, inputs: torch.Tensor, targets: torch.Tensor, scale: int
+) -> ObjectiveResult:
+    prediction = model(inputs, scale)
+    loss = torch.nn.functional.mse_loss(prediction, targets)
+    return ObjectiveResult(loss, {"mean": prediction.mean(), "scale": scale})
+
+
+def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
+    assert not torch.cuda.is_initialized()
+    model = _Network()
+    inputs = [torch.randn(4, 8), torch.randn(4, 8), 2]
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    fake_inputs = fake_cuda_inputs(inputs, mode)
+    with mode:
+        capture = capture_training(replica, _objective, fake_inputs)
+    assert capture.objective_schema.tensor_metric_positions == (0,)
+    assert capture.objective_schema.static_metric_leaves == ((1, 2),)
+    assert capture.save_pair.forward.operator_targets
+    assert capture.save_pair.backward.operator_targets
+    assert capture.recompute_pair.forward.argument_count > 0
+    assert capture.recompute_pair.backward.argument_count > 0
+    assert capture.save_pair.forward.compatibility_digest
+
+
+def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> None:
+    model = _Network().eval()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8), 3], mode)
+    with mode, torch.no_grad():
+        first = inference_artifact(capture_forward(replica, inputs))
+        second = inference_artifact(capture_forward(replica, inputs))
+    assert first.compatibility_digest == second.compatibility_digest
+    assert "aten.linear.default" in first.operator_targets
+
+
+@torch.library.custom_op("shadowspill_test::affine", mutates_args=())
+def _affine(value: torch.Tensor, bias: float) -> torch.Tensor:
+    return value + bias
+
+
+@_affine.register_fake
+def _affine_fake(value: torch.Tensor, bias: float) -> torch.Tensor:
+    return torch.empty_like(value)
+
+
+class _CustomOperationModule(nn.Module):
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return _affine(value, 1.25)
+
+
+def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(_CustomOperationModule(), mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 3)], mode)
+    with mode, torch.no_grad():
+        artifact = inference_artifact(capture_forward(model, inputs))
+    assert any(
+        "shadowspill_test.affine" in target for target in artifact.operator_targets
+    )
+
+
+def test_objective_schema_reconstructs_metrics_and_rejects_count_change() -> None:
+    model = _Network()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8), 2], mode)
+    with mode:
+        capture = capture_training(replica, _objective, inputs)
+        metric = torch.ones((), device="cuda")
+        rebuilt = capture.objective_schema.rebuild_metrics((metric,))
+    assert rebuilt["mean"] is metric
+    assert rebuilt["scale"] == 2
+    with pytest.raises(ObjectiveError, match="count"):
+        capture.objective_schema.rebuild_metrics(())
+
+
+@pytest.mark.parametrize(
+    ("objective", "message"),
+    [
+        (lambda model, value: 3, "tensor"),
+        (lambda model, value: model(value, 1), "scalar"),
+        (lambda model, value: torch.ones((), dtype=torch.int64), "floating"),
+        (lambda model, value: value.detach().sum(), "gradients"),
+    ],
+)
+def test_invalid_objectives_fail_during_capture(
+    objective: object, message: str
+) -> None:
+    model = _Network()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    with mode, pytest.raises(ObjectiveError, match=message):
+        capture_training(replica, objective, inputs)  # type: ignore[arg-type]

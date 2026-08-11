@@ -1,5 +1,19 @@
-"""PyTorch frontend for ShadowSpill.
+"""Public PyTorch values and planning entrypoints for ShadowSpill."""
 
-The public planning callables are introduced in Phase 8. Allocator integration
-currently remains an internal construction detail.
-"""
+from .contracts import (
+    CaptureError,
+    InputGuardError,
+    ObjectiveError,
+    ObjectiveResult,
+    PlanningError,
+    TensorSpec,
+)
+
+__all__ = [
+    "CaptureError",
+    "InputGuardError",
+    "ObjectiveError",
+    "ObjectiveResult",
+    "PlanningError",
+    "TensorSpec",
+]

@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 6 — hard physical-budget admission and reconciliation.
+Phase 7 — PyTorch capture, lowering, and structural profiling.
 
 ## Status
 
@@ -59,6 +59,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] Bounded task-scoped allocation telemetry records requested/charged
   lifetimes, slab extents, output promotion, and exact sequential workspace
   reuse without allocating inside allocator callbacks.
+- [x] Fixed-shape tensor/static guards, storage-free CUDA model replicas, strict
+  Export, objective schemas, and save/recompute AOTAutograd graph pairs work
+  for ordinary ATen and unrelated registered custom operations.
 
 ## Completed gates
 
