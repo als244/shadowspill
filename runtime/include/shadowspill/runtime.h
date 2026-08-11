@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 2U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 3U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -282,6 +282,18 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_bind_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     uint64_t allocation_id
+);
+
+/*
+ * Removes one DEVICE_READY object while leaving its allocation live under
+ * ordinary caller ownership. No queued action may reference the object. The
+ * framework's eventual logical free and recorded streams govern range reuse.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_transfer_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    ShadowSpillAllocation *allocation
 );
 
 /*

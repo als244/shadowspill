@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 4
+ADAPTER_ABI_VERSION: Final = 5
 
 
 class AdapterConfig(ctypes.Structure):
@@ -254,6 +254,25 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(Allocation),
     ]
     library.shadowspill_pytorch_allocation_for_pointer.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_register_host_object.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint8,
+        ctypes.c_uint64,
+    ]
+    library.shadowspill_pytorch_register_host_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_bind_registered_allocation.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    library.shadowspill_pytorch_bind_registered_allocation.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_transfer_output_to_caller.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(Allocation),
+    ]
+    library.shadowspill_pytorch_transfer_output_to_caller.restype = ctypes.c_uint32
     library.shadowspill_pytorch_promote_allocation.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,

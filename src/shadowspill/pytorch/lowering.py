@@ -66,6 +66,7 @@ class LoweredForwardProgram:
     final_residency: tuple[ResidencySpec, ...]
     entrypoints: tuple[TaskEntrypoint, ...]
     registrations: tuple[RegistrationBinding, ...]
+    root_input_slots: tuple[TensorSlot, ...]
     output_tree_spec: TreeSpec
     output_leaf_count: int
 
@@ -238,6 +239,18 @@ def lower_forward_program(
         )
         registrations.append(RegistrationBinding(name, object_id, False))
 
+    root_input_slots: list[TensorSlot] = []
+    for position, value in enumerate(partitioned.root_inputs):
+        if not isinstance(value, torch.Tensor):
+            continue
+        object_id = inventory.add(
+            value,
+            role=ObjectRole.INPUT,
+            persistence=Persistence.STEP,
+            retain_host_backing=True,
+        )
+        root_input_slots.append(TensorSlot(position, object_id))
+
     profiles: list[TaskProfile] = []
     profile_by_key: dict[tuple[object, ...], str] = {}
     profile_ids: list[str] = []
@@ -334,7 +347,7 @@ def lower_forward_program(
     final_host = {
         item.alias_group_id
         for item in objects
-        if item.persistence is Persistence.CHECKPOINT
+        if item.persistence is Persistence.CHECKPOINT or item.role is ObjectRole.INPUT
     }
     final_device = {inventory.alias_id(object_id) for object_id in last_output_objects}
     final_host -= final_device
@@ -367,6 +380,7 @@ def lower_forward_program(
         final_residency,
         tuple(entrypoints),
         tuple(registrations),
+        tuple(root_input_slots),
         last_tree_spec,
         len(_last_leaves),
     )

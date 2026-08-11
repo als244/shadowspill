@@ -12,6 +12,7 @@ import torch
 from shadowspill.pytorch._abi import (
     AdapterCapabilities,
     AdapterStatistics,
+    Allocation,
     ObjectBinding,
     ObjectSnapshot,
     PhysicalMemory,
@@ -277,6 +278,119 @@ def main() -> int:
         or final_statistics.callback_failures != 0
     ):
         raise AssertionError("storage relocation caused an allocator callback failure")
+
+    host_source = torch.arange(4096, dtype=torch.uint8)
+    status = int(
+        library.shadowspill_pytorch_register_host_object(
+            3001,
+            host_source.untyped_storage().nbytes(),
+            1,
+            host_source.untyped_storage().data_ptr(),
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"direct host registration failed with status {status}")
+    host_tensor = torch.empty_like(host_source, device="cuda")
+    host_binding = ObjectBinding()
+    status = int(
+        library.shadowspill_pytorch_bind_registered_allocation(
+            3001,
+            host_tensor.untyped_storage().data_ptr(),
+            host_tensor.untyped_storage().nbytes(),
+            ctypes.byref(host_binding),
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"registered allocation bind failed with status {status}")
+    host_release = (RuntimeAction * 1)(RuntimeAction(3001, 0))
+    if (
+        int(
+            library.shadowspill_pytorch_after_task(
+                300, compute_stream, None, 0, host_release, 1
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("initial placeholder release failed")
+    torch.ops.shadowspill._rebind_storage(
+        host_tensor, 0, host_binding.object_id, host_binding.generation
+    )
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("host placeholder release did not drain")
+    host_prefetch = (RuntimeAction * 1)(RuntimeAction(3001, 2))
+    if (
+        int(
+            library.shadowspill_pytorch_after_task(
+                301, compute_stream, None, 0, host_prefetch, 1
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("direct host prefetch failed")
+    host_ids = (ctypes.c_uint64 * 1)(3001)
+    host_rebound = (ObjectBinding * 1)()
+    if (
+        int(
+            library.shadowspill_pytorch_before_task(
+                302, compute_stream, host_ids, 1, host_rebound, 1
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("direct host object acquisition failed")
+    torch.ops.shadowspill._rebind_storage(
+        host_tensor,
+        host_rebound[0].pointer,
+        host_rebound[0].object_id,
+        host_rebound[0].generation,
+    )
+    torch.testing.assert_close(host_tensor.cpu(), host_source)
+    if (
+        int(
+            library.shadowspill_pytorch_after_task(
+                302, compute_stream, None, 0, host_release, 1
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("direct host final release failed")
+    torch.ops.shadowspill._rebind_storage(
+        host_tensor, 0, host_rebound[0].object_id, host_rebound[0].generation
+    )
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("direct host final release did not drain")
+
+    caller_output = torch.arange(1024, dtype=torch.float32, device="cuda")
+    caller_binding = ObjectBinding()
+    if (
+        int(
+            library.shadowspill_pytorch_promote_allocation(
+                3002,
+                caller_output.untyped_storage().data_ptr(),
+                caller_output.untyped_storage().nbytes(),
+                ctypes.byref(caller_binding),
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("caller output promotion failed")
+    caller_allocation = Allocation()
+    if (
+        int(
+            library.shadowspill_pytorch_transfer_output_to_caller(
+                caller_binding.object_id, ctypes.byref(caller_allocation)
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("output ownership transfer failed")
+    if caller_allocation.pointer != caller_output.untyped_storage().data_ptr():
+        raise AssertionError("caller output changed allocation during transfer")
+    del caller_output, host_tensor
+    gc.collect()
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("caller-owned output did not free normally")
+
     physical = PhysicalMemory()
     if int(library.shadowspill_pytorch_physical_memory(ctypes.byref(physical))) != 0:
         raise AssertionError("physical memory query failed")

@@ -221,6 +221,20 @@ static int valid_transition_paths(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY) {
         result = -1;
+        goto done;
+    }
+    ShadowSpillAllocation caller = {0};
+    if (shadowspill_transfer_object_to_caller(
+            fixture.runtime, device_created.object_id, &caller
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        caller.allocation_id != third.allocation_id ||
+        shadowspill_object_snapshot(
+            fixture.runtime, device_created.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_free(
+            fixture.runtime, caller.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
     }
 
 done:

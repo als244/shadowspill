@@ -187,6 +187,77 @@ done:
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    ShadowSpillAllocation *allocation
+) {
+    if (runtime == NULL || allocation == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillObjectRecord *previous = NULL;
+    ShadowSpillObjectRecord *object = runtime->objects;
+    while (object != NULL && object->object_id != object_id) {
+        previous = object;
+        object = object->next;
+    }
+    ShadowSpillAllocationRecord *record = object == NULL
+        ? NULL
+        : shadowspill_find_allocation(runtime, object->allocation_id);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (object == NULL || record == NULL || record->pointer == NULL ||
+        record->logical_freed || !record->plan_owned ||
+        object->residency != SHADOWSPILL_OBJECT_DEVICE_READY) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    for (ShadowSpillQueuedAction *action = runtime->action_head;
+         action != NULL; action = action->next) {
+        if (action->object == object) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
+        }
+    }
+    if (object->has_host_range) {
+        uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
+        if (shadowspill_range_free(
+                &runtime->host_ranges, object->host_offset, charged
+            ) != 0) {
+            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            goto done;
+        }
+    }
+    if (previous == NULL) {
+        runtime->objects = object->next;
+    } else {
+        previous->next = object->next;
+    }
+    --runtime->registered_objects;
+    record->plan_owned = 0;
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        record,
+        SHADOWSPILL_ALLOCATION_PROMOTED,
+        SHADOWSPILL_ALLOCATION_CALLER_OWNED
+    );
+    *allocation = (ShadowSpillAllocation){
+        .allocation_id = record->allocation_id,
+        .generation = record->generation,
+        .requested_bytes = record->requested_bytes,
+        .charged_bytes = record->charged_bytes,
+        .pointer = record->pointer,
+    };
+    free(object);
+
+done:
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,

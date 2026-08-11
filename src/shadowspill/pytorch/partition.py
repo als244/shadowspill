@@ -39,6 +39,7 @@ class PartitionedExport:
     """Executable split root and topologically ordered stage examples."""
 
     root: GraphModule
+    root_inputs: tuple[object, ...]
     stages: tuple[StageExample, ...]
     repeated_groups: tuple[str, ...]
 
@@ -99,6 +100,7 @@ def partition_export(
         raise CaptureError("partitioning produced no executable stage")
     return PartitionedExport(
         root=root,
+        root_inputs=capture.flat_inputs,
         stages=tuple(stages),
         repeated_groups=repeated,
     )

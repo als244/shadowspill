@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 4U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 5U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -144,6 +144,31 @@ shadowspill_pytorch_allocation_telemetry_read(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocation_for_pointer(
     uint64_t address,
+    ShadowSpillAllocation *allocation
+);
+
+/* Register and populate one initially host-resident alias-group object. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_register_host_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint8_t retain_host_backing,
+    uint64_t source_address
+);
+
+/* Bind an already registered object to one ordinary framework allocation. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_bind_registered_allocation(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes,
+    ShadowSpillObjectBinding *binding
+);
+
+/* Transfer one final device allocation from plan to caller ownership. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_transfer_output_to_caller(
+    uint64_t object_id,
     ShadowSpillAllocation *allocation
 );
 

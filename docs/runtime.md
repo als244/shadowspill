@@ -36,6 +36,13 @@ copies current bytes into ordinary caller-owned CPU storage. Both operations
 require exact object size and a `HOST_ONLY` state, so neither can race an
 asynchronous transfer.
 
+This host initialization can occur directly from a borrowed CPU payload; no
+device round trip is required. A final `DEVICE_READY` object can instead be
+transferred from plan ownership to caller ownership without a copy. Its logical
+object record is removed, its live slab allocation stays at the same address,
+and ordinary framework free plus recorded-stream retirement governs reuse.
+Transfer is rejected while an action still references the object.
+
 ## Task protocol
 
 `shadowspill_before_task` deduplicates input object identities, validates their

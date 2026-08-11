@@ -49,6 +49,9 @@ class _Library:
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
+    shadowspill_pytorch_register_host_object = _Function()
+    shadowspill_pytorch_bind_registered_allocation = _Function()
+    shadowspill_pytorch_transfer_output_to_caller = _Function()
     shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
@@ -108,6 +111,22 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(ctypes.c_uint64),
     ]
     assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
+        ctypes.c_uint64,
+        ctypes.POINTER(Allocation),
+    ]
+    assert library.shadowspill_pytorch_register_host_object.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint8,
+        ctypes.c_uint64,
+    ]
+    assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    assert library.shadowspill_pytorch_transfer_output_to_caller.argtypes == [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
     ]

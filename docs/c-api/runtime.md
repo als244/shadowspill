@@ -6,7 +6,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The ABI is version 2. All public functions return an enum status except
+The ABI is version 3. All public functions return an enum status except
 idempotent destroy functions and read-only mock controls. Call
 `shadowspill_runtime_abi_version()` and validate the backend ABI before creating
 a runtime.
@@ -40,6 +40,12 @@ first failure, joins the worker, and frees all runtime-owned resources.
 
 Diagnostics and statistics are snapshots. They expose no internal record or
 backend handle and are safe to inspect concurrently.
+
+`shadowspill_transfer_object_to_caller` removes one ready logical object and
+returns its still-live allocation. The allocation becomes ordinary rather than
+plan-owned and must eventually pass through `shadowspill_free`; the transition
+does not wait for device work or change the address. It rejects queued actions,
+missing generations, and non-ready residency.
 
 ## Allocation profiling
 

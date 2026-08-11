@@ -77,6 +77,9 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
 - [x] Forward task positions lower deterministically into canonical Program
   objects, storage alias groups, profiles, dependencies, initial/final
   residency, and narrow framework entrypoint bindings accepted by PressureFit.
+- [x] Initial CPU payloads can populate retained pinned backing directly, and
+  final device objects can transfer to ordinary caller allocator ownership
+  without copying, changing addresses, or leaking logical object identities.
 
 ## Completed gates
 
