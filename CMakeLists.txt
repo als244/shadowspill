@@ -97,6 +97,74 @@ install(
   DESTINATION shadowspill/include/shadowspill
 )
 
+find_package(Threads REQUIRED)
+
+add_library(
+  shadowspill_runtime
+  SHARED
+  runtime/src/allocations.c
+  runtime/src/objects.c
+  runtime/src/progress.c
+  runtime/src/ranges.c
+  runtime/src/runtime.c
+  runtime/src/status.c
+)
+target_include_directories(
+  shadowspill_runtime
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
+    $<INSTALL_INTERFACE:shadowspill/include>
+  PRIVATE runtime/src
+)
+target_link_libraries(
+  shadowspill_runtime
+  PRIVATE Threads::Threads shadowspill_build_options
+)
+set_target_properties(
+  shadowspill_runtime
+  PROPERTIES
+    OUTPUT_NAME shadowspill_runtime
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 0
+)
+
+add_library(
+  shadowspill_backend_mock
+  SHARED
+  runtime/backends/mock/src/backend_mock.c
+)
+target_include_directories(
+  shadowspill_backend_mock
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/backends/mock/include>
+    $<INSTALL_INTERFACE:shadowspill/include>
+)
+target_link_libraries(
+  shadowspill_backend_mock
+  PRIVATE Threads::Threads shadowspill_build_options
+)
+set_target_properties(
+  shadowspill_backend_mock
+  PROPERTIES
+    OUTPUT_NAME shadowspill_backend_mock
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 0
+)
+
+install(
+  TARGETS shadowspill_runtime shadowspill_backend_mock
+  LIBRARY DESTINATION shadowspill/lib
+  RUNTIME DESTINATION shadowspill/lib
+)
+install(
+  FILES
+    runtime/include/shadowspill/backend.h
+    runtime/include/shadowspill/runtime.h
+    runtime/backends/mock/include/shadowspill/backend_mock.h
+  DESTINATION shadowspill/include/shadowspill
+)
+
 if(BUILD_TESTING)
   add_executable(shadowspill_build_canary tests/native/build_canary.c)
   target_link_libraries(shadowspill_build_canary PRIVATE shadowspill_build_options)
@@ -118,4 +186,33 @@ if(BUILD_TESTING)
     PRIVATE shadowspill_planner shadowspill_build_options
   )
   add_test(NAME shadowspill_planner_canary COMMAND shadowspill_planner_canary)
+
+  add_executable(shadowspill_runtime_canary tests/runtime/runtime_canary.c)
+  target_link_libraries(
+    shadowspill_runtime_canary
+    PRIVATE
+      shadowspill_runtime
+      shadowspill_backend_mock
+      shadowspill_build_options
+  )
+  add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
+
+  foreach(runtime_test IN ITEMS blocking failure transitions)
+    add_executable(
+      shadowspill_runtime_${runtime_test}_canary
+      tests/runtime/runtime_${runtime_test}_canary.c
+    )
+    target_link_libraries(
+      shadowspill_runtime_${runtime_test}_canary
+      PRIVATE
+        shadowspill_runtime
+        shadowspill_backend_mock
+        shadowspill_build_options
+        Threads::Threads
+    )
+    add_test(
+      NAME shadowspill_runtime_${runtime_test}_canary
+      COMMAND shadowspill_runtime_${runtime_test}_canary
+    )
+  endforeach()
 endif()

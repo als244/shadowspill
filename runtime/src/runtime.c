@@ -1,0 +1,314 @@
+#include "internal.h"
+
+#include <pthread.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
+    return backend != NULL &&
+        backend->abi_version == SHADOWSPILL_BACKEND_ABI_VERSION &&
+        backend->allocate_device != NULL && backend->free_device != NULL &&
+        backend->allocate_host != NULL && backend->free_host != NULL &&
+        backend->create_stream != NULL && backend->destroy_stream != NULL &&
+        backend->create_event != NULL && backend->destroy_event != NULL &&
+        backend->record_event != NULL && backend->query_event != NULL &&
+        backend->wait_event != NULL && backend->copy_async != NULL &&
+        backend->synchronize_stream != NULL;
+}
+
+static void destroy_allocations(ShadowSpillRuntime *runtime) {
+    ShadowSpillAllocationRecord *allocation = runtime->allocations;
+    while (allocation != NULL) {
+        ShadowSpillAllocationRecord *next = allocation->next;
+        ShadowSpillStreamRecord *stream = allocation->streams;
+        while (stream != NULL) {
+            ShadowSpillStreamRecord *stream_next = stream->next;
+            free(stream);
+            stream = stream_next;
+        }
+        ShadowSpillEventRecord *event = allocation->retirement_events;
+        while (event != NULL) {
+            ShadowSpillEventRecord *event_next = event->next;
+            (void)runtime->backend.destroy_event(
+                runtime->backend.context, event->event
+            );
+            free(event);
+            event = event_next;
+        }
+        free(allocation);
+        allocation = next;
+    }
+    runtime->allocations = NULL;
+}
+
+static void destroy_objects(ShadowSpillRuntime *runtime) {
+    ShadowSpillObjectRecord *object = runtime->objects;
+    while (object != NULL) {
+        ShadowSpillObjectRecord *next = object->next;
+        free(object);
+        object = next;
+    }
+    runtime->objects = NULL;
+}
+
+static void destroy_actions(ShadowSpillRuntime *runtime) {
+    ShadowSpillQueuedAction *action = runtime->action_head;
+    while (action != NULL) {
+        ShadowSpillQueuedAction *next = action->next;
+        if (action->has_completion_event) {
+            (void)runtime->backend.destroy_event(
+                runtime->backend.context, action->completion_event
+            );
+        }
+        ShadowSpillTaskFence *fence = action->fence;
+        if (--fence->references == 0U) {
+            (void)runtime->backend.destroy_event(
+                runtime->backend.context, fence->event
+            );
+            free(fence);
+        }
+        free(action);
+        action = next;
+    }
+    runtime->action_head = NULL;
+    runtime->action_tail = NULL;
+}
+
+static void release_resources(ShadowSpillRuntime *runtime) {
+    destroy_actions(runtime);
+    destroy_allocations(runtime);
+    destroy_objects(runtime);
+    shadowspill_range_destroy(&runtime->device_ranges);
+    shadowspill_range_destroy(&runtime->host_ranges);
+    if (runtime->h2d_stream_created) {
+        (void)runtime->backend.destroy_stream(
+            runtime->backend.context, runtime->h2d_stream
+        );
+        runtime->h2d_stream_created = 0;
+    }
+    if (runtime->d2h_stream_created) {
+        (void)runtime->backend.destroy_stream(
+            runtime->backend.context, runtime->d2h_stream
+        );
+        runtime->d2h_stream_created = 0;
+    }
+    if (runtime->device_slab != NULL) {
+        (void)runtime->backend.free_device(
+            runtime->backend.context, runtime->device_slab
+        );
+        runtime->device_slab = NULL;
+    }
+    if (runtime->host_arena != NULL) {
+        (void)runtime->backend.free_host(
+            runtime->backend.context, runtime->host_arena
+        );
+        runtime->host_arena = NULL;
+    }
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_create(
+    const ShadowSpillRuntimeConfig *config,
+    ShadowSpillRuntime **output
+) {
+    if (config == NULL || output == NULL ||
+        config->abi_version != SHADOWSPILL_RUNTIME_ABI_VERSION ||
+        config->device_slab_bytes == 0U || config->minimum_alignment == 0U ||
+        !shadowspill_backend_is_valid(&config->backend)) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *output = NULL;
+    ShadowSpillRuntime *runtime = calloc(1U, sizeof(*runtime));
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    runtime->backend = config->backend;
+    runtime->progress_poll_nanoseconds = config->progress_poll_nanoseconds;
+    runtime->minimum_alignment = config->minimum_alignment;
+    runtime->next_allocation_id = 1U;
+    runtime->next_generation = 1U;
+    runtime->failure.object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    runtime->failure.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    if (pthread_mutex_init(&runtime->mutex, NULL) != 0) {
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    if (pthread_cond_init(&runtime->condition, NULL) != 0) {
+        pthread_mutex_destroy(&runtime->mutex);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    if (runtime->backend.allocate_device(
+            runtime->backend.context,
+            config->device_slab_bytes,
+            &runtime->device_slab
+        ) != 0 ||
+        (config->host_arena_bytes != 0U && runtime->backend.allocate_host(
+             runtime->backend.context,
+             config->host_arena_bytes,
+             &runtime->host_arena
+         ) != 0)) {
+        goto fail;
+    }
+    if (shadowspill_range_initialize(
+            &runtime->device_ranges, config->device_slab_bytes
+        ) != 0 || shadowspill_range_initialize(
+            &runtime->host_ranges, config->host_arena_bytes
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto fail;
+    }
+    if (runtime->backend.create_stream(
+            runtime->backend.context,
+            SHADOWSPILL_TRANSFER_TO_DEVICE,
+            &runtime->h2d_stream
+        ) != 0) {
+        goto fail;
+    }
+    runtime->h2d_stream_created = 1;
+    if (runtime->backend.create_stream(
+            runtime->backend.context,
+            SHADOWSPILL_TRANSFER_TO_HOST,
+            &runtime->d2h_stream
+        ) != 0) {
+        goto fail;
+    }
+    runtime->d2h_stream_created = 1;
+    if (pthread_create(
+            &runtime->progress_thread, NULL, shadowspill_progress_main, runtime
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto fail;
+    }
+    runtime->progress_started = 1;
+    *output = runtime;
+    return SHADOWSPILL_RUNTIME_OK;
+
+fail:
+    release_resources(runtime);
+    pthread_cond_destroy(&runtime->condition);
+    pthread_mutex_destroy(&runtime->mutex);
+    free(runtime);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
+    ShadowSpillRuntime *runtime
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    while (!runtime->closed && runtime->failure.status == SHADOWSPILL_RUNTIME_OK &&
+           (runtime->queued_actions != 0U ||
+            runtime->pending_retirements != 0U)) {
+        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+    }
+    ShadowSpillRuntimeStatus status = runtime->failure.status == 0U
+        ? SHADOWSPILL_RUNTIME_OK
+        : (ShadowSpillRuntimeStatus)runtime->failure.status;
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_close(ShadowSpillRuntime *runtime) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    if (runtime->closed) {
+        pthread_mutex_unlock(&runtime->mutex);
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    runtime->closing = 1;
+    while (runtime->failure.status == SHADOWSPILL_RUNTIME_OK &&
+           (runtime->queued_actions != 0U ||
+            runtime->pending_retirements != 0U)) {
+        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+    }
+    pthread_mutex_unlock(&runtime->mutex);
+
+    int synchronization_failed = 0;
+    if (runtime->h2d_stream_created && runtime->backend.synchronize_stream(
+            runtime->backend.context, runtime->h2d_stream
+        ) != 0) {
+        synchronization_failed = 1;
+    }
+    if (runtime->d2h_stream_created && runtime->backend.synchronize_stream(
+            runtime->backend.context, runtime->d2h_stream
+        ) != 0) {
+        synchronization_failed = 1;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    if (synchronization_failed) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            0U
+        );
+    }
+    runtime->worker_stop = 1;
+    pthread_cond_broadcast(&runtime->condition);
+    pthread_mutex_unlock(&runtime->mutex);
+    if (runtime->progress_started) {
+        (void)pthread_join(runtime->progress_thread, NULL);
+        runtime->progress_started = 0;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = runtime->failure.status ==
+            SHADOWSPILL_RUNTIME_OK
+        ? SHADOWSPILL_RUNTIME_OK
+        : (ShadowSpillRuntimeStatus)runtime->failure.status;
+    runtime->closed = 1;
+    pthread_mutex_unlock(&runtime->mutex);
+    release_resources(runtime);
+    return status;
+}
+
+void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
+    if (runtime == NULL) {
+        return;
+    }
+    (void)shadowspill_runtime_close(runtime);
+    pthread_cond_destroy(&runtime->condition);
+    pthread_mutex_destroy(&runtime->mutex);
+    free(runtime);
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatistics *statistics
+) {
+    if (runtime == NULL || statistics == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    *statistics = (ShadowSpillRuntimeStatistics){
+        .slab_bytes = runtime->device_ranges.capacity,
+        .allocated_bytes = runtime->device_ranges.allocated,
+        .free_bytes = shadowspill_range_free_bytes(&runtime->device_ranges),
+        .largest_free_range_bytes =
+            shadowspill_range_largest_free(&runtime->device_ranges),
+        .external_fragmentation_bytes =
+            shadowspill_range_free_bytes(&runtime->device_ranges) -
+            shadowspill_range_largest_free(&runtime->device_ranges),
+        .peak_allocated_bytes = runtime->device_ranges.peak_allocated,
+        .host_arena_bytes = runtime->host_ranges.capacity,
+        .host_allocated_bytes = runtime->host_ranges.allocated,
+        .host_peak_allocated_bytes = runtime->host_ranges.peak_allocated,
+        .live_allocations = runtime->live_allocations,
+        .blocked_allocators = runtime->blocked_allocators,
+        .pending_retirements = runtime->pending_retirements,
+        .registered_objects = runtime->registered_objects,
+        .queued_actions = runtime->queued_actions,
+        .transfers_to_device = runtime->transfers_to_device,
+        .transfers_to_host = runtime->transfers_to_host,
+        .bytes_to_device = runtime->bytes_to_device,
+        .bytes_to_host = runtime->bytes_to_host,
+        .wait_events_inserted = runtime->wait_events_inserted,
+    };
+    pthread_mutex_unlock(&runtime->mutex);
+    return SHADOWSPILL_RUNTIME_OK;
+}

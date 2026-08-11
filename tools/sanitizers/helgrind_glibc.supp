@@ -1,0 +1,17 @@
+# Valgrind 3.18 misclassifies glibc 2.34's internal timed-wait wakeup as an
+# unlocked condition-variable broadcast. Keep the suppression scoped through
+# ShadowSpill's one timed-wait helper so unrelated condition errors remain
+# visible.
+{
+   shadowspill_glibc_timed_wait_internal_wakeup
+   Helgrind:Misc
+   obj:/usr/libexec/valgrind/vgpreload_helgrind-amd64-linux.so
+   fun:__pthread_cond_wait_common
+   fun:pthread_cond_timedwait@@GLIBC_2.3.2
+   obj:/usr/libexec/valgrind/vgpreload_helgrind-amd64-linux.so
+   fun:timed_wait_locked
+   fun:shadowspill_progress_main
+   obj:/usr/libexec/valgrind/vgpreload_helgrind-amd64-linux.so
+   fun:start_thread
+   fun:clone
+}

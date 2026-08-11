@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 4 — framework-neutral runtime and deterministic mock backend.
+Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
 
 ## Status
 
@@ -27,6 +27,9 @@ Phase 4 — framework-neutral runtime and deterministic mock backend.
   candidate selection, and canonical ExecutionPlan construction implemented.
 - [x] Public planner C ABI, header, compiled selector, documentation, and
   frozen schedule artifacts added.
+- [x] Framework-neutral slab runtime, deterministic mock backend, stream-safe
+  allocation retirement, object residency/version state machine, and public C
+  API implemented.
 
 ## Completed gates
 
@@ -105,6 +108,38 @@ Phase 4 — framework-neutral runtime and deterministic mock backend.
 - 101 Python tests pass with 92.10% branch coverage. C warnings-as-errors,
   native canaries, Clang ASan/UBSan, strict mypy, Ruff, naming, external-oracle,
   isolated wheel, RPATH, public-header, and exported-symbol gates pass.
+
+### Phase 4
+
+- `libshadowspill_runtime.so` owns one coalescing device slab, one bounded host
+  arena, allocation/object tables, one progress thread, H2D/D2H queues,
+  readiness events, failures, and deterministic teardown without framework or
+  vendor types.
+- Ordinary allocations support synchronous lease, logical free, multiple
+  recorded streams, delayed physical reuse, allocator blocking/wakeup, and
+  diagnostic no-progress OOM. Telemetry reports requested physical occupancy,
+  largest free range, external fragmentation, blocked allocators, transfers,
+  and waits.
+- Alias-group objects preserve identity while their device addresses and
+  generations change. Exact release/offload/prefetch actions are submitted at
+  task boundaries; every unfinished input prefetch inserts its own compute
+  stream wait.
+- The deterministic mock backend covers delay, transfer ordering, stream
+  retirement, changed addresses, failure injection, and first-cause
+  propagation. A worker failure wakes an allocator blocked on pending release.
+- A stream-timeline race found by the new regression is fixed: H2D completion
+  changes readiness but never rolls back a device version advanced after the
+  compute stream has waited on that transfer.
+- Seven C canaries pass with warnings as errors, GCC 11 ASan, Clang UBSan, and
+  GCC 11 ThreadSanitizer. TSan is run with ASLR disabled because all instrumented
+  binaries otherwise fail at startup on this host with an unexpected-shadow
+  mapping before executing application code. Valgrind Memcheck and Helgrind
+  also pass; the only suppression is a scoped Valgrind 3.18/glibc 2.34
+  `pthread_cond_timedwait` false positive.
+- The isolated wheel contains the runtime/mock shared libraries and public
+  headers. A clean virtual environment loads ABI version 1 and compiles/runs a
+  consumer against only the installed artifacts. The full 101-test Python
+  suite remains at 92.10% branch coverage.
 
 ## Gate rule
 

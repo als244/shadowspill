@@ -1,0 +1,218 @@
+#include <stdint.h>
+#include <stdlib.h>
+
+#include <shadowspill/backend_mock.h>
+#include <shadowspill/runtime.h>
+
+int main(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .h2d_delay_nanoseconds = 100000000U,
+        .d2h_delay_nanoseconds = 100000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 256U,
+        .host_arena_bytes = 256U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 10000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+        SHADOWSPILL_RUNTIME_OK) {
+        shadowspill_mock_backend_destroy(mock);
+        return EXIT_FAILURE;
+    }
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    if (shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return EXIT_FAILURE;
+    }
+    ShadowSpillAllocation allocation = {0};
+    if (shadowspill_allocate(runtime, 128U, 16U, compute, &allocation) !=
+        SHADOWSPILL_RUNTIME_OK || allocation.pointer == NULL ||
+        allocation.charged_bytes != 128U) {
+        return EXIT_FAILURE;
+    }
+    if (shadowspill_record_stream(runtime, allocation.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+        shadowspill_free(runtime, allocation.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillRuntimeStatistics statistics = {0};
+    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.allocated_bytes != 0U || statistics.free_bytes != 256U ||
+        statistics.largest_free_range_bytes != 256U ||
+        statistics.pending_retirements != 0U) {
+        return EXIT_FAILURE;
+    }
+
+    const ShadowSpillObjectDescription object = {
+        .object_id = 7U,
+        .size_bytes = 128U,
+        .initial_version = 4U,
+        .retain_host_backing = 1U,
+        .initially_host_resident = 1U,
+    };
+    ShadowSpillAllocation first_generation = {0};
+    if (shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 128U, 16U, compute, &first_generation) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_bind_object(
+            runtime, object.object_id, first_generation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillRuntimeAction offload = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillObjectUpdate update = {
+        .object_id = object.object_id,
+        .version_delta = 1U,
+    };
+    if (shadowspill_after_task(runtime, 1U, compute, &update, 1U, &offload, 1U) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillAllocation blocker = {0};
+    if (shadowspill_allocate(runtime, 64U, 16U, compute, &blocker) !=
+        SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillRuntimeAction prefetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    if (shadowspill_after_task(runtime, 2U, compute, NULL, 0U, &prefetch, 1U) !=
+        SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    const uint64_t input_ids[] = {object.object_id, object.object_id};
+    ShadowSpillObjectBinding bindings[2] = {{0}};
+    if (shadowspill_before_task(
+            runtime, 3U, compute, input_ids, 2U, bindings, 2U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        bindings[0].pointer == first_generation.pointer ||
+        bindings[0].pointer != bindings[1].pointer ||
+        bindings[0].generation <= first_generation.generation ||
+        bindings[0].authoritative_version != 5U) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillObjectUpdate post_prefetch_update = {
+        .object_id = object.object_id,
+        .version_delta = 1U,
+    };
+    ShadowSpillObjectSnapshot snapshot = {0};
+    if (shadowspill_after_task(
+            runtime, 3U, compute, &post_prefetch_update, 1U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        snapshot.authoritative_version != 6U || snapshot.device_version != 6U ||
+        snapshot.host_current) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillRuntimeAction release = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+        shadowspill_after_task(
+            runtime, 3U, compute, NULL, 0U, &release, 1U
+        ) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, blocker.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.transfers_to_host != 1U ||
+        statistics.transfers_to_device != 1U ||
+        statistics.bytes_to_host != 128U ||
+        statistics.bytes_to_device != 128U ||
+        statistics.wait_events_inserted != 1U ||
+        statistics.allocated_bytes != 0U ||
+        snapshot.authoritative_version != 6U || snapshot.host_current ||
+        snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+        snapshot.device_pointer != NULL) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillObjectDescription pair[] = {
+        {
+            .object_id = 8U,
+            .size_bytes = 64U,
+            .initially_host_resident = 1U,
+        },
+        {
+            .object_id = 9U,
+            .size_bytes = 64U,
+            .initially_host_resident = 1U,
+        },
+    };
+    const ShadowSpillRuntimeAction pair_prefetch[] = {
+        {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+    };
+    if (shadowspill_register_object(runtime, &pair[0]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &pair[1]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 4U, compute, NULL, 0U, pair_prefetch, 2U
+        ) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    const uint64_t pair_inputs[] = {8U, 9U};
+    ShadowSpillObjectBinding pair_bindings[2] = {{0}};
+    if (shadowspill_before_task(
+            runtime, 5U, compute, pair_inputs, 2U, pair_bindings, 2U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        pair_bindings[0].pointer == pair_bindings[1].pointer) {
+        return EXIT_FAILURE;
+    }
+    const ShadowSpillRuntimeAction pair_release[] = {
+        {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
+        {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
+    };
+    if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+        shadowspill_after_task(
+            runtime, 5U, compute, NULL, 0U, pair_release, 2U
+        ) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.wait_events_inserted != 3U ||
+        statistics.transfers_to_device != 3U ||
+        statistics.allocated_bytes != 0U) {
+        return EXIT_FAILURE;
+    }
+    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
+        return EXIT_FAILURE;
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return EXIT_SUCCESS;
+}
