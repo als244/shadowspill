@@ -1,20 +1,25 @@
 #include <shadowspill/backend_cuda.h>
 
 #include <cuda.h>
+#include <nvml.h>
 #include <nvtx3/nvToolsExt.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 struct ShadowSpillCudaBackend {
     pthread_mutex_t mutex;
     CUdevice device;
     CUcontext context;
     CUcontext creator_previous_context;
+    nvmlDevice_t nvml_device;
+    uint8_t nvml_initialized;
     pthread_t creator_thread;
     ShadowSpillCudaBackendCapabilities capabilities;
     ShadowSpillCudaBackendStatistics statistics;
     CUresult last_error;
+    nvmlReturn_t last_nvml_error;
 };
 
 static _Thread_local ShadowSpillCudaBackend *attached_backend;
@@ -26,6 +31,21 @@ static int record_result(ShadowSpillCudaBackend *backend, CUresult result) {
     pthread_mutex_lock(&backend->mutex);
     if (backend->last_error == CUDA_SUCCESS) {
         backend->last_error = result;
+    }
+    pthread_mutex_unlock(&backend->mutex);
+    return -1;
+}
+
+static int record_nvml_result(
+    ShadowSpillCudaBackend *backend,
+    nvmlReturn_t result
+) {
+    if (result == NVML_SUCCESS) {
+        return 0;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    if (backend->last_nvml_error == NVML_SUCCESS) {
+        backend->last_nvml_error = result;
     }
     pthread_mutex_unlock(&backend->mutex);
     return -1;
@@ -354,7 +374,15 @@ int shadowspill_cuda_backend_create(
         return -1;
     }
     backend->creator_thread = pthread_self();
-    CUresult result = cuDeviceGet(&backend->device, config->device_ordinal);
+    CUresult result = CUDA_SUCCESS;
+    nvmlReturn_t nvml_result = nvmlInit_v2();
+    if (nvml_result != NVML_SUCCESS) {
+        backend->last_nvml_error = nvml_result;
+        result = CUDA_ERROR_UNKNOWN;
+        goto fail;
+    }
+    backend->nvml_initialized = 1U;
+    result = cuDeviceGet(&backend->device, config->device_ordinal);
     if (result != CUDA_SUCCESS) {
         goto fail;
     }
@@ -380,6 +408,21 @@ int shadowspill_cuda_backend_create(
         goto fail;
     }
     attached_backend = backend;
+    char pci_bus_id[32];
+    result = cuDeviceGetPCIBusId(
+        pci_bus_id, (int)sizeof(pci_bus_id), backend->device
+    );
+    if (result != CUDA_SUCCESS) {
+        goto release_context;
+    }
+    nvml_result = nvmlDeviceGetHandleByPciBusId_v2(
+        pci_bus_id, &backend->nvml_device
+    );
+    if (nvml_result != NVML_SUCCESS) {
+        backend->last_nvml_error = nvml_result;
+        result = CUDA_ERROR_UNKNOWN;
+        goto release_context;
+    }
     size_t total_bytes = 0U;
     int driver_version = 0;
     if (cuDeviceTotalMem(&total_bytes, backend->device) != CUDA_SUCCESS ||
@@ -408,6 +451,7 @@ int shadowspill_cuda_backend_create(
         .unified_addressing = (uint8_t)read_attribute(
             backend->device, CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING
         ),
+        .process_memory_accounting = 1U,
     };
     *output = backend;
     return 0;
@@ -419,6 +463,9 @@ release_context:
     backend->context = NULL;
 fail:
     backend->last_error = result;
+    if (backend->nvml_initialized) {
+        (void)nvmlShutdown();
+    }
     pthread_mutex_destroy(&backend->mutex);
     free(backend);
     return -1;
@@ -436,6 +483,9 @@ void shadowspill_cuda_backend_destroy(ShadowSpillCudaBackend *backend) {
     }
     if (backend->context != NULL) {
         (void)cuDevicePrimaryCtxRelease(backend->device);
+    }
+    if (backend->nvml_initialized) {
+        (void)nvmlShutdown();
     }
     pthread_mutex_destroy(&backend->mutex);
     free(backend);
@@ -486,12 +536,78 @@ void shadowspill_cuda_backend_statistics(
     pthread_mutex_unlock(&backend->mutex);
 }
 
+int shadowspill_cuda_physical_memory(
+    ShadowSpillCudaBackend *backend,
+    ShadowSpillCudaPhysicalMemory *memory
+) {
+    if (backend == NULL || memory == NULL || !backend->nvml_initialized) {
+        return -1;
+    }
+    nvmlMemory_t device_memory = {0};
+    nvmlReturn_t result = nvmlDeviceGetMemoryInfo(
+        backend->nvml_device, &device_memory
+    );
+    if (record_nvml_result(backend, result) != 0) {
+        return -1;
+    }
+    unsigned int count = 0U;
+    result = nvmlDeviceGetComputeRunningProcesses_v3(
+        backend->nvml_device, &count, NULL
+    );
+    if (result != NVML_SUCCESS && result != NVML_ERROR_INSUFFICIENT_SIZE) {
+        return record_nvml_result(backend, result);
+    }
+    nvmlProcessInfo_t *processes = NULL;
+    if (count != 0U) {
+        processes = calloc((size_t)count, sizeof(*processes));
+        if (processes == NULL) {
+            return -1;
+        }
+        result = nvmlDeviceGetComputeRunningProcesses_v3(
+            backend->nvml_device, &count, processes
+        );
+        if (record_nvml_result(backend, result) != 0) {
+            free(processes);
+            return -1;
+        }
+    }
+    uint64_t process_bytes = 0U;
+    const unsigned int process_id = (unsigned int)getpid();
+    for (unsigned int index = 0U; index < count; ++index) {
+        if (processes[index].pid == process_id &&
+            processes[index].usedGpuMemory !=
+                (unsigned long long)NVML_VALUE_NOT_AVAILABLE) {
+            process_bytes += (uint64_t)processes[index].usedGpuMemory;
+        }
+    }
+    free(processes);
+    *memory = (ShadowSpillCudaPhysicalMemory){
+        .abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
+        .process_bytes = process_bytes,
+        .device_used_bytes = (uint64_t)device_memory.used,
+        .device_total_bytes = (uint64_t)device_memory.total,
+    };
+    return 0;
+}
+
 uint32_t shadowspill_cuda_backend_last_error(ShadowSpillCudaBackend *backend) {
     if (backend == NULL) {
         return (uint32_t)CUDA_ERROR_INVALID_VALUE;
     }
     pthread_mutex_lock(&backend->mutex);
     uint32_t result = (uint32_t)backend->last_error;
+    pthread_mutex_unlock(&backend->mutex);
+    return result;
+}
+
+uint32_t shadowspill_cuda_backend_last_nvml_error(
+    ShadowSpillCudaBackend *backend
+) {
+    if (backend == NULL) {
+        return (uint32_t)NVML_ERROR_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    uint32_t result = (uint32_t)backend->last_nvml_error;
     pthread_mutex_unlock(&backend->mutex);
     return result;
 }

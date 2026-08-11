@@ -19,3 +19,10 @@ The operation ledger is intended for admission and qualification. It reports
 conventional allocation/free counts, pinned allocation/free counts, transfers,
 events, waits, synchronizations, and context activations. A successful sealed
 steady state must not increase either allocation count.
+
+`shadowspill_cuda_physical_memory` uses NVML's per-process accounting and
+device ledger. The process value includes the CUDA context, complete physical
+slab, and allocations made directly by providers. It is independent of which
+slab ranges are logically live. ShadowSpill treats missing per-process
+accounting as an admission failure rather than silently weakening the public
+physical cap.

@@ -21,7 +21,16 @@ int main(void) {
     if (shadowspill_cuda_backend_capabilities(cuda, &capabilities) != 0 ||
         capabilities.abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
         capabilities.total_device_bytes == 0U ||
-        capabilities.recommended_minimum_alignment == 0U) {
+        capabilities.recommended_minimum_alignment == 0U ||
+        !capabilities.process_memory_accounting) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillCudaPhysicalMemory context_memory = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &context_memory) != 0 ||
+        context_memory.abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
+        context_memory.process_bytes == 0U ||
+        context_memory.device_used_bytes < context_memory.process_bytes ||
+        context_memory.device_total_bytes < capabilities.total_device_bytes) {
         return EXIT_FAILURE;
     }
     const ShadowSpillRuntimeConfig runtime_config = {
@@ -39,6 +48,12 @@ int main(void) {
         backend.create_stream(
             backend.context, SHADOWSPILL_TRANSFER_TO_DEVICE, &compute
         ) != 0) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillCudaPhysicalMemory admitted_memory = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &admitted_memory) != 0 ||
+        admitted_memory.process_bytes <
+            context_memory.process_bytes + runtime_config.device_slab_bytes) {
         return EXIT_FAILURE;
     }
     unsigned char *original = malloc(PAYLOAD_BYTES);
@@ -127,7 +142,8 @@ int main(void) {
         cuda_statistics.streams_created != 3U ||
         cuda_statistics.streams_destroyed != 3U ||
         cuda_statistics.events_created != cuda_statistics.events_destroyed ||
-        shadowspill_cuda_backend_last_error(cuda) != 0U) {
+        shadowspill_cuda_backend_last_error(cuda) != 0U ||
+        shadowspill_cuda_backend_last_nvml_error(cuda) != 0U) {
         return EXIT_FAILURE;
     }
     free(original);

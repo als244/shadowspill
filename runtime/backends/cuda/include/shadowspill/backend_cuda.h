@@ -35,7 +35,15 @@ typedef struct ShadowSpillCudaBackendCapabilities {
     uint64_t recommended_minimum_alignment;
     uint8_t concurrent_kernels;
     uint8_t unified_addressing;
+    uint8_t process_memory_accounting;
 } ShadowSpillCudaBackendCapabilities;
+
+typedef struct ShadowSpillCudaPhysicalMemory {
+    uint32_t abi_version;
+    uint64_t process_bytes;
+    uint64_t device_used_bytes;
+    uint64_t device_total_bytes;
+} ShadowSpillCudaPhysicalMemory;
 
 typedef struct ShadowSpillCudaBackendStatistics {
     uint64_t device_allocations;
@@ -87,8 +95,23 @@ SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_statistics(
     ShadowSpillCudaBackendStatistics *statistics
 );
 
+/*
+ * Reports NVML physical memory for the current process and whole device.
+ * Process bytes include the CUDA context, the slab, and provider allocations;
+ * they do not depend on allocator-visible logical occupancy.
+ */
+SHADOWSPILL_BACKEND_CUDA_API int shadowspill_cuda_physical_memory(
+    ShadowSpillCudaBackend *backend,
+    ShadowSpillCudaPhysicalMemory *memory
+);
+
 /* Last CUDA Driver API result observed by this backend; zero means success. */
 SHADOWSPILL_BACKEND_CUDA_API uint32_t shadowspill_cuda_backend_last_error(
+    ShadowSpillCudaBackend *backend
+);
+
+/* Last NVML result observed by physical accounting; zero means success. */
+SHADOWSPILL_BACKEND_CUDA_API uint32_t shadowspill_cuda_backend_last_nvml_error(
     ShadowSpillCudaBackend *backend
 );
 

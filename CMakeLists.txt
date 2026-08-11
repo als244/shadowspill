@@ -169,6 +169,11 @@ option(SHADOWSPILL_BUILD_CUDA "Build the CUDA slab backend" ON)
 if(SHADOWSPILL_BUILD_CUDA)
   find_package(CUDAToolkit QUIET)
   if(CUDAToolkit_FOUND)
+    find_library(
+      SHADOWSPILL_NVML_LIBRARY
+      NAMES nvidia-ml libnvidia-ml.so.1
+      REQUIRED
+    )
     add_library(
       shadowspill_backend_cuda
       SHARED
@@ -183,7 +188,11 @@ if(SHADOWSPILL_BUILD_CUDA)
     )
     target_link_libraries(
       shadowspill_backend_cuda
-      PRIVATE CUDA::cuda_driver Threads::Threads shadowspill_build_options
+      PRIVATE
+        CUDA::cuda_driver
+        ${SHADOWSPILL_NVML_LIBRARY}
+        Threads::Threads
+        shadowspill_build_options
     )
     set_target_properties(
       shadowspill_backend_cuda

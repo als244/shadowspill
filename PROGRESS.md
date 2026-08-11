@@ -42,6 +42,8 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] Real CUDA task boundaries insert one wait per unfinished input and allow
   simultaneous H2D, D2H, and unrelated compute without a steady-state transfer
   stream synchronization.
+- [x] CUDA admission telemetry reports per-process physical bytes through NVML,
+  separately from logical slab occupancy, plus whole-device used/total bytes.
 
 ## Completed gates
 
