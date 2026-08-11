@@ -86,6 +86,9 @@ Phase 8 — public forward and training callables.
 - [x] Forward checkpoint snapshots/reloads, caller-owned output lifetime,
   original Parameter identity, ties, model mode, deterministic close, and CPU
   restoration pass in a fresh allocator process.
+- [x] Captured objective graph pairs now have a small explicit executor that
+  reconstructs loss/metrics and returns input-aligned gradients; both save and
+  recompute ABIs match ordinary autograd on the same parameters and inputs.
 
 ## Completed gates
 
