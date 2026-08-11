@@ -47,6 +47,19 @@ def test_tensor_guard_rejects_geometry_before_execution() -> None:
         raise AssertionError("changed stride escaped its guard")
 
 
+def test_tensor_guard_preserves_backing_extent_offset_and_aliases() -> None:
+    base = torch.arange(12, dtype=torch.float32)
+    signature = capture_input_signature([base[:8], base[2:10]])
+    runtime = torch.zeros(12)
+    signature.validate([runtime[:8], runtime[2:10]])
+
+    separate = torch.zeros(12)
+    with pytest.raises(InputGuardError, match="alias relationship"):
+        signature.validate([runtime[:8], separate[2:10]])
+    with pytest.raises(InputGuardError, match="storage_nbytes"):
+        capture_input_signature([torch.zeros(8)]).validate([runtime[:8]])
+
+
 @pytest.mark.parametrize(
     "factory",
     [
@@ -59,6 +72,12 @@ def test_tensor_guard_rejects_geometry_before_execution() -> None:
 def test_tensor_spec_rejects_invalid_geometry(factory: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         factory()  # type: ignore[operator]
+
+
+def test_tensor_spec_reports_minimum_strided_backing_extent() -> None:
+    assert TensorSpec((3, 2), torch.bfloat16, stride=(1, 3)).storage_nbytes == 12
+    assert TensorSpec((0, 4), torch.float32).storage_nbytes == 0
+    assert TensorSpec((), torch.float32).storage_nbytes == 4
 
 
 def test_guard_reports_structure_type_count_and_static_errors() -> None:

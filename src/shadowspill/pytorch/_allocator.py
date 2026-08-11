@@ -36,6 +36,12 @@ class InstalledAllocator:
 _installed: InstalledAllocator | None = None
 
 
+def installed_allocator() -> InstalledAllocator | None:
+    """Return the process-lifetime allocator owner, if already selected."""
+
+    return _installed
+
+
 def _function_pointer(library: Any, name: str) -> int:
     try:
         symbol = getattr(library, name)
@@ -64,8 +70,6 @@ def install_allocator(
     """
 
     global _installed
-    if _installed is not None:
-        raise AllocatorInstallError("ShadowSpill's allocator is already installed")
     if device_ordinal < 0:
         raise AllocatorInstallError("device ordinal must be non-negative")
     if device_budget_bytes <= 0:
@@ -81,6 +85,8 @@ def install_allocator(
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
         raise AllocatorInstallError(f"PyTorch adapter does not exist: {path}")
+    if _installed is not None:
+        raise AllocatorInstallError("ShadowSpill's allocator is already installed")
     if torch.version.cuda is None:
         raise AllocatorInstallError("a CUDA-enabled PyTorch build is required")
     cuda: Any = torch.cuda

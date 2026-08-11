@@ -8,12 +8,16 @@ from .contracts import (
     PlanningError,
     TensorSpec,
 )
+from .public import PlannedForward, PlanReport, forward_pass
 
 __all__ = [
     "CaptureError",
     "InputGuardError",
     "ObjectiveError",
     "ObjectiveResult",
+    "PlanReport",
+    "PlannedForward",
     "PlanningError",
     "TensorSpec",
+    "forward_pass",
 ]

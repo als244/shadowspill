@@ -22,6 +22,9 @@ class TensorGuard:
     dtype: torch.dtype
     layout: torch.layout
     requires_grad: bool
+    storage_offset: int
+    storage_nbytes: int
+    alias_ordinal: int
 
     def validate(self, value: object, *, path: str) -> None:
         if not isinstance(value, torch.Tensor):
@@ -32,6 +35,8 @@ class TensorGuard:
             value.dtype,
             value.layout,
             bool(value.requires_grad),
+            int(value.storage_offset()),
+            int(value.untyped_storage().nbytes()),
         )
         expected = (
             self.shape,
@@ -39,6 +44,8 @@ class TensorGuard:
             self.dtype,
             self.layout,
             self.requires_grad,
+            self.storage_offset,
+            self.storage_nbytes,
         )
         if actual != expected:
             raise InputGuardError(
@@ -46,7 +53,8 @@ class TensorGuard:
                 f"stride={self.stride}, dtype={self.dtype}, "
                 f"layout={self.layout}, requires_grad={self.requires_grad}; "
                 f"got shape={actual[0]}, stride={actual[1]}, dtype={actual[2]}, "
-                f"layout={actual[3]}, requires_grad={actual[4]}"
+                f"layout={actual[3]}, requires_grad={actual[4]}, "
+                f"storage_offset={actual[5]}, storage_nbytes={actual[6]}"
             )
         if value.device.type not in {"cpu", "cuda"}:
             raise InputGuardError(f"{path} must be a CPU or CUDA tensor")
@@ -59,6 +67,9 @@ class TensorGuard:
             "dtype": str(self.dtype),
             "layout": str(self.layout),
             "requires_grad": self.requires_grad,
+            "storage_offset": self.storage_offset,
+            "storage_nbytes": self.storage_nbytes,
+            "alias_ordinal": self.alias_ordinal,
         }
 
 
@@ -110,6 +121,19 @@ class InputSignature:
             )
         for index, (guard, value) in enumerate(zip(self.leaves, leaves, strict=True)):
             guard.validate(value, path=f"{prefix} leaf {index}")
+        storage_ordinals: dict[tuple[str, int], int] = {}
+        for index, (guard, value) in enumerate(zip(self.leaves, leaves, strict=True)):
+            if not isinstance(guard, TensorGuard) or not isinstance(
+                value, torch.Tensor
+            ):
+                continue
+            storage = value.untyped_storage()
+            key = (value.device.type, storage._cdata)
+            ordinal = storage_ordinals.setdefault(key, len(storage_ordinals))
+            if ordinal != guard.alias_ordinal:
+                raise InputGuardError(
+                    f"{prefix} leaf {index} storage alias relationship differs"
+                )
 
 
 def capture_input_signature(values: object) -> InputSignature:
@@ -117,8 +141,11 @@ def capture_input_signature(values: object) -> InputSignature:
 
     leaves, tree_spec = tree_flatten(values)
     guards: list[LeafGuard] = []
+    storage_ordinals: dict[tuple[str, int], int] = {}
     for index, value in enumerate(leaves):
         if isinstance(value, TensorSpec):
+            alias_ordinal = len(storage_ordinals)
+            storage_ordinals[("spec", index)] = alias_ordinal
             guards.append(
                 TensorGuard(
                     shape=value.shape,
@@ -126,6 +153,9 @@ def capture_input_signature(values: object) -> InputSignature:
                     dtype=value.dtype,
                     layout=value.layout,
                     requires_grad=value.requires_grad,
+                    storage_offset=0,
+                    storage_nbytes=value.storage_nbytes,
+                    alias_ordinal=alias_ordinal,
                 )
             )
             continue
@@ -138,6 +168,11 @@ def capture_input_signature(values: object) -> InputSignature:
                 raise PlanningError(
                     f"example input leaf {index} must be CPU or meta before planning"
                 )
+            storage = value.untyped_storage()
+            storage_key = (value.device.type, storage._cdata)
+            alias_ordinal = storage_ordinals.setdefault(
+                storage_key, len(storage_ordinals)
+            )
             guards.append(
                 TensorGuard(
                     shape=tuple(value.shape),
@@ -145,6 +180,9 @@ def capture_input_signature(values: object) -> InputSignature:
                     dtype=value.dtype,
                     layout=value.layout,
                     requires_grad=bool(value.requires_grad),
+                    storage_offset=int(value.storage_offset()),
+                    storage_nbytes=int(storage.nbytes()),
+                    alias_ordinal=alias_ordinal,
                 )
             )
             continue

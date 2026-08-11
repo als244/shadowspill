@@ -4,8 +4,9 @@ ShadowSpill transparently plans recomputation, host offload, and prefetching
 around ordinary PyTorch execution while enforcing an explicit physical memory
 budget.
 
-> **Status:** architecture extraction is in progress. The public surface below
-> is the compatibility target; it is not yet available in the Phase 0 scaffold.
+> **Status:** the public forward-only callable is functional through the CUDA
+> slab runtime. Training assembly and model-scale qualification remain in
+> progress.
 
 ## Development installation
 
@@ -19,7 +20,7 @@ wheel and build the version-pinned adapter with `python tools/install.py`.
 Until that installer reaches its release gate, development uses the qualified
 PyTorch already installed in the `shadowspill` environment.
 
-## Planned training API
+## Training API target
 
 ```python
 from functools import partial
@@ -48,7 +49,7 @@ result = train_step(
 )
 ```
 
-## Planned forward API
+## Forward API
 
 ```python
 from shadowspill.pytorch import forward_pass

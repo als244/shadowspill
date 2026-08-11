@@ -63,6 +63,21 @@ class TensorSpec:
 
         return self.stride or _contiguous_stride(self.shape)
 
+    @property
+    def storage_nbytes(self) -> int:
+        """Smallest backing extent that can represent the fixed strided tensor."""
+
+        if not self.shape or any(dimension == 0 for dimension in self.shape):
+            elements = 0 if self.shape else 1
+        else:
+            elements = 1 + sum(
+                (dimension - 1) * stride
+                for dimension, stride in zip(
+                    self.shape, self.resolved_stride, strict=True
+                )
+            )
+        return elements * self.dtype.itemsize
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectiveResult:

@@ -422,5 +422,20 @@ if(BUILD_TESTING)
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
         TIMEOUT 60
     )
+    add_test(
+      NAME shadowspill_pytorch_forward_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/forward_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_forward_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT
+          "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src;SHADOWSPILL_SIMULATOR_LIBRARY=$<TARGET_FILE:shadowspill_simulator>;SHADOWSPILL_PLANNER_LIBRARY=$<TARGET_FILE:shadowspill_planner>"
+        TIMEOUT 90
+    )
   endif()
 endif()

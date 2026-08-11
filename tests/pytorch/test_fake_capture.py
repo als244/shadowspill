@@ -38,3 +38,14 @@ def test_fake_inputs_retain_nested_static_values_and_exact_strides() -> None:
     assert isinstance(converted[0], FakeTensor)
     assert tuple(converted[0].stride()) == (1, 3)
     assert converted[1] == {"length": 3}
+
+
+def test_fake_inputs_preserve_representative_view_aliases() -> None:
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    base = torch.arange(16, dtype=torch.float32)
+    converted = fake_cuda_inputs([base[:8], base[2:10]], mode)
+    assert (
+        converted[0].untyped_storage()._cdata == converted[1].untyped_storage()._cdata
+    )
+    assert converted[0].storage_offset() == 0
+    assert converted[1].storage_offset() == 2

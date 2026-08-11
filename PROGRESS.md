@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 7 — PyTorch capture, lowering, and structural profiling.
+Phase 8 — public forward and training callables.
 
 ## Status
 
@@ -80,6 +80,12 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
 - [x] Initial CPU payloads can populate retained pinned backing directly, and
   final device objects can transfer to ordinary caller allocator ownership
   without copying, changing addresses, or leaking logical object identities.
+- [x] Public `forward_pass()` now runs captured pure-ATen stages through the
+  production allocator, PressureFit schedule, storage rebinding, and ordinary
+  PyTorch task dispatch across repeated fixed-shape calls.
+- [x] Forward checkpoint snapshots/reloads, caller-owned output lifetime,
+  original Parameter identity, ties, model mode, deterministic close, and CPU
+  restoration pass in a fresh allocator process.
 
 ## Completed gates
 
@@ -217,6 +223,27 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
 - The private adapter exports only its versioned `shadowspill_pytorch_*` ABI.
   All eleven CTest cases, all 105 Python tests (91.00% coverage), Ruff, strict
   mypy, naming, installed-wheel relocation, and symbol gates pass.
+
+### Phase 8 forward vertical slice
+
+- The public planning session validates CPU model state and guarded inputs,
+  installs or reuses compatible process-global physical admission, captures
+  FakeTensor/Export stages, profiles each structural ABI, runs PressureFit, and
+  materializes the original model incrementally through retained host backing.
+- The executor acquires and rebinds every task input before invoking the
+  compiled PyTorch stage, promotes outputs, submits PressureFit actions in
+  order, dematerializes released storage, and transfers final output leaves to
+  ordinary caller ownership.
+- A release-completion race discovered by the public canary is fixed without
+  changing action timing: one retired binding token permits the frontend to
+  null a pointer whose allocation was already reclaimed by progress.
+- Read-only parameters correctly require H2D on each non-cyclic invocation but
+  no D2H writeback, because their retained host copies remain current. A real
+  D2H forward gate therefore requires pressured activation eviction rather
+  than an unchanged-weight assertion.
+- Fifteen CTest canaries and 169 Python tests pass. The CUDA public test covers
+  repeated execution, exact metadata guards, state reload, caller-retained
+  output lifetime, and idempotent close; full branch coverage is 90.42%.
 
 ## Gate rule
 

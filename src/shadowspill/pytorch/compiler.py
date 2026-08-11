@@ -147,11 +147,12 @@ class CudaTaskProfiler:
         self._samples = sample_iterations
         self._telemetry_capacity = telemetry_capacity
         self._next_task_id = 1 << 62
+        self._executables: dict[str, CompiledTask] = {}
 
     def measure(self, artifact: GraphArtifact) -> TaskMeasurement:
         """Compile once, then measure calibrated time and one exact live set."""
 
-        executable = compile_artifact(artifact, device_ordinal=self._device_ordinal)
+        executable = self._compiled(artifact)
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
         for _ in range(self._warmups):
@@ -178,6 +179,33 @@ class CudaTaskProfiler:
             samples_ns=tuple(samples),
             provenance="cuda-events+shadowspill-allocation-telemetry",
         )
+
+    def take_functions(
+        self, artifacts: Sequence[GraphArtifact]
+    ) -> dict[str, Callable[..., object]]:
+        """Transfer unique compiled entrypoints while releasing examples."""
+
+        result: dict[str, Callable[..., object]] = {}
+        for artifact in artifacts:
+            digest = artifact.compatibility_digest
+            if digest in result:
+                continue
+            executable = self._executables.pop(digest, None)
+            if executable is None:
+                executable = compile_artifact(
+                    artifact, device_ordinal=self._device_ordinal
+                )
+            result[digest] = executable.function
+        gc.collect()
+        return result
+
+    def _compiled(self, artifact: GraphArtifact) -> CompiledTask:
+        digest = artifact.compatibility_digest
+        executable = self._executables.get(digest)
+        if executable is None:
+            executable = compile_artifact(artifact, device_ordinal=self._device_ordinal)
+            self._executables[digest] = executable
+        return executable
 
     def _measure_workspace(
         self, executable: CompiledTask, stream: torch.cuda.Stream

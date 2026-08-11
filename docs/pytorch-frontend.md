@@ -3,6 +3,33 @@
 ShadowSpill's PyTorch frontend owns capture and ordinary task dispatch. It does
 not move model arithmetic into the neutral runtime.
 
+## Public forward callable
+
+`forward_pass(model, example_inputs=..., device_budget=...,
+host_budget=..., partition="auto")` is implemented. Planning must occur before
+an incompatible CUDA allocator has initialized the process. Parameters and
+buffers start on CPU; the returned callable gives the original registered
+tensors CUDA identity while it owns the model and restores them to CPU on
+`close()`.
+
+Every invocation validates the complete tensor geometry, storage alias
+relationships, and static metadata before writing persistent input slots.
+PressureFit's initial placement and exact ordered actions are submitted to the
+neutral runtime without trigger changes. Each compiled stage remains an
+ordinary PyTorch call wrapped by `before_task` and `after_task`. Public output
+pytrees are reconstructed from Export's user-output positions, and their live
+slab allocations transfer to ordinary caller ownership without a copy.
+
+`state_dict()` and `load_state_dict()` are explicitly synchronizing and use
+ordinary CPU tensors with the original model names. `close()` is synchronizing,
+idempotent, preserves Parameter objects and ties, restores host-authoritative
+bytes, and unregisters plan objects. Caller-retained outputs remain valid after
+close because they are no longer plan-owned.
+
+The current training capture and optimizer boundaries are implemented, but the
+public `plan()` executor is not yet released. The package does not advertise a
+partial training callable.
+
 ## Fixed input contract
 
 `TensorSpec` describes storage-free shape, stride, dtype, layout, and gradient

@@ -62,6 +62,7 @@ def fake_cuda_inputs(
     """Replace only tensor leaves with storage-free fixed CUDA geometry."""
 
     device = torch.device("cuda", device_index)
+    storage_owners: dict[tuple[str, int], torch.Tensor] = {}
 
     def convert(value: object) -> object:
         if isinstance(value, TensorSpec):
@@ -69,14 +70,33 @@ def fake_cuda_inputs(
             stride = value.resolved_stride
             dtype = value.dtype
             requires_grad = value.requires_grad
+            spec_owner = torch.empty(
+                value.storage_nbytes, dtype=torch.uint8, device=device
+            )
+            result = torch.empty(0, dtype=dtype, device=device).set_(
+                spec_owner.untyped_storage(), 0, shape, stride
+            )
         elif isinstance(value, torch.Tensor):
             shape = tuple(value.shape)
             stride = tuple(value.stride())
             dtype = value.dtype
             requires_grad = bool(value.requires_grad)
+            source_storage = value.untyped_storage()
+            key = (value.device.type, source_storage._cdata)
+            input_owner = storage_owners.get(key)
+            if input_owner is None:
+                input_owner = torch.empty(
+                    source_storage.nbytes(), dtype=torch.uint8, device=device
+                )
+                storage_owners[key] = input_owner
+            result = torch.empty(0, dtype=dtype, device=device).set_(
+                input_owner.untyped_storage(),
+                value.storage_offset(),
+                shape,
+                stride,
+            )
         else:
             return value
-        result = torch.empty_strided(shape, stride, dtype=dtype, device=device)
         result.requires_grad_(requires_grad)
         return result
 
