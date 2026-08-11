@@ -355,6 +355,41 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_wait_idle(void) {
     return shadowspill_runtime_wait_idle(runtime);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_start(
+    uint64_t capacity
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_telemetry_start(runtime, capacity);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_stop(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_telemetry_stop(runtime);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_read(
+    ShadowSpillAllocationEvent *events,
+    uint64_t capacity,
+    uint64_t *count
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_telemetry_read(
+              runtime, events, capacity, count
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_promote_allocation(
     uint64_t object_id,
     uint64_t address,
@@ -528,6 +563,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
 }
 
 void shadowspill_pytorch_abort_task_range(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    shadowspill_abort_task(runtime);
     if (task_range_active) {
         (void)nvtxRangePop();
         task_range_active = 0;

@@ -10,6 +10,7 @@ from shadowspill.pytorch._abi import (
     AdapterConfig,
     AdapterFailure,
     AdapterStatistics,
+    AllocationEvent,
     CudaStatistics,
     ObjectBinding,
     ObjectSnapshot,
@@ -43,6 +44,9 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
+    shadowspill_pytorch_allocation_telemetry_start = _Function()
+    shadowspill_pytorch_allocation_telemetry_stop = _Function()
+    shadowspill_pytorch_allocation_telemetry_read = _Function()
     shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
@@ -53,11 +57,12 @@ class _Library:
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 40
     assert ctypes.sizeof(AdapterCapabilities) == 16
-    assert ctypes.sizeof(RuntimeStatistics) == 19 * 8
+    assert ctypes.sizeof(RuntimeStatistics) == 24 * 8
+    assert ctypes.sizeof(AllocationEvent) == 64
     assert ctypes.sizeof(CudaStatistics) == 16 * 8
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
-    assert ctypes.sizeof(AdapterStatistics) == 360
+    assert ctypes.sizeof(AdapterStatistics) == 400
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 16
@@ -90,6 +95,15 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
+        ctypes.c_uint64
+    ]
+    assert library.shadowspill_pytorch_allocation_telemetry_stop.argtypes == []
+    assert library.shadowspill_pytorch_allocation_telemetry_read.argtypes == [
+        ctypes.POINTER(AllocationEvent),
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
     assert library.shadowspill_pytorch_promote_allocation.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,

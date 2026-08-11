@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 2
+ADAPTER_ABI_VERSION: Final = 3
 
 
 class AdapterConfig(ctypes.Structure):
@@ -57,6 +57,8 @@ class AdapterCapabilities(ctypes.Structure):
 class RuntimeStatistics(ctypes.Structure):
     _fields_ = [
         ("slab_bytes", ctypes.c_uint64),
+        ("requested_allocated_bytes", ctypes.c_uint64),
+        ("peak_requested_allocated_bytes", ctypes.c_uint64),
         ("allocated_bytes", ctypes.c_uint64),
         ("free_bytes", ctypes.c_uint64),
         ("largest_free_range_bytes", ctypes.c_uint64),
@@ -75,6 +77,23 @@ class RuntimeStatistics(ctypes.Structure):
         ("bytes_to_device", ctypes.c_uint64),
         ("bytes_to_host", ctypes.c_uint64),
         ("wait_events_inserted", ctypes.c_uint64),
+        ("allocation_events", ctypes.c_uint64),
+        ("allocation_event_capacity", ctypes.c_uint64),
+        ("allocation_event_overflow", ctypes.c_uint64),
+    ]
+
+
+class AllocationEvent(ctypes.Structure):
+    _fields_ = [
+        ("sequence", ctypes.c_uint64),
+        ("task_id", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("generation", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("charged_bytes", ctypes.c_uint64),
+        ("slab_offset", ctypes.c_uint64),
+        ("kind", ctypes.c_uint8),
+        ("category", ctypes.c_uint8),
     ]
 
 
@@ -210,6 +229,16 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_allocator_failure.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_wait_idle.argtypes = []
     library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_allocation_telemetry_start.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_allocation_telemetry_start.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_allocation_telemetry_stop.argtypes = []
+    library.shadowspill_pytorch_allocation_telemetry_stop.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_allocation_telemetry_read.argtypes = [
+        ctypes.POINTER(AllocationEvent),
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    library.shadowspill_pytorch_allocation_telemetry_read.restype = ctypes.c_uint32
     library.shadowspill_pytorch_promote_allocation.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,

@@ -108,6 +108,7 @@ add_library(
   runtime/src/ranges.c
   runtime/src/runtime.c
   runtime/src/status.c
+  runtime/src/telemetry.c
 )
 target_include_directories(
   shadowspill_runtime
@@ -313,7 +314,7 @@ if(BUILD_TESTING)
   )
   add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
 
-  foreach(runtime_test IN ITEMS blocking failure transitions)
+  foreach(runtime_test IN ITEMS blocking failure telemetry transitions)
     add_executable(
       shadowspill_runtime_${runtime_test}_canary
       tests/runtime/runtime_${runtime_test}_canary.c

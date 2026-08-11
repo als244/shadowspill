@@ -56,6 +56,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] Ordinary frees match stream-ordered allocator behavior: same-stream
   ranges are immediately reusable, while any distinct recorded stream retains
   event-gated retirement.
+- [x] Bounded task-scoped allocation telemetry records requested/charged
+  lifetimes, slab extents, output promotion, and exact sequential workspace
+  reuse without allocating inside allocator callbacks.
 
 ## Completed gates
 

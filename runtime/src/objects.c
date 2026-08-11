@@ -167,6 +167,16 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         goto done;
     }
     allocation->plan_owned = 1;
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        allocation,
+        SHADOWSPILL_ALLOCATION_PROMOTED,
+        SHADOWSPILL_ALLOCATION_PLANNED_OBJECT
+    );
+    if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
+        status = (ShadowSpillRuntimeStatus)runtime->failure.status;
+        goto done;
+    }
     object->allocation_id = allocation_id;
     object->generation = allocation->generation;
     object->device_version = object->authoritative_version;
@@ -220,7 +230,6 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
-    (void)task_id;
     if (runtime == NULL || (input_count != 0U && input_object_ids == NULL) ||
         (input_count != 0U && bindings == NULL) ||
         binding_capacity < input_count) {
@@ -305,6 +314,10 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
             .authoritative_version = object->authoritative_version,
             .pointer = allocation->pointer,
         };
+    }
+    if (status == SHADOWSPILL_RUNTIME_OK &&
+        shadowspill_enter_task_scope(runtime, task_id) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     pthread_mutex_unlock(&runtime->mutex);
     return status;
@@ -495,5 +508,6 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
+    shadowspill_leave_task_scope(runtime);
     return status;
 }

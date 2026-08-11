@@ -36,6 +36,8 @@ typedef struct ShadowSpillAllocationRecord {
     uint64_t requested_bytes;
     uint64_t charged_bytes;
     uint64_t offset;
+    uint64_t origin_task_id;
+    uint64_t release_task_id;
     void *pointer;
     int logical_freed;
     int plan_owned;
@@ -111,6 +113,8 @@ struct ShadowSpillRuntime {
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
+    uint64_t requested_allocated_bytes;
+    uint64_t peak_requested_allocated_bytes;
     uint64_t live_allocations;
     uint64_t blocked_allocators;
     uint64_t pending_retirements;
@@ -121,6 +125,12 @@ struct ShadowSpillRuntime {
     uint64_t bytes_to_device;
     uint64_t bytes_to_host;
     uint64_t wait_events_inserted;
+    ShadowSpillAllocationEvent *allocation_events;
+    uint64_t allocation_event_count;
+    uint64_t allocation_event_capacity;
+    uint64_t next_allocation_event_sequence;
+    int allocation_telemetry_active;
+    int allocation_event_overflow;
     ShadowSpillRuntimeFailure failure;
 };
 
@@ -164,6 +174,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
+    uint64_t origin_task_id,
     ShadowSpillAllocationRecord **record
 );
 void shadowspill_release_allocation_locked(
@@ -179,6 +190,18 @@ void shadowspill_latch_failure_locked(
 );
 ShadowSpillRuntimeStatus shadowspill_current_status_locked(
     ShadowSpillRuntime *runtime
+);
+uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
+int shadowspill_enter_task_scope(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id
+);
+void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime);
+void shadowspill_append_allocation_event_locked(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillAllocationRecord *allocation,
+    ShadowSpillAllocationEventKind kind,
+    ShadowSpillAllocationCategory category
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 void *shadowspill_progress_main(void *pointer);

@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -125,6 +125,20 @@ shadowspill_pytorch_allocator_failure(
 /* Explicitly synchronizing qualification/checkpoint helper. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_wait_idle(void);
+
+/* Bounded task-scoped allocation telemetry used by structural profiling. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_telemetry_start(uint64_t capacity);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_telemetry_stop(void);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_telemetry_read(
+    ShadowSpillAllocationEvent *events,
+    uint64_t capacity,
+    uint64_t *count
+);
 
 /*
  * Converts an existing ordinary PyTorch allocation into one plan-owned object

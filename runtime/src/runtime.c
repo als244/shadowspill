@@ -78,6 +78,10 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     destroy_actions(runtime);
     destroy_allocations(runtime);
     destroy_objects(runtime);
+    free(runtime->allocation_events);
+    runtime->allocation_events = NULL;
+    runtime->allocation_event_count = 0U;
+    runtime->allocation_event_capacity = 0U;
     shadowspill_range_destroy(&runtime->device_ranges);
     shadowspill_range_destroy(&runtime->host_ranges);
     if (runtime->h2d_stream_created) {
@@ -287,6 +291,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     pthread_mutex_lock(&runtime->mutex);
     *statistics = (ShadowSpillRuntimeStatistics){
         .slab_bytes = runtime->device_ranges.capacity,
+        .requested_allocated_bytes = runtime->requested_allocated_bytes,
+        .peak_requested_allocated_bytes =
+            runtime->peak_requested_allocated_bytes,
         .allocated_bytes = runtime->device_ranges.allocated,
         .free_bytes = shadowspill_range_free_bytes(&runtime->device_ranges),
         .largest_free_range_bytes =
@@ -308,6 +315,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .bytes_to_device = runtime->bytes_to_device,
         .bytes_to_host = runtime->bytes_to_host,
         .wait_events_inserted = runtime->wait_events_inserted,
+        .allocation_events = runtime->allocation_event_count,
+        .allocation_event_capacity = runtime->allocation_event_capacity,
+        .allocation_event_overflow =
+            (uint64_t)runtime->allocation_event_overflow,
     };
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;

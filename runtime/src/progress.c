@@ -228,7 +228,12 @@ static int dispatch_prefetch_locked(
     ShadowSpillObjectRecord *object = action->object;
     ShadowSpillAllocationRecord *allocation = NULL;
     ShadowSpillRuntimeStatus allocation_status = shadowspill_allocate_locked(
-        runtime, object->size_bytes, 1U, 1, &allocation
+        runtime,
+        object->size_bytes,
+        1U,
+        1,
+        action->task_id,
+        &allocation
     );
     if (allocation_status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
         return 0;
@@ -289,6 +294,7 @@ backend_failure:
             runtime->backend.context, action->completion_event
         );
     }
+    allocation->release_task_id = action->task_id;
     shadowspill_release_allocation_locked(runtime, allocation);
     shadowspill_latch_failure_locked(
         runtime,
@@ -331,6 +337,7 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                         );
                         return changed;
                     }
+                    allocation->release_task_id = action->task_id;
                     shadowspill_release_allocation_locked(runtime, allocation);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
                     object->residency = object->host_current
@@ -384,6 +391,7 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                         );
                         return changed;
                     }
+                    allocation->release_task_id = action->task_id;
                     shadowspill_release_allocation_locked(runtime, allocation);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
                     object->host_current = 1U;

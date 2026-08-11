@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 1U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 2U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -51,6 +51,18 @@ typedef enum ShadowSpillRuntimeActionKind {
     SHADOWSPILL_RUNTIME_OFFLOAD = 1,
     SHADOWSPILL_RUNTIME_PREFETCH = 2,
 } ShadowSpillRuntimeActionKind;
+
+typedef enum ShadowSpillAllocationEventKind {
+    SHADOWSPILL_ALLOCATION_CREATED = 0,
+    SHADOWSPILL_ALLOCATION_RELEASED = 1,
+    SHADOWSPILL_ALLOCATION_PROMOTED = 2,
+} ShadowSpillAllocationEventKind;
+
+typedef enum ShadowSpillAllocationCategory {
+    SHADOWSPILL_ALLOCATION_ANONYMOUS = 0,
+    SHADOWSPILL_ALLOCATION_PLANNED_OBJECT = 1,
+    SHADOWSPILL_ALLOCATION_CALLER_OWNED = 2,
+} ShadowSpillAllocationCategory;
 
 typedef struct ShadowSpillRuntimeConfig {
     uint32_t abi_version;
@@ -95,8 +107,22 @@ typedef struct ShadowSpillRuntimeAction {
     uint8_t kind;
 } ShadowSpillRuntimeAction;
 
+typedef struct ShadowSpillAllocationEvent {
+    uint64_t sequence;
+    uint64_t task_id;
+    uint64_t allocation_id;
+    uint64_t generation;
+    uint64_t requested_bytes;
+    uint64_t charged_bytes;
+    uint64_t slab_offset;
+    uint8_t kind;
+    uint8_t category;
+} ShadowSpillAllocationEvent;
+
 typedef struct ShadowSpillRuntimeStatistics {
     uint64_t slab_bytes;
+    uint64_t requested_allocated_bytes;
+    uint64_t peak_requested_allocated_bytes;
     uint64_t allocated_bytes;
     uint64_t free_bytes;
     uint64_t largest_free_range_bytes;
@@ -115,6 +141,9 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t bytes_to_device;
     uint64_t bytes_to_host;
     uint64_t wait_events_inserted;
+    uint64_t allocation_events;
+    uint64_t allocation_event_capacity;
+    uint64_t allocation_event_overflow;
 } ShadowSpillRuntimeStatistics;
 
 typedef struct ShadowSpillRuntimeFailure {
@@ -286,6 +315,41 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_after_task(
     uint32_t update_count,
     const ShadowSpillRuntimeAction *actions,
     uint32_t action_count
+);
+
+/*
+ * Clears the calling thread's active task scope after frontend execution
+ * aborts before after_task. This does not cancel already submitted device work.
+ */
+SHADOWSPILL_RUNTIME_API void shadowspill_abort_task(
+    ShadowSpillRuntime *runtime
+);
+
+/*
+ * Starts one bounded allocation-lifetime capture. Storage is allocated before
+ * capture begins, so allocator callbacks only append fixed-size records. A
+ * full buffer latches ALLOCATION_FAILURE rather than silently losing evidence.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_telemetry_start(
+    ShadowSpillRuntime *runtime,
+    uint64_t capacity
+);
+
+/* Stops capture. Previously recorded events remain readable until restart. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_telemetry_stop(ShadowSpillRuntime *runtime);
+
+/*
+ * Copies the complete ordered event stream. Pass events=NULL and capacity=0
+ * to query count. Caller owns the destination and no runtime pointer escapes.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_telemetry_read(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillAllocationEvent *events,
+    uint64_t capacity,
+    uint64_t *count
 );
 
 /* Explicitly synchronizing test/checkpoint helper; returns first failure. */

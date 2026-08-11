@@ -6,7 +6,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The ABI is version 1. All public functions return an enum status except
+The ABI is version 2. All public functions return an enum status except
 idempotent destroy functions and read-only mock controls. Call
 `shadowspill_runtime_abi_version()` and validate the backend ABI before creating
 a runtime.
@@ -40,6 +40,24 @@ first failure, joins the worker, and frees all runtime-owned resources.
 
 Diagnostics and statistics are snapshots. They expose no internal record or
 backend handle and are safe to inspect concurrently.
+
+## Allocation profiling
+
+`shadowspill_allocation_telemetry_start` preallocates one bounded event buffer
+before profiling. Between a successful `shadowspill_before_task` and its
+matching `shadowspill_after_task`, allocation callbacks are tagged with that
+task identity. The trace records requested and charged bytes, slab offset,
+generation, physical create/release order, and promotion from anonymous output
+allocation to planned-object ownership. `shadowspill_abort_task` clears only
+the calling thread's task tag when frontend execution raises.
+
+Capture never grows its buffer. Exhaustion latches
+`SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE`, so an incomplete workspace profile
+cannot be admitted. `shadowspill_allocation_telemetry_read` copies records into
+caller-owned storage and may first be called with a null destination to query
+the exact count. Physical releases delayed by a distinct recorded stream retain
+the task identity of their logical free; plan actions retain their trigger task
+identity even when the progress thread performs the allocation or release.
 
 The mock backend supports directional copy delays, event delay, operation
 counts, and exact failure injection. `shadowspill_mock_fail_next_operation` is
