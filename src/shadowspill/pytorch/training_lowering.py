@@ -321,9 +321,11 @@ def lower_partitioned_training_program(
                     pair,
                     values.backward_outputs,
                     forward_inputs,
+                    backward_inputs,
                     parameter_ids,
                     gradient_by_parameter,
                     cotangent_by_activation,
+                    inventory,
                 )
                 variants[variant] = _PreparedStageVariant(
                     stage,
@@ -442,6 +444,9 @@ def lower_partitioned_training_program(
                 )
                 inputs = [slot.object_id for slot in item.backward_inputs]
                 inputs.extend(mutated)
+                input_aliases = {
+                    inventory.alias_id(object_id) for object_id in inputs
+                }
                 task = TaskSpec(
                     task_id,
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
@@ -452,6 +457,7 @@ def lower_partitioned_training_program(
                         object_id
                         for object_id in destinations
                         if object_id in first_destinations
+                        and inventory.alias_id(object_id) not in input_aliases
                     ),
                     mutations=tuple(MutationSpec(object_id) for object_id in mutated),
                     phase="backward",
@@ -1179,11 +1185,21 @@ def _stage_backward_contributions(
     pair: AotGraphPair,
     values: tuple[object, ...],
     forward_inputs: tuple[TensorSlot, ...],
+    backward_inputs: tuple[TensorSlot, ...],
     parameter_ids: set[str],
     gradient_by_parameter: dict[str, str],
     cotangent_by_activation: dict[tuple[int, str], str],
+    inventory: _TensorInventory,
 ) -> tuple[TensorSlot, ...]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
+    backward_object_by_key = {
+        inventory.key(value): slot.object_id
+        for slot in backward_inputs
+        if slot.leaf_index < len(pair.backward.example_arguments)
+        and isinstance(
+            value := pair.backward.example_arguments[slot.leaf_index], torch.Tensor
+        )
+    }
     results: list[TensorSlot] = []
     for output_index in pair.forward.tensor_argument_positions:
         object_id = input_by_position.get(output_index)
@@ -1199,6 +1215,9 @@ def _stage_backward_contributions(
             destination = cotangent_by_activation.get((position, object_id))
             if destination is None:
                 continue
+            source = backward_object_by_key.get(inventory.key(value))
+            if source is not None:
+                inventory.merge_object_aliases(destination, source)
         results.append(TensorSlot(output_index, destination))
     return tuple(results)
 

@@ -56,10 +56,47 @@ class _LongLivedBoundaryModel(nn.Module):
         return self.third(middle + early)
 
 
+class _AuxiliaryPassThroughBlock(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.projection = nn.Linear(4, 4)
+
+    def forward(
+        self, value: torch.Tensor, auxiliary: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        projected = torch.relu(self.projection(value))
+        return projected, auxiliary + projected.square().mean()
+
+
+class _AuxiliaryPassThroughModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            [_AuxiliaryPassThroughBlock() for _ in range(3)]
+        )
+
+    def forward(
+        self, value: torch.Tensor, auxiliary: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        for block in self.blocks:
+            value, auxiliary = block(value, auxiliary)
+        return value, auxiliary
+
+
 def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
     return torch.nn.functional.mse_loss(model(value), target)
+
+
+def _auxiliary_objective(
+    model: nn.Module,
+    value: torch.Tensor,
+    target: torch.Tensor,
+    auxiliary: torch.Tensor,
+) -> torch.Tensor:
+    output, passed = model(value, auxiliary)
+    return torch.nn.functional.mse_loss(output, target) + passed
 
 
 def _lowered() -> LoweredTrainingProgram:
@@ -412,6 +449,64 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
                 assert any(candidate in task.dependencies for candidate in candidates)
         for object_id in task.outputs:
             producers.setdefault(object_id, []).append(task.task_id)
+
+
+def test_partitioned_backward_preserves_identity_cotangent_alias() -> None:
+    real_model = _AuxiliaryPassThroughModel()
+    optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        capture = partition_training_capture(
+            capture_training(
+                model,
+                _auxiliary_objective,
+                fake_cuda_inputs(
+                    [torch.randn(2, 4), torch.randn(2, 4), torch.randn(())], mode
+                ),
+            )
+        )
+    artifacts = (
+        *(
+            artifact
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+    )
+    measurements = {
+        artifact.compatibility_digest: TaskMeasurement(
+            100, 10, 10, (10,), (100,), "unit-test"
+        )
+        for artifact in artifacts
+        if artifact is not None
+    }
+    lowered = lower_partitioned_training_program(
+        model, (capture,), measurements, optimizer_capture
+    )
+    task_by_id = {task.task_id: task for task in lowered.program.tasks}
+    alias_by_object = {
+        item.object_id: item.alias_group_id for item in lowered.program.objects
+    }
+    identity_aliases: set[str] = set()
+    for entrypoint in lowered.entrypoints:
+        if entrypoint.phase != "backward":
+            continue
+        task = task_by_id[entrypoint.task_id]
+        input_aliases = {alias_by_object[item] for item in task.inputs}
+        for slot in entrypoint.gradient_output_slots:
+            alias_id = alias_by_object[slot.object_id]
+            if alias_id in input_aliases:
+                identity_aliases.add(alias_id)
+                assert slot.object_id not in task.outputs
+    assert identity_aliases
 
 
 def test_training_lowering_rejects_empty_templates() -> None:

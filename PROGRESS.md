@@ -651,3 +651,57 @@ the ignored internal progress log before this tracked summary is updated.
 - All 16 native/CUDA CTest canaries, the complete Python suite, Ruff, and strict
   mypy pass after the correction. Runtime ABI is 7, adapter ABI is 11, and the
   structural-profile schema is v4 so unsafe cached traces cannot be consumed.
+
+## 2026-08-11 — Bounded provider retention and exact Qwen qualification
+
+- Qwen's first linear-attention forward ABI retained one 24-byte tensor and
+  one 32-byte tensor on every isolated call. Exact allocation-ID, output-leaf,
+  dispatch, and Python-reference tracing proved these were not graph outputs,
+  Triton scratch, or hidden autograd state. FLA's bounded identity-based tensor
+  cache retains derived sequence lengths and indices while newly materialized
+  packed metadata rotates through its four-entry cache.
+- Profiling no longer assumes that a second call must retain nothing. It audits
+  the allocator's logical live-byte baseline for up to sixteen isolated calls,
+  requires two stable observations, reserves the observed high-water as fixed
+  slab use, and still rejects retention whose live baseline keeps growing. The
+  rule is operation- and provider-independent and changes no task or transfer
+  directive. Profile schema v7 separates it from prior semantics.
+- Exact 1.007B Qwen 3.5 passed five two-microbatch steps at a strict 10-GiB cap
+  with real D2H/H2D, selected recomputation, and bitwise step-three checkpoint
+  replay. Worst objective relative error was 0.002316; minimum per-tensor cosine
+  was 0.999649, maximum relative L2 was 0.016754, and minimum sign agreement was
+  0.994792.
+- The numerical gate passes, but performance does not: cold planning took
+  148.60 seconds, including 115.31 seconds profiling 43 unique ABIs. Runtime
+  steps were 0.916--1.168 seconds against a 0.404-second simulator prediction.
+  These latency and fidelity gaps remain explicit Phase 10 work.
+
+## 2026-08-11 — Identity cotangents and OLMoE authority audit
+
+- OLMoE spatial replay found a backward leaf that was literally one of the
+  backward graph's tangent inputs. Lowering had assigned that pass-through
+  value a fresh output alias, so admission waited for an allocation that the
+  graph correctly never made. Tensor inventory now merges exact input/output
+  views, the task does not claim a fresh output, and accumulation recognizes
+  the already-bound view without adding it to itself. A repeated auxiliary-loss
+  block regression covers the identity-cotangent form.
+- After that correction, the exact 0.976B optimized OLMoE run admitted and
+  completed five accumulated steps plus bitwise checkpoint replay. It did not
+  pass the numerical qualification: minimum cosine was 0.993619 and maximum
+  relative L2 was 0.11308 after five steps. An independent eager repeat was
+  bitwise identical, so the difference is not eager kernel nondeterminism.
+- A reduced real OLMoE produced identical results with automatic stage
+  partitioning and a single whole-graph stage. A frozen-optimizer gradient
+  comparison localized the difference below scheduling: the explicit compiled
+  AOT backward differed slightly from eager after one call, but remained inside
+  the stated one-step thresholds (minimum cosine 0.999964, maximum relative L2
+  0.00866, minimum sign agreement 0.99219). Discrete expert routing amplified
+  that small compiled/eager difference across later updates.
+- This audit also found that the first qualification harness used the external
+  `models.mlops` implementations as its numerical authority. The project plan
+  instead designates `models/pytorch` as the authority. The optimized Llama,
+  Qwen, and OLMoE measurements remain valuable supplemental evidence; the
+  formal family gate will use pure PyTorch models with `mlops.optim.AdamW`.
+- The complete Python suite and all 16 native/CUDA CTest canaries pass after
+  both behavior corrections. Ruff, production mypy, the naming audit, and
+  whitespace checks also pass.

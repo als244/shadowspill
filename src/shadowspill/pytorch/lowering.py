@@ -200,6 +200,34 @@ class _TensorInventory:
         ):
             self._object_by_key[key] = object_id
 
+    def merge_object_aliases(self, destination_id: str, source_id: str) -> None:
+        """Record that a graph output is exactly one of the graph inputs."""
+
+        destination = self._record(destination_id)
+        source = self._record(source_id)
+        destination_alias = destination.alias_group_id
+        source_alias = source.alias_group_id
+        if destination_alias == source_alias:
+            return
+        if (
+            self._alias_sizes[destination_alias] != self._alias_sizes[source_alias]
+            or destination.offset_bytes != source.offset_bytes
+            or destination.size_bytes != source.size_bytes
+        ):
+            raise CaptureError(
+                "an aliased graph output has incompatible input geometry"
+            )
+        for record in self._objects:
+            if record.alias_group_id == destination_alias:
+                record.alias_group_id = source_alias
+        for storage, alias_id in tuple(self._alias_by_storage.items()):
+            if alias_id == destination_alias:
+                self._alias_by_storage[storage] = source_alias
+        if destination_alias in self._retain_host:
+            self._retain_host.add(source_alias)
+            self._retain_host.remove(destination_alias)
+        del self._alias_sizes[destination_alias]
+
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
         if record.role in {ObjectRole.OTHER, ObjectRole.ACTIVATION}:

@@ -357,6 +357,8 @@ class TrainingExecutor:
             destination = self._state.object_store.get(alias_id)
             if destination is None:
                 first.append((object_id, alias_id, contribution))
+            elif _same_tensor_view(destination, contribution):
+                self._state.object_tensors[object_id] = destination
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
@@ -655,6 +657,18 @@ class TrainingExecutor:
                 for slot in entrypoint.output_slots[: entrypoint.public_output_count]
             )
         return tuple(result[index] for index in range(len(result)))
+
+
+def _same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:
+    """Return whether two tensors name the same bytes with the same geometry."""
+
+    return bool(
+        left.untyped_storage()._cdata == right.untyped_storage()._cdata
+        and left.storage_offset() == right.storage_offset()
+        and left.shape == right.shape
+        and left.stride() == right.stride()
+        and left.dtype == right.dtype
+    )
 
 
 __all__ = ["TrainingExecutor"]
