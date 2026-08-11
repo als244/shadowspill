@@ -19,6 +19,7 @@ class StageExample:
     """One split graph plus exact values observed at its functional ABI."""
 
     stage_id: str
+    module_target: str
     graph_module: GraphModule
     inputs: tuple[object, ...]
     output: object
@@ -88,6 +89,7 @@ def partition_export(
         stages.append(
             StageExample(
                 stage_id=f"stage_{index:04d}",
+                module_target=target,
                 graph_module=child,
                 inputs=inputs,
                 output=output,

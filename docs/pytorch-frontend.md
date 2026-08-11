@@ -90,3 +90,19 @@ Returned task storages are identified through a read-only exact pointer lookup
 and excluded from workspace without promoting them into permanent runtime
 objects. Content-addressed profiling invokes this machinery once per structural
 ABI; a warm cache launches no compilation or profiling kernels.
+
+## Canonical lowering
+
+Lowering assigns dense identities in encounter order and never serializes
+framework objects. One physical storage becomes one alias group; tied tensors
+and views become logical objects within that group with explicit byte offsets
+and sizes. Registered parameters and buffers are checkpoint-persistent and
+retain host backing. Caller inputs, intermediate activations, and returned
+outputs have step-scoped identities and declared initial/final residency.
+
+Each automatic stage becomes one canonical task with its structural profile,
+dependencies, inputs, outputs, and compute resource. A separate private
+entrypoint binding retains only the stage module target, compiled artifact, and
+tensor leaf positions needed by the PyTorch executor. The resulting `Program`
+is accepted directly by the standalone simulator and PressureFit; neither sees
+PyTorch tensors, graph modules, pointers, or operation names.

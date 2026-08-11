@@ -74,6 +74,9 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
 - [x] Structural task profiling now compiles real CUDA tasks once, warms outside
   timing, measures calibrated CUDA-event samples, and derives exact anonymous
   workspace live peaks from the production slab allocator.
+- [x] Forward task positions lower deterministically into canonical Program
+  objects, storage alias groups, profiles, dependencies, initial/final
+  residency, and narrow framework entrypoint bindings accepted by PressureFit.
 
 ## Completed gates
 
