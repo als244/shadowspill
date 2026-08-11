@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 1 — canonical IR and serialization.
+Phase 2 — standalone deterministic simulator.
 
 ## Status
 
@@ -16,6 +16,8 @@ Phase 1 — canonical IR and serialization.
   documented.
 - [x] Compact legacy-oracle evidence frozen with source hashes.
 - [x] Clean build, wheel, test, naming, and dependency-isolation gates pass.
+- [x] Canonical Program, MemorySchedule, and ExecutionPlan schemas implemented.
+- [x] Stable lossless dense projections and frozen IR identity artifact added.
 
 ## Completed gates
 
@@ -28,6 +30,22 @@ Phase 1 — canonical IR and serialization.
 - Production naming and old-repository dependency audits pass.
 - External oracle executes only in a separate process with a sanitized Python
   environment.
+
+### Phase 1
+
+- Immutable, validated records cover devices, resource lanes, alias extents,
+  versions, persistence, dependencies, mutations, workspace, recomputation
+  choices, memory actions, entrypoints, physical admission, and predictions.
+- Canonical JSON round trips byte-identically with deterministic SHA-256
+  identities.
+- Save/recompute alternatives resolve to an ordinary DAG by removing inactive
+  tasks and dependency edges; simultaneous non-exclusive writers are rejected.
+- Dense projections preserve every compiled-component input without framework
+  objects or backend handles.
+- 51 Python tests pass with 98% branch coverage, including Hypothesis-generated
+  programs and field-specific invalid-record cases.
+- Strict mypy, Ruff, isolated wheel installation, C warnings-as-errors, CTest,
+  naming, and dependency-isolation gates pass.
 
 ## Gate rule
 

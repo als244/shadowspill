@@ -1,0 +1,275 @@
+"""Explicit memory residency schedules."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+
+from ._serialization import JsonValue, canonical_json, digest_json, parse_json
+from ._validation import (
+    expect_list,
+    expect_mapping,
+    expect_string,
+    fail,
+    field,
+    index_unique,
+    require,
+    require_identifier,
+    require_tuple,
+)
+from .program import Program, RecomputationSelection
+
+SCHEDULE_SCHEMA = "shadowspill.memory_schedule/v1"
+
+
+class MemoryLocation(StrEnum):
+    DEVICE = "device"
+    HOST = "host"
+
+
+class MemoryActionKind(StrEnum):
+    RELEASE = "release"
+    OFFLOAD = "offload"
+    PREFETCH = "prefetch"
+
+
+@dataclass(frozen=True, slots=True)
+class ResidencySpec:
+    alias_group_id: str
+    location: MemoryLocation
+
+    def __post_init__(self) -> None:
+        require_identifier(self.alias_group_id, "residency.alias_group_id")
+        require(
+            isinstance(self.location, MemoryLocation),
+            "residency.location",
+            "invalid location",
+        )
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "alias_group_id": self.alias_group_id,
+            "location": self.location.value,
+        }
+
+    @classmethod
+    def from_value(cls, value: object, path: str) -> ResidencySpec:
+        data = expect_mapping(value, path)
+        location_value = expect_string(
+            field(data, "location", path), f"{path}.location"
+        )
+        try:
+            location = MemoryLocation(location_value)
+        except ValueError:
+            fail(f"{path}.location", f"unknown location {location_value!r}")
+        return cls(
+            alias_group_id=expect_string(
+                field(data, "alias_group_id", path), f"{path}.alias_group_id"
+            ),
+            location=location,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryAction:
+    trigger_task_id: str
+    alias_group_id: str
+    kind: MemoryActionKind
+
+    def __post_init__(self) -> None:
+        require_identifier(self.trigger_task_id, "action.trigger_task_id")
+        require_identifier(self.alias_group_id, "action.alias_group_id")
+        require(isinstance(self.kind, MemoryActionKind), "action.kind", "invalid kind")
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "alias_group_id": self.alias_group_id,
+            "kind": self.kind.value,
+            "trigger_task_id": self.trigger_task_id,
+        }
+
+    @classmethod
+    def from_value(cls, value: object, path: str) -> MemoryAction:
+        data = expect_mapping(value, path)
+        kind_value = expect_string(field(data, "kind", path), f"{path}.kind")
+        try:
+            kind = MemoryActionKind(kind_value)
+        except ValueError:
+            fail(f"{path}.kind", f"unknown memory action {kind_value!r}")
+        return cls(
+            trigger_task_id=expect_string(
+                field(data, "trigger_task_id", path), f"{path}.trigger_task_id"
+            ),
+            alias_group_id=expect_string(
+                field(data, "alias_group_id", path), f"{path}.alias_group_id"
+            ),
+            kind=kind,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySchedule:
+    initial_residency: tuple[ResidencySpec, ...]
+    actions: tuple[MemoryAction, ...]
+    final_residency: tuple[ResidencySpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        require_tuple(self.initial_residency, "schedule.initial_residency")
+        require_tuple(self.actions, "schedule.actions")
+        require_tuple(self.final_residency, "schedule.final_residency")
+        index_unique(
+            (item.alias_group_id for item in self.initial_residency),
+            "schedule.initial_residency",
+        )
+        index_unique(
+            (item.alias_group_id for item in self.final_residency),
+            "schedule.final_residency",
+        )
+
+    @property
+    def digest(self) -> str:
+        return digest_json(self.to_dict())
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "actions": [action.to_dict() for action in self.actions],
+            "final_residency": [item.to_dict() for item in self.final_residency],
+            "initial_residency": [item.to_dict() for item in self.initial_residency],
+            "schema": SCHEDULE_SCHEMA,
+        }
+
+    def to_json(self) -> str:
+        return canonical_json(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, value: object) -> MemorySchedule:
+        data = expect_mapping(value, "schedule")
+        schema = expect_string(field(data, "schema", "schedule"), "schedule.schema")
+        require(
+            schema == SCHEDULE_SCHEMA,
+            "schedule.schema",
+            f"unsupported schema {schema!r}",
+        )
+        initial = expect_list(
+            field(data, "initial_residency", "schedule"),
+            "schedule.initial_residency",
+        )
+        actions = expect_list(field(data, "actions", "schedule"), "schedule.actions")
+        final = expect_list(
+            field(data, "final_residency", "schedule"),
+            "schedule.final_residency",
+        )
+        return cls(
+            initial_residency=tuple(
+                ResidencySpec.from_value(item, f"schedule.initial_residency[{index}]")
+                for index, item in enumerate(initial)
+            ),
+            actions=tuple(
+                MemoryAction.from_value(item, f"schedule.actions[{index}]")
+                for index, item in enumerate(actions)
+            ),
+            final_residency=tuple(
+                ResidencySpec.from_value(item, f"schedule.final_residency[{index}]")
+                for index, item in enumerate(final)
+            ),
+        )
+
+    @classmethod
+    def from_json(cls, payload: str) -> MemorySchedule:
+        return cls.from_dict(parse_json(payload))
+
+    def validate(
+        self,
+        program: Program,
+        selections: tuple[RecomputationSelection, ...] = (),
+    ) -> None:
+        active_tasks = program.selected_tasks(selections)
+        task_order = {task.task_id: index for index, task in enumerate(active_tasks)}
+        alias_ids = {group.alias_group_id for group in program.alias_groups}
+        object_alias = {item.object_id: item.alias_group_id for item in program.objects}
+
+        states: dict[str, MemoryLocation] = {}
+        for index, residency in enumerate(self.initial_residency):
+            require(
+                residency.alias_group_id in alias_ids,
+                f"schedule.initial_residency[{index}].alias_group_id",
+                f"unknown alias group {residency.alias_group_id!r}",
+            )
+            states[residency.alias_group_id] = residency.location
+
+        actions_by_task: dict[str, list[tuple[int, MemoryAction]]] = {}
+        previous_trigger = -1
+        for index, action in enumerate(self.actions):
+            path = f"schedule.actions[{index}]"
+            require(
+                action.trigger_task_id in task_order,
+                f"{path}.trigger_task_id",
+                f"unknown or inactive task {action.trigger_task_id!r}",
+            )
+            require(
+                action.alias_group_id in alias_ids,
+                f"{path}.alias_group_id",
+                f"unknown alias group {action.alias_group_id!r}",
+            )
+            trigger = task_order[action.trigger_task_id]
+            require(
+                trigger >= previous_trigger,
+                path,
+                "actions must be ordered by trigger task",
+            )
+            previous_trigger = trigger
+            actions_by_task.setdefault(action.trigger_task_id, []).append(
+                (index, action)
+            )
+
+        for task in active_tasks:
+            for object_id in task.inputs:
+                alias_id = object_alias[object_id]
+                require(
+                    states.get(alias_id) is MemoryLocation.DEVICE,
+                    f"schedule.task[{task.task_id}].inputs",
+                    f"alias group {alias_id!r} is not device resident",
+                )
+            for object_id in task.outputs:
+                states[object_alias[object_id]] = MemoryLocation.DEVICE
+            for action_index, action in actions_by_task.get(task.task_id, []):
+                path = f"schedule.actions[{action_index}]"
+                current = states.get(action.alias_group_id)
+                if action.kind is MemoryActionKind.RELEASE:
+                    require(current is not None, path, "cannot release absent storage")
+                    del states[action.alias_group_id]
+                elif action.kind is MemoryActionKind.OFFLOAD:
+                    require(
+                        current is MemoryLocation.DEVICE,
+                        path,
+                        "offload requires device residency",
+                    )
+                    states[action.alias_group_id] = MemoryLocation.HOST
+                else:
+                    require(
+                        current is MemoryLocation.HOST,
+                        path,
+                        "prefetch requires host residency",
+                    )
+                    states[action.alias_group_id] = MemoryLocation.DEVICE
+
+        for index, residency in enumerate(self.final_residency):
+            require(
+                residency.alias_group_id in alias_ids,
+                f"schedule.final_residency[{index}].alias_group_id",
+                f"unknown alias group {residency.alias_group_id!r}",
+            )
+            require(
+                states.get(residency.alias_group_id) is residency.location,
+                f"schedule.final_residency[{index}]",
+                f"required {residency.location.value} residency was not reached",
+            )
+
+
+__all__ = [
+    "MemoryAction",
+    "MemoryActionKind",
+    "MemoryLocation",
+    "MemorySchedule",
+    "ResidencySpec",
+]
