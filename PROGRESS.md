@@ -483,6 +483,15 @@ Phase 8 — public forward and training callables.
   will translate that latched failure at the task boundary and distinguish
   insufficient total capacity from contiguous-range fragmentation before any
   admission or allocator policy is changed.
+- Cold-path allocator-failure translation now reports the failing task and the
+  neutral runtime's requested, free, and largest-range evidence without adding
+  work to successful task dispatch. The exact rerun proved spatial
+  fragmentation: task 71 requested 525,336,576 bytes with 682,739,712 bytes
+  free, but its largest range was 489,988,096 bytes. The simulator's byte plan
+  is valid; production training admission failed to replay/prove slab geometry.
+- The diagnostic rerun also found that `close()` queries a runtime after its
+  first fatal allocation failure and can mask the primary exception. Failure
+  cleanup must preserve the first cause while restoring model ownership.
 
 ## Gate rule
 

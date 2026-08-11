@@ -343,6 +343,26 @@ class RuntimeBridge:
     def abort_task(self) -> None:
         self.library.shadowspill_pytorch_abort_task_range()
 
+    def abort_task_after_failure(self, operation: str, cause: BaseException) -> None:
+        """Close a failed task boundary and expose a latched allocator cause."""
+
+        self.abort_task()
+        try:
+            self.raise_if_allocator_failed(operation)
+        except RuntimeExecutionError as error:
+            raise error from cause
+
+    def raise_if_allocator_failed(self, operation: str) -> None:
+        """Raise the first callback failure without touching the device timeline."""
+
+        failure = AdapterFailure()
+        status = int(
+            self.library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))
+        )
+        if status == 0:
+            return
+        raise RuntimeExecutionError(self._failure_message(operation, status, failure))
+
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)
 
@@ -365,10 +385,19 @@ class RuntimeBridge:
             return
         failure = AdapterFailure()
         self.library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))
-        raise RuntimeExecutionError(
+        raise RuntimeExecutionError(self._failure_message(operation, status, failure))
+
+    @staticmethod
+    def _failure_message(operation: str, status: int, failure: AdapterFailure) -> str:
+        requested = max(
+            int(failure.requested_bytes), int(failure.runtime.requested_bytes)
+        )
+        return (
             f"{operation} failed with status {status}; "
+            f"device={failure.device_ordinal}, "
             f"object={failure.runtime.object_id}, "
-            f"requested={failure.runtime.requested_bytes}, "
+            f"allocation={failure.runtime.allocation_id}, "
+            f"requested={requested}, "
             f"free={failure.runtime.free_bytes}, "
             f"largest_free_range={failure.runtime.largest_free_range_bytes}"
         )

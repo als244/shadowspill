@@ -98,9 +98,11 @@ class _ExecutingStage(nn.Module):
             finally:
                 task_open = False
             return output
-        except BaseException:
+        except BaseException as error:
             if task_open:
-                self._bridge.abort_task()
+                self._bridge.abort_task_after_failure(
+                    f"execute task {self._task.task_id}", error
+                )
             raise
 
 

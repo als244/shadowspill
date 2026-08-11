@@ -302,9 +302,11 @@ class TrainingExecutor:
             task_open = False
             self._forget_released_objects(run, task.task_id)
             return outputs
-        except BaseException:
+        except BaseException as error:
             if task_open:
-                self._bridge.abort_task()
+                self._bridge.abort_task_after_failure(
+                    f"execute task {task.task_id}", error
+                )
             raise
 
     def _bind_forward_outputs(
@@ -430,9 +432,11 @@ class TrainingExecutor:
                     self._state.object_tensors.pop(
                         gradient_binding.gradient_object_id, None
                     )
-        except BaseException:
+        except BaseException as error:
             if task_open:
-                self._bridge.abort_task()
+                self._bridge.abort_task_after_failure(
+                    f"execute task {task.task_id}", error
+                )
             raise
 
     def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
