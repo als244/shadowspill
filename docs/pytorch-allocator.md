@@ -53,3 +53,9 @@ PyTorch package. Development and wheel builds therefore pass
 `torch.utils.cmake_prefix_path` as `CMAKE_PREFIX_PATH`. The release installer
 will make that handshake mandatory; an allocator-only build advertises
 `storage_rebinding = 0` and cannot construct a planned callable.
+
+Task actions do not synchronize transfer streams. Qualification holds two H2D
+inputs behind a compute event, verifies that `before_task` inserts both waits,
+and then observes those copies plus a simultaneous D2H finishing while an
+independent compute stream remains busy. Explicit `wait_idle`, checkpoint, and
+close boundaries are synchronizing by contract.

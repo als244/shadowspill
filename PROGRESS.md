@@ -39,6 +39,9 @@ Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
 - [x] The narrow version-pinned storage adapter preserves Parameter, storage,
   view, and alias identity while a planned object is dematerialized and later
   rebound to a different slab address and allocation generation.
+- [x] Real CUDA task boundaries insert one wait per unfinished input and allow
+  simultaneous H2D, D2H, and unrelated compute without a steady-state transfer
+  stream synchronization.
 
 ## Completed gates
 

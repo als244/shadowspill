@@ -347,6 +347,20 @@ if(BUILD_TESTING)
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
     )
     add_test(
+      NAME shadowspill_pytorch_overlap_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/overlap_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_overlap_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+        TIMEOUT 20
+    )
+    add_test(
       NAME shadowspill_pytorch_allocator_oom_canary
       COMMAND
         ${Python3_EXECUTABLE}
