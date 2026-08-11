@@ -492,6 +492,15 @@ Phase 8 — public forward and training callables.
 - The diagnostic rerun also found that `close()` queries a runtime after its
   first fatal allocation failure and can mask the primary exception. Failure
   cleanup must preserve the first cause while restoring model ownership.
+- Save and recomputation capture now receive distinct detached Tensor views of
+  the same example storages. This isolates custom-autograd saved-tensor lifetime
+  without changing aliases or graph ABI; a newly registered, unrelated custom
+  operation with saved-tensor autograd passes both AOT alternatives.
+- The resulting one-layer full-vocabulary diagnostic completed capture and
+  planning in 34.2 seconds, then exposed a separate invalid initial-action
+  transition before task execution. That reduced-plan transition remains a
+  separate runtime bug and is not being conflated with exact-scale slab
+  fragmentation.
 
 ## Gate rule
 

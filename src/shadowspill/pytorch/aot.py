@@ -158,6 +158,12 @@ def capture_graph_pair(
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
 
+    capture_inputs = tuple(
+        value.detach().requires_grad_(value.requires_grad)
+        if isinstance(value, torch.Tensor)
+        else value
+        for value in inputs
+    )
     captured: dict[str, GraphArtifact] = {}
 
     def forward_compiler(
@@ -195,7 +201,7 @@ def capture_graph_pair(
                 fw_compiler=forward_compiler,
                 bw_compiler=backward_compiler,
             )
-        outputs = compiled(*inputs)
+        outputs = compiled(*capture_inputs)
         output_values, _ = tree_flatten(outputs)
         if root_output_positions is None:
             roots = tuple(
@@ -211,7 +217,7 @@ def capture_graph_pair(
             raise CaptureError("training stage has no differentiable output")
         differentiable_inputs = tuple(
             value
-            for value in inputs
+            for value in capture_inputs
             if isinstance(value, torch.Tensor) and value.requires_grad
         )
         if not differentiable_inputs:

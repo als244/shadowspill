@@ -77,6 +77,43 @@ class _CustomOperationModule(nn.Module):
         return _affine(value, 1.25)
 
 
+@torch.library.custom_op("shadowspill_test::saved_square", mutates_args=())
+def _saved_square(value: torch.Tensor) -> torch.Tensor:
+    return value.square()
+
+
+@_saved_square.register_fake
+def _saved_square_fake(value: torch.Tensor) -> torch.Tensor:
+    return torch.empty_like(value)
+
+
+def _saved_square_setup(
+    ctx: object, inputs: tuple[torch.Tensor], output: torch.Tensor
+) -> None:
+    del output
+    ctx.save_for_backward(inputs[0])  # type: ignore[attr-defined]
+
+
+def _saved_square_backward(ctx: object, gradient: torch.Tensor) -> torch.Tensor:
+    (value,) = ctx.saved_tensors  # type: ignore[attr-defined]
+    return 2 * value * gradient
+
+
+_saved_square.register_autograd(
+    _saved_square_backward,
+    setup_context=_saved_square_setup,
+)
+
+
+class _SavedOperationModule(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(3))
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return _saved_square(value * self.weight)
+
+
 def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_cuda_model(_CustomOperationModule(), mode)
@@ -86,6 +123,20 @@ def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
     assert any(
         "shadowspill_test.affine" in target for target in artifact.operator_targets
     )
+
+
+def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(_SavedOperationModule(), mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 3)], mode)
+
+    with mode:
+        capture = capture_training(
+            model, lambda module, value: module(value).sum(), inputs
+        )
+
+    assert capture.save_pair.backward.operator_targets
+    assert capture.recompute_pair.backward.operator_targets
 
 
 def test_objective_schema_reconstructs_metrics_and_rejects_count_change() -> None:
