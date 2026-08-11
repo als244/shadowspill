@@ -390,6 +390,23 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_read(
           );
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_for_pointer(
+    uint64_t address,
+    ShadowSpillAllocation *allocation
+) {
+    if (address == 0U || allocation == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_for_pointer(
+              runtime, (const void *)(uintptr_t)address, allocation
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_promote_allocation(
     uint64_t object_id,
     uint64_t address,

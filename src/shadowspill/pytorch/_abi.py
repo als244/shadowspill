@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 3
+ADAPTER_ABI_VERSION: Final = 4
 
 
 class AdapterConfig(ctypes.Structure):
@@ -94,6 +94,16 @@ class AllocationEvent(ctypes.Structure):
         ("slab_offset", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
         ("category", ctypes.c_uint8),
+    ]
+
+
+class Allocation(ctypes.Structure):
+    _fields_ = [
+        ("allocation_id", ctypes.c_uint64),
+        ("generation", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("charged_bytes", ctypes.c_uint64),
+        ("pointer", ctypes.c_void_p),
     ]
 
 
@@ -239,6 +249,11 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(ctypes.c_uint64),
     ]
     library.shadowspill_pytorch_allocation_telemetry_read.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_allocation_for_pointer.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(Allocation),
+    ]
+    library.shadowspill_pytorch_allocation_for_pointer.restype = ctypes.c_uint32
     library.shadowspill_pytorch_promote_allocation.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,

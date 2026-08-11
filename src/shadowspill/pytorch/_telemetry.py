@@ -56,6 +56,7 @@ class TaskWorkspaceProfile:
     peak_charged_bytes: int
     peak_extent_bytes: tuple[int, ...]
     promoted_allocation_ids: tuple[int, ...]
+    output_allocation_ids: tuple[int, ...]
     events: tuple[CapturedAllocationEvent, ...]
 
 
@@ -137,7 +138,10 @@ def read_allocation_telemetry(library: Any) -> tuple[CapturedAllocationEvent, ..
 
 
 def summarize_task_workspace(
-    events: tuple[CapturedAllocationEvent, ...], *, task_id: int
+    events: tuple[CapturedAllocationEvent, ...],
+    *,
+    task_id: int,
+    output_allocation_ids: tuple[int, ...] = (),
 ) -> TaskWorkspaceProfile:
     """Replay task-local anonymous lifetimes; sequential buffers do not add."""
 
@@ -149,13 +153,14 @@ def summarize_task_workspace(
         for event in selected
         if event.kind is AllocationEventKind.PROMOTED
     }
+    outputs = set(output_allocation_ids)
     live: dict[int, tuple[int, int]] = {}
     peak_requested = 0
     peak_charged = 0
     peak_extents: tuple[int, ...] = ()
     for event in selected:
         if event.kind is AllocationEventKind.CREATED:
-            if event.allocation_id in promoted:
+            if event.allocation_id in promoted or event.allocation_id in outputs:
                 continue
             if event.allocation_id in live:
                 raise AllocationTelemetryError(
@@ -179,5 +184,6 @@ def summarize_task_workspace(
         peak_charged_bytes=peak_charged,
         peak_extent_bytes=peak_extents,
         promoted_allocation_ids=tuple(sorted(promoted)),
+        output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
     )

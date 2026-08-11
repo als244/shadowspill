@@ -71,6 +71,9 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
   task distinction, tensor-state lifting, and bounded opaque fallback work for
   AdamW, Adam, SGD, and an unrelated custom optimizer without changing the
   caller's optimizer.
+- [x] Structural task profiling now compiles real CUDA tasks once, warms outside
+  timing, measures calibrated CUDA-event samples, and derives exact anonymous
+  workspace live peaks from the production slab allocator.
 
 ## Completed gates
 

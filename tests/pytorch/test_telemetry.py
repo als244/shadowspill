@@ -51,6 +51,18 @@ def test_workspace_uses_live_peak_and_excludes_promoted_outputs() -> None:
     assert profile.peak_charged_bytes == 96
     assert profile.peak_extent_bytes == (96,)
     assert profile.promoted_allocation_ids == (3,)
+    assert profile.output_allocation_ids == ()
+
+
+def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
+    events = (
+        _event(0, 10, AllocationEventKind.CREATED, 128),
+        _event(1, 11, AllocationEventKind.CREATED, 64),
+        _event(2, 11, AllocationEventKind.RELEASED, 64),
+    )
+    profile = summarize_task_workspace(events, task_id=7, output_allocation_ids=(10,))
+    assert profile.peak_charged_bytes == 64
+    assert profile.output_allocation_ids == (10,)
 
 
 def test_workspace_ignores_other_tasks_and_unknown_prior_release() -> None:

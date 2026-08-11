@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import torch
@@ -55,6 +55,7 @@ class GraphArtifact:
     output_count: int
     operator_targets: tuple[str, ...]
     compatibility_digest: str
+    example_arguments: tuple[object, ...] = field(repr=False, compare=False)
 
     @classmethod
     def capture(
@@ -101,6 +102,7 @@ class GraphArtifact:
             output_count=len(outputs),
             operator_targets=operators,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
+            example_arguments=example_inputs,
         )
 
 

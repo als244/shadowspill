@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 4U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -138,6 +138,13 @@ shadowspill_pytorch_allocation_telemetry_read(
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
     uint64_t *count
+);
+
+/* Read-only exact pointer lookup used to classify profiled task outputs. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_for_pointer(
+    uint64_t address,
+    ShadowSpillAllocation *allocation
 );
 
 /*

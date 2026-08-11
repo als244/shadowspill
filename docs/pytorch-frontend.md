@@ -73,3 +73,20 @@ claiming that unknown workspace or external device allocations are free. The
 runtime executes lifted optimizer graphs under `torch.no_grad()`, matching the
 ordinary `Optimizer.step()` mutation contract. ShadowSpill contains no `mlops`
 import; an externally supplied optimized optimizer uses this same boundary.
+
+## Compilation and profiling
+
+The private PyTorch artifact retains representative arguments only for task
+compilation; those framework values never enter canonical ShadowSpill IR or its
+serialized cache identity. Real CUDA representatives preserve shared storages,
+offsets, shapes, strides, dtypes, and gradient requirements. Inductor compiles
+the explicit task graph once, and warmup runs occur before measurement.
+
+Calibrated runtime samples use CUDA events. One additional isolated invocation
+runs inside the production `before_task`/`after_task` boundary while the slab
+allocator records requested and charged allocation lifetimes. Workspace is the
+maximum simultaneously-live anonymous extent set, not allocation volume.
+Returned task storages are identified through a read-only exact pointer lookup
+and excluded from workspace without promoting them into permanent runtime
+objects. Content-addressed profiling invokes this machinery once per structural
+ABI; a warm cache launches no compilation or profiling kernels.

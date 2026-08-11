@@ -10,6 +10,7 @@ from shadowspill.pytorch._abi import (
     AdapterConfig,
     AdapterFailure,
     AdapterStatistics,
+    Allocation,
     AllocationEvent,
     CudaStatistics,
     ObjectBinding,
@@ -47,6 +48,7 @@ class _Library:
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
+    shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
@@ -59,6 +61,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterCapabilities) == 16
     assert ctypes.sizeof(RuntimeStatistics) == 24 * 8
     assert ctypes.sizeof(AllocationEvent) == 64
+    assert ctypes.sizeof(Allocation) == 40
     assert ctypes.sizeof(CudaStatistics) == 16 * 8
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
@@ -103,6 +106,10 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AllocationEvent),
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint64),
+    ]
+    assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
+        ctypes.c_uint64,
+        ctypes.POINTER(Allocation),
     ]
     assert library.shadowspill_pytorch_promote_allocation.argtypes == [
         ctypes.c_uint64,
