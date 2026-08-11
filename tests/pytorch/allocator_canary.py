@@ -106,6 +106,23 @@ def main() -> int:
     if statistics.cuda.device_allocations != 1:
         raise AssertionError("CUDA backend did not use exactly one device slab")
 
+    same_stream = torch.full((1024, 1024), 6.0, device="cuda")
+    same_stream.add_(1.0)
+    same_stream_pointer = same_stream.data_ptr()
+    del same_stream
+    gc.collect()
+    same_stream_replacement = torch.empty(
+        (1024, 1024), dtype=torch.float32, device="cuda"
+    )
+    if same_stream_replacement.data_ptr() != same_stream_pointer:
+        raise AssertionError("same-stream logical free was not immediately reusable")
+    same_stream_replacement.fill_(8.0)
+    torch.testing.assert_close(
+        same_stream_replacement.cpu(), torch.full((1024, 1024), 8.0)
+    )
+    del same_stream_replacement
+    gc.collect()
+
     expected = torch.arange(2 << 20, dtype=torch.float32)
     parameter = torch.nn.Parameter(expected.cuda())
     view = parameter.view(1024, -1)

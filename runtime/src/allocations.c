@@ -278,6 +278,19 @@ ShadowSpillRuntimeStatus shadowspill_free(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
+    int same_stream_only = 1;
+    for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
+         item = item->next) {
+        if (!stream_equal(item->stream, stream)) {
+            same_stream_only = 0;
+            break;
+        }
+    }
+    if (same_stream_only) {
+        allocation->logical_freed = 1;
+        shadowspill_release_allocation_locked(runtime, allocation);
+        goto done;
+    }
     ShadowSpillEventRecord *events = NULL;
     for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
          item = item->next) {

@@ -53,6 +53,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] Physical sealing rejects provider requirements larger than the reserved
   headroom; later per-process growth beyond either headroom or the total cap is
   latched as a non-callback plan violation.
+- [x] Ordinary frees match stream-ordered allocator behavior: same-stream
+  ranges are immediately reusable, while any distinct recorded stream retains
+  event-gated retirement.
 
 ## Completed gates
 

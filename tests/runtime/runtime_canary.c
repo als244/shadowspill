@@ -51,6 +51,19 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
         shadowspill_free(runtime, allocation.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+    ShadowSpillAllocation same_stream_reuse = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    if (shadowspill_allocate(
+            runtime, 128U, 16U, compute, &same_stream_reuse
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        same_stream_reuse.pointer != allocation.pointer ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.pending_retirements != 0U ||
+        shadowspill_free(runtime, same_stream_reuse.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
@@ -60,7 +73,6 @@ int main(void) {
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
         return EXIT_FAILURE;
     }
-    ShadowSpillRuntimeStatistics statistics = {0};
     if (shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.allocated_bytes != 0U || statistics.free_bytes != 256U ||

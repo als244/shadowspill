@@ -84,15 +84,20 @@ static int worker_failure(void) {
         .backend = shadowspill_mock_backend_vtable(mock),
     };
     ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream other_stream = {{0U, 0U}};
     ShadowSpillAllocation allocation = {0};
     if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_mock_create_compute_stream(mock, &other_stream) != 0 ||
         shadowspill_allocate(runtime, 128U, 1U, stream, &allocation) !=
             SHADOWSPILL_RUNTIME_OK) {
         return -1;
     }
-    if (shadowspill_free(runtime, allocation.allocation_id, stream) !=
-        SHADOWSPILL_RUNTIME_OK) {
+    if (shadowspill_record_stream(
+            runtime, allocation.allocation_id, other_stream
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, allocation.allocation_id, stream) !=
+            SHADOWSPILL_RUNTIME_OK) {
         return -1;
     }
     WaitingAllocation waiting = {
@@ -136,6 +141,7 @@ static int worker_failure(void) {
     }
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    (void)shadowspill_mock_destroy_compute_stream(mock, other_stream);
     shadowspill_mock_backend_destroy(mock);
     return result;
 }

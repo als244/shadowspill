@@ -11,11 +11,13 @@ A runtime instance owns one device slab, one bounded host arena, one H2D stream,
 one D2H stream, and one progress thread. The frontend owns compute streams and
 submits numerical work.
 
-An allocation is an ordinary lease from the coalescing slab. Logical free
-records events on every associated stream; its range is not reusable until all
-events complete. If a request cannot fit, it blocks only while a retirement,
-release, or offload can create a suitable range. Otherwise it returns a
-structured no-progress OOM.
+An allocation is an ordinary lease from the coalescing slab. A logical free
+used only by its freeing stream is immediately reusable: subsequent work on
+that stream is already ordered after every prior use. If any distinct stream
+was recorded, retirement records events on all associated streams and delays
+reuse until all complete. If a request cannot fit, it blocks only while a
+cross-stream retirement, release, or offload can create a suitable range.
+Otherwise it returns a structured no-progress OOM.
 
 Allocation IDs are authoritative. Framework protocols that carry only an
 address resolve it through `shadowspill_allocation_for_pointer`, which returns
