@@ -12,6 +12,7 @@ from shadowspill.pytorch.aot import (
     capture_training_objective,
     inference_artifact,
 )
+from shadowspill.pytorch.capture import GraphArtifact
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 
 
@@ -80,6 +81,32 @@ def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> Non
         second = inference_artifact(capture_forward(replica, inputs))
     assert first.compatibility_digest == second.compatibility_digest
     assert "aten.linear.default" in first.operator_targets
+
+
+def test_structural_identity_includes_input_storage_aliases_and_offsets() -> None:
+    class _Pair(nn.Module):
+        def forward(
+            self, left: torch.Tensor, right: torch.Tensor
+        ) -> torch.Tensor:
+            return left + right
+
+    graph = torch.fx.symbolic_trace(_Pair())
+    owner = torch.arange(20, dtype=torch.float32)
+    aliased = GraphArtifact.capture(
+        kind="inference",
+        graph_module=graph,
+        example_inputs=(owner[1:9], owner[2:10]),
+    )
+    distinct = GraphArtifact.capture(
+        kind="inference",
+        graph_module=graph,
+        example_inputs=(owner[1:9].clone(), owner[2:10].clone()),
+    )
+    assert aliased.tensor_argument_alias_groups == (0, 0)
+    assert distinct.tensor_argument_alias_groups == (0, 1)
+    assert aliased.tensor_inputs[0].storage_offset == 1
+    assert aliased.tensor_inputs[1].storage_offset == 2
+    assert aliased.compatibility_digest != distinct.compatibility_digest
 
 
 @torch.library.custom_op("shadowspill_test::affine", mutates_args=())

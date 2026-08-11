@@ -766,3 +766,14 @@ the ignored internal progress log before this tracked summary is updated.
 - A regression replaces the whole-graph pair builder with a failing sentinel and
   proves export-only capture never invokes it. Focused AOT, partition, training,
   and training-lowering suites pass without changing runtime task semantics.
+
+## 2026-08-11 — Complete tensor-argument structural identity
+
+- Auditing safe graph-pair reuse found that the structural artifact identity
+  described tensor shape and stride but omitted storage offset and cross-input
+  alias relationships. Two call ABIs with the same geometry but different view
+  semantics could therefore share a profile or executable incorrectly.
+- Tensor geometry now includes storage offset, and each artifact records a dense
+  alias-group vector for its tensor arguments. Both enter the compatibility
+  digest. A focused regression distinguishes overlapping views from equal-shaped
+  independent tensors before any graph-pair reuse is enabled.

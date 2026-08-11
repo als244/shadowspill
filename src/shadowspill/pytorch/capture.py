@@ -20,6 +20,7 @@ from .contracts import ObjectiveError, ObjectiveResult
 class TensorGeometry:
     shape: tuple[int, ...]
     stride: tuple[int, ...]
+    storage_offset: int
     dtype: torch.dtype
     device_type: str
     requires_grad: bool
@@ -29,6 +30,7 @@ class TensorGeometry:
         return cls(
             shape=tuple(tensor.shape),
             stride=tuple(tensor.stride()),
+            storage_offset=int(tensor.storage_offset()),
             dtype=tensor.dtype,
             device_type=tensor.device.type,
             requires_grad=bool(tensor.requires_grad),
@@ -38,6 +40,7 @@ class TensorGeometry:
         return {
             "shape": self.shape,
             "stride": self.stride,
+            "storage_offset": self.storage_offset,
             "dtype": str(self.dtype),
             "device_type": self.device_type,
             "requires_grad": self.requires_grad,
@@ -55,6 +58,7 @@ class GraphArtifact:
     output_count: int
     operator_targets: tuple[str, ...]
     tensor_argument_positions: tuple[int, ...]
+    tensor_argument_alias_groups: tuple[int, ...]
     compatibility_digest: str
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
 
@@ -69,10 +73,18 @@ class GraphArtifact:
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
         )
+        tensor_arguments = tuple(
+            value for value in example_inputs if isinstance(value, torch.Tensor)
+        )
         tensor_inputs = tuple(
-            TensorGeometry.from_tensor(value)
-            for value in example_inputs
-            if isinstance(value, torch.Tensor)
+            TensorGeometry.from_tensor(value) for value in tensor_arguments
+        )
+        alias_group_by_storage: dict[int, int] = {}
+        tensor_alias_groups = tuple(
+            alias_group_by_storage.setdefault(
+                int(value.untyped_storage()._cdata), len(alias_group_by_storage)
+            )
+            for value in tensor_arguments
         )
         operators = tuple(
             sorted(
@@ -93,6 +105,7 @@ class GraphArtifact:
             "inputs": [geometry.identity() for geometry in tensor_inputs],
             "argument_count": len(example_inputs),
             "tensor_argument_positions": tensor_positions,
+            "tensor_argument_alias_groups": tensor_alias_groups,
             "output_count": len(outputs),
             "operators": operators,
             "torch": torch.__version__,
@@ -107,6 +120,7 @@ class GraphArtifact:
             output_count=len(outputs),
             operator_targets=operators,
             tensor_argument_positions=tensor_positions,
+            tensor_argument_alias_groups=tensor_alias_groups,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
             example_arguments=example_inputs,
         )
