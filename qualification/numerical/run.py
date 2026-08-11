@@ -21,6 +21,7 @@ from shadowspill.pytorch._abi import AdapterStatistics
 from shadowspill.pytorch._allocator import installed_allocator
 
 from .cases import DEFAULT_DEVICE_BUDGETS, ModelImplementation, build_case
+from .fixtures import write_pressurefit_fixtures
 from .metrics import compare_states, cpu_state, state_digest
 
 _HOST_BUDGET = 64 << 30
@@ -266,6 +267,10 @@ def _planned_worker(
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
+        pressurefit_fixtures = write_pressurefit_fixtures(
+            results=report.pressurefit_results,
+            directory=result_path.parent / f"{result_path.stem}_pressurefit",
+        )
         runtime_statistics = _adapter_statistics()
         training.close()
 
@@ -419,6 +424,7 @@ def _planned_worker(
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "recomputation_cache_hits": report.recomputation_cache_hits,
         "recomputation_cache_misses": report.recomputation_cache_misses,
+        "pressurefit_fixtures": pressurefit_fixtures,
     }
     qualification_result["passed"] = bool(
         not loss_failures

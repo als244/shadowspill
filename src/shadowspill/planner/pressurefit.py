@@ -679,6 +679,7 @@ def pressurefit(
     )
     return PressureFitResult(
         program=program,
+        options=selected_options,
         initial_residency=initial_residency,
         final_residency=final_residency,
         simulation_config=config,

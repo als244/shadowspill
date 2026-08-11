@@ -255,6 +255,7 @@ def build_forward(
                 tuple(timer.values),
                 started,
                 recomputation_cache_hit=cached_selection.cache_hit,
+                pressurefit_results=(selected,),
             )
             return PlannedForward(model, signature, executor, state, report)
     except BaseException:
@@ -442,6 +443,7 @@ def _forward_report(
     started: int,
     *,
     recomputation_cache_hit: bool = False,
+    pressurefit_results: tuple[Any, ...] = (),
 ) -> PlanReport:
     identity = {
         "mode": "forward",
@@ -485,6 +487,7 @@ def _forward_report(
         recomputation_cache_hits=int(recomputation_cache_hit),
         recomputation_cache_misses=int(not recomputation_cache_hit),
         fixed_slab_bytes=profiles.fixed_slab_bytes,
+        pressurefit_results=pressurefit_results,
     )
 
 

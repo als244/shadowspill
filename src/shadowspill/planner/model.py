@@ -151,6 +151,7 @@ class PressureFitResult:
     """Selected logical schedule plus exact simulator evidence."""
 
     program: Program
+    options: PressureFitOptions
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     simulation_config: SimulationConfig

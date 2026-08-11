@@ -74,6 +74,7 @@ class PressureFitCache:
             initial_residency,
             final_residency,
             config,
+            selected_options,
         )
         if cached is not None:
             return CachedPressureFitResult(cached, True)
@@ -94,6 +95,7 @@ class PressureFitCache:
         initial_residency: tuple[ResidencySpec, ...],
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
+        options: PressureFitOptions,
     ) -> PressureFitResult | None:
         path = self.root / f"{key}.json"
         try:
@@ -128,6 +130,7 @@ class PressureFitCache:
             )
         return PressureFitResult(
             program=program,
+            options=options,
             initial_residency=initial_residency,
             final_residency=final_residency,
             simulation_config=config,

@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, TaskProfile
+from shadowspill.planner import PressureFitResult
 
 from .executor import ForwardExecutor
 from .guards import InputSignature, validate_training_inputs
@@ -43,6 +44,7 @@ class PlanReport:
     aot_unique_stage_abis: int = 0
     aot_graph_pair_cache_hits: int = 0
     aot_graph_pair_cache_misses: int = 0
+    pressurefit_results: tuple[PressureFitResult, ...] = ()
 
     @property
     def predicted_device_peak_bytes(self) -> int:

@@ -867,3 +867,21 @@ the ignored internal progress log before this tracked summary is updated.
 - All 16 compiled gates, Ruff, MyPy, and 423 ordinary Python tests pass. Five
   public CUDA tests conflict only when included after CUDA-initializing tests in
   one process; all five pass through their required fresh-process CTest gates.
+
+## 2026-08-11 — Direct PressureFit goldens and benchmark
+
+- Added deterministic fixtures at the exact public `pressurefit()` boundary.
+  Their request is Program + initial/final residency + simulator configuration
+  + normalized options; their expected result is selections + schedule + full
+  simulation + all candidate diagnostics. PyTorch capture/profiling and outer
+  `plan()` artifacts are explicitly not part of these goldens.
+- Added a cache-free direct replay benchmark. It measures only
+  `pressurefit()`, stores raw/median nanosecond samples keyed by request-suite
+  digest, and requires the complete expected-result digest to match. This is
+  the baseline for the fresh C implementation and prevents AOT, profiling, or
+  cache behavior from contaminating the reported PressureFit speedup.
+- The current six-case matrix passes both Llama implementations and mlops Qwen.
+  Pure Qwen has a frontend workspace/capacity mismatch; pure OLMoE needs a
+  bounded contract for data-dependent `aten.bincount`; mlops OLMoE has a
+  numerical-state failure despite bitwise checkpoint replay. These are tracked
+  separately from PressureFit wall time.

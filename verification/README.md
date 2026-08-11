@@ -76,3 +76,24 @@ and custom-operation policy outside the verification launcher.
 The eager artifact records a digest of the complete request. `--reuse-eager`
 is rejected if the model name, implementation, seed, model config, geometry,
 factory, or case options differ.
+
+Every accepted planned run writes a `<case>_pressurefit/` directory containing
+the exact `pressurefit()` input/output fixtures. Record a direct, cache-free
+Python baseline with:
+
+```bash
+python -m verification.benchmark_pressurefit \
+  qualification/results/numerical_matrix/pytorch_llama3_pressurefit \
+  qualification/results/numerical_matrix/mlops_llama3_pressurefit \
+  --repeats 3 \
+  --output qualification/results/pressurefit_benchmark.json
+```
+
+The benchmark bypasses the selection cache, times the public PressureFit
+implementation, and fails unless schedule, recomputation selections, complete
+simulator result, and candidate diagnostics reproduce the recorded expected
+digest. After replacing the implementation, pass the saved report back with
+`--baseline qualification/results/pressurefit_benchmark.json`; matching fixture
+suites then report direct `pressurefit()` speedup. No PyTorch capture,
+compilation, profiling, materialization, admission, or outer `plan()` work is
+inside the timed interval.

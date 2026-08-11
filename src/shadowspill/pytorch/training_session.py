@@ -363,6 +363,11 @@ def build_training(
                 ),
                 aot_graph_pair_cache_hits=graph_pair_cache.hits,
                 aot_graph_pair_cache_misses=graph_pair_cache.misses,
+                pressurefit_results=tuple(
+                    item
+                    for item in (initial_selected, recurrent_selected)
+                    if item is not None
+                ),
             )
             return PlannedTrainStep(
                 model, signatures, executor, state, optimizer, report
@@ -462,6 +467,7 @@ def _training_report(
     captured_stage_count: int = 0,
     aot_graph_pair_cache_hits: int = 0,
     aot_graph_pair_cache_misses: int = 0,
+    pressurefit_results: tuple[Any, ...] = (),
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -494,6 +500,7 @@ def _training_report(
         aot_unique_stage_abis=aot_graph_pair_cache_misses,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        pressurefit_results=pressurefit_results,
     )
 
 

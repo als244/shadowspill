@@ -28,6 +28,12 @@ after planning, after each of the five steps, and after both replay steps. It
 also requires the observed process high-water to remain within the public cap,
 one initial CUDA slab allocation, no steady-state device or pinned allocation,
 bounded slab/host peaks, and no allocator callback or pointer-lookup failure.
+Each planned case also writes canonical initial/recurrent PressureFit fixtures.
+They contain exactly the framework-free arguments passed to `pressurefit()`—the
+Program, residency inputs, simulator configuration, and planner options—and
+exactly its expected selections, schedule, full simulator result, and candidate
+diagnostics. Frontend capture, profiling, physical admission, ExecutionPlan
+construction, and outer `plan()` timing are intentionally excluded.
 
 For repeatable matrices and configurable/custom model cases, use
 `python -m verification.run_model_correctness`; its README documents model
