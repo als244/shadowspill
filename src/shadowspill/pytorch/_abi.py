@@ -199,3 +199,5 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(ObjectSnapshot),
     ]
     library.shadowspill_pytorch_object_snapshot.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_abort_task_range.argtypes = []
+    library.shadowspill_pytorch_abort_task_range.restype = None

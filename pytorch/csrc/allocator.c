@@ -1,8 +1,11 @@
 #include <shadowspill/pytorch_adapter.h>
 
 #include <pthread.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+
+#include <nvtx3/nvToolsExt.h>
 
 typedef struct ShadowSpillPytorchAdapterState {
     pthread_mutex_t mutex;
@@ -22,6 +25,8 @@ static ShadowSpillPytorchAdapterState adapter = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .device_ordinal = -1,
 };
+
+static _Thread_local int task_range_active;
 
 static void latch_failure(
     ShadowSpillRuntimeStatus status,
@@ -270,13 +275,27 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
+    if (task_range_active) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    char range_name[96];
+    (void)snprintf(
+        range_name,
+        sizeof(range_name),
+        "shadowspill.pytorch.task.%llu",
+        (unsigned long long)task_id
+    );
+    (void)nvtxRangePushA(range_name);
+    task_range_active = 1;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
+        (void)nvtxRangePop();
+        task_range_active = 0;
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    return shadowspill_before_task(
+    ShadowSpillRuntimeStatus status = shadowspill_before_task(
         runtime,
         task_id,
         shadowspill_cuda_wrap_stream(compute_stream_address),
@@ -285,6 +304,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task(
         bindings,
         binding_capacity
     );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        (void)nvtxRangePop();
+        task_range_active = 0;
+    }
+    return status;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
@@ -295,13 +319,25 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
     const ShadowSpillRuntimeAction *actions,
     uint32_t action_count
 ) {
+    if (!task_range_active) {
+        char range_name[96];
+        (void)snprintf(
+            range_name,
+            sizeof(range_name),
+            "shadowspill.pytorch.after_task.%llu",
+            (unsigned long long)task_id
+        );
+        (void)nvtxRangePushA(range_name);
+    }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
+        (void)nvtxRangePop();
+        task_range_active = 0;
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    return shadowspill_after_task(
+    ShadowSpillRuntimeStatus status = shadowspill_after_task(
         runtime,
         task_id,
         shadowspill_cuda_wrap_stream(compute_stream_address),
@@ -310,6 +346,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
         actions,
         action_count
     );
+    (void)nvtxRangePop();
+    task_range_active = 0;
+    return status;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
@@ -325,11 +364,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
     return shadowspill_object_snapshot(runtime, object_id, snapshot);
 }
 
+void shadowspill_pytorch_abort_task_range(void) {
+    if (task_range_active) {
+        (void)nvtxRangePop();
+        task_range_active = 0;
+    }
+}
+
 void *shadowspill_pytorch_cuda_malloc(
     ptrdiff_t bytes,
     int32_t device_ordinal,
     void *stream
 ) {
+    (void)nvtxRangePushA("shadowspill.runtime.allocate");
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.allocation_callbacks;
     if (bytes == 0) {
@@ -339,6 +386,7 @@ void *shadowspill_pytorch_cuda_malloc(
     int32_t expected_device;
     ShadowSpillRuntime *runtime = bound_runtime(&expected_device);
     if (bytes == 0 && runtime != NULL && device_ordinal == expected_device) {
+        (void)nvtxRangePop();
         return NULL;
     }
     if (runtime == NULL || bytes < 0 || device_ordinal != expected_device) {
@@ -349,6 +397,7 @@ void *shadowspill_pytorch_cuda_malloc(
             NULL,
             bytes < 0 ? 0U : (uint64_t)bytes
         );
+        (void)nvtxRangePop();
         return NULL;
     }
     ShadowSpillAllocation allocation = {0};
@@ -361,8 +410,10 @@ void *shadowspill_pytorch_cuda_malloc(
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         latch_failure(status, device_ordinal, NULL, (uint64_t)bytes);
+        (void)nvtxRangePop();
         return NULL;
     }
+    (void)nvtxRangePop();
     return allocation.pointer;
 }
 

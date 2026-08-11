@@ -1,0 +1,6 @@
+SHADOWSPILL_PYTORCH_1.0 {
+  global:
+    shadowspill_pytorch_*;
+  local:
+    *;
+};

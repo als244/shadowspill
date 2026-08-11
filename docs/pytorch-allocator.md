@@ -59,3 +59,16 @@ inputs behind a compute event, verifies that `before_task` inserts both waits,
 and then observes those copies plus a simultaneous D2H finishing while an
 independent compute stream remains busy. Explicit `wait_idle`, checkpoint, and
 close boundaries are synchronizing by contract.
+
+Nsight ranges follow the documented namespace:
+
+- `shadowspill.pytorch.task.<dense-id>` spans frontend task dispatch;
+- `shadowspill.pytorch.storage_rebind` identifies each storage swap;
+- `shadowspill.runtime.allocate` identifies slab-range admission;
+- `shadowspill.runtime.transfer.{h2d,d2h}` identifies copy submission;
+- `shadowspill.runtime.wait_event` identifies stream dependency insertion.
+
+The Phase-5 qualification trace is reproducibly checked with
+`qualification/check_cuda_trace.py`. It requires one conventional slab
+allocation, one pinned arena, real bidirectional copy overlap with compute, no
+VMM entry point, and no device/context-wide synchronization.

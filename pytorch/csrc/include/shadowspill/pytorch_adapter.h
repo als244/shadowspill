@@ -137,6 +137,9 @@ shadowspill_pytorch_object_snapshot(
     ShadowSpillObjectSnapshot *snapshot
 );
 
+/* Closes a task NVTX range when frontend execution raises before after_task. */
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_abort_task_range(void);
+
 /*
  * Exact callback ABI consumed by torch.cuda.memory.CUDAPluggableAllocator.
  * These functions never throw across the C boundary. Failures are latched and

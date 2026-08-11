@@ -41,6 +41,7 @@ class _Library:
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
+    shadowspill_pytorch_abort_task_range = _Function()
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
@@ -93,6 +94,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(RuntimeAction),
         ctypes.c_uint32,
     ]
+    assert library.shadowspill_pytorch_abort_task_range.argtypes == []
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:

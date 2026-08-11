@@ -4,6 +4,8 @@
 #include <c10/core/Allocator.h>
 #include <torch/library.h>
 
+#include <nvtx3/nvToolsExt.h>
+
 #include <cstdint>
 #include <utility>
 
@@ -15,6 +17,10 @@ at::Tensor rebind_storage(
     int64_t object_id,
     int64_t generation
 ) {
+  nvtxRangePushA("shadowspill.pytorch.storage_rebind");
+  struct RangeGuard {
+    ~RangeGuard() { nvtxRangePop(); }
+  } range_guard;
   TORCH_CHECK(tensor.is_cuda(), "storage rebinding requires a CUDA tensor");
   TORCH_CHECK(target_address >= 0, "storage address must be nonnegative");
   TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");

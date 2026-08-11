@@ -222,6 +222,16 @@ if(SHADOWSPILL_BUILD_CUDA)
         Threads::Threads
         shadowspill_build_options
     )
+    if(TARGET CUDA::nvtx3)
+      target_link_libraries(shadowspill_pytorch PRIVATE CUDA::nvtx3)
+    endif()
+    if(UNIX AND NOT APPLE)
+      target_link_options(
+        shadowspill_pytorch
+        PRIVATE
+          "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/pytorch/csrc/shadowspill_pytorch.map"
+      )
+    endif()
     find_package(Torch QUIET)
     if(Torch_FOUND)
       target_sources(shadowspill_pytorch PRIVATE pytorch/csrc/storage.cpp)
@@ -249,6 +259,8 @@ if(SHADOWSPILL_BUILD_CUDA)
       PROPERTIES
         OUTPUT_NAME shadowspill_pytorch
         INSTALL_RPATH "$ORIGIN"
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN YES
     )
     install(
       TARGETS shadowspill_pytorch

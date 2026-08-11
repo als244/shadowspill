@@ -1,6 +1,7 @@
 #include <shadowspill/backend_cuda.h>
 
 #include <cuda.h>
+#include <nvtx3/nvToolsExt.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -240,16 +241,19 @@ static int wait_event(
     ShadowSpillBackendStream stream,
     ShadowSpillBackendEvent event
 ) {
+    (void)nvtxRangePushA("shadowspill.runtime.wait_event");
     ShadowSpillCudaBackend *backend = context;
     if (activate_context(backend) != 0 || record_result(
             backend,
             cuStreamWaitEvent(stream_value(stream), event_value(event), 0U)
         ) != 0) {
+        (void)nvtxRangePop();
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.stream_waits;
     pthread_mutex_unlock(&backend->mutex);
+    (void)nvtxRangePop();
     return 0;
 }
 
@@ -261,9 +265,14 @@ static int copy_async(
     ShadowSpillTransferKind kind,
     ShadowSpillBackendStream stream
 ) {
+    const char *range_name = kind == SHADOWSPILL_TRANSFER_TO_DEVICE
+        ? "shadowspill.runtime.transfer.h2d"
+        : "shadowspill.runtime.transfer.d2h";
+    (void)nvtxRangePushA(range_name);
     ShadowSpillCudaBackend *backend = context;
     if ((bytes != 0U && (destination == NULL || source == NULL)) ||
         bytes > SIZE_MAX || activate_context(backend) != 0) {
+        (void)nvtxRangePop();
         return -1;
     }
     CUresult result;
@@ -283,6 +292,7 @@ static int copy_async(
         );
     }
     if (record_result(backend, result) != 0) {
+        (void)nvtxRangePop();
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
@@ -294,6 +304,7 @@ static int copy_async(
         backend->statistics.bytes_to_host += bytes;
     }
     pthread_mutex_unlock(&backend->mutex);
+    (void)nvtxRangePop();
     return 0;
 }
 
