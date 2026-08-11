@@ -542,6 +542,31 @@ Phase 8 — public forward and training callables.
   and left only a 400,515,072-byte largest range. The session currently does
   not feed its annotated allocation timeline through `replay_slab_timeline`.
   This remains a separate admission bug; no PressureFit action was moved.
+- Slab admission now replays initial device placement, task-output allocation,
+  exact profiled workspace extents, releases, D2H completion, and H2D admission
+  in simulator-time order with the production allocator policy. Both training
+  optimizer phases and forward-only plans must pass before the callable is
+  returned; predicted external fragmentation is recorded in `PlanReport`.
+- Ordinary allocations now use a coalescing best-fit/high-address selection,
+  while planned prefetches retain low-address placement. This is the documented
+  segregated-fit policy: small allocations consume the smallest suitable hole
+  instead of needlessly splitting a larger future workspace range. Python and
+  C replays have matching permanent regressions.
+- The original 25% workspace admission allowance is unchanged. The 4-GiB
+  reduced plan is now rejected during planning with the same four-byte spatial
+  deficit later observed in CUDA, rather than poisoning the process-global
+  runtime. The admitted 8-GiB plan retains 115 actions, completes three
+  two-microbatch steps in 0.209/0.105/0.105 seconds, and closes cleanly.
+- At the exact 1.180B Llama configuration and a 6.25-GiB physical cap, spatial
+  admission rejected generation zero of a 525,336,576-byte alias: aggregate
+  free capacity was 720,492,548 bytes but the largest range was 321,692,928
+  bytes. This is an admission result, not a simulator schedule rewrite; exact
+  numerical qualification will use the next admitted cap. The replay remains
+  deliberately conservative about zero-copy task-output handoffs until those
+  structural relationships are represented in profiling evidence.
+- The admission milestone passes the complete Python suite, all 16 CTest
+  canaries (including CUDA forward/training/overlap), Ruff, strict mypy, the
+  production naming audit, and `git diff --check`.
 
 ## Gate rule
 

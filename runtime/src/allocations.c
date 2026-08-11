@@ -77,7 +77,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
         ? shadowspill_range_allocate(
             &runtime->device_ranges, charged, alignment, &offset
         )
-        : shadowspill_range_allocate_high(
+        : shadowspill_range_allocate_best_fit_high(
             &runtime->device_ranges, charged, alignment, &offset
         );
     if (range_status > 0) {

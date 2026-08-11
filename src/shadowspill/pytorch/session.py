@@ -18,6 +18,7 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.ir import EntrypointSpec, MemoryActionKind, PhysicalAdmission
 from shadowspill.planner import pressurefit
+from shadowspill.runtime import AdmissionError, workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
 from ._abi import AdapterStatistics
@@ -40,13 +41,12 @@ from .partition import capture_forward_stages, partition_export
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import PlannedForward, PlanReport
 from .runtime_bridge import RuntimeBridge
+from .spatial_admission import replay_selected_schedule
 
 _MIB = 1 << 20
 _PROVIDER_HEADROOM = 512 * _MIB
-_WORKSPACE_RESERVE_MINIMUM = 512 * _MIB
 _HOST_LEEWAY_MINIMUM = 256 * _MIB
 _HOST_ALIGNMENT = 64 << 10
-_DEVICE_ALIGNMENT = 2 * _MIB
 
 
 class _PhaseTimer:
@@ -123,6 +123,12 @@ def build_forward(
         installed.library.shadowspill_pytorch_allocator_wait_idle()
 
     with timer.measure("program_lowering"):
+        measurements = {
+            artifact.compatibility_digest: measurement
+            for artifact, measurement in zip(
+                artifacts, profiles.measurements, strict=True
+            )
+        }
         lowered = lower_forward_program(
             fake_model,
             partitioned,
@@ -169,6 +175,16 @@ def build_forward(
             host_budget=host_budget,
         )
 
+    with timer.measure("slab_admission"):
+        try:
+            slab_replay = replay_selected_schedule(
+                selected,
+                measurements,
+                slab_bytes=int(installed.admission.slab_bytes),
+            )
+        except AdmissionError as exc:
+            raise PlanningError(f"slab spatial admission failed: {exc}") from exc
+
     admission = PhysicalAdmission(
         device_budget_bytes=device_budget,
         host_budget_bytes=host_budget,
@@ -177,6 +193,7 @@ def build_forward(
         slab_bytes=int(installed.admission.slab_bytes),
         workspace_reserve_bytes=workspace_reserve,
         host_reservation_bytes=int(installed.admission.host_arena_bytes),
+        predicted_fragmentation_bytes=slab_replay.peak_fragmentation_bytes,
     )
     entrypoints = tuple(
         EntrypointSpec(
@@ -322,8 +339,7 @@ def _adapter_path() -> Path:
 
 def _workspace_reserve(measurements: Sequence[Any]) -> int:
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
-    requested = max(_WORKSPACE_RESERVE_MINIMUM, (peak * 5 + 3) // 4)
-    return _round_up(requested, _DEVICE_ALIGNMENT)
+    return workspace_reserve_bytes(peak)
 
 
 def _reconcile_host_arena(

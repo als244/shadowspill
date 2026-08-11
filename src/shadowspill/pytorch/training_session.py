@@ -14,6 +14,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, PhysicalAdmission
 from shadowspill.planner import pressurefit
+from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
 from .aot import capture_training
@@ -37,6 +38,7 @@ from .session import (
     _simulation_capacity,
     _workspace_reserve,
 )
+from .spatial_admission import replay_selected_schedule
 from .training_executor import TrainingExecutor
 from .training_lowering import (
     lower_partitioned_training_program,
@@ -226,6 +228,28 @@ def build_training(
                 ),
                 host_budget=host_budget,
             )
+        with timer.measure("slab_admission"):
+            try:
+                replays = [
+                    replay_selected_schedule(
+                        recurrent_selected,
+                        measurements,
+                        slab_bytes=int(installed.admission.slab_bytes),
+                    )
+                ]
+                if initial_selected is not None:
+                    replays.append(
+                        replay_selected_schedule(
+                            initial_selected,
+                            measurements,
+                            slab_bytes=int(installed.admission.slab_bytes),
+                        )
+                    )
+            except AdmissionError as exc:
+                raise PlanningError(f"slab spatial admission failed: {exc}") from exc
+            predicted_fragmentation = max(
+                item.peak_fragmentation_bytes for item in replays
+            )
         admission = PhysicalAdmission(
             device_budget_bytes=device_budget,
             host_budget_bytes=host_budget,
@@ -234,6 +258,7 @@ def build_training(
             slab_bytes=int(installed.admission.slab_bytes),
             workspace_reserve_bytes=workspace_reserve,
             host_reservation_bytes=int(installed.admission.host_arena_bytes),
+            predicted_fragmentation_bytes=predicted_fragmentation,
         )
         recurrent_plan = _execution_plan(
             recurrent_lowered,

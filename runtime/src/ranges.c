@@ -168,7 +168,7 @@ int shadowspill_range_allocate(
     return 1;
 }
 
-int shadowspill_range_allocate_high(
+int shadowspill_range_allocate_best_fit_high(
     ShadowSpillRangeAllocator *allocator,
     uint64_t bytes,
     uint64_t alignment,
@@ -177,6 +177,7 @@ int shadowspill_range_allocate_high(
     ShadowSpillRange *selected = NULL;
     ShadowSpillRange *selected_previous = NULL;
     uint64_t selected_aligned = 0U;
+    uint64_t selected_bytes = UINT64_MAX;
     ShadowSpillRange *previous = NULL;
     for (ShadowSpillRange *range = allocator->free_ranges; range != NULL;
          range = range->next) {
@@ -190,9 +191,13 @@ int shadowspill_range_allocate_high(
             previous = range;
             continue;
         }
-        selected = range;
-        selected_previous = previous;
-        selected_aligned = aligned;
+        if (range->bytes < selected_bytes ||
+            (range->bytes == selected_bytes && aligned > selected_aligned)) {
+            selected = range;
+            selected_previous = previous;
+            selected_aligned = aligned;
+            selected_bytes = range->bytes;
+        }
         previous = range;
     }
     if (selected == NULL) {

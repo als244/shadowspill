@@ -157,7 +157,7 @@ int shadowspill_range_allocate(
     uint64_t alignment,
     uint64_t *offset
 );
-int shadowspill_range_allocate_high(
+int shadowspill_range_allocate_best_fit_high(
     ShadowSpillRangeAllocator *allocator,
     uint64_t bytes,
     uint64_t alignment,

@@ -155,7 +155,7 @@ def replay_slab_timeline(
         if event.operation is AllocationOperation.ALLOCATE:
             if event.allocation_id in live:
                 raise ValueError(f"allocation {event.allocation_id!r} is already live")
-            candidates: list[tuple[int, int, int]] = []
+            candidates: list[tuple[int, int, int, int]] = []
             for index, (offset, available) in enumerate(ranges):
                 if event.planned:
                     aligned = _round_up(offset, event.alignment)
@@ -170,7 +170,7 @@ def replay_slab_timeline(
                     continue
                 leading = aligned - offset
                 if leading <= available and event.bytes <= available - leading:
-                    candidates.append((aligned, index, leading))
+                    candidates.append((aligned, index, leading, available))
             if not candidates:
                 free_bytes = sum(bytes_ for _, bytes_ in ranges)
                 largest = max((bytes_ for _, bytes_ in ranges), default=0)
@@ -185,9 +185,13 @@ def replay_slab_timeline(
                     free_bytes=free_bytes,
                     largest_free_range_bytes=largest,
                 )
-            aligned, index, leading = (
-                min(candidates) if event.planned else max(candidates)
-            )
+            if event.planned:
+                aligned, index, leading, _available = min(candidates)
+            else:
+                aligned, index, leading, _available = min(
+                    candidates,
+                    key=lambda candidate: (candidate[3], -candidate[0]),
+                )
             offset, available = ranges.pop(index)
             trailing = available - leading - event.bytes
             if leading:
@@ -261,14 +265,8 @@ def admit_physical_budget(
             capacity_bytes=device_budget_bytes,
         )
     slab_bytes = device_budget_bytes - fixed_device_bytes
-    scaled_workspace = (
-        maximum_task_workspace_bytes * policy.workspace_numerator
-        + policy.workspace_denominator
-        - 1
-    ) // policy.workspace_denominator
-    workspace_reserve = max(
-        policy.minimum_workspace_reserve_bytes,
-        _round_up(scaled_workspace, policy.workspace_granularity_bytes),
+    workspace_reserve = workspace_reserve_bytes(
+        maximum_task_workspace_bytes, policy=policy
     )
     if workspace_reserve > slab_bytes:
         raise AdmissionError(
@@ -304,3 +302,24 @@ def admit_physical_budget(
         predicted_fragmentation_bytes=replay.peak_fragmentation_bytes,
     )
     return admission, replay
+
+
+def workspace_reserve_bytes(
+    maximum_task_workspace_bytes: int,
+    *,
+    policy: AdmissionPolicy | None = None,
+) -> int:
+    """Return the conservative contiguous-workspace admission allowance."""
+
+    if maximum_task_workspace_bytes < 0:
+        raise ValueError("maximum task workspace must be non-negative")
+    policy = policy or AdmissionPolicy()
+    scaled = (
+        maximum_task_workspace_bytes * policy.workspace_numerator
+        + policy.workspace_denominator
+        - 1
+    ) // policy.workspace_denominator
+    return max(
+        policy.minimum_workspace_reserve_bytes,
+        _round_up(scaled, policy.workspace_granularity_bytes),
+    )

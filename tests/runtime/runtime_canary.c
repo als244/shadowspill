@@ -5,7 +5,61 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+static int best_fit_preserves_largest_range(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 256U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    ShadowSpillAllocation allocations[5] = {{0}};
+    const uint64_t sizes[] = {64U, 32U, 96U, 32U};
+    for (uint32_t index = 0U; !failed && index < 4U; ++index) {
+        failed = shadowspill_allocate(
+            runtime, sizes[index], 1U, compute, &allocations[index]
+        ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed || shadowspill_free(
+            runtime, allocations[1].allocation_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            runtime, allocations[0].allocation_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            runtime, allocations[3].allocation_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            runtime, 48U, 1U, compute, &allocations[4]
+        ) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.largest_free_range_bytes != 96U;
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
+    if (best_fit_preserves_largest_range() != 0) {
+        return EXIT_FAILURE;
+    }
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,

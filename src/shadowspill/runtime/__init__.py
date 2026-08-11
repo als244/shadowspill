@@ -8,6 +8,7 @@ from .admission import (
     SlabReplay,
     admit_physical_budget,
     replay_slab_timeline,
+    workspace_reserve_bytes,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "SlabReplay",
     "admit_physical_budget",
     "replay_slab_timeline",
+    "workspace_reserve_bytes",
 ]

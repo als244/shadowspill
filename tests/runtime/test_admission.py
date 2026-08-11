@@ -8,6 +8,7 @@ from shadowspill.runtime import (
     AllocationOperation,
     admit_physical_budget,
     replay_slab_timeline,
+    workspace_reserve_bytes,
 )
 
 MIB = 1 << 20
@@ -56,6 +57,22 @@ def test_spatial_replay_reports_fragmentation_not_only_total_free() -> None:
     assert captured.value.position == 5
 
 
+def test_anonymous_replay_uses_smallest_compatible_range() -> None:
+    timeline = (
+        event(0, "a", AllocationOperation.ALLOCATE, 64),
+        event(1, "b", AllocationOperation.ALLOCATE, 32),
+        event(2, "c", AllocationOperation.ALLOCATE, 96),
+        event(3, "d", AllocationOperation.ALLOCATE, 32),
+        event(4, "b", AllocationOperation.FREE, 32),
+        event(5, "a", AllocationOperation.FREE, 64),
+        event(6, "d", AllocationOperation.FREE, 32),
+        event(7, "small", AllocationOperation.ALLOCATE, 48),
+    )
+    replay = replay_slab_timeline(256, timeline)
+    assert replay.final_allocated_bytes == 144
+    assert replay.final_largest_free_range_bytes == 96
+
+
 def test_physical_admission_exposes_every_subtraction() -> None:
     admission, replay = admit_physical_budget(
         device_budget_bytes=4 * GIB,
@@ -77,6 +94,11 @@ def test_physical_admission_exposes_every_subtraction() -> None:
     )
     assert admission.host_reservation_bytes == 1280 * MIB
     assert replay.peak_allocated_bytes == 1 * GIB
+
+
+def test_workspace_reserve_has_explicit_fragmentation_allowance() -> None:
+    assert workspace_reserve_bytes(600 * MIB) == 750 * MIB
+    assert workspace_reserve_bytes(1) == 512 * MIB
 
 
 @pytest.mark.parametrize(
