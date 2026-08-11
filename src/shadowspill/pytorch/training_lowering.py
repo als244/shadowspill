@@ -35,6 +35,7 @@ from .optimizer import (
     OptimizerCapture,
     OptimizerTensorRole,
 )
+from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 
 
@@ -104,6 +105,18 @@ class _PairValues:
     backward_outputs: tuple[object, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedStageVariant:
+    stage: TrainingStage
+    pair: AotGraphPair
+    forward_inputs: tuple[TensorSlot, ...]
+    forward_outputs: tuple[TensorSlot, ...]
+    backward_inputs: tuple[TensorSlot, ...]
+    contributions: tuple[TensorSlot, ...]
+    residual_aliases: tuple[str, ...]
+    public_output_count: int
+
+
 def lower_training_storage_layout(
     model: nn.Module,
     captures: tuple[TrainingCapture, ...],
@@ -128,6 +141,472 @@ def lower_training_storage_layout(
         ),
         registrations,
         root_slots,
+    )
+
+
+def lower_partitioned_training_program(
+    model: nn.Module,
+    captures: tuple[PartitionedTrainingCapture, ...],
+    measurements: dict[str, TaskMeasurement],
+    optimizer: OptimizerCapture,
+    *,
+    device_ordinal: int = 0,
+    optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
+) -> LoweredTrainingProgram:
+    """Compose stage-local graph pairs into one accumulated training program."""
+
+    if not captures:
+        raise CaptureError("partitioned training lowering requires a microbatch")
+    if optimizer.recurrent is None:
+        raise CaptureError("partitioned training requires a graphable optimizer")
+    if optimizer_phase not in {"initial", "recurrent"}:
+        raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
+    device_id = f"cuda_{device_ordinal}"
+    inventory = _TensorInventory(device_id=device_id)
+    registrations, parameter_objects = _register_model(model, inventory)
+    base_captures = tuple(item.training for item in captures)
+    root_slots, _initial_inputs = _register_microbatch_inputs(base_captures, inventory)
+    gradients = _register_gradients(model, inventory, parameter_objects)
+    gradient_by_parameter = {
+        item.parameter_object_id: item.gradient_object_id for item in gradients
+    }
+    optimizer_objects = _register_optimizer_objects(optimizer, inventory, gradients)
+
+    profile_by_digest: dict[str, str] = {}
+    profiles: list[TaskProfile] = []
+
+    def profile_id(artifact: GraphArtifact, extra_workspace: int = 0) -> str:
+        measurement = measurements.get(artifact.compatibility_digest)
+        if measurement is None:
+            raise CaptureError(
+                f"training profile scatter is missing {artifact.compatibility_digest}"
+            )
+        key = f"{artifact.compatibility_digest}:{extra_workspace}"
+        existing = profile_by_digest.get(key)
+        if existing is not None:
+            return existing
+        result = f"profile_{len(profiles):06d}"
+        profile_by_digest[key] = result
+        profiles.append(
+            TaskProfile(
+                result,
+                measurement.runtime_ns,
+                measurement.workspace_charged_bytes + extra_workspace,
+                artifact.compatibility_digest,
+            )
+        )
+        return result
+
+    parameter_ids = set(parameter_objects.values())
+    boundary_ids: list[list[tuple[str, ...]]] = []
+    cotangent_by_activation: dict[tuple[int, str], str] = {}
+    fixed_tensors: dict[str, FixedTensorBinding] = {}
+    public_objects_by_position: dict[int, tuple[str, ...]] = {}
+
+    for position, capture in enumerate(captures):
+        position_boundaries: list[tuple[str, ...]] = []
+        for stage_index, stage in enumerate(capture.stages):
+            leaves, _ = tree_flatten(stage.example.output)
+            terminal = stage_index == len(capture.stages) - 1
+            public_count = (
+                1 + len(capture.training.objective_schema.tensor_metric_positions)
+                if terminal
+                else 0
+            )
+            if terminal and len(leaves) != public_count:
+                raise CaptureError(
+                    "terminal stage output differs from objective schema"
+                )
+            ids: list[str] = []
+            for index, value in enumerate(leaves):
+                if not isinstance(value, torch.Tensor):
+                    raise CaptureError("training stage output became non-tensor")
+                ids.append(
+                    inventory.add(
+                        value,
+                        role=(
+                            ObjectRole.OUTPUT
+                            if terminal and index < public_count
+                            else ObjectRole.ACTIVATION
+                        ),
+                        persistence=Persistence.STEP,
+                    )
+                )
+            position_boundaries.append(tuple(ids))
+            if terminal:
+                public_objects_by_position[position] = tuple(ids[:public_count])
+
+            save_pair = stage.save_pair
+            tangent_values = save_pair.backward.example_arguments[
+                save_pair.saved_value_count :
+            ]
+            if len(tangent_values) != len(stage.differentiable_output_indices):
+                raise CaptureError("stage tangent ABI differs from selected roots")
+            for output_index, tangent in zip(
+                stage.differentiable_output_indices,
+                tangent_values,
+                strict=True,
+            ):
+                if not isinstance(tangent, torch.Tensor):
+                    raise CaptureError("stage tangent became non-tensor")
+                if terminal:
+                    tangent_id = inventory.add(
+                        tangent,
+                        role=ObjectRole.INPUT,
+                        persistence=Persistence.STEP,
+                        retain_host_backing=True,
+                    )
+                    fixed_tensors.setdefault(
+                        tangent_id, FixedTensorBinding(tangent_id, tangent)
+                    )
+                else:
+                    activation_id = ids[output_index]
+                    tangent_id = inventory.add(
+                        torch.empty_like(tangent),
+                        role=ObjectRole.GRADIENT,
+                        persistence=Persistence.STEP,
+                    )
+                    cotangent_by_activation[(position, activation_id)] = tangent_id
+        boundary_ids.append(position_boundaries)
+
+    prepared: list[list[dict[str, _PreparedStageVariant]]] = []
+    for position, capture in enumerate(captures):
+        position_variants: list[dict[str, _PreparedStageVariant]] = []
+        for stage_index, stage in enumerate(capture.stages):
+            variants: dict[str, _PreparedStageVariant] = {}
+            terminal = stage_index == len(capture.stages) - 1
+            public_count = (
+                1 + len(capture.training.objective_schema.tensor_metric_positions)
+                if terminal
+                else 0
+            )
+            canonical_outputs = boundary_ids[position][stage_index]
+            for variant, pair in (
+                ("save", stage.save_pair),
+                ("recompute", stage.recompute_pair),
+            ):
+                values = _execute_stage_pair_examples(pair)
+                forward_inputs = _tensor_slots(
+                    pair.forward.example_arguments, inventory
+                )
+                forward_outputs, residual_aliases = _stage_forward_outputs(
+                    pair,
+                    values.forward_outputs,
+                    canonical_outputs,
+                    inventory,
+                )
+                backward_inputs = _stage_backward_inputs(
+                    position,
+                    stage,
+                    pair,
+                    forward_outputs,
+                    canonical_outputs,
+                    cotangent_by_activation,
+                    fixed_tensors,
+                    inventory,
+                    terminal=terminal,
+                )
+                contributions = _stage_backward_contributions(
+                    position,
+                    pair,
+                    values.backward_outputs,
+                    forward_inputs,
+                    parameter_ids,
+                    gradient_by_parameter,
+                    cotangent_by_activation,
+                )
+                variants[variant] = _PreparedStageVariant(
+                    stage,
+                    pair,
+                    forward_inputs,
+                    forward_outputs,
+                    backward_inputs,
+                    contributions,
+                    residual_aliases,
+                    public_count,
+                )
+            position_variants.append(variants)
+        prepared.append(position_variants)
+
+    tasks: list[TaskSpec] = []
+    entrypoints: list[TrainingTaskEntrypoint] = []
+    forward_ids: dict[tuple[int, int, str], str] = {}
+    backward_ids: dict[tuple[int, int, str], str] = {}
+    completion_ids: tuple[str, ...] = ()
+    all_backward_ids: list[str] = []
+    initial_writers: dict[str, tuple[str, ...]] = {}
+    latest_contributors: dict[str, tuple[str, ...]] = {}
+    object_producers: dict[str, list[str]] = {}
+
+    for position, position_variants in enumerate(prepared):
+        previous_forward_ids = completion_ids
+        for stage_index, variants in enumerate(position_variants):
+            current_ids: list[str] = []
+            for variant in ("save", "recompute"):
+                item = variants[variant]
+                task_id = f"task_{len(tasks):06d}"
+                forward_ids[(position, stage_index, variant)] = task_id
+                input_aliases = {
+                    inventory.alias_id(slot.object_id) for slot in item.forward_inputs
+                }
+                task = TaskSpec(
+                    task_id,
+                    ResourceSpec(device_id, ResourceKind.COMPUTE),
+                    profile_id(item.pair.forward),
+                    dependencies=previous_forward_ids,
+                    inputs=_unique(slot.object_id for slot in item.forward_inputs),
+                    outputs=_unique(
+                        slot.object_id
+                        for slot in item.forward_outputs
+                        if inventory.alias_id(slot.object_id) not in input_aliases
+                    ),
+                    phase="forward",
+                )
+                tasks.append(task)
+                for object_id in task.outputs:
+                    object_producers.setdefault(object_id, []).append(task_id)
+                entrypoints.append(
+                    TrainingTaskEntrypoint(
+                        task_id,
+                        "forward",
+                        position,
+                        variant,
+                        item.pair.forward,
+                        item.forward_inputs,
+                        item.forward_outputs,
+                        public_output_count=item.public_output_count,
+                    )
+                )
+                current_ids.append(task_id)
+            previous_forward_ids = tuple(current_ids)
+
+        downstream_ids: tuple[str, ...] = ()
+        for stage_index in reversed(range(len(position_variants))):
+            variants = position_variants[stage_index]
+            stage_task_ids = tuple(
+                f"task_{len(tasks) + offset:06d}" for offset in range(2)
+            )
+            first_destinations = {
+                slot.object_id
+                for item in variants.values()
+                for slot in item.contributions
+                if slot.object_id not in initial_writers
+            }
+            for variant, task_id in zip(
+                ("save", "recompute"), stage_task_ids, strict=True
+            ):
+                item = variants[variant]
+                backward_ids[(position, stage_index, variant)] = task_id
+                destinations = _unique(slot.object_id for slot in item.contributions)
+                mutated = tuple(
+                    object_id
+                    for object_id in destinations
+                    if object_id not in first_destinations
+                )
+                dependencies = list(
+                    dict.fromkeys(
+                        (
+                            forward_ids[(position, stage_index, variant)],
+                            *downstream_ids,
+                        )
+                    )
+                )
+                for slot in item.backward_inputs:
+                    object_id = slot.object_id
+                    dependencies.extend(object_producers.get(object_id, ()))
+                    dependencies.extend(initial_writers.get(object_id, ()))
+                    dependencies.extend(latest_contributors.get(object_id, ()))
+                for object_id in mutated:
+                    dependencies.extend(initial_writers[object_id])
+                    dependencies.extend(latest_contributors[object_id])
+                mutation_bytes = sum(
+                    next(
+                        value.size_bytes
+                        for value in inventory.objects()
+                        if value.object_id == object_id
+                    )
+                    for object_id in mutated
+                )
+                inputs = [slot.object_id for slot in item.backward_inputs]
+                inputs.extend(mutated)
+                task = TaskSpec(
+                    task_id,
+                    ResourceSpec(device_id, ResourceKind.COMPUTE),
+                    profile_id(item.pair.backward, mutation_bytes),
+                    dependencies=_unique(dependencies),
+                    inputs=_unique(inputs),
+                    outputs=tuple(
+                        object_id
+                        for object_id in destinations
+                        if object_id in first_destinations
+                    ),
+                    mutations=tuple(MutationSpec(object_id) for object_id in mutated),
+                    phase="backward",
+                )
+                tasks.append(task)
+                for object_id in task.outputs:
+                    object_producers.setdefault(object_id, []).append(task_id)
+                entrypoints.append(
+                    TrainingTaskEntrypoint(
+                        task_id,
+                        "backward",
+                        position,
+                        variant,
+                        item.pair.backward,
+                        item.backward_inputs,
+                        (),
+                        gradient_output_slots=item.contributions,
+                    )
+                )
+                all_backward_ids.append(task_id)
+            contribution_destinations = _unique(
+                slot.object_id
+                for item in variants.values()
+                for slot in item.contributions
+            )
+            for object_id in contribution_destinations:
+                initial_writers.setdefault(object_id, stage_task_ids)
+                latest_contributors[object_id] = stage_task_ids
+            downstream_ids = stage_task_ids
+        completion_ids = downstream_ids
+
+    groups = tuple(
+        RecomputationGroup(
+            f"recompute_{position:04d}_{stage_index:04d}",
+            tuple(
+                RecomputationOption(
+                    variant,
+                    (
+                        forward_ids[(position, stage_index, variant)],
+                        backward_ids[(position, stage_index, variant)],
+                    ),
+                    prepared[position][stage_index][variant].residual_aliases,
+                )
+                for variant in ("save", "recompute")
+            ),
+        )
+        for position, position_variants in enumerate(prepared)
+        for stage_index in range(len(position_variants))
+    )
+
+    optimizer_task_id = f"task_{len(tasks):06d}"
+    optimizer_inputs = (
+        tuple(item.parameter_object_id for item in gradients)
+        + tuple(item.gradient_object_id for item in gradients)
+        + tuple(
+            item.object_id
+            for item in optimizer_objects
+            if optimizer_phase == "recurrent" or not item.created_on_first_step
+        )
+    )
+    optimizer_outputs = tuple(
+        item.object_id
+        for item in optimizer_objects
+        if optimizer_phase == "initial" and item.created_on_first_step
+    )
+    optimizer_mutations = tuple(
+        MutationSpec(item.parameter_object_id) for item in gradients
+    ) + tuple(
+        MutationSpec(item.object_id)
+        for item in optimizer_objects
+        if item.mutable
+        and (optimizer_phase == "recurrent" or not item.created_on_first_step)
+    )
+    tasks.append(
+        TaskSpec(
+            optimizer_task_id,
+            ResourceSpec(device_id, ResourceKind.COMPUTE),
+            profile_id(optimizer.recurrent),
+            dependencies=tuple(all_backward_ids),
+            inputs=optimizer_inputs,
+            outputs=optimizer_outputs,
+            mutations=optimizer_mutations,
+            phase="optimizer",
+        )
+    )
+    entrypoints.append(
+        TrainingTaskEntrypoint(
+            optimizer_task_id,
+            "optimizer",
+            None,
+            None,
+            optimizer.recurrent,
+            (),
+            (),
+        )
+    )
+
+    alias_groups = inventory.alias_groups()
+    objects = inventory.objects()
+    parameter_aliases = {
+        next(
+            item.alias_group_id
+            for item in objects
+            if item.object_id == binding.parameter_object_id
+        )
+        for binding in gradients
+    }
+    produced_objects = {object_id for task in tasks for object_id in task.outputs}
+    initial_input_objects = {
+        object_id
+        for task in tasks
+        for object_id in task.inputs
+        if object_id not in produced_objects
+    }
+    input_aliases = {
+        item.alias_group_id
+        for item in objects
+        if item.object_id in initial_input_objects
+        and item.alias_group_id not in parameter_aliases
+    }
+    public_aliases = {
+        next(item.alias_group_id for item in objects if item.object_id == object_id)
+        for values in public_objects_by_position.values()
+        for object_id in values
+    }
+    optimizer_aliases = {
+        next(
+            item.alias_group_id
+            for item in objects
+            if item.object_id == binding.object_id
+        )
+        for binding in optimizer_objects
+    }
+    initial_residency = tuple(
+        ResidencySpec(item.alias_group_id, MemoryLocation.HOST)
+        for item in alias_groups
+        if item.alias_group_id in parameter_aliases | input_aliases
+    )
+    final_residency = tuple(
+        ResidencySpec(
+            item.alias_group_id,
+            MemoryLocation.DEVICE
+            if item.alias_group_id in public_aliases
+            else MemoryLocation.HOST,
+        )
+        for item in alias_groups
+        if item.alias_group_id
+        in parameter_aliases | input_aliases | public_aliases | optimizer_aliases
+    )
+    program = Program(
+        devices=(DeviceSpec(device_id, "process_0", "cuda", device_ordinal),),
+        alias_groups=alias_groups,
+        objects=objects,
+        profiles=tuple(profiles),
+        tasks=tuple(tasks),
+        recomputation_groups=groups,
+    )
+    return LoweredTrainingProgram(
+        program,
+        initial_residency,
+        final_residency,
+        registrations,
+        root_slots,
+        tuple(entrypoints),
+        gradients,
+        optimizer_objects,
+        tuple(fixed_tensors.values()),
+        optimizer_task_id,
     )
 
 
@@ -581,6 +1060,127 @@ def _execute_pair_examples(pair: AotGraphPair) -> _PairValues:
     return _PairValues(tuple(forward_values), tuple(backward_values))
 
 
+def _execute_stage_pair_examples(pair: AotGraphPair) -> _PairValues:
+    forward_raw = pair.forward.graph_module(*pair.forward.example_arguments)
+    forward_values, _ = tree_flatten(forward_raw)
+    residuals = forward_values[pair.forward.output_count - pair.saved_value_count :]
+    tangents = pair.backward.example_arguments[pair.saved_value_count :]
+    backward_raw = pair.backward.graph_module(*residuals, *tangents)
+    backward_values, _ = tree_flatten(backward_raw)
+    return _PairValues(tuple(forward_values), tuple(backward_values))
+
+
+def _stage_forward_outputs(
+    pair: AotGraphPair,
+    values: tuple[object, ...],
+    canonical_outputs: tuple[str, ...],
+    inventory: _TensorInventory,
+) -> tuple[tuple[TensorSlot, ...], tuple[str, ...]]:
+    public_count = pair.forward.output_count - pair.saved_value_count
+    if public_count != len(canonical_outputs):
+        raise CaptureError("stage boundary output count changed across AOT capture")
+    slots: list[TensorSlot] = []
+    residual_aliases: list[str] = []
+    for index, value in enumerate(values):
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError("AOT stage forward returned a non-tensor leaf")
+        if index < public_count:
+            object_id = canonical_outputs[index]
+            inventory.associate_storage(value, object_id)
+        else:
+            object_id = inventory.add(
+                value,
+                role=ObjectRole.ACTIVATION,
+                persistence=Persistence.STEP,
+            )
+        slots.append(TensorSlot(index, object_id))
+        if index >= public_count:
+            residual_aliases.append(inventory.alias_id(object_id))
+    return tuple(slots), tuple(dict.fromkeys(residual_aliases))
+
+
+def _stage_backward_inputs(
+    position: int,
+    stage: TrainingStage,
+    pair: AotGraphPair,
+    forward_outputs: tuple[TensorSlot, ...],
+    canonical_outputs: tuple[str, ...],
+    cotangent_by_activation: dict[tuple[int, str], str],
+    fixed_tensors: dict[str, FixedTensorBinding],
+    inventory: _TensorInventory,
+    *,
+    terminal: bool,
+) -> tuple[TensorSlot, ...]:
+    public_count = pair.forward.output_count - pair.saved_value_count
+    residuals = tuple(
+        TensorSlot(index, slot.object_id)
+        for index, slot in enumerate(forward_outputs[public_count:])
+    )
+    tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
+    if len(tangent_values) != len(stage.differentiable_output_indices):
+        raise CaptureError("stage backward tangent arity changed")
+    tangents: list[TensorSlot] = []
+    for ordinal, (output_index, value) in enumerate(
+        zip(stage.differentiable_output_indices, tangent_values, strict=True)
+    ):
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError("stage backward tangent became non-tensor")
+        if terminal:
+            matching = next(
+                (
+                    item.object_id
+                    for item in fixed_tensors.values()
+                    if tuple(item.value.shape) == tuple(value.shape)
+                    and item.value.dtype == value.dtype
+                ),
+                None,
+            )
+            if matching is None:
+                matching = inventory.add(
+                    value,
+                    role=ObjectRole.INPUT,
+                    persistence=Persistence.STEP,
+                    retain_host_backing=True,
+                )
+                fixed_tensors[matching] = FixedTensorBinding(matching, value)
+            tangent_id = matching
+        else:
+            tangent_id = cotangent_by_activation[
+                (position, canonical_outputs[output_index])
+            ]
+        tangents.append(TensorSlot(len(residuals) + ordinal, tangent_id))
+    return (*residuals, *tangents)
+
+
+def _stage_backward_contributions(
+    position: int,
+    pair: AotGraphPair,
+    values: tuple[object, ...],
+    forward_inputs: tuple[TensorSlot, ...],
+    parameter_ids: set[str],
+    gradient_by_parameter: dict[str, str],
+    cotangent_by_activation: dict[tuple[int, str], str],
+) -> tuple[TensorSlot, ...]:
+    input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
+    results: list[TensorSlot] = []
+    for output_index in pair.forward.tensor_argument_positions:
+        object_id = input_by_position.get(output_index)
+        if object_id is None or output_index >= len(values):
+            continue
+        value = values[output_index]
+        if not isinstance(value, torch.Tensor):
+            continue
+        destination: str | None
+        if object_id in parameter_ids:
+            destination = gradient_by_parameter[object_id]
+        else:
+            destination = cotangent_by_activation.get((position, object_id))
+            if destination is None:
+                continue
+        results.append(TensorSlot(output_index, destination))
+    return tuple(results)
+
+
 def _tensor_slots(
     values: tuple[object, ...], inventory: _TensorInventory
 ) -> tuple[TensorSlot, ...]:
@@ -612,6 +1212,7 @@ def _forward_outputs(
             raise CaptureError("AOT forward returned a non-tensor leaf")
         if index < public_count and canonical_public is not None:
             object_id = canonical_public[index]
+            inventory.associate_storage(value, object_id)
         else:
             object_id = inventory.add(
                 value,
@@ -707,6 +1308,7 @@ __all__ = [
     "OptimizerObjectBinding",
     "TrainingStorageLayout",
     "TrainingTaskEntrypoint",
+    "lower_partitioned_training_program",
     "lower_training_program",
     "lower_training_storage_layout",
 ]

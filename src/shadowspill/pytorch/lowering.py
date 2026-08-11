@@ -169,6 +169,37 @@ class _TensorInventory:
     def alias_id(self, object_id: str) -> str:
         return self._record(object_id).alias_group_id
 
+    def associate_storage(self, tensor: torch.Tensor, object_id: str) -> None:
+        """Associate an equivalent capture storage with a canonical object.
+
+        Export partition examples and their AOT graphs are evaluated separately.
+        They can therefore use different fake storage identities for the same
+        logical stage-boundary value.  Recording that equivalence before saved
+        residuals are inventoried preserves the true alias bundle.
+        """
+
+        self._tensor_keepalive.append(tensor)
+        key = self.key(tensor)
+        record = self._record(object_id)
+        alias_id = record.alias_group_id
+        storage_bytes = tensor.untyped_storage().nbytes()
+        if storage_bytes != self._alias_sizes[alias_id]:
+            raise CaptureError(
+                "equivalent capture storages have different byte extents"
+            )
+        existing_alias = self._alias_by_storage.get(key.storage_identity)
+        if existing_alias is not None and existing_alias != alias_id:
+            raise CaptureError("one capture storage maps to distinct alias groups")
+        self._alias_by_storage[key.storage_identity] = alias_id
+        existing_object = self._object_by_key.get(key)
+        if existing_object is not None and existing_object != object_id:
+            raise CaptureError("one tensor view maps to distinct logical objects")
+        if (
+            record.offset_bytes == int(tensor.storage_offset()) * tensor.element_size()
+            and record.size_bytes == int(tensor.numel()) * tensor.element_size()
+        ):
+            self._object_by_key[key] = object_id
+
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
         if record.role in {ObjectRole.OTHER, ObjectRole.ACTIVATION}:

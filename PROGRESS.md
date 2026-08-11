@@ -320,9 +320,22 @@ Phase 8 — public forward and training callables.
   bitwise checkpoint replay, and CPU restoration. Native ASan, UBSan, and TSan
   pass after the arena-preservation change. All 181 Python tests pass the
   90.02% branch-coverage gate.
-- Remaining qualification work is opaque optimizer task admission, external
-  mlops AdamW, stage-partitioned training, and the approximately-1B/full-model
-  gates.
+- Automatic training partitioning is now connected to the public path. Every
+  microbatch has one immutable save/recompute choice per authored stage,
+  explicit boundary activations and cotangents, reverse-stage VJPs, global
+  gradient accumulation, and one optimizer task. Ordinary PyTorch SGD and lazy
+  AdamW pass repeated public execution and checkpoint replay through this path.
+- AOT can return one allocation both as a public stage boundary and as a saved
+  residual. Associating the separately evaluated AOT storage with the
+  canonical boundary alias prevents double promotion and premature release.
+  Ephemeral objects released at a non-cyclic step boundary are now forgotten
+  by the framework object store, so their next-step production is not mistaken
+  for an in-place contribution into a dematerialized prior generation.
+- The milestone gate passes all 16 native/CUDA canaries and 183 Python tests at
+  90.04% branch coverage, together with Ruff, strict mypy, and the naming audit.
+- Remaining qualification work is bounded opaque optimizer task admission,
+  external mlops AdamW, stressed recomputation/offload tests, and the
+  approximately-1B/full-model gates.
 
 ## Gate rule
 

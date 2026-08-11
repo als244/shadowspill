@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import torch
 import torch.nn as nn
 from torch.fx import GraphModule, Interpreter, Node
 from torch.fx.passes.split_module import split_module
+from torch.utils._pytree import tree_flatten
 
-from .aot import ExportCapture, capture_graph_pair
+from .aot import ExportCapture, TrainingCapture, capture_graph_pair
 from .capture import AotGraphPair, GraphArtifact
 from .contracts import CaptureError
 
@@ -30,8 +32,18 @@ class TrainingStage:
     """One automatic stage and its two legal differentiation variants."""
 
     example: StageExample
+    differentiable_output_indices: tuple[int, ...]
     save_pair: AotGraphPair
     recompute_pair: AotGraphPair
+
+
+@dataclass(frozen=True, slots=True)
+class PartitionedTrainingCapture:
+    """One objective capture decomposed into executable training stages."""
+
+    training: TrainingCapture
+    partitioned: PartitionedExport
+    stages: tuple[TrainingStage, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,23 +123,56 @@ def capture_training_stages(
 ) -> tuple[TrainingStage, ...]:
     """Differentiate every stage independently for save/recompute planning."""
 
-    return tuple(
-        TrainingStage(
-            example=example,
-            save_pair=capture_graph_pair(
-                example.graph_module,
-                example.inputs,
-                original_output=example.output,
-                recomputation=False,
-            ),
-            recompute_pair=capture_graph_pair(
-                example.graph_module,
-                example.inputs,
-                original_output=example.output,
-                recomputation=True,
-            ),
+    stages: list[TrainingStage] = []
+    for index, example in enumerate(partitioned.stages):
+        leaves, _ = tree_flatten(example.output)
+        if not leaves or any(not isinstance(value, torch.Tensor) for value in leaves):
+            raise CaptureError("training stage outputs must be tensors")
+        differentiable = tuple(
+            position
+            for position, value in enumerate(leaves)
+            if value.requires_grad and (value.is_floating_point() or value.is_complex())
         )
-        for example in partitioned.stages
+        if not differentiable:
+            raise CaptureError(f"training {example.stage_id} has no gradient output")
+        roots = (0,) if index == len(partitioned.stages) - 1 else differentiable
+        if any(position not in differentiable for position in roots):
+            raise CaptureError("terminal objective loss is not differentiable")
+        stages.append(
+            TrainingStage(
+                example=example,
+                differentiable_output_indices=roots,
+                save_pair=capture_graph_pair(
+                    example.graph_module,
+                    example.inputs,
+                    original_output=example.output,
+                    recomputation=False,
+                    root_output_positions=roots,
+                ),
+                recompute_pair=capture_graph_pair(
+                    example.graph_module,
+                    example.inputs,
+                    original_output=example.output,
+                    recomputation=True,
+                    root_output_positions=roots,
+                ),
+            )
+        )
+    return tuple(stages)
+
+
+def partition_training_capture(
+    capture: TrainingCapture, *, partition: str = "auto"
+) -> PartitionedTrainingCapture:
+    """Partition and differentiate one captured objective template."""
+
+    partitioned = partition_export(
+        capture.exported, capture.capture_module, partition=partition
+    )
+    return PartitionedTrainingCapture(
+        training=capture,
+        partitioned=partitioned,
+        stages=capture_training_stages(partitioned),
     )
 
 

@@ -23,6 +23,7 @@ from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
 from .materialization import representative_cpu_inputs
 from .optimizer import capture_optimizer
+from .partition import partition_training_capture
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import PlannedTrainStep, PlanReport
 from .runtime_bridge import RuntimeBridge
@@ -38,7 +39,7 @@ from .session import (
 )
 from .training_executor import TrainingExecutor
 from .training_lowering import (
-    lower_training_program,
+    lower_partitioned_training_program,
     lower_training_storage_layout,
 )
 from .training_materialization import TrainingMaterializedState
@@ -56,7 +57,6 @@ def build_training(
 ) -> PlannedTrainStep:
     """Construct one fixed accumulated training program."""
 
-    del partition  # Whole-objective AOT pairs are the first correct training ABI.
     started = time.perf_counter_ns()
     timer = _PhaseTimer()
     with timer.measure("validation"):
@@ -86,6 +86,10 @@ def build_training(
                     fake_cuda_inputs(microbatch, fake_mode, device_index=0),
                 )
                 for microbatch in cpu_inputs
+            )
+            partitioned_captures = tuple(
+                partition_training_capture(capture, partition=partition)
+                for capture in captures
             )
         layout = lower_training_storage_layout(fake_model, captures)
 
@@ -125,8 +129,9 @@ def build_training(
         artifacts = (
             *{
                 artifact.compatibility_digest: artifact
-                for capture in captures
-                for pair in (capture.save_pair, capture.recompute_pair)
+                for capture in partitioned_captures
+                for stage in capture.stages
+                for pair in (stage.save_pair, stage.recompute_pair)
                 for artifact in (pair.forward, pair.backward)
             }.values(),
             optimizer_capture.recurrent,
@@ -152,16 +157,16 @@ def build_training(
                     artifacts, profiles.measurements, strict=True
                 )
             }
-            initial_lowered = lower_training_program(
+            initial_lowered = lower_partitioned_training_program(
                 fake_model,
-                captures,
+                partitioned_captures,
                 measurements,
                 optimizer_capture,
                 optimizer_phase="initial",
             )
-            recurrent_lowered = lower_training_program(
+            recurrent_lowered = lower_partitioned_training_program(
                 fake_model,
-                captures,
+                partitioned_captures,
                 measurements,
                 optimizer_capture,
                 optimizer_phase="recurrent",

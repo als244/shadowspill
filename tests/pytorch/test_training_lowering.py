@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -7,12 +10,16 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.ir import RecomputationSelection
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.aot import capture_training
+from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.partition import partition_training_capture
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.training_lowering import (
     LoweredTrainingProgram,
+    lower_partitioned_training_program,
     lower_training_program,
+    lower_training_storage_layout,
 )
 from shadowspill.simulator import SimulationConfig
 
@@ -248,3 +255,88 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     assert created.issubset(
         {mutation.object_id for mutation in recurrent_task.mutations}
     )
+
+
+def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
+    real_model = _MultiLinearModel()
+    optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    assert optimizer_capture.recurrent is not None
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        capture = partition_training_capture(
+            capture_training(
+                model,
+                _objective,
+                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+            )
+        )
+    artifacts = (
+        *(
+            artifact
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+    )
+    measurements = {
+        artifact.compatibility_digest: TaskMeasurement(
+            100, 10, 10, (10,), (100,), "unit-test"
+        )
+        for artifact in artifacts
+    }
+    lowered = lower_partitioned_training_program(
+        model, (capture,), measurements, optimizer_capture
+    )
+    assert len(lowered.program.recomputation_groups) == len(capture.stages)
+    alias_by_object = {
+        item.object_id: item.alias_group_id for item in lowered.program.objects
+    }
+    for task in lowered.program.tasks:
+        if task.phase != "forward":
+            continue
+        aliases = tuple(alias_by_object[object_id] for object_id in task.outputs)
+        assert len(aliases) == len(set(aliases))
+    first_forward = next(
+        item
+        for item in lowered.entrypoints
+        if item.phase == "forward" and item.variant == "save"
+    )
+    boundary = first_forward.output_slots[0].object_id
+    assert any(slot.object_id == boundary for slot in first_forward.output_slots[1:])
+
+    with pytest.raises(CaptureError, match="profile scatter"):
+        lower_partitioned_training_program(model, (capture,), {}, optimizer_capture)
+    with pytest.raises(CaptureError, match="unknown optimizer phase"):
+        lower_partitioned_training_program(
+            model,
+            (capture,),
+            measurements,
+            optimizer_capture,
+            optimizer_phase="unknown",  # type: ignore[arg-type]
+        )
+    with pytest.raises(CaptureError, match="graphable optimizer"):
+        lower_partitioned_training_program(
+            model,
+            (capture,),
+            measurements,
+            replace(optimizer_capture, recurrent=None),
+        )
+
+
+def test_training_lowering_rejects_empty_templates() -> None:
+    model = _Model()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1, foreach=False)
+    for parameter in model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(dict(model.named_parameters()), optimizer)
+    with pytest.raises(CaptureError, match="storage layout"):
+        lower_training_storage_layout(model, ())
+    with pytest.raises(CaptureError, match="requires a microbatch"):
+        lower_partitioned_training_program(model, (), {}, optimizer_capture)

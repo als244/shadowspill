@@ -27,6 +27,8 @@ class _PlanRun:
     entrypoints: tuple[TrainingTaskEntrypoint, ...]
     initial_device_aliases: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
+    ephemeral_aliases: frozenset[str]
+    objects_by_alias: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +269,7 @@ class TrainingExecutor:
                 run.actions.get(task.task_id, ()),
             )
             task_open = False
+            self._forget_released_objects(run, task.task_id)
             return outputs
         except BaseException:
             if task_open:
@@ -294,17 +297,25 @@ class TrainingExecutor:
     def _accumulate_gradients(
         self, entrypoint: TrainingTaskEntrypoint, leaves: list[object]
     ) -> None:
-        contributions: list[torch.Tensor] = []
-        destinations: list[torch.Tensor] = []
-        first: list[tuple[str, str, torch.Tensor]] = []
+        by_destination: dict[str, tuple[str, list[torch.Tensor]]] = {}
         for slot in entrypoint.gradient_output_slots:
             contribution = leaves[slot.leaf_index]
             if not isinstance(contribution, torch.Tensor):
                 raise RuntimeError("parameter gradient became non-tensor")
             alias_id = self._bridge.alias_for_object(slot.object_id)
+            item = by_destination.setdefault(alias_id, (slot.object_id, []))
+            item[1].append(contribution)
+
+        contributions: list[torch.Tensor] = []
+        destinations: list[torch.Tensor] = []
+        first: list[tuple[str, str, torch.Tensor]] = []
+        for alias_id, (object_id, values) in by_destination.items():
+            contribution = values[0]
+            for additional in values[1:]:
+                contribution.add_(additional)
             destination = self._state.object_store.get(alias_id)
             if destination is None:
-                first.append((slot.object_id, alias_id, contribution))
+                first.append((object_id, alias_id, contribution))
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
@@ -314,7 +325,9 @@ class TrainingExecutor:
             self._state.object_store[alias_id] = contribution
             self._state.object_tensors[object_id] = contribution
             self._state.generations[alias_id] = binding.generation
-            self._gradients[alias_id].grad = contribution
+            parameter = self._gradients.get(alias_id)
+            if parameter is not None:
+                parameter.grad = contribution
         if destinations:
             torch._foreach_add_(destinations, contributions)
 
@@ -348,6 +361,7 @@ class TrainingExecutor:
                 run.actions.get(task.task_id, ()),
             )
             task_open = False
+            self._forget_released_objects(run, task.task_id)
             for parameter in self._gradients.values():
                 parameter.grad = None
             for alias_id in self._gradients:
@@ -480,7 +494,26 @@ class TrainingExecutor:
             generation = self._state.generations.get(alias_id)
             if tensor is None or generation is None:
                 raise RuntimeError(f"action references unbound object {alias_id!r}")
-            self._bridge.dematerialize(tensor, alias_id, generation)
+            try:
+                self._bridge.dematerialize(tensor, alias_id, generation)
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"failed to dematerialize {alias_id!r} after {task_id!r} "
+                    f"at generation {generation} from address {tensor.data_ptr()}"
+                ) from exc
+
+    def _forget_released_objects(self, run: _PlanRun, task_id: str) -> None:
+        for action in run.actions.get(task_id, ()):
+            alias_id = action.alias_group_id
+            if (
+                action.kind is not MemoryActionKind.RELEASE
+                or alias_id not in run.ephemeral_aliases
+            ):
+                continue
+            self._state.object_store.pop(alias_id, None)
+            self._state.generations.pop(alias_id, None)
+            for object_id in run.objects_by_alias.get(alias_id, ()):
+                self._state.object_tensors.pop(object_id, None)
 
     def _prepare(
         self, lowered: LoweredTrainingProgram, plan: ExecutionPlan
@@ -503,6 +536,25 @@ class TrainingExecutor:
                 if item.location.value == "device"
             ),
             public_by_microbatch=self._public_outputs(entrypoints),
+            ephemeral_aliases=frozenset(
+                item.alias_group_id
+                for item in plan.program.alias_groups
+                if item.alias_group_id
+                not in {
+                    residency.alias_group_id
+                    for residency in plan.schedule.initial_residency
+                }
+            ),
+            objects_by_alias={
+                alias_id: tuple(
+                    item.object_id
+                    for item in plan.program.objects
+                    if item.alias_group_id == alias_id
+                )
+                for alias_id in (
+                    item.alias_group_id for item in plan.program.alias_groups
+                )
+            },
         )
 
     def _public_outputs(
