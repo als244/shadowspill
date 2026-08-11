@@ -220,6 +220,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         goto done;
     }
     allocation->plan_owned = 1;
+    allocation->ever_plan_owned = 1;
     shadowspill_append_allocation_event_locked(
         runtime,
         allocation,

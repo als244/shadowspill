@@ -34,6 +34,15 @@ ShadowSpillAllocationRecord *shadowspill_find_allocation_by_pointer(
             return record;
         }
     }
+    for (ShadowSpillAllocationRecord *record = runtime->allocations;
+         record != NULL; record = record->next) {
+        const void *retired_pointer =
+            (const unsigned char *)runtime->device_slab + record->offset;
+        if (record->logical_freed && record->ever_plan_owned &&
+            !record->framework_free_seen && retired_pointer == pointer) {
+            return record;
+        }
+    }
     return NULL;
 }
 
@@ -306,12 +315,32 @@ ShadowSpillRuntimeStatus shadowspill_free(
         runtime, allocation_id
     );
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    if (allocation == NULL || allocation->logical_freed) {
+    if (allocation == NULL) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    if (allocation->logical_freed) {
+        if (allocation->ever_plan_owned && !allocation->framework_free_seen) {
+            allocation->framework_free_seen = 1;
+            goto done;
+        }
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
     if (allocation->plan_owned) {
+        if (allocation->framework_free_seen) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
+        }
+        allocation->framework_free_seen = 1;
         goto done;
+    }
+    if (allocation->ever_plan_owned) {
+        if (allocation->framework_free_seen) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
+        }
+        allocation->framework_free_seen = 1;
     }
     if (append_stream(allocation, stream) != 0) {
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;

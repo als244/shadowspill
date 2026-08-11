@@ -41,6 +41,8 @@ typedef struct ShadowSpillAllocationRecord {
     void *pointer;
     int logical_freed;
     int plan_owned;
+    int ever_plan_owned;
+    int framework_free_seen;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
     struct ShadowSpillAllocationRecord *next;

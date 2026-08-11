@@ -194,6 +194,20 @@ static int valid_transition_paths(void) {
         result = -1;
         goto done;
     }
+    ShadowSpillAllocation retired = {0};
+    if (shadowspill_allocation_for_pointer(
+            fixture.runtime, first.pointer, &retired
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        retired.allocation_id != first.allocation_id ||
+        shadowspill_free(
+            fixture.runtime, first.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, first.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
+        result = -1;
+        goto done;
+    }
     if (shadowspill_unregister_object(
             fixture.runtime, retained.object_id
         ) != SHADOWSPILL_RUNTIME_OK ||
