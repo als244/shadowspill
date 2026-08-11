@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from models.pytorch import OLMoE, OLMoEConfig, Qwen35, Qwen35Config
+from models.pytorch.qwen35 import _delta_rule, _delta_rule_reference
 
 
 def test_reduced_family_parameter_counts() -> None:
@@ -43,6 +44,33 @@ def test_tiny_qwen_hybrid_schedule_and_gradients() -> None:
         "full",
     )
     assert all(parameter.grad is not None for parameter in model.parameters())
+
+
+def test_qwen_delta_rule_bounded_operation_matches_reference_vjp() -> None:
+    torch.manual_seed(29)
+    shapes = ((1, 5, 2, 4), (1, 5, 4, 3), (1, 5, 4))
+    reference_inputs = (
+        torch.randn(shapes[0], requires_grad=True),
+        torch.randn(shapes[0], requires_grad=True),
+        torch.randn(shapes[1], requires_grad=True),
+        torch.sigmoid(torch.randn(shapes[2])).requires_grad_(),
+        (-torch.rand(shapes[2])).requires_grad_(),
+    )
+    bounded_inputs = tuple(
+        value.detach().clone().requires_grad_() for value in reference_inputs
+    )
+    expected = _delta_rule_reference(*reference_inputs)
+    actual = _delta_rule(*bounded_inputs)
+    torch.testing.assert_close(actual, expected)
+    tangent = torch.randn_like(expected)
+    expected_gradients = torch.autograd.grad(expected, reference_inputs, tangent)
+    actual_gradients = torch.autograd.grad(actual, bounded_inputs, tangent)
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients, expected_gradients, strict=True
+    ):
+        torch.testing.assert_close(
+            actual_gradient, expected_gradient, rtol=2e-5, atol=2e-6
+        )
 
 
 def test_tiny_olmoe_auxiliary_loss_reaches_router() -> None:

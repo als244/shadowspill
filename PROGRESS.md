@@ -794,3 +794,17 @@ the ignored internal progress log before this tracked summary is updated.
   linear stage to 1,914--2,714 Export nodes and up to 9,013 backward nodes.
   Deduplication cannot make that unique ABI cheap; a compact bounded operation
   contract is required before repeating full qualification.
+
+## 2026-08-11 — Bounded pure-PyTorch Qwen recurrence
+
+- The pure Qwen reference now registers its ATen delta-rule recurrence as one
+  bounded PyTorch operation with fake and first-order autograd contracts. Its
+  backend remains the readable PyTorch recurrence; its explicit reverse
+  recurrence is differentially tested against eager Autograd for every input.
+- No ShadowSpill core code recognizes Qwen or linear attention. This exercises
+  the same arbitrary registered-operation contract available to user models and
+  keeps the pure model independent of `mlops`.
+- Exact two-shape frontend time fell from 125.75 to 16.68 seconds: Export fell
+  from 56.81 to 8.57 seconds and stage AOT from 68.82 to 8.00 seconds. The
+  largest backward graph fell from 9,013 to 722 nodes while structural reuse
+  remained 8 unique ABIs and 8 hits.
