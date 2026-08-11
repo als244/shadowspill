@@ -751,3 +751,18 @@ the ignored internal progress log before this tracked summary is updated.
   actions, transfer triggers, task ordering, and runtime synchronization remain
   untouched. Qwen then exposed a separate upstream lowering defect, recorded in
   the internal log and addressed as an independent change.
+
+## 2026-08-11 — Remove discarded whole-objective AOT graphs
+
+- Public training capture exported each complete objective and immediately
+  constructed save-all and recompute whole-model AOT graph pairs. Automatic
+  partitioning then ignored both pairs and differentiated every stage again.
+  Qwen's fixed-length reference recurrence made those discarded graphs enormous.
+- Objective export and whole-graph differentiation are now separate internal
+  operations. The public planning session uses export-only capture, partitions
+  the functional graph, and constructs only graph pairs that become executable
+  stage alternatives. Whole-graph pairs remain available to focused oracle
+  tests and the non-partitioned internal lowering path.
+- A regression replaces the whole-graph pair builder with a failing sentinel and
+  proves export-only capture never invokes it. Focused AOT, partition, training,
+  and training-lowering suites pass without changing runtime task semantics.

@@ -28,7 +28,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 
-from .aot import TrainingCapture
+from .aot import TrainingCapture, TrainingObjectiveCapture
 from .capture import AotGraphPair, GraphArtifact
 from .contracts import CaptureError
 from .lowering import RegistrationBinding, TensorSlot, _TensorInventory
@@ -127,7 +127,7 @@ class _PreparedStageVariant:
 
 def lower_training_storage_layout(
     model: nn.Module,
-    captures: tuple[TrainingCapture, ...],
+    captures: tuple[TrainingObjectiveCapture, ...],
     *,
     device_ordinal: int = 0,
 ) -> TrainingStorageLayout:
@@ -980,7 +980,7 @@ def _register_model(
 
 
 def _register_microbatch_inputs(
-    captures: tuple[TrainingCapture, ...], inventory: _TensorInventory
+    captures: tuple[TrainingObjectiveCapture, ...], inventory: _TensorInventory
 ) -> tuple[tuple[tuple[TensorSlot, ...], ...], set[str]]:
     positions: list[tuple[TensorSlot, ...]] = []
     initial: set[str] = set()

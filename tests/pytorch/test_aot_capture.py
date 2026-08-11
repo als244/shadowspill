@@ -9,6 +9,7 @@ from shadowspill.pytorch import ObjectiveError, ObjectiveResult
 from shadowspill.pytorch.aot import (
     capture_forward,
     capture_training,
+    capture_training_objective,
     inference_artifact,
 )
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
@@ -48,6 +49,25 @@ def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
     assert capture.recompute_pair.forward.argument_count > 0
     assert capture.recompute_pair.backward.argument_count > 0
     assert capture.save_pair.forward.compatibility_digest
+
+
+def test_objective_export_does_not_construct_a_whole_model_vjp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _Network()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
+    monkeypatch.setattr(
+        "shadowspill.pytorch.aot._capture_pair",
+        lambda *arguments, **options: pytest.fail(
+            f"unexpected whole-model AOT capture {arguments}, {options}"
+        ),
+    )
+    with mode:
+        capture = capture_training_objective(replica, _objective, inputs)
+    assert capture.exported.user_output_indices
+    assert capture.objective_schema.tensor_metric_positions == (0,)
 
 
 def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> None:

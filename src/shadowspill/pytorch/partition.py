@@ -11,7 +11,7 @@ from torch.fx import GraphModule, Interpreter, Node
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
 
-from .aot import ExportCapture, TrainingCapture, capture_graph_pair
+from .aot import ExportCapture, TrainingObjectiveCapture, capture_graph_pair
 from .capture import AotGraphPair, GraphArtifact
 from .contracts import CaptureError
 
@@ -41,7 +41,7 @@ class TrainingStage:
 class PartitionedTrainingCapture:
     """One objective capture decomposed into executable training stages."""
 
-    training: TrainingCapture
+    training: TrainingObjectiveCapture
     partitioned: PartitionedExport
     stages: tuple[TrainingStage, ...]
 
@@ -162,7 +162,7 @@ def capture_training_stages(
 
 
 def partition_training_capture(
-    capture: TrainingCapture, *, partition: str = "auto"
+    capture: TrainingObjectiveCapture, *, partition: str = "auto"
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template."""
 

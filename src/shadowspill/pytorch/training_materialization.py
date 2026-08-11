@@ -13,7 +13,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.ir import MemoryAction, MemoryActionKind
 
-from .aot import TrainingCapture
+from .aot import TrainingObjectiveCapture
 from .contracts import PlanningError
 from .lowering import RegistrationBinding
 from .optimizer import current_optimizer_bindings
@@ -34,7 +34,7 @@ class TrainingMaterializedState:
         self,
         model: nn.Module,
         layout: TrainingStorageLayout,
-        captures: tuple[TrainingCapture, ...],
+        captures: tuple[TrainingObjectiveCapture, ...],
         example_inputs: tuple[Sequence[Any], ...],
         bridge: RuntimeBridge,
         *,
@@ -449,7 +449,7 @@ class TrainingMaterializedState:
 
 
 def _flat_training_arguments(
-    capture: TrainingCapture,
+    capture: TrainingObjectiveCapture,
     model: nn.Module,
     microbatch: Sequence[Any],
 ) -> tuple[object, ...]:

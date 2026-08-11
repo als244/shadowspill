@@ -58,7 +58,9 @@ state into explicit graph inputs. An empty decomposition table preserves
 differentiable operator semantics until AOTAutograd constructs the explicit
 forward/backward pair.
 
-Training capture produces both save-oriented and min-cut recomputation graph
+Training first exports the complete objective for semantic partitioning. It
+does not differentiate that whole graph and then discard it. After partitioning,
+each executable stage produces save-oriented and min-cut recomputation graph
 pairs. Metrics are detached tensor outputs or preserved static pytree leaves;
 only the scalar objective is differentiated. Structural graph identities use
 operator targets, tensor geometry, calling convention, and the pinned

@@ -34,12 +34,18 @@ class ExportCapture:
 
 
 @dataclass(frozen=True, slots=True)
-class TrainingCapture:
-    """Objective schema and save/recompute AOT alternatives for one ABI."""
+class TrainingObjectiveCapture:
+    """Exported objective semantics before stage-local differentiation."""
 
     exported: ExportCapture
     capture_module: nn.Module
     objective_schema: ObjectiveSchema
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingCapture(TrainingObjectiveCapture):
+    """Objective export plus whole-graph AOT alternatives for oracle use."""
+
     save_pair: AotGraphPair
     recompute_pair: AotGraphPair
 
@@ -109,6 +115,25 @@ def capture_training(
 ) -> TrainingCapture:
     """Capture objective plus save-all and min-cut recomputation graph pairs."""
 
+    objective_capture = capture_training_objective(model, objective, microbatch)
+    save_pair = _capture_pair(objective_capture.exported, recomputation=False)
+    recompute_pair = _capture_pair(objective_capture.exported, recomputation=True)
+    return TrainingCapture(
+        exported=objective_capture.exported,
+        capture_module=objective_capture.capture_module,
+        objective_schema=objective_capture.objective_schema,
+        save_pair=save_pair,
+        recompute_pair=recompute_pair,
+    )
+
+
+def capture_training_objective(
+    model: nn.Module,
+    objective: Callable[..., torch.Tensor | ObjectiveResult],
+    microbatch: Sequence[Any],
+) -> TrainingObjectiveCapture:
+    """Export an objective without constructing an unused whole-model VJP."""
+
     probe_loss, probe_metrics = normalize_objective_result(
         objective(model, *microbatch), require_grad=True
     )
@@ -116,14 +141,10 @@ def capture_training(
     schema = capture_objective_schema(probe_metrics)
     capture_module = _ObjectiveModule(model, objective, schema)
     exported = _export(capture_module, microbatch)
-    save_pair = _capture_pair(exported, recomputation=False)
-    recompute_pair = _capture_pair(exported, recomputation=True)
-    return TrainingCapture(
+    return TrainingObjectiveCapture(
         exported=exported,
         capture_module=capture_module,
         objective_schema=schema,
-        save_pair=save_pair,
-        recompute_pair=recompute_pair,
     )
 
 

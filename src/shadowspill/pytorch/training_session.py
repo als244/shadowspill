@@ -17,7 +17,7 @@ from shadowspill.planner._cache import PressureFitCache
 from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
-from .aot import capture_training
+from .aot import capture_training_objective
 from .compiler import CudaTaskProfiler, profile_environment
 from .contracts import ObjectiveResult, PlanningError
 from .fake import fake_cuda_inputs, fake_cuda_model
@@ -85,7 +85,7 @@ def build_training(
         fake_model = fake_cuda_model(model, fake_mode, device_index=0)
         with fake_mode:
             captures = tuple(
-                capture_training(
+                capture_training_objective(
                     fake_model,
                     objective,
                     fake_cuda_inputs(microbatch, fake_mode, device_index=0),
