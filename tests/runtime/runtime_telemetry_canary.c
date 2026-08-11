@@ -149,6 +149,204 @@ static int ordered_task_capture(void) {
     return failed ? -1 : 0;
 }
 
+static int same_stream_retirement_is_task_batched(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    if (create_runtime(&mock, &runtime, &compute) != 0) {
+        return -1;
+    }
+    ShadowSpillMockBackendStatistics before = {0};
+    ShadowSpillMockBackendStatistics during = {0};
+    ShadowSpillMockBackendStatistics after = {0};
+    shadowspill_mock_backend_statistics(mock, &before);
+    int failed = shadowspill_before_task(
+            runtime, 77U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    void *first_pointer = NULL;
+    for (uint32_t index = 0U; !failed && index < 2500U; ++index) {
+        ShadowSpillAllocation allocation = {0};
+        failed = shadowspill_allocate(
+                runtime, 64U, 1U, compute, &allocation
+            ) != SHADOWSPILL_RUNTIME_OK;
+        if (index == 0U) {
+            first_pointer = allocation.pointer;
+        } else if (allocation.pointer != first_pointer) {
+            failed = 1;
+        }
+        failed = failed || shadowspill_free(
+                runtime, allocation.allocation_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    shadowspill_mock_backend_statistics(mock, &during);
+    failed = failed || during.operation_count != before.operation_count ||
+        shadowspill_after_task(
+            runtime, 77U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    shadowspill_mock_backend_statistics(mock, &after);
+    ShadowSpillRuntimeStatistics runtime_statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(
+            runtime, &runtime_statistics
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        runtime_statistics.pending_retirements != 0U ||
+        runtime_statistics.allocated_bytes != 0U ||
+        after.operation_count - during.operation_count >= 32U;
+    if (failed) {
+        fprintf(
+            stderr,
+            "task retirement batching before=%llu during=%llu after=%llu "
+            "pending=%llu allocated=%llu\n",
+            (unsigned long long)before.operation_count,
+            (unsigned long long)during.operation_count,
+            (unsigned long long)after.operation_count,
+            (unsigned long long)runtime_statistics.pending_retirements,
+            (unsigned long long)runtime_statistics.allocated_bytes
+        );
+    }
+    destroy_runtime(mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
+static int queued_transfers_survive_retirement_only_task(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .h2d_delay_nanoseconds = 100000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 256U,
+        .host_arena_bytes = 128U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    const ShadowSpillObjectDescription objects[] = {
+        {.object_id = 20U, .size_bytes = 32U, .initially_host_resident = 1U},
+        {.object_id = 21U, .size_bytes = 32U, .initially_host_resident = 1U},
+        {.object_id = 22U, .size_bytes = 32U, .initially_host_resident = 1U},
+    };
+    const ShadowSpillRuntimeAction initial[] = {
+        {.object_id = 20U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 21U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+    };
+    const ShadowSpillRuntimeAction appended = {
+        .object_id = 22U,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    for (uint32_t index = 0U; !failed && index < 3U; ++index) {
+        failed = shadowspill_register_object(runtime, &objects[index]) !=
+            SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed || shadowspill_after_task(
+            runtime, 80U, compute, NULL, 0U, initial, 2U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_task(
+            runtime, 81U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillAllocation temporary = {0};
+    failed = failed || shadowspill_allocate(
+            runtime, 16U, 1U, compute, &temporary
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, temporary.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 81U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 82U, compute, NULL, 0U, &appended, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    for (uint32_t index = 0U; !failed && index < 3U; ++index) {
+        ShadowSpillObjectSnapshot snapshot = {0};
+        failed = shadowspill_object_snapshot(
+                runtime, objects[index].object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+            snapshot.device_pointer == NULL;
+    }
+    if (failed) {
+        fprintf(stderr, "retirement-only task dropped a queued transfer\n");
+    }
+    destroy_runtime(mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
+static int all_completed_retirements_precede_action_admission(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .event_delay_nanoseconds = 100000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 128U,
+        .host_arena_bytes = 128U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    const ShadowSpillObjectDescription object = {
+        .object_id = 30U,
+        .size_bytes = 96U,
+        .initially_host_resident = 1U,
+    };
+    ShadowSpillAllocation first = {0};
+    ShadowSpillAllocation second = {0};
+    failed = failed || shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_task(
+            runtime, 90U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 64U, 1U, compute, &first) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 64U, 1U, compute, &second) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, first.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, second.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 90U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    const ShadowSpillRuntimeAction prefetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    failed = failed || shadowspill_after_task(
+            runtime, 91U, compute, NULL, 0U, &prefetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillObjectSnapshot snapshot = {0};
+    failed = failed || shadowspill_object_snapshot(
+            runtime, object.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        snapshot.device_pointer == NULL;
+    if (failed) {
+        fprintf(stderr, "action admission ran before all completed retirements\n");
+    }
+    destroy_runtime(mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
 static int overflow_is_failure(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
@@ -179,7 +377,11 @@ static int overflow_is_failure(void) {
 }
 
 int main(void) {
-    return ordered_task_capture() == 0 && overflow_is_failure() == 0
+    return ordered_task_capture() == 0 &&
+        same_stream_retirement_is_task_batched() == 0 &&
+        queued_transfers_survive_retirement_only_task() == 0 &&
+        all_completed_retirements_precede_action_admission() == 0 &&
+        overflow_is_failure() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

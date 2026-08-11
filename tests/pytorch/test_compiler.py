@@ -93,8 +93,9 @@ def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
 def test_cuda_measurement_uses_events_and_reports_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    library = _TaskLibrary()
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=2
+        library, device_ordinal=0, warmup_iterations=1, sample_iterations=2
     )
     workspace = SimpleNamespace(
         peak_requested_bytes=64,
@@ -133,6 +134,10 @@ class _TaskLibrary:
 
     def shadowspill_pytorch_abort_task_range(self) -> None:
         self.aborted = True
+
+    @staticmethod
+    def shadowspill_pytorch_allocator_wait_idle() -> int:
+        return 0
 
 
 class _Stream:
@@ -183,6 +188,43 @@ def test_workspace_boundary_always_stops_telemetry(
     with pytest.raises(CaptureError, match="before_task"):
         failing._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
     assert calls[-2:] == ["start:65536", "stop"]
+
+
+def test_workspace_releases_disposable_results_before_after_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Result:
+        def __del__(self) -> None:
+            calls.append("release-result")
+
+    class Library(_TaskLibrary):
+        def shadowspill_pytorch_after_task(self, *arguments: object) -> int:
+            del arguments
+            calls.append("after-task")
+            return 0
+
+    monkeypatch.setattr(
+        compiler_module, "start_allocation_telemetry", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        compiler_module, "stop_allocation_telemetry", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        compiler_module, "read_allocation_telemetry", lambda library: ()
+    )
+    monkeypatch.setattr(
+        compiler_module,
+        "summarize_task_workspace",
+        lambda events, **options: object(),
+    )
+    profiler = CudaTaskProfiler(
+        Library(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    executable = CompiledTask(_artifact(), lambda: Result(), ())
+    profiler._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
+    assert calls == ["release-result", "after-task"]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -305,8 +347,9 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
         return CompiledTask(value, lambda *arguments: arguments, ())
 
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
+    library = _TaskLibrary()
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     functions = profiler.take_functions((artifact, artifact))
     assert tuple(functions) == (artifact.compatibility_digest,)

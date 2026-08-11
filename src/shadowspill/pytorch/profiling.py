@@ -13,7 +13,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v7"
+# v8 measures every calibrated sample inside the same task-boundary allocator
+# contract used by production execution.  Older entries measured samples
+# outside a task and therefore included conservative per-free retirement cost.
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v8"
 
 
 class TaskAllocationOperation(StrEnum):

@@ -47,7 +47,8 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         backend.create_stream(
             backend.context, SHADOWSPILL_TRANSFER_TO_DEVICE, &compute
-        ) != 0) {
+        ) != 0 ||
+        shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0) {
         return EXIT_FAILURE;
     }
     ShadowSpillCudaPhysicalMemory admitted_memory = {0};
@@ -142,6 +143,13 @@ int main(void) {
         cuda_statistics.streams_created != 3U ||
         cuda_statistics.streams_destroyed != 3U ||
         cuda_statistics.events_created != cuda_statistics.events_destroyed ||
+        !cuda_statistics.event_pool_sealed ||
+        cuda_statistics.event_pool_capacity < 8U ||
+        cuda_statistics.event_pool_driver_creates !=
+            cuda_statistics.event_pool_capacity ||
+        cuda_statistics.event_pool_in_use != 0U ||
+        cuda_statistics.event_pool_peak_in_use == 0U ||
+        cuda_statistics.event_pool_growth_rejections != 0U ||
         shadowspill_cuda_backend_last_error(cuda) != 0U ||
         shadowspill_cuda_backend_last_nvml_error(cuda) != 0U) {
         return EXIT_FAILURE;

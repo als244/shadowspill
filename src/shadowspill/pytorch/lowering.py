@@ -102,15 +102,64 @@ _ROLE_PRIORITY = {
 }
 
 
+def _view_extent_bytes(tensor: torch.Tensor) -> int:
+    """Return the compact storage span needed for one strided tensor view."""
+
+    if tensor.numel() == 0:
+        return 0
+    if any(stride < 0 for stride in tensor.stride()):
+        raise CaptureError("compiled task output has a negative stride")
+    last_element = sum(
+        (extent - 1) * stride
+        for extent, stride in zip(tensor.shape, tensor.stride(), strict=True)
+    )
+    return int((last_element + 1) * tensor.element_size())
+
+
+@dataclass(frozen=True, slots=True)
+class _CompiledOutputAllocation:
+    """Backend allocation that physically owns one compiled output leaf."""
+
+    ordinal: int
+    size_bytes: int
+
+
+def _compiled_output_allocations(
+    measurement: TaskMeasurement,
+) -> dict[int, _CompiledOutputAllocation]:
+    """Map returned leaves to the backend allocations that own them.
+
+    AOT metadata remains authoritative for semantic aliases of graph inputs.
+    Compiler-private outputs and saved tensors have no stable physical-layout
+    contract: Inductor may split fake multi-output views or compact a view of a
+    larger fake storage. The one-time compiled-task observation is therefore
+    the physical boundary used by admission and the runtime.
+    """
+
+    result: dict[int, _CompiledOutputAllocation] = {}
+    for event in measurement.allocation_trace:
+        for leaf_index in event.output_leaf_indices:
+            allocation = _CompiledOutputAllocation(
+                event.allocation_ordinal, event.charged_bytes
+            )
+            previous = result.setdefault(leaf_index, allocation)
+            if previous != allocation:
+                raise CaptureError("one output leaf reported two physical extents")
+    return result
+
+
 class _TensorInventory:
     def __init__(self, *, device_id: str) -> None:
         self._device_id = device_id
         self._tensor_keepalive: list[torch.Tensor] = []
         self._alias_by_storage: dict[int, str] = {}
+        self._alias_by_compiled_allocation: dict[tuple[int, int], str] = {}
         self._alias_sizes: dict[str, int] = {}
         self._retain_host: set[str] = set()
         self._object_by_key: dict[_TensorKey, str] = {}
         self._objects: list[_ObjectRecord] = []
+        self._next_alias_id = 0
+        self._next_compiled_output_scope = 0
 
     @staticmethod
     def key(tensor: torch.Tensor) -> _TensorKey:
@@ -132,39 +181,175 @@ class _TensorInventory:
         persistence: Persistence,
         retain_host_backing: bool = False,
     ) -> str:
+        return self._add(
+            tensor,
+            role=role,
+            persistence=persistence,
+            retain_host_backing=retain_host_backing,
+        )
+
+    def add_compiled_output(
+        self,
+        tensor: torch.Tensor,
+        *,
+        role: ObjectRole,
+        persistence: Persistence,
+        allocation_scope: int,
+        physical_allocation: _CompiledOutputAllocation | None,
+    ) -> str:
+        """Add a task output using the compiled boundary's physical storage.
+
+        A leaf with no new allocation follows AOT/FakeTensor identity because
+        it aliases an input or another known value. A newly allocated leaf
+        follows its backend allocation group even when FakeTensor happened to
+        place several non-aliasing values in one storage.
+        """
+
+        if physical_allocation is None:
+            return self.add(tensor, role=role, persistence=persistence)
+        return self._add_compiled_allocation(
+            tensor,
+            role=role,
+            persistence=persistence,
+            group=(allocation_scope, physical_allocation.ordinal),
+            physical_storage_bytes=physical_allocation.size_bytes,
+        )
+
+    def compiled_output_scope(self) -> int:
+        """Return an identity local to one invocation of one compiled ABI."""
+
+        result = self._next_compiled_output_scope
+        self._next_compiled_output_scope += 1
+        return result
+
+    def _add(
+        self,
+        tensor: torch.Tensor,
+        *,
+        role: ObjectRole,
+        persistence: Persistence,
+        retain_host_backing: bool,
+    ) -> str:
         self._tensor_keepalive.append(tensor)
         key = self.key(tensor)
+        object_id = self._object_by_key.get(key)
+        if object_id is not None:
+            self._upgrade_object(
+                object_id,
+                role=role,
+                persistence=persistence,
+                retain_host_backing=retain_host_backing,
+            )
+            return object_id
         alias_id = self._alias_by_storage.get(key.storage_identity)
         storage_bytes = tensor.untyped_storage().nbytes()
         if alias_id is None:
-            alias_id = f"alias_{len(self._alias_by_storage):06d}"
+            alias_id = self._new_alias(storage_bytes)
             self._alias_by_storage[key.storage_identity] = alias_id
-            self._alias_sizes[alias_id] = storage_bytes
         elif self._alias_sizes[alias_id] != storage_bytes:
             raise CaptureError("one capture storage reported inconsistent byte extents")
         if retain_host_backing:
             self._retain_host.add(alias_id)
-        object_id = self._object_by_key.get(key)
-        if object_id is None:
-            object_id = f"object_{len(self._objects):06d}"
-            self._object_by_key[key] = object_id
-            self._objects.append(
-                _ObjectRecord(
-                    object_id=object_id,
-                    alias_group_id=alias_id,
-                    offset_bytes=int(tensor.storage_offset()) * tensor.element_size(),
-                    size_bytes=int(tensor.numel()) * tensor.element_size(),
-                    role=role,
-                    persistence=persistence,
-                )
+        return self._new_object(
+            key,
+            alias_id=alias_id,
+            offset_bytes=int(tensor.storage_offset()) * tensor.element_size(),
+            tensor=tensor,
+            role=role,
+            persistence=persistence,
+        )
+
+    def _add_compiled_allocation(
+        self,
+        tensor: torch.Tensor,
+        *,
+        role: ObjectRole,
+        persistence: Persistence,
+        group: tuple[int, int],
+        physical_storage_bytes: int,
+    ) -> str:
+        self._tensor_keepalive.append(tensor)
+        if physical_storage_bytes < _view_extent_bytes(tensor):
+            raise CaptureError(
+                "compiled task output allocation is smaller than its tensor view"
             )
-        else:
-            record = self._record(object_id)
-            if persistence is Persistence.CHECKPOINT:
-                record.persistence = persistence
-            if _ROLE_PRIORITY[role] > _ROLE_PRIORITY[record.role]:
-                record.role = role
+        alias_id = self._alias_by_compiled_allocation.get(group)
+        if alias_id is None:
+            alias_id = self._new_alias(physical_storage_bytes)
+            self._alias_by_compiled_allocation[group] = alias_id
+        elif self._alias_sizes[alias_id] != physical_storage_bytes:
+            raise CaptureError(
+                "one compiled output allocation reported inconsistent byte extents"
+            )
+        key = self.key(tensor)
+        existing = self._object_by_key.get(key)
+        if existing is not None:
+            record = self._record(existing)
+            if record.alias_group_id != alias_id:
+                raise CaptureError(
+                    "one fake tensor view maps to distinct compiled allocations"
+                )
+            self._upgrade_object(
+                existing,
+                role=role,
+                persistence=persistence,
+                retain_host_backing=False,
+            )
+            return existing
+        return self._new_object(
+            key,
+            alias_id=alias_id,
+            offset_bytes=0,
+            tensor=tensor,
+            role=role,
+            persistence=persistence,
+        )
+
+    def _new_alias(self, size_bytes: int) -> str:
+        alias_id = f"alias_{self._next_alias_id:06d}"
+        self._next_alias_id += 1
+        self._alias_sizes[alias_id] = size_bytes
+        return alias_id
+
+    def _new_object(
+        self,
+        key: _TensorKey,
+        *,
+        alias_id: str,
+        offset_bytes: int,
+        tensor: torch.Tensor,
+        role: ObjectRole,
+        persistence: Persistence,
+    ) -> str:
+        object_id = f"object_{len(self._objects):06d}"
+        self._object_by_key[key] = object_id
+        self._objects.append(
+            _ObjectRecord(
+                object_id=object_id,
+                alias_group_id=alias_id,
+                offset_bytes=offset_bytes,
+                size_bytes=int(tensor.numel()) * tensor.element_size(),
+                role=role,
+                persistence=persistence,
+            )
+        )
         return object_id
+
+    def _upgrade_object(
+        self,
+        object_id: str,
+        *,
+        role: ObjectRole,
+        persistence: Persistence,
+        retain_host_backing: bool,
+    ) -> None:
+        record = self._record(object_id)
+        if persistence is Persistence.CHECKPOINT:
+            record.persistence = persistence
+        if _ROLE_PRIORITY[role] > _ROLE_PRIORITY[record.role]:
+            record.role = role
+        if retain_host_backing:
+            self._retain_host.add(record.alias_group_id)
 
     def alias_id(self, object_id: str) -> str:
         return self._record(object_id).alias_group_id
@@ -360,13 +545,19 @@ def lower_forward_program(
 
         input_aliases = {inventory.alias_id(value) for value in input_objects}
         output_leaves, _ = tree_flatten(stage.output)
+        allocation_scope = inventory.compiled_output_scope()
+        output_allocations = _compiled_output_allocations(measurements[index])
         output_slots: list[TensorSlot] = []
         output_objects: list[str] = []
         for position, leaf in enumerate(output_leaves):
             if not isinstance(leaf, torch.Tensor):
                 continue
-            object_id = inventory.add(
-                leaf, role=ObjectRole.ACTIVATION, persistence=Persistence.STEP
+            object_id = inventory.add_compiled_output(
+                leaf,
+                role=ObjectRole.ACTIVATION,
+                persistence=Persistence.STEP,
+                allocation_scope=allocation_scope,
+                physical_allocation=output_allocations.get(position),
             )
             output_slots.append(TensorSlot(position, object_id))
             if object_id not in input_objects and object_id not in output_objects:

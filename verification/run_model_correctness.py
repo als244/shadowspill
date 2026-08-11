@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -58,8 +59,10 @@ def _budget_overrides(
     result: dict[str, int] = {}
     for value in values:
         family, separator, budget = value.partition("=")
-        if separator == "" or not family or (
-            valid_models is not None and family not in valid_models
+        if (
+            separator == ""
+            or not family
+            or (valid_models is not None and family not in valid_models)
         ):
             raise argparse.ArgumentTypeError(
                 "budget must be MODEL=BYTES for one of "
@@ -103,15 +106,17 @@ def _run_case(
     device_budget: int,
     output_directory: Path,
     environment: dict[str, str],
-    reuse_eager: bool,
+    reuse_reference: bool,
     seed: int,
     model_config: str,
     data_geometry: str | None,
     case_factory: str | None,
     case_options: list[str],
+    cold: bool,
+    cache_directory: Path | None,
 ) -> CaseResult:
     prefix = f"{implementation}_{family}"
-    reference = output_directory / f"{prefix}_eager.pt"
+    reference = output_directory / f"{prefix}_reference.pt"
     artifact = output_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
     options = ["--seed", str(seed), "--model-config", model_config]
@@ -122,11 +127,11 @@ def _run_case(
     for value in case_options:
         options.extend(("--case-option", value))
     commands: list[list[str]] = []
-    if not reuse_eager or not reference.is_file():
+    if not reuse_reference or not reference.is_file():
         commands.append(
             [
                 *base,
-                "_eager",
+                "_reference",
                 family,
                 str(reference),
                 "--model-implementation",
@@ -149,8 +154,32 @@ def _run_case(
     )
     started = time.perf_counter()
     return_code = 0
-    for command in commands:
-        completed = subprocess.run(command, check=False, env=environment)
+    for command_index, command in enumerate(commands):
+        command_environment = dict(environment)
+        if cold:
+            cache_parent = (
+                output_directory / "cold_caches"
+                if cache_directory is None
+                else cache_directory.expanduser().resolve()
+            )
+            cache_root = (
+                cache_parent
+                / f"{prefix}-{uuid.uuid4().hex}"
+                / ("reference" if command_index == 0 and len(commands) == 2 else "plan")
+            )
+            cache_root.mkdir(parents=True, exist_ok=False)
+            command_environment.update(
+                {
+                    "SHADOWSPILL_PROFILE_CACHE": str(cache_root / "profiles"),
+                    "SHADOWSPILL_RECOMPUTATION_CACHE": str(
+                        cache_root / "recomputation"
+                    ),
+                    "SHADOWSPILL_QUALIFICATION_COLD": "1",
+                    "TORCHINDUCTOR_CACHE_DIR": str(cache_root / "torchinductor"),
+                    "TRITON_CACHE_DIR": str(cache_root / "triton"),
+                }
+            )
+        completed = subprocess.run(command, check=False, env=command_environment)
         return_code = completed.returncode
         if return_code != 0:
             break
@@ -158,7 +187,7 @@ def _run_case(
     if return_code == 0 and artifact.is_file():
         payload = json.loads(artifact.read_text())
         passed = bool(
-            payload.get("schema") == "shadowspill.numerical_qualification/v3"
+            payload.get("schema") == "shadowspill.numerical_qualification/v4"
             and payload.get("passed") is True
         )
         if not passed:
@@ -177,8 +206,8 @@ def _run_case(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run fresh-process eager/planned parity, checkpoint replay, transfer, "
-            "recomputation, and physical-budget gates."
+            "Run fresh-process compiled-reference/planned parity, checkpoint "
+            "replay, transfer, recomputation, and physical-budget gates."
         )
     )
     parser.add_argument(
@@ -209,6 +238,14 @@ def main() -> int:
     )
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument(
+        "--cold",
+        action="store_true",
+        help=(
+            "give every reference and planned subprocess fresh ShadowSpill, "
+            "Inductor, and Triton cache roots"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument(
         "--model-config",
@@ -234,9 +271,12 @@ def main() -> int:
         help="repeatable custom-factory argument",
     )
     parser.add_argument(
-        "--reuse-eager",
+        "--reuse-reference",
         action="store_true",
-        help="reuse an existing eager artifact; regeneration is safer by default",
+        help=(
+            "reuse an existing torch.compile reference artifact; regeneration "
+            "is safer by default"
+        ),
     )
     parser.add_argument(
         "--keep-going",
@@ -263,11 +303,7 @@ def main() -> int:
         overrides = _budget_overrides(
             arguments.budget, valid_models=set(arguments.models)
         )
-        missing_budgets = [
-            name
-            for name in custom_names
-            if name not in overrides
-        ]
+        missing_budgets = [name for name in custom_names if name not in overrides]
         if missing_budgets:
             raise RuntimeError(
                 "custom model budgets must be explicit with --budget: "
@@ -275,8 +311,10 @@ def main() -> int:
             )
         environment = _environment(
             build_directory=arguments.build_dir,
-            cache_directory=arguments.cache_dir,
+            cache_directory=None if arguments.cold else arguments.cache_dir,
         )
+        if arguments.cold and arguments.reuse_reference:
+            raise RuntimeError("--cold cannot be combined with --reuse-reference")
     except (argparse.ArgumentTypeError, FileNotFoundError, RuntimeError) as exc:
         parser.error(str(exc))
 
@@ -296,12 +334,14 @@ def main() -> int:
                 device_budget=budget,
                 output_directory=output_directory,
                 environment=environment,
-                reuse_eager=arguments.reuse_eager,
+                reuse_reference=arguments.reuse_reference,
                 seed=arguments.seed,
                 model_config=arguments.model_config,
                 data_geometry=arguments.data_geometry,
                 case_factory=arguments.case_factory,
                 case_options=arguments.case_option,
+                cold=arguments.cold,
+                cache_directory=arguments.cache_dir,
             )
             results.append(result)
             print(
@@ -317,9 +357,9 @@ def main() -> int:
 
     summary = {
         "schema": "shadowspill.model_correctness_matrix/v1",
-        "passed": len(results)
-        == len(arguments.models) * len(arguments.implementations)
+        "passed": len(results) == len(arguments.models) * len(arguments.implementations)
         and all(item.passed for item in results),
+        "cold": arguments.cold,
         "cases": [
             {
                 "family": item.family,

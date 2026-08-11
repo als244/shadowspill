@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+typedef struct ShadowSpillCudaEventNode {
+    CUevent event;
+    struct ShadowSpillCudaEventNode *all_next;
+    struct ShadowSpillCudaEventNode *free_next;
+} ShadowSpillCudaEventNode;
+
 struct ShadowSpillCudaBackend {
     pthread_mutex_t mutex;
     CUdevice device;
@@ -18,6 +24,8 @@ struct ShadowSpillCudaBackend {
     pthread_t creator_thread;
     ShadowSpillCudaBackendCapabilities capabilities;
     ShadowSpillCudaBackendStatistics statistics;
+    ShadowSpillCudaEventNode *all_events;
+    ShadowSpillCudaEventNode *free_events;
     CUresult last_error;
     nvmlReturn_t last_nvml_error;
 };
@@ -189,31 +197,63 @@ static int create_event(void *context, ShadowSpillBackendEvent *event) {
     if (event == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    CUevent created = NULL;
-    CUresult result = cuEventCreate(&created, CU_EVENT_DISABLE_TIMING);
-    if (record_result(backend, result) != 0) {
+    pthread_mutex_lock(&backend->mutex);
+    ShadowSpillCudaEventNode *node = backend->free_events;
+    if (node != NULL) {
+        backend->free_events = node->free_next;
+        node->free_next = NULL;
+    } else if (backend->statistics.event_pool_sealed) {
+        ++backend->statistics.event_pool_growth_rejections;
+        pthread_mutex_unlock(&backend->mutex);
         return -1;
     }
+    pthread_mutex_unlock(&backend->mutex);
+    if (node == NULL) {
+        node = calloc(1U, sizeof(*node));
+        CUevent created = NULL;
+        if (node == NULL || record_result(
+                backend, cuEventCreate(&created, CU_EVENT_DISABLE_TIMING)
+            ) != 0) {
+            free(node);
+            return -1;
+        }
+        node->event = created;
+        pthread_mutex_lock(&backend->mutex);
+        node->all_next = backend->all_events;
+        backend->all_events = node;
+        ++backend->statistics.event_pool_capacity;
+        ++backend->statistics.event_pool_driver_creates;
+        pthread_mutex_unlock(&backend->mutex);
+    }
     *event = (ShadowSpillBackendEvent){
-        .words = {(uintptr_t)created, 0U},
+        .words = {(uintptr_t)node->event, (uintptr_t)node},
     };
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.events_created;
+    ++backend->statistics.event_pool_in_use;
+    if (backend->statistics.event_pool_in_use >
+        backend->statistics.event_pool_peak_in_use) {
+        backend->statistics.event_pool_peak_in_use =
+            backend->statistics.event_pool_in_use;
+    }
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
 static int destroy_event(void *context, ShadowSpillBackendEvent event) {
     ShadowSpillCudaBackend *backend = context;
-    if (activate_context(backend) != 0) {
+    if (activate_context(backend) != 0 || event.words[1] == 0U) {
         return -1;
     }
-    CUresult result = cuEventDestroy(event_value(event));
-    if (record_result(backend, result) != 0) {
-        return -1;
-    }
+    ShadowSpillCudaEventNode *node =
+        (ShadowSpillCudaEventNode *)event.words[1];
     pthread_mutex_lock(&backend->mutex);
+    node->free_next = backend->free_events;
+    backend->free_events = node;
     ++backend->statistics.events_destroyed;
+    if (backend->statistics.event_pool_in_use != 0U) {
+        --backend->statistics.event_pool_in_use;
+    }
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
@@ -475,6 +515,18 @@ void shadowspill_cuda_backend_destroy(ShadowSpillCudaBackend *backend) {
     if (backend == NULL) {
         return;
     }
+    if (backend->context != NULL) {
+        (void)cuCtxSetCurrent(backend->context);
+        ShadowSpillCudaEventNode *event = backend->all_events;
+        while (event != NULL) {
+            ShadowSpillCudaEventNode *next = event->all_next;
+            (void)cuEventDestroy(event->event);
+            free(event);
+            event = next;
+        }
+        backend->all_events = NULL;
+        backend->free_events = NULL;
+    }
     if (pthread_equal(pthread_self(), backend->creator_thread) != 0) {
         (void)cuCtxSetCurrent(backend->creator_previous_context);
     }
@@ -534,6 +586,47 @@ void shadowspill_cuda_backend_statistics(
     pthread_mutex_lock(&backend->mutex);
     *statistics = backend->statistics;
     pthread_mutex_unlock(&backend->mutex);
+}
+
+int shadowspill_cuda_backend_seal_event_pool(
+    ShadowSpillCudaBackend *backend,
+    uint64_t minimum_free_events
+) {
+    if (backend == NULL || activate_context(backend) != 0) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    if (backend->statistics.event_pool_sealed) {
+        pthread_mutex_unlock(&backend->mutex);
+        return 0;
+    }
+    uint64_t free_count = backend->statistics.event_pool_capacity -
+        backend->statistics.event_pool_in_use;
+    pthread_mutex_unlock(&backend->mutex);
+    while (free_count < minimum_free_events) {
+        ShadowSpillCudaEventNode *node = calloc(1U, sizeof(*node));
+        CUevent created = NULL;
+        if (node == NULL || record_result(
+                backend, cuEventCreate(&created, CU_EVENT_DISABLE_TIMING)
+            ) != 0) {
+            free(node);
+            return -1;
+        }
+        node->event = created;
+        pthread_mutex_lock(&backend->mutex);
+        node->all_next = backend->all_events;
+        backend->all_events = node;
+        node->free_next = backend->free_events;
+        backend->free_events = node;
+        ++backend->statistics.event_pool_capacity;
+        ++backend->statistics.event_pool_driver_creates;
+        pthread_mutex_unlock(&backend->mutex);
+        ++free_count;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    backend->statistics.event_pool_sealed = 1U;
+    pthread_mutex_unlock(&backend->mutex);
+    return 0;
 }
 
 int shadowspill_cuda_physical_memory(

@@ -215,9 +215,7 @@ def partition_training_capture(
     return PartitionedTrainingCapture(
         training=capture,
         partitioned=partitioned,
-        stages=capture_training_stages(
-            partitioned, graph_pair_cache=graph_pair_cache
-        ),
+        stages=capture_training_stages(partitioned, graph_pair_cache=graph_pair_cache),
     )
 
 

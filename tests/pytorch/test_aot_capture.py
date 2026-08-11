@@ -85,9 +85,7 @@ def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> Non
 
 def test_structural_identity_includes_input_storage_aliases_and_offsets() -> None:
     class _Pair(nn.Module):
-        def forward(
-            self, left: torch.Tensor, right: torch.Tensor
-        ) -> torch.Tensor:
+        def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
             return left + right
 
     graph = torch.fx.symbolic_trace(_Pair())

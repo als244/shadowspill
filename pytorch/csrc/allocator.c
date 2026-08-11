@@ -251,8 +251,18 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
-    uint64_t required_provider_headroom_bytes
+    uint64_t required_provider_headroom_bytes,
+    uint64_t event_pool_reserve
 ) {
+    pthread_mutex_lock(&adapter.mutex);
+    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    pthread_mutex_unlock(&adapter.mutex);
+    if (cuda == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    if (shadowspill_cuda_backend_seal_event_pool(cuda, event_pool_reserve) != 0) {
+        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    }
     ShadowSpillRuntimeStatus status =
         shadowspill_pytorch_check_physical_budget();
     if (status != SHADOWSPILL_RUNTIME_OK) {

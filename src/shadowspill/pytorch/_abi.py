@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 11
+ADAPTER_ABI_VERSION: Final = 12
 RUNTIME_ABI_VERSION: Final = 7
 
 
@@ -126,6 +126,12 @@ class CudaStatistics(ctypes.Structure):
         ("stream_waits", ctypes.c_uint64),
         ("stream_synchronizations", ctypes.c_uint64),
         ("context_activations", ctypes.c_uint64),
+        ("event_pool_capacity", ctypes.c_uint64),
+        ("event_pool_in_use", ctypes.c_uint64),
+        ("event_pool_peak_in_use", ctypes.c_uint64),
+        ("event_pool_driver_creates", ctypes.c_uint64),
+        ("event_pool_growth_rejections", ctypes.c_uint64),
+        ("event_pool_sealed", ctypes.c_uint8),
     ]
 
 
@@ -224,7 +230,10 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(PhysicalMemory)
     ]
     library.shadowspill_pytorch_physical_memory.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_seal_physical_budget.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_seal_physical_budget.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
     library.shadowspill_pytorch_seal_physical_budget.restype = ctypes.c_uint32
     library.shadowspill_pytorch_resize_host_arena.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_resize_host_arena.restype = ctypes.c_uint32

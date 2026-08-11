@@ -271,7 +271,12 @@ class TrainingExecutor:
         )
         task_open = False
         try:
-            bindings = self._bridge.before_task(task.task_id, stream, input_aliases)
+            try:
+                bindings = self._bridge.before_task(task.task_id, stream, input_aliases)
+            except RuntimeError as error:
+                states = self._bridge.input_failure_states(input_aliases)
+                detail = "; ".join(states) if states else "all snapshots device-ready"
+                raise RuntimeError(f"{error}; input_states=[{detail}]") from error
             task_open = True
             binding_by_alias = dict(zip(input_aliases, bindings, strict=True))
             for alias_id, binding in binding_by_alias.items():
@@ -290,15 +295,25 @@ class TrainingExecutor:
                 raw = function(*arguments)
             leaves, _ = tree_flatten(raw)
             if entrypoint.phase == "forward":
-                outputs = tuple(
+                tensor_outputs = tuple(
                     value for value in leaves if isinstance(value, torch.Tensor)
                 )
-                if len(outputs) != len(leaves):
+                if len(tensor_outputs) != len(leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
-                self._bind_forward_outputs(entrypoint, outputs, input_aliases)
+                self._bind_forward_outputs(entrypoint, tensor_outputs, input_aliases)
+                outputs = tensor_outputs[: entrypoint.public_output_count]
+                del tensor_outputs
             else:
                 self._accumulate_gradients(entrypoint, leaves)
                 outputs = ()
+
+            # Only declared object bindings and public results may cross the
+            # task boundary. AOT graphs can return additional derivative
+            # leaves that are useful only inside this task. Drop those raw
+            # references before after_task allows the worker to consume the
+            # annotated memory actions.
+            del leaves
+            del raw
 
             self._dematerialize_actions(run, task.task_id)
             self._bridge.after_task(
@@ -388,7 +403,12 @@ class TrainingExecutor:
         )
         task_open = False
         try:
-            bindings = self._bridge.before_task(task.task_id, stream, aliases)
+            try:
+                bindings = self._bridge.before_task(task.task_id, stream, aliases)
+            except RuntimeError as error:
+                states = self._bridge.input_failure_states(aliases)
+                detail = "; ".join(states) if states else "all snapshots device-ready"
+                raise RuntimeError(f"{error}; input_states=[{detail}]") from error
             task_open = True
             for alias_id, binding in zip(aliases, bindings, strict=True):
                 tensor = self._state.object_store.get(alias_id)

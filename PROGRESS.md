@@ -885,3 +885,225 @@ the ignored internal progress log before this tracked summary is updated.
   bounded contract for data-dependent `aten.bincount`; mlops OLMoE has a
   numerical-state failure despite bitwise checkpoint replay. These are tracked
   separately from PressureFit wall time.
+
+## 2026-08-11 — Compiled-reference numerical authority
+
+- The apparent mlops OLMoE numerical discrepancy was isolated to Inductor, not
+  ShadowSpill. The uncompiled and compiled forwards are bitwise identical. In
+  backward, the shared BF16 attention input receives three BF16 projection
+  gradients. Eager executes two separate BF16 additions, whereas Inductor
+  fuses them into one Triton kernel, loads all three operands into FP32
+  registers, and rounds once at the final BF16 store. `aot_eager` is bitwise
+  eager, and Inductor's `emulate_precision_casts=True` also restores eager
+  rounding, confirming the cause.
+- The performance-preserving decision is to retain normal Inductor fusion. The
+  numerical reference is now the complete objective compiled with
+  `torch.compile(fullgraph=True, dynamic=False)` under PyTorch's standard
+  allocator. Reference identity includes this execution convention, and
+  qualification artifacts use versioned compiled-reference schemas rather than
+  describing that process as eager.
+- A direct five-step comparison of whole-model compiled execution under the
+  standard allocator and ShadowSpill produced the same complete model and
+  optimizer-state digest:
+  `91782bf1ca1808fef1eb10df31c1a616c247935bebc9706b29b7b10f54086b00`.
+  All ten objectives were bitwise identical.
+- Fresh 8-GiB mlops OLMoE qualification passed every gate. It transferred
+  5,854,600,600 bytes D2H and 1,112,609,528 bytes H2D, selected recomputation,
+  peaked at 8,170,504,192 physical bytes under the 8,589,934,592-byte cap, and
+  reproduced the step-three checkpoint replay bitwise.
+- The run attributed 7.847 seconds to 30 cold structural profiles and 450.506
+  seconds to Python PressureFit out of 477.342 seconds of planning. PressureFit,
+  not AOT or profiling, is the dominant planning-latency target for this case.
+
+## 2026-08-11 — Task-lifetime workspace and compiled-view reconciliation
+
+- Pure Qwen's earlier task-64 rejection was caused by profiler lifetime
+  accounting, not its AdamW geometry. Disposable AOT return leaves remained
+  referenced until after `after_task`, so the profiler classified several
+  gigabytes of dead task output as anonymous workspace. The profiler and
+  executor now delete undeclared raw/output leaves before closing the task
+  boundary, synchronize the profiling stream, drain allocator retirements, and
+  only then sample the persistent baseline.
+- With corrected accounting, the exact 10-GiB pure-Qwen Program has
+  9,260,655,616 bytes of task capacity, a true maximum anonymous workspace of
+  2,354,838,832 bytes, and therefore 6,905,816,784 bytes of object capacity.
+  Its largest mandatory boundary is the token-embedding/output-head AdamW task:
+  a 762,839,040-byte parameter, gradient, and two moments plus an 8-byte step,
+  totaling 3,051,356,168 bytes. It now passes the required-capacity floor.
+- The next admission check exposed a distinct FakeTensor/compiler storage
+  mismatch. One task returned a 39,936-byte view at byte offset 39,936 into an
+  otherwise inaccessible 79,872-byte temporary. Fake/AOT metadata retained the
+  unused prefix, while Inductor correctly returned a compact 39,936-byte,
+  offset-zero allocation. The IR had consequently expected twice the physical
+  allocation.
+- Task-output lowering now compacts a newly produced backing storage only when
+  exactly one returned view exposes it and it aliases no existing input.
+  Multiple returned views retain the full storage bundle. The same Qwen task
+  contains a 196,608-byte storage exposed by three views at byte offsets 0,
+  39,936, and 98,304; that bundle remains shared and unchanged. Focused
+  lowering, training-lowering, and spatial-admission tests pass.
+
+## 2026-08-11 — AOT semantic aliases separated from compiled physical outputs
+
+- A second pure-Qwen admission failure disproved the preceding
+  "multiple FakeTensor views imply one physical bundle" rule. Forward task 35
+  exposed three Program objects in a 104,448-byte fake storage, but its compiled
+  allocation trace contained four independent 26,112-byte output allocations
+  for leaves 10, 13, 12, and 15. The first conflicting binding was leaf 10:
+  runtime allocation ordinal 7 had 26,112 bytes while `alias_001770` incorrectly
+  expected the entire 104,448-byte fake backing.
+- AOTAutograd exposes user-visible alias semantics through
+  `ViewAndMutationMeta.output_info`, including aliases of inputs and
+  intermediates. It does not expose a stable final physical layout for
+  compiler-private saved tensors. PyTorch explicitly permits Inductor to change
+  output layouts, and differentiable multi-output views may intentionally be
+  classified as non-aliasing. FakeTensor storage identity was therefore the
+  wrong physical contract.
+- Decision: semantic aliases that reuse existing graph inputs remain governed
+  by AOT/FakeTensor identity. A newly allocated compiled output is grouped by
+  the allocation-to-output-leaf map observed once when validating the compiled
+  structural ABI. This observation is independent of timed samples: lowering
+  does not use task duration or workspace estimates to invent graph semantics.
+- The inventory now has explicit per-invocation compiled-output scopes. Leaves
+  from one actual allocation share a residency bundle; leaves from distinct
+  allocations are distinct even if fake execution reused a storage. This is a
+  graph- and operator-independent rule. Focused forward lowering, partitioned
+  training lowering, identity-cotangent aliasing, and spatial-admission tests
+  pass; the full pure-Qwen gate is next.
+
+## 2026-08-11 — Interrupted pure-Qwen run: phase correction and allocator hot path
+
+- The long pure-PyTorch Qwen qualification was stopped rather than allowed to
+  continue silently. No qualification process remains. Its traceback was in
+  the CUDA custom-op implementation
+  `qwen35_delta_rule_backward -> _delta_rule_backward_reference`, during an
+  actual ShadowSpill training step; it was not still searching PressureFit.
+- Cache timestamps bound the cold recurrent PressureFit/finalization interval
+  to about 31.1 seconds: the last structural profile was written at
+  17:31:18.620 and the only recomputation result at 17:31:49.693. There was no
+  second optimizer-phase result. The prior inference that 100% host CPU meant
+  a second PressureFit search was wrong.
+- The compiled standard-allocator reference took 51.775 seconds for its first
+  compile-and-run step, then 0.300, 0.296, 0.297, and 0.297 seconds. Therefore
+  the pure recurrence and its CUDA arithmetic are not intrinsically slow at
+  this geometry.
+- A warm-cache diagnostic rebuilt the callable in 125.197 seconds
+  (`capture_lowering=17.328`, cached profiling=0.349, cached
+  PressureFit=0.030) and was stopped at the first training step. The residual
+  planning time is compiled-entrypoint reconstruction/loading and now has live
+  phase output; it is separate from PressureFit.
+- The decisive runtime evidence is in the cold task profiles. The 43 unique
+  task medians sum to 39.199 seconds under ShadowSpill. The slowest two tasks
+  take 4.936 and 4.913 seconds and produce 5,029 and 5,035 allocator events.
+  Several other recurrence tasks produce 1,500--3,400 events each and take
+  1.3--4.1 seconds. GPU utilization was near idle while one host thread was
+  busy dispatching this work.
+- Root cause: every anonymous temporary free currently creates and records a
+  CUDA retirement event, the progress thread repeatedly scans all allocation
+  records/events, and pointer lookup is a linear scan. The token recurrence
+  creates thousands of short-lived tensors, turning correct cross-stream
+  retirement machinery into the dominant task cost. PyTorch's caching
+  allocator reuses same-stream temporaries without one event per free.
+- Decision: retain stream-safe semantics but add a task-scoped anonymous fast
+  path. Same-stream frees are immediately reusable in stream order; allocations
+  still awaiting task exit share the task-completion fence. Cross-stream
+  `record_stream` remains explicitly fenced. This is allocator-generic and
+  does not change model arithmetic, PressureFit directives, or task boundaries.
+- Qualification now prints every completed reference/planned step plus the
+  planning phase summary, so a long execution cannot again be mistaken for a
+  planner search.
+- Added the standalone incident report `docs/allocator_storm.md`. It presents
+  the standard-allocator and original-ShadowSpill timelines side by side,
+  includes the 43-profile/50,028-event ledger and the six slowest structural
+  ABIs, and leaves an explicit validation section for post-fix measurements.
+
+## 2026-08-11 — Allocator storm corrected and pure-Qwen gate passes
+
+- Implemented task-local same-stream reuse in the neutral C runtime. An
+  anonymous allocation freed on its active task stream can be leased again on
+  that stream without an event or wait. Unreused task-local ranges share one
+  task-completion fence; explicit `record_stream` dependencies retain the
+  conservative cross-stream retirement path.
+- Added direct hash indexes for allocation ID, pointer, and exact-size
+  reusable extents. Normal allocation/free no longer scans the growing
+  historical telemetry list. The progress thread is not awakened by
+  eventless task-local frees, and shared task fences are queried at most once
+  per progress epoch.
+- Added a reusable CUDA event pool. Planning now sizes it generically from the
+  selected task count, planned object count, and 64 service events, then seals
+  it with the physical budget. No steady-state `cuEventCreate` fallback is
+  permitted. The PyTorch adapter ABI is now v12 and exposes event-pool
+  capacity, peak, driver-create, rejection, and sealed telemetry.
+- A native canary performs 2,500 same-stream allocation/free pairs inside one
+  task. It observes pointer reuse, no backend event operation inside the task,
+  fewer than 32 backend operations after task exit, and zero pending
+  retirements. Full native/CUDA/PyTorch ctest passes 16/16.
+- Found and fixed a separate measurement-contract bug: workspace telemetry ran
+  inside `before_task`/`after_task`, but timed and warmed executions did not.
+  Profiling therefore forced the allocator's conservative out-of-task path,
+  unlike production execution. Every warmup, CUDA-event sample, and cache-hit
+  executable warmup now uses a task boundary. Profile schema v8 invalidates
+  the inflated legacy measurements.
+- On the same 43 pure-Qwen structural ABIs, the allocation trace remains
+  essentially unchanged (50,028 original events versus 50,020 corrected), but
+  summed medians fall from 39.199 seconds to 0.195 seconds (201x). The
+  5,029-event 96-token backward falls from 4.936 seconds to 18.19 ms (271x).
+  PressureFit predicted makespan falls from 42.567 seconds to 0.501 seconds.
+- The complete 10-GiB pure-Qwen qualification now passes: five training steps,
+  two heterogeneous microbatches, real D2H/H2D, recomputation, and bitwise
+  checkpoint replay. Worst loss relative error is 0.003739; minimum cosine is
+  0.999650; maximum relative L2 is 0.021320; minimum sign agreement is
+  0.994792. Peak process physical use is 9.613 GiB, with zero steady-state
+  device or pinned-host allocations.
+- Median planned step time is 1.317 seconds versus 0.297 seconds for the
+  compiled standard-allocator reference. This remaining 4.44x gap is not
+  accepted as a throughput result. The simulator predicts 0.501 seconds, so
+  task dispatch and runtime/transfer overhead require NSYS decomposition.
+- Cold planning remains too slow at 134.788 seconds: 17.290 seconds in
+  capture/lowering, 41.895 seconds in compilation/profiling, and 63.848 seconds
+  in Python PressureFit. These are now cleanly separated from the fixed GPU
+  task samples and remain explicit optimization gates.
+- Updated `docs/allocator_storm.md` with the implemented fixed timeline,
+  before/after ABI table, corrected ledger, numerical evidence, budget
+  evidence, and unresolved throughput work.
+
+## 2026-08-11 — Warm-cache queue preservation and bounded active scans
+
+- The first warm-cache Qwen execution exposed a timing-dependent runtime bug
+  hidden by cold profiling latency. Before backward task 17, the required
+  4-byte objective seed (`alias_000507`) was host-only with no allocation even
+  though the schedule declared it initially device-resident. The slab had
+  5,020,345,940 free bytes and a 4,988,206,336-byte largest range, ruling out
+  capacity pressure.
+- Root cause: `after_task` correctly created a shared fence for task-local
+  retirements when a task had zero memory actions, but then assigned the
+  transfer queue tail to the empty action list. The next action append replaced
+  the queue head and discarded remaining initial prefetches. Cold execution
+  happened to drain the initial queue first; warm execution exposed the race.
+- Fix: action head/tail state changes only for a non-empty action list. Added a
+  deterministic mock-backend regression that holds two H2D requests, closes a
+  retirement-only task, appends a third request, and requires all three
+  objects to become device-ready.
+- A subsequent run revealed a second hot-list issue: steps increased from
+  0.792 to 1.110 seconds as task closure and progress scanned every historical
+  allocation record. Added an intrusive active-allocation list; allocation ID,
+  pointer, and telemetry history remain intact, but hot retirement, handoff,
+  fallback, abort, and progress scans cover only live/pending records.
+- Preserved the complete active-list successor before releasing an allocation.
+  Without that detail, progress retired only one completed range before trying
+  a large prefetch and produced a false 762,839,040-byte admission failure with
+  more completed retirements still available. Added a regression requiring all
+  completed retirements to run before action admission.
+- The corrected warm Qwen steps are 0.533/0.615/0.619/0.523/0.616 seconds and
+  replay steps are 0.533/0.618 seconds, with no monotonic history growth.
+  Median is 0.615 seconds versus 0.297 seconds for standard allocation and
+  0.501 seconds simulated. All numerical, checkpoint, transfer, recomputation,
+  and physical-cap gates still pass.
+- Event demand peaked at 76 leases. Replaced object-count sizing (which
+  unnecessarily created 2,955 events) with selected-task upper bound + twice
+  observed profiling peak + 64 service events, with a minimum of 256. The pool
+  remains sealed before execution and growth remains forbidden.
+- Final qualification after event-reserve retuning passes with a 303-event
+  pool, 76 peak leases, zero steady-state driver event creations, and zero
+  growth rejections. Steps are 0.521/0.612/0.611/0.517/0.615 seconds (0.611
+  median), retaining the same numerical and physical-budget evidence.

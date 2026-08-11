@@ -62,6 +62,12 @@ typedef struct ShadowSpillCudaBackendStatistics {
     uint64_t stream_waits;
     uint64_t stream_synchronizations;
     uint64_t context_activations;
+    uint64_t event_pool_capacity;
+    uint64_t event_pool_in_use;
+    uint64_t event_pool_peak_in_use;
+    uint64_t event_pool_driver_creates;
+    uint64_t event_pool_growth_rejections;
+    uint8_t event_pool_sealed;
 } ShadowSpillCudaBackendStatistics;
 
 /*
@@ -93,6 +99,15 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_cuda_backend_capabilities(
 SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_statistics(
     ShadowSpillCudaBackend *backend,
     ShadowSpillCudaBackendStatistics *statistics
+);
+
+/*
+ * Ensures the requested free-event reserve, then forbids later cuEventCreate
+ * calls. Returned event leases continue to recycle through the same pool.
+ */
+SHADOWSPILL_BACKEND_CUDA_API int shadowspill_cuda_backend_seal_event_pool(
+    ShadowSpillCudaBackend *backend,
+    uint64_t minimum_free_events
 );
 
 /*

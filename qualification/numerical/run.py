@@ -1,4 +1,4 @@
-"""Fresh-process eager/planned numerical qualification orchestrator."""
+"""Fresh-process compiled-reference/planned numerical qualification."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ _LOSS_ABSOLUTE_TOLERANCE = 2e-5
 _MINIMUM_COSINE = 0.999
 _MAXIMUM_RELATIVE_L2 = 0.025
 _MINIMUM_SIGN_AGREEMENT = 0.99
+_REFERENCE_EXECUTION = "torch.compile.inductor.fullgraph"
 
 
 def _meets_tensor_tolerance(metric: Any) -> bool:
@@ -100,6 +102,7 @@ def _case_identity(
     case_options: dict[str, Any],
 ) -> str:
     payload = {
+        "reference_execution": _REFERENCE_EXECUTION,
         "model_name": model_name,
         "model_implementation": model_implementation,
         "seed": seed,
@@ -118,9 +121,7 @@ def _adapter_statistics() -> AdapterStatistics:
         raise RuntimeError("ShadowSpill allocator is not installed")
     result = AdapterStatistics()
     status = int(
-        installed.library.shadowspill_pytorch_allocator_statistics(
-            ctypes.byref(result)
-        )
+        installed.library.shadowspill_pytorch_allocator_statistics(ctypes.byref(result))
     )
     if status != 0:
         raise RuntimeError(f"allocator statistics failed with status {status}")
@@ -134,7 +135,40 @@ def _check_physical_budget() -> int:
     return int(installed.library.shadowspill_pytorch_check_physical_budget())
 
 
-def _eager_worker(
+def _planning_breakdown(
+    phase_seconds: dict[str, float], *, planning_seconds: float
+) -> dict[str, float]:
+    """Return non-overlapping public planning phases for matrix comparisons."""
+
+    lowering_aot = phase_seconds.get("capture_lowering", 0.0)
+    profiling = phase_seconds.get("structural_profiling", 0.0)
+    compilation = phase_seconds.get("compilation", 0.0)
+    program_lowering = phase_seconds.get("program_lowering", 0.0)
+    pressurefit = phase_seconds.get("pressurefit_simulation", 0.0)
+    admission = phase_seconds.get("host_admission", 0.0) + phase_seconds.get(
+        "slab_admission", 0.0
+    )
+    classified = (
+        lowering_aot
+        + profiling
+        + compilation
+        + program_lowering
+        + pressurefit
+        + admission
+    )
+    return {
+        "lowering_aot": lowering_aot,
+        "profiling": profiling,
+        "compiled_entrypoint_finalization": compilation,
+        "canonical_program_lowering": program_lowering,
+        "pressurefit": pressurefit,
+        "physical_admission": admission,
+        "other": max(0.0, planning_seconds - classified),
+        "total": planning_seconds,
+    }
+
+
+def _reference_worker(
     family: str,
     model_implementation: ModelImplementation,
     output: Path,
@@ -157,22 +191,39 @@ def _eager_worker(
     model = case.model.cuda()
     microbatches = _cuda_microbatches(case.microbatches)
     optimizer = case.optimizer(model.parameters())
+
+    def reference_objective(*microbatch: Any) -> torch.Tensor:
+        return case.objective(model, *microbatch)
+
+    compiled_objective: Callable[..., torch.Tensor] = torch.compile(
+        reference_objective,
+        fullgraph=True,
+        dynamic=False,
+    )
     losses: list[list[float]] = []
     timings: list[float] = []
     with case.implementations():
-        for _step in range(5):
+        for step in range(5):
             optimizer.zero_grad(set_to_none=True)
             started = time.perf_counter()
             step_losses: list[float] = []
             for microbatch in microbatches:
-                loss = case.objective(model, *microbatch)
+                loss = compiled_objective(*microbatch)
                 loss.backward()
                 step_losses.append(float(loss.detach()))
             optimizer.step()
             torch.cuda.current_stream().synchronize()
-            timings.append(time.perf_counter() - started)
+            elapsed = time.perf_counter() - started
+            timings.append(elapsed)
             losses.append(step_losses)
+            print(
+                f"reference {model_implementation}/{family} "
+                f"step {step + 1}/5: {elapsed:.3f}s",
+                flush=True,
+            )
     artifact = {
+        "schema": "shadowspill.compiled_reference/v1",
+        "reference_execution": _REFERENCE_EXECUTION,
         "family": family,
         "model_implementation": model_implementation,
         "case_identity": _case_identity(
@@ -235,6 +286,19 @@ def _planned_worker(
             host_budget=_HOST_BUDGET,
         )
         planning_seconds = time.perf_counter() - planning_started
+        planning_phases = {
+            name: nanoseconds / 1e9
+            for name, nanoseconds in training.plan_report.phase_timings_ns
+        }
+        print(
+            f"planned {model_implementation}/{family}: "
+            f"total={planning_seconds:.3f}s, "
+            f"lowering_aot={planning_phases.get('capture_lowering', 0.0):.3f}s, "
+            f"profiling={planning_phases.get('structural_profiling', 0.0):.3f}s, "
+            "pressurefit="
+            f"{planning_phases.get('pressurefit_simulation', 0.0):.3f}s",
+            flush=True,
+        )
         physical_statuses = [_check_physical_budget()]
         execution_baseline = _adapter_statistics()
         losses: list[list[float]] = []
@@ -249,6 +313,11 @@ def _planned_worker(
             timings.append(time.perf_counter() - started)
             values = [float(item) for item in step_result.objectives]
             losses.append(values)
+            print(
+                f"shadowspill {model_implementation}/{family} "
+                f"step {step + 1}/5: {timings[-1]:.3f}s",
+                flush=True,
+            )
             if step == 2:
                 checkpoint = copy.deepcopy(training.state_dict())
             elif step > 2:
@@ -259,11 +328,18 @@ def _planned_worker(
             raise AssertionError("step-three checkpoint was not captured")
         training.load_state_dict(checkpoint)
         replay_losses: list[list[float]] = []
-        for _step in range(2):
+        for replay_step in range(2):
+            replay_started = time.perf_counter()
             step_result = training(case.microbatches)
             torch.cuda.current_stream().synchronize()
             physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
+            print(
+                f"shadowspill {model_implementation}/{family} replay "
+                f"{replay_step + 1}/2: "
+                f"{time.perf_counter() - replay_started:.3f}s",
+                flush=True,
+            )
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
@@ -276,13 +352,15 @@ def _planned_worker(
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)
     if (
-        reference.get("family") != family
+        reference.get("schema") != "shadowspill.compiled_reference/v1"
+        or reference.get("reference_execution") != _REFERENCE_EXECUTION
+        or reference.get("family") != family
         or reference.get("model_implementation") != model_implementation
         or reference.get("case_identity") != identity
     ):
         raise RuntimeError(
-            "eager reference identity differs from requested qualification; "
-            "regenerate it without --reuse-eager"
+            "compiled reference identity differs from requested qualification; "
+            "regenerate it without --reuse-reference"
         )
     tensor_results, exact_failures = compare_states(
         {"model": reference["model"], "optimizer": reference["optimizer"]},
@@ -313,8 +391,12 @@ def _planned_worker(
     selections = tuple(
         (item.group_id, item.option_id) for item in report.execution_plan.selections
     )
+    phase_seconds = {
+        name: nanoseconds / 1e9 for name, nanoseconds in report.phase_timings_ns
+    }
     qualification_result = {
-        "schema": "shadowspill.numerical_qualification/v3",
+        "schema": "shadowspill.numerical_qualification/v4",
+        "reference_execution": _REFERENCE_EXECUTION,
         "family": family,
         "model_implementation": model_implementation,
         "case_identity": identity,
@@ -336,13 +418,15 @@ def _planned_worker(
             "minimum_sign_agreement": _MINIMUM_SIGN_AGREEMENT,
         },
         "planning_seconds": planning_seconds,
-        "phase_seconds": {
-            name: nanoseconds / 1e9 for name, nanoseconds in report.phase_timings_ns
-        },
+        "phase_seconds": phase_seconds,
+        "planning_breakdown_seconds": _planning_breakdown(
+            phase_seconds, planning_seconds=planning_seconds
+        ),
+        "pressurefit_seconds": phase_seconds.get("pressurefit_simulation", 0.0),
         "planned_step_seconds": timings,
-        "eager_step_seconds": reference["step_seconds"],
+        "reference_step_seconds": reference["step_seconds"],
         "planned_losses": losses,
-        "eager_losses": reference["losses"],
+        "reference_losses": reference["losses"],
         "worst_loss_relative": worst_loss_relative,
         "loss_failures": loss_failures,
         "minimum_cosine": min(
@@ -398,15 +482,11 @@ def _planned_worker(
             runtime_statistics.runtime.host_peak_allocated_bytes
         ),
         "callback_failures": int(runtime_statistics.callback_failures),
-        "pointer_lookup_failures": int(
-            runtime_statistics.pointer_lookup_failures
-        ),
+        "pointer_lookup_failures": int(runtime_statistics.pointer_lookup_failures),
         "allocation_event_overflow": bool(
             runtime_statistics.runtime.allocation_event_overflow
         ),
-        "cuda_device_allocations": int(
-            runtime_statistics.cuda.device_allocations
-        ),
+        "cuda_device_allocations": int(runtime_statistics.cuda.device_allocations),
         "steady_state_cuda_device_allocations": int(
             runtime_statistics.cuda.device_allocations
             - execution_baseline.cuda.device_allocations
@@ -415,6 +495,19 @@ def _planned_worker(
             runtime_statistics.cuda.pinned_host_allocations
             - execution_baseline.cuda.pinned_host_allocations
         ),
+        "event_pool_capacity": int(runtime_statistics.cuda.event_pool_capacity),
+        "event_pool_peak_in_use": int(runtime_statistics.cuda.event_pool_peak_in_use),
+        "event_pool_driver_creates": int(
+            runtime_statistics.cuda.event_pool_driver_creates
+        ),
+        "steady_state_event_pool_driver_creates": int(
+            runtime_statistics.cuda.event_pool_driver_creates
+            - execution_baseline.cuda.event_pool_driver_creates
+        ),
+        "event_pool_growth_rejections": int(
+            runtime_statistics.cuda.event_pool_growth_rejections
+        ),
+        "event_pool_sealed": bool(runtime_statistics.cuda.event_pool_sealed),
         "profile_cache_hits": report.profile_cache_hits,
         "profile_cache_misses": report.profile_cache_misses,
         "profile_unique_keys": report.profile_unique_keys,
@@ -424,8 +517,26 @@ def _planned_worker(
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "recomputation_cache_hits": report.recomputation_cache_hits,
         "recomputation_cache_misses": report.recomputation_cache_misses,
+        "cold_cache_requested": os.environ.get("SHADOWSPILL_QUALIFICATION_COLD") == "1",
         "pressurefit_fixtures": pressurefit_fixtures,
+        "reference_state_digest": state_digest(
+            {"model": reference["model"], "optimizer": reference["optimizer"]}
+        ),
+        "planned_state_digest": state_digest(
+            {"model": final_state["model"], "optimizer": final_state["optimizer"]}
+        ),
     }
+    qualification_result["reference_bitwise_equal"] = bool(
+        qualification_result["reference_state_digest"]
+        == qualification_result["planned_state_digest"]
+    )
+    qualification_result["cold_cache_confirmed"] = bool(
+        not qualification_result["cold_cache_requested"]
+        or (
+            qualification_result["profile_cache_hits"] == 0
+            and qualification_result["recomputation_cache_hits"] == 0
+        )
+    )
     qualification_result["passed"] = bool(
         not loss_failures
         and not metric_failures
@@ -449,6 +560,10 @@ def _planned_worker(
         and qualification_result["cuda_device_allocations"] == 1
         and qualification_result["steady_state_cuda_device_allocations"] == 0
         and qualification_result["steady_state_pinned_host_allocations"] == 0
+        and qualification_result["steady_state_event_pool_driver_creates"] == 0
+        and qualification_result["event_pool_growth_rejections"] == 0
+        and qualification_result["event_pool_sealed"]
+        and qualification_result["cold_cache_confirmed"]
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
@@ -475,7 +590,7 @@ def _orchestrate(
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
-    reference = result_directory / f"{prefix}_eager.pt"
+    reference = result_directory / f"{prefix}_reference.pt"
     result = result_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
     options = ["--seed", str(seed), "--model-config", model_config_argument]
@@ -489,7 +604,7 @@ def _orchestrate(
     subprocess.run(
         [
             *base,
-            "_eager",
+            "_reference",
             family,
             str(reference),
             "--model-implementation",
@@ -519,7 +634,7 @@ def _orchestrate(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("run", "_eager", "_planned"))
+    parser.add_argument("mode", choices=("run", "_reference", "_planned"))
     parser.add_argument("family", help="built-in family or custom model name")
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--device-budget", type=int)
@@ -593,10 +708,10 @@ def main() -> int:
             case_factory=arguments.case_factory,
             case_option_arguments=arguments.case_option,
         )
-    elif arguments.mode == "_eager":
+    elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
-            parser.error("_eager requires one output path")
-        _eager_worker(
+            parser.error("_reference requires one output path")
+        _reference_worker(
             family,
             model_implementation,
             Path(arguments.paths[0]),

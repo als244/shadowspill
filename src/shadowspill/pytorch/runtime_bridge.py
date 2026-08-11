@@ -10,7 +10,13 @@ import torch
 
 from shadowspill.ir import MemoryAction, MemoryActionKind, MutationSpec, Program
 
-from ._abi import AdapterFailure, ObjectBinding, ObjectUpdate, RuntimeAction
+from ._abi import (
+    AdapterFailure,
+    ObjectBinding,
+    ObjectSnapshot,
+    ObjectUpdate,
+    RuntimeAction,
+)
 from .contracts import PlanningError
 
 
@@ -339,6 +345,31 @@ class RuntimeBridge:
         self._require(
             self.library.shadowspill_pytorch_allocator_wait_idle(), "wait idle"
         )
+
+    def input_failure_states(self, alias_ids: Iterable[str]) -> tuple[str, ...]:
+        """Describe unavailable inputs without changing runtime state."""
+
+        result: list[str] = []
+        for alias_id in dict.fromkeys(alias_ids):
+            snapshot = ObjectSnapshot()
+            status = int(
+                self.library.shadowspill_pytorch_object_snapshot(
+                    _dense_id(alias_id, "alias_"), ctypes.byref(snapshot)
+                )
+            )
+            if status != 0:
+                result.append(f"{alias_id}:snapshot_status={status}")
+                continue
+            allocation_id = int(snapshot.allocation_id)
+            pointer = int(snapshot.device_pointer or 0)
+            if int(snapshot.residency) in {1, 2} and pointer != 0:
+                continue
+            result.append(
+                f"{alias_id}:residency={int(snapshot.residency)},"
+                f"allocation={allocation_id},generation={int(snapshot.generation)},"
+                f"pointer={pointer},host_current={int(snapshot.host_current)}"
+            )
+        return tuple(result)
 
     def abort_task(self) -> None:
         self.library.shadowspill_pytorch_abort_task_range()

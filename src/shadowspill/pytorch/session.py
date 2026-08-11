@@ -236,7 +236,7 @@ def build_forward(
                 device_ordinal=0,
             )
         with timer.measure("physical_sealing"):
-            _seal_physical_budget(installed)
+            _seal_physical_budget(installed, execution_plan)
         with timer.measure("callable_construction"):
             executor = ForwardExecutor(
                 partitioned,
@@ -406,7 +406,7 @@ def _simulation_capacity(
     return usable_slab - workspace_reserve + maximum_workspace
 
 
-def _seal_physical_budget(installed: InstalledAllocator) -> None:
+def _seal_physical_budget(installed: InstalledAllocator, execution_plan: Any) -> None:
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
     if status != 0:
@@ -426,7 +426,20 @@ def _seal_physical_budget(installed: InstalledAllocator) -> None:
             64 * _MIB,
         ),
     )
-    status = int(library.shadowspill_pytorch_seal_physical_budget(required))
+    # Every selected task can contribute at most one shared completion fence.
+    # Double the largest event demand actually observed during compilation and
+    # profiling for cross-stream/custom-op retirements, then retain bounded
+    # transfer/service leeway.  Object count is not event demand: H2D and D2H
+    # are serialized on their respective lanes.
+    event_pool_reserve = max(
+        256,
+        len(execution_plan.program.selected_tasks(execution_plan.selections))
+        + 2 * int(statistics.cuda.event_pool_peak_in_use)
+        + 64,
+    )
+    status = int(
+        library.shadowspill_pytorch_seal_physical_budget(required, event_pool_reserve)
+    )
     if status != 0:
         reserved = int(installed.admission.provider_headroom_bytes)
         raise PlanningError(

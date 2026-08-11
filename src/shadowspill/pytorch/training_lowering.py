@@ -31,7 +31,12 @@ from shadowspill.ir import (
 from .aot import TrainingCapture, TrainingObjectiveCapture
 from .capture import AotGraphPair, GraphArtifact
 from .contracts import CaptureError
-from .lowering import RegistrationBinding, TensorSlot, _TensorInventory
+from .lowering import (
+    RegistrationBinding,
+    TensorSlot,
+    _compiled_output_allocations,
+    _TensorInventory,
+)
 from .optimizer import (
     OptimizerCapture,
     OptimizerTask,
@@ -183,14 +188,20 @@ def lower_partitioned_training_program(
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
 
-    def profile_id(
-        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
-    ) -> str:
+    def measurement_for(
+        artifact: GraphArtifact | OptimizerTaskArtifact,
+    ) -> TaskMeasurement:
         measurement = measurements.get(artifact.compatibility_digest)
         if measurement is None:
             raise CaptureError(
                 f"training profile scatter is missing {artifact.compatibility_digest}"
             )
+        return measurement
+
+    def profile_id(
+        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
+    ) -> str:
+        measurement = measurement_for(artifact)
         key = f"{artifact.compatibility_digest}:{extra_workspace}"
         existing = profile_by_digest.get(key)
         if existing is not None:
@@ -304,6 +315,7 @@ def lower_partitioned_training_program(
                     values.forward_outputs,
                     canonical_outputs,
                     inventory,
+                    measurement_for(pair.forward),
                 )
                 backward_inputs = _stage_backward_inputs(
                     position,
@@ -444,9 +456,7 @@ def lower_partitioned_training_program(
                 )
                 inputs = [slot.object_id for slot in item.backward_inputs]
                 inputs.extend(mutated)
-                input_aliases = {
-                    inventory.alias_id(object_id) for object_id in inputs
-                }
+                input_aliases = {inventory.alias_id(object_id) for object_id in inputs}
                 task = TaskSpec(
                     task_id,
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
@@ -612,14 +622,20 @@ def lower_training_program(
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
 
-    def profile_id(
-        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
-    ) -> str:
+    def measurement_for(
+        artifact: GraphArtifact | OptimizerTaskArtifact,
+    ) -> TaskMeasurement:
         measurement = measurements.get(artifact.compatibility_digest)
         if measurement is None:
             raise CaptureError(
                 f"training profile scatter is missing {artifact.compatibility_digest}"
             )
+        return measurement
+
+    def profile_id(
+        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
+    ) -> str:
+        measurement = measurement_for(artifact)
         key = f"{artifact.compatibility_digest}:{extra_workspace}"
         existing = profile_by_digest.get(key)
         if existing is not None:
@@ -670,6 +686,7 @@ def lower_training_program(
                 values.forward_outputs,
                 inventory,
                 public_objects_by_position,
+                measurement_for(pair.forward),
             )
             backward_inputs, fixed = _backward_inputs(
                 pair,
@@ -1103,12 +1120,15 @@ def _stage_forward_outputs(
     values: tuple[object, ...],
     canonical_outputs: tuple[str, ...],
     inventory: _TensorInventory,
+    measurement: TaskMeasurement,
 ) -> tuple[tuple[TensorSlot, ...], tuple[str, ...]]:
     public_count = pair.forward.output_count - pair.saved_value_count
     if public_count != len(canonical_outputs):
         raise CaptureError("stage boundary output count changed across AOT capture")
     slots: list[TensorSlot] = []
     residual_aliases: list[str] = []
+    allocation_scope = inventory.compiled_output_scope()
+    output_allocations = _compiled_output_allocations(measurement)
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
             raise CaptureError("AOT stage forward returned a non-tensor leaf")
@@ -1116,10 +1136,12 @@ def _stage_forward_outputs(
             object_id = canonical_outputs[index]
             inventory.associate_storage(value, object_id)
         else:
-            object_id = inventory.add(
+            object_id = inventory.add_compiled_output(
                 value,
                 role=ObjectRole.ACTIVATION,
                 persistence=Persistence.STEP,
+                allocation_scope=allocation_scope,
+                physical_allocation=output_allocations.get(index),
             )
         slots.append(TensorSlot(index, object_id))
         if index >= public_count:
@@ -1242,12 +1264,15 @@ def _forward_outputs(
     values: tuple[object, ...],
     inventory: _TensorInventory,
     public_by_position: dict[int, tuple[str, ...]],
+    measurement: TaskMeasurement,
 ) -> tuple[tuple[TensorSlot, ...], tuple[str, ...], tuple[str, ...]]:
     public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
     canonical_public = public_by_position.get(position)
     slots: list[TensorSlot] = []
     public_ids: list[str] = []
     residual_aliases: list[str] = []
+    allocation_scope = inventory.compiled_output_scope()
+    output_allocations = _compiled_output_allocations(measurement)
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
             raise CaptureError("AOT forward returned a non-tensor leaf")
@@ -1255,12 +1280,14 @@ def _forward_outputs(
             object_id = canonical_public[index]
             inventory.associate_storage(value, object_id)
         else:
-            object_id = inventory.add(
+            object_id = inventory.add_compiled_output(
                 value,
                 role=ObjectRole.OUTPUT
                 if index < public_count
                 else ObjectRole.ACTIVATION,
                 persistence=Persistence.STEP,
+                allocation_scope=allocation_scope,
+                physical_allocation=output_allocations.get(index),
             )
         slots.append(TensorSlot(index, object_id))
         if index < public_count:

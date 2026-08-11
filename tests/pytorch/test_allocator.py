@@ -71,10 +71,10 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(RuntimeStatistics) == 24 * 8
     assert ctypes.sizeof(AllocationEvent) == 64
     assert ctypes.sizeof(Allocation) == 40
-    assert ctypes.sizeof(CudaStatistics) == 16 * 8
+    assert ctypes.sizeof(CudaStatistics) == 22 * 8
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
-    assert ctypes.sizeof(AdapterStatistics) == 400
+    assert ctypes.sizeof(AdapterStatistics) == 448
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 16
@@ -94,7 +94,8 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(PhysicalMemory)
     ]
     assert library.shadowspill_pytorch_seal_physical_budget.argtypes == [
-        ctypes.c_uint64
+        ctypes.c_uint64,
+        ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_check_physical_budget.argtypes == []
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [

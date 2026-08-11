@@ -37,6 +37,12 @@ static void destroy_allocations(ShadowSpillRuntime *runtime) {
             free(event);
             event = event_next;
         }
+        if (allocation->retirement_fence != NULL) {
+            shadowspill_release_task_fence_locked(
+                runtime, allocation->retirement_fence
+            );
+            allocation->retirement_fence = NULL;
+        }
         free(allocation);
         allocation = next;
     }
@@ -73,13 +79,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                 action->destination_bytes
             );
         }
-        ShadowSpillTaskFence *fence = action->fence;
-        if (--fence->references == 0U) {
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, fence->event
-            );
-            free(fence);
-        }
+        shadowspill_release_task_fence_locked(runtime, action->fence);
         free(action);
         action = next;
     }
@@ -91,6 +91,12 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     destroy_actions(runtime);
     destroy_allocations(runtime);
     destroy_objects(runtime);
+    free(runtime->allocations_by_id);
+    free(runtime->allocations_by_pointer);
+    free(runtime->reusable_by_size);
+    runtime->allocations_by_id = NULL;
+    runtime->allocations_by_pointer = NULL;
+    runtime->reusable_by_size = NULL;
     free(runtime->allocation_events);
     runtime->allocation_events = NULL;
     runtime->allocation_event_count = 0U;
@@ -145,12 +151,37 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
     runtime->next_generation = 1U;
     runtime->failure.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->failure.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    runtime->allocation_index_bucket_count = 65536U;
+    runtime->reusable_index_bucket_count = 8192U;
+    runtime->allocations_by_id = calloc(
+        (size_t)runtime->allocation_index_bucket_count,
+        sizeof(*runtime->allocations_by_id)
+    );
+    runtime->allocations_by_pointer = calloc(
+        (size_t)runtime->allocation_index_bucket_count,
+        sizeof(*runtime->allocations_by_pointer)
+    );
+    runtime->reusable_by_size = calloc(
+        (size_t)runtime->reusable_index_bucket_count,
+        sizeof(*runtime->reusable_by_size)
+    );
+    if (runtime->allocations_by_id == NULL ||
+        runtime->allocations_by_pointer == NULL ||
+        runtime->reusable_by_size == NULL) {
+        free(runtime->allocations_by_id);
+        free(runtime->allocations_by_pointer);
+        free(runtime->reusable_by_size);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
     if (pthread_mutex_init(&runtime->mutex, NULL) != 0) {
+        release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     if (pthread_cond_init(&runtime->condition, NULL) != 0) {
         pthread_mutex_destroy(&runtime->mutex);
+        release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }

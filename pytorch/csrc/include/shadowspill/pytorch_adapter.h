@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 11U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 12U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -105,7 +105,8 @@ shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
  */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_seal_physical_budget(
-    uint64_t required_provider_headroom_bytes
+    uint64_t required_provider_headroom_bytes,
+    uint64_t event_pool_reserve
 );
 
 /* Reconciles current process bytes against the sealed or provisional cap. */

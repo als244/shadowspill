@@ -23,7 +23,7 @@ def main() -> int:
         progress_poll_nanoseconds=10_000,
     )
     library = installed.library
-    if int(library.shadowspill_pytorch_seal_physical_budget(64 * MIB)) != 0:
+    if int(library.shadowspill_pytorch_seal_physical_budget(64 * MIB, 16)) != 0:
         raise AssertionError("physical budget did not seal before growth injection")
 
     cuda = ctypes.CDLL("libcuda.so.1")

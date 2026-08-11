@@ -187,12 +187,8 @@ def _delta_rule_backward_reference(
     predictions: list[torch.Tensor] = []
     for index in range(sequence):
         decayed = state * multiplier[:, index, :, None, None]
-        prediction = torch.einsum(
-            "bhk,bhkv->bhv", expanded_key[:, index], decayed
-        )
-        update = float_beta[:, index, :, None] * (
-            float_value[:, index] - prediction
-        )
+        prediction = torch.einsum("bhk,bhkv->bhv", expanded_key[:, index], decayed)
+        update = float_beta[:, index, :, None] * (float_value[:, index] - prediction)
         state = decayed + expanded_key[:, index, :, :, None] * update[:, :, None, :]
         decayed_states.append(decayed)
         predictions.append(prediction)
@@ -224,9 +220,7 @@ def _delta_rule_backward_reference(
         )
         difference = float_value[:, index] - predictions[index]
         beta_gradient[:, index] = (update_gradient * difference).sum(dim=-1)
-        value_gradient[:, index] = (
-            update_gradient * float_beta[:, index, :, None]
-        )
+        value_gradient[:, index] = update_gradient * float_beta[:, index, :, None]
         prediction_gradient = -update_gradient * float_beta[:, index, :, None]
         key_gradient[:, index] += torch.einsum(
             "bhv,bhkv->bhk", prediction_gradient, decayed_states[index]
@@ -234,17 +228,17 @@ def _delta_rule_backward_reference(
         decayed_gradient = current_state_gradient + torch.einsum(
             "bhk,bhv->bhkv", expanded_key[:, index], prediction_gradient
         )
-        decay_gradient[:, index] = (
-            decayed_gradient * decayed_states[index]
-        ).sum(dim=(-1, -2))
+        decay_gradient[:, index] = (decayed_gradient * decayed_states[index]).sum(
+            dim=(-1, -2)
+        )
         state_gradient = decayed_gradient * multiplier[:, index, :, None, None]
 
     query_gradient = query_gradient.view(
         batch, sequence, key_heads, repeat, key_width
     ).sum(dim=3)
-    key_gradient = key_gradient.view(
-        batch, sequence, key_heads, repeat, key_width
-    ).sum(dim=3)
+    key_gradient = key_gradient.view(batch, sequence, key_heads, repeat, key_width).sum(
+        dim=3
+    )
     return (
         query_gradient.to(query.dtype).contiguous(),
         key_gradient.to(key.dtype).contiguous(),

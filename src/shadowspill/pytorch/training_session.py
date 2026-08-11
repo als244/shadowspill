@@ -325,7 +325,7 @@ def build_training(
                 optimizer=optimizer,
             )
         with timer.measure("physical_sealing"):
-            _seal_physical_budget(installed)
+            _seal_physical_budget(installed, recurrent_plan)
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
                 None if initial_plan is None else (initial_lowered, initial_plan),

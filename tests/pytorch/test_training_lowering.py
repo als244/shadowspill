@@ -71,9 +71,7 @@ class _AuxiliaryPassThroughBlock(nn.Module):
 class _AuxiliaryPassThroughModel(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.blocks = nn.ModuleList(
-            [_AuxiliaryPassThroughBlock() for _ in range(3)]
-        )
+        self.blocks = nn.ModuleList([_AuxiliaryPassThroughBlock() for _ in range(3)])
 
     def forward(
         self, value: torch.Tensor, auxiliary: torch.Tensor

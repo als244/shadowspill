@@ -9,8 +9,9 @@ python -m verification.run_model_correctness \
   --cache-dir qualification/results/cache
 ```
 
-Every case runs eager PyTorch and ShadowSpill in separate processes. The matrix
-requires five two-microbatch optimizer steps, eager numerical parity,
+Every case runs a whole-objective `torch.compile(fullgraph=True)` reference on
+PyTorch's standard allocator and ShadowSpill in separate processes. The matrix
+requires five two-microbatch optimizer steps, compiled-reference numerical parity,
 step-three checkpoint/two-step bitwise replay, real D2H/H2D, selected
 recomputation, and measured physical-budget enforcement. Individual evidence
 and `summary.json` are written below `qualification/results/numerical_matrix`.
@@ -24,12 +25,12 @@ python -m verification.run_model_correctness \
   --implementations pytorch mlops \
   --budget qwen35=10GiB \
   --budget olmoe=10GiB \
-  --reuse-eager \
+  --reuse-reference \
   --keep-going
 ```
 
-`--reuse-eager` is opt-in because a newly generated eager reference is safer
-after model or optimizer changes. The per-case implementation remains in
+`--reuse-reference` is opt-in because a newly generated compiled reference is
+safer after model, optimizer, PyTorch, or compiler changes. The per-case implementation remains in
 `qualification.numerical.run`; this launcher only orchestrates the matrix and
 summarizes its artifacts.
 
@@ -65,7 +66,7 @@ python -m verification.run_model_correctness \
   --case-option optimizer='{"name":"AdamW","lr":0.0001}'
 ```
 
-The factory is called independently in eager and planned processes with the
+The factory is called independently in compiled-reference and planned processes with the
 keyword arguments `model_name`, `model_implementation`, `seed`, `model_config`,
 `data_geometry`, and `case_options`. It returns an object exposing `model`,
 `microbatches`, `objective(model, *microbatch)`, `optimizer(parameters)`, and an
@@ -73,7 +74,8 @@ keyword arguments `model_name`, `model_implementation`, `seed`, `model_config`,
 `model_implementation` fields. This keeps model-, data-, objective-, optimizer-,
 and custom-operation policy outside the verification launcher.
 
-The eager artifact records a digest of the complete request. `--reuse-eager`
+The compiled-reference artifact records a digest of the complete request,
+including the reference execution mode. `--reuse-reference`
 is rejected if the model name, implementation, seed, model config, geometry,
 factory, or case options differ.
 

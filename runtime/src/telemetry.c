@@ -164,6 +164,9 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_read(
 
 void shadowspill_abort_task(ShadowSpillRuntime *runtime) {
     if (runtime != NULL) {
+        shadowspill_finalize_aborted_task_retirements(
+            runtime, shadowspill_current_task_id(runtime)
+        );
         shadowspill_leave_task_scope(runtime);
     }
 }

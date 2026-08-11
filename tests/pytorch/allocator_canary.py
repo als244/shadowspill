@@ -404,7 +404,8 @@ def main() -> int:
     if (
         int(
             library.shadowspill_pytorch_seal_physical_budget(
-                installed.admission.provider_headroom_bytes
+                installed.admission.provider_headroom_bytes,
+                64,
             )
         )
         != 0

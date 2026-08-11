@@ -30,6 +30,8 @@ typedef struct ShadowSpillEventRecord {
     struct ShadowSpillEventRecord *next;
 } ShadowSpillEventRecord;
 
+typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
+
 typedef struct ShadowSpillAllocationRecord {
     uint64_t allocation_id;
     uint64_t generation;
@@ -48,7 +50,14 @@ typedef struct ShadowSpillAllocationRecord {
     uint64_t handoff_task_id;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
+    ShadowSpillTaskFence *retirement_fence;
     struct ShadowSpillAllocationRecord *next;
+    struct ShadowSpillAllocationRecord *id_index_next;
+    struct ShadowSpillAllocationRecord *pointer_index_next;
+    struct ShadowSpillAllocationRecord *reusable_index_next;
+    struct ShadowSpillAllocationRecord *active_next;
+    struct ShadowSpillAllocationRecord **active_previous_link;
+    uint8_t in_reusable_index;
 } ShadowSpillAllocationRecord;
 
 typedef struct ShadowSpillObjectRecord {
@@ -71,10 +80,13 @@ typedef struct ShadowSpillObjectRecord {
     struct ShadowSpillObjectRecord *next;
 } ShadowSpillObjectRecord;
 
-typedef struct ShadowSpillTaskFence {
+struct ShadowSpillTaskFence {
     ShadowSpillBackendEvent event;
     uint32_t references;
-} ShadowSpillTaskFence;
+    uint8_t completion_known;
+    uint8_t last_query_complete;
+    uint64_t last_query_epoch;
+};
 
 typedef enum ShadowSpillQueuedActionState {
     SHADOWSPILL_ACTION_QUEUED = 0,
@@ -117,6 +129,12 @@ struct ShadowSpillRuntime {
     ShadowSpillRangeAllocator device_ranges;
     ShadowSpillRangeAllocator host_ranges;
     ShadowSpillAllocationRecord *allocations;
+    ShadowSpillAllocationRecord *active_allocations;
+    ShadowSpillAllocationRecord **allocations_by_id;
+    ShadowSpillAllocationRecord **allocations_by_pointer;
+    ShadowSpillAllocationRecord **reusable_by_size;
+    uint64_t allocation_index_bucket_count;
+    uint64_t reusable_index_bucket_count;
     ShadowSpillObjectRecord *objects;
     ShadowSpillQueuedAction *action_head;
     ShadowSpillQueuedAction *action_tail;
@@ -135,6 +153,7 @@ struct ShadowSpillRuntime {
     uint64_t bytes_to_device;
     uint64_t bytes_to_host;
     uint64_t wait_events_inserted;
+    uint64_t event_query_epoch;
     ShadowSpillAllocationEvent *allocation_events;
     uint64_t allocation_event_count;
     uint64_t allocation_event_capacity;
@@ -215,6 +234,19 @@ ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
 void shadowspill_release_allocation_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillAllocationRecord *allocation
+);
+void shadowspill_release_task_fence_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTaskFence *fence
+);
+int shadowspill_task_fence_complete_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTaskFence *fence,
+    int *complete
+);
+void shadowspill_finalize_aborted_task_retirements(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id
 );
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,

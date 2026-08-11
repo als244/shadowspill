@@ -222,25 +222,41 @@ class CudaTaskProfiler:
         persistent_baseline = self._requested_allocated_bytes()
         persistent_high_water = persistent_baseline
         for _ in range(self._warmups):
-            self._discard_output(executable())
-            persistent_high_water = max(
-                persistent_high_water, self._requested_allocated_bytes()
-            )
+            task_id = self._open_profile_task(stream)
+            try:
+                output = executable()
+                del output
+                self._close_profile_task(task_id, stream)
+            except BaseException:
+                self._library.shadowspill_pytorch_abort_task_range()
+                raise
         stream.synchronize()
+        self._library.shadowspill_pytorch_allocator_wait_idle()
+        persistent_high_water = max(
+            persistent_high_water, self._requested_allocated_bytes()
+        )
         samples: list[int] = []
         event_factory: Any = torch.cuda.Event
         for _ in range(self._samples):
             start = event_factory(enable_timing=True)
             finish = event_factory(enable_timing=True)
-            start.record(stream)
-            output = executable()
-            finish.record(stream)
+            task_id = self._open_profile_task(stream)
+            try:
+                start.record(stream)
+                output = executable()
+                del output
+                finish.record(stream)
+                self._close_profile_task(task_id, stream)
+            except BaseException:
+                self._library.shadowspill_pytorch_abort_task_range()
+                raise
             finish.synchronize()
+            self._library.shadowspill_pytorch_allocator_wait_idle()
             samples.append(max(0, round(start.elapsed_time(finish) * 1_000_000)))
-            del output
-            persistent_high_water = max(
-                persistent_high_water, self._requested_allocated_bytes()
-            )
+        self._library.shadowspill_pytorch_allocator_wait_idle()
+        persistent_high_water = max(
+            persistent_high_water, self._requested_allocated_bytes()
+        )
         workspace, persistent_high_water = self._audit_workspace_retention(
             executable,
             stream,
@@ -265,6 +281,27 @@ class CudaTaskProfiler:
             allocation_trace=workspace.allocation_trace,
             persistent_extent_bytes=fixed_extents,
         )
+
+    def _open_profile_task(self, stream: torch.cuda.Stream) -> int:
+        task_id = self._next_task_id
+        self._next_task_id += 1
+        status = int(
+            self._library.shadowspill_pytorch_before_task(
+                task_id, stream.cuda_stream, None, 0, None, 0
+            )
+        )
+        if status != 0:
+            raise CaptureError(f"profiling before_task failed with status {status}")
+        return task_id
+
+    def _close_profile_task(self, task_id: int, stream: torch.cuda.Stream) -> None:
+        status = int(
+            self._library.shadowspill_pytorch_after_task(
+                task_id, stream.cuda_stream, None, 0, None, 0
+            )
+        )
+        if status != 0:
+            raise CaptureError(f"profiling after_task failed with status {status}")
 
     def _audit_workspace_retention(
         self,
@@ -336,9 +373,10 @@ class CudaTaskProfiler:
     def take_functions(
         self, artifacts: Sequence[ProfilableArtifact]
     ) -> dict[str, Callable[..., object]]:
-        """Transfer unique compiled entrypoints while releasing examples."""
+        """Transfer warmed unique entrypoints while releasing examples."""
 
         result: dict[str, Callable[..., object]] = {}
+        stream: torch.cuda.Stream | None = None
         for artifact in artifacts:
             if isinstance(artifact, OpaqueOptimizerArtifact):
                 continue
@@ -354,6 +392,19 @@ class CudaTaskProfiler:
                 executable = compile_artifact(
                     artifact, device_ordinal=self._device_ordinal
                 )
+                if stream is None:
+                    stream = torch.cuda.current_stream(self._device_ordinal)
+                for _ in range(self._warmups):
+                    task_id = self._open_profile_task(stream)
+                    try:
+                        output = executable()
+                        del output
+                        self._close_profile_task(task_id, stream)
+                    except BaseException:
+                        self._library.shadowspill_pytorch_abort_task_range()
+                        raise
+                stream.synchronize()
+                self._library.shadowspill_pytorch_allocator_wait_idle()
             result[digest] = executable.function
         return result
 
@@ -383,6 +434,12 @@ class CudaTaskProfiler:
                 raise CaptureError(f"profiling before_task failed with status {status}")
             task_open = True
             output = executable()
+            output_allocations = self._output_allocation_leaves(output)
+            # Profiling does not retain task results. Release them while the
+            # task range is still active so output-dependent temporary frees
+            # remain attributable to this ABI. The allocator retires their
+            # physical ranges against the active compute stream.
+            output = None
             status = int(
                 self._library.shadowspill_pytorch_after_task(
                     task_id, stream.cuda_stream, None, 0, None, 0
@@ -392,8 +449,7 @@ class CudaTaskProfiler:
             if status != 0:
                 raise CaptureError(f"profiling after_task failed with status {status}")
             stream.synchronize()
-            output_allocations = self._output_allocation_leaves(output)
-            output = None
+            self._library.shadowspill_pytorch_allocator_wait_idle()
         except BaseException:
             if task_open:
                 self._library.shadowspill_pytorch_abort_task_range()
@@ -433,10 +489,3 @@ class CudaTaskProfiler:
             allocation_id: tuple(indices)
             for allocation_id, indices in leaves_by_allocation.items()
         }
-
-    @staticmethod
-    def _discard_output(output: object) -> None:
-        # Tensor/storage lifetime is reference-counted. A process-wide cyclic
-        # collection here traverses every retained FX graph once per warmup and
-        # turns profiling large structural ABIs into quadratic CPU work.
-        del output

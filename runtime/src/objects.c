@@ -477,33 +477,13 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
     return status;
 }
 
-static void release_fence_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence
-) {
-    if (--fence->references == 0U) {
-        if (runtime->backend.destroy_event(
-                runtime->backend.context, fence->event
-            ) != 0) {
-            shadowspill_latch_failure_locked(
-                runtime,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                0U
-            );
-        }
-        free(fence);
-    }
-}
-
 static void discard_actions_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *head
 ) {
     while (head != NULL) {
         ShadowSpillQueuedAction *next = head->next;
-        release_fence_locked(runtime, head->fence);
+        shadowspill_release_task_fence_locked(runtime, head->fence);
         free(head);
         head = next;
     }
@@ -555,8 +535,8 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         object->device_version = object->authoritative_version;
         object->host_current = 0U;
     }
-    for (ShadowSpillAllocationRecord *allocation = runtime->allocations;
-         allocation != NULL; allocation = allocation->next) {
+    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+         allocation != NULL; allocation = allocation->active_next) {
         if (allocation->handoff_task_id != task_id) {
             continue;
         }
@@ -581,7 +561,17 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
             goto done;
         }
     }
-    if (action_count == 0U) {
+    uint64_t task_retirement_count = 0U;
+    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+         allocation != NULL; allocation = allocation->active_next) {
+        if (allocation->logical_freed && allocation->pointer != NULL &&
+            allocation->release_task_id == task_id &&
+            allocation->retirement_events == NULL &&
+            allocation->retirement_fence == NULL) {
+            ++task_retirement_count;
+        }
+    }
+    if (action_count == 0U && task_retirement_count == 0U) {
         goto done;
     }
     fence = calloc(1U, sizeof(*fence));
@@ -671,13 +661,26 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         );
         goto done;
     }
-    if (runtime->action_tail == NULL) {
-        runtime->action_head = head;
-    } else {
-        runtime->action_tail->next = head;
+    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+         allocation != NULL; allocation = allocation->active_next) {
+        if (!allocation->logical_freed || allocation->pointer == NULL ||
+            allocation->release_task_id != task_id ||
+            allocation->retirement_events != NULL ||
+            allocation->retirement_fence != NULL) {
+            continue;
+        }
+        allocation->retirement_fence = fence;
+        ++fence->references;
     }
-    runtime->action_tail = tail;
-    runtime->queued_actions += action_count;
+    if (head != NULL) {
+        if (runtime->action_tail == NULL) {
+            runtime->action_head = head;
+        } else {
+            runtime->action_tail->next = head;
+        }
+        runtime->action_tail = tail;
+        runtime->queued_actions += action_count;
+    }
     pthread_cond_broadcast(&runtime->condition);
 
 done:

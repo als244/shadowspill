@@ -28,20 +28,45 @@ static void destroy_retirement_events_locked(
         event = next;
     }
     allocation->retirement_events = NULL;
+    if (allocation->retirement_fence != NULL) {
+        shadowspill_release_task_fence_locked(
+            runtime, allocation->retirement_fence
+        );
+        allocation->retirement_fence = NULL;
+    }
 }
 
 static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
     int changed = 0;
-    for (ShadowSpillAllocationRecord *allocation = runtime->allocations;
-         allocation != NULL; allocation = allocation->next) {
-        if (!allocation->logical_freed ||
-            allocation->retirement_events == NULL ||
-            allocation->pointer == NULL) {
+    ++runtime->event_query_epoch;
+    if (runtime->event_query_epoch == 0U) {
+        ++runtime->event_query_epoch;
+    }
+    ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+    while (allocation != NULL) {
+        ShadowSpillAllocationRecord *next = allocation->active_next;
+        if (!allocation->logical_freed || allocation->pointer == NULL ||
+            (allocation->retirement_events == NULL &&
+             allocation->retirement_fence == NULL)) {
+            allocation = next;
             continue;
         }
         int complete = 1;
+        if (allocation->retirement_fence != NULL &&
+            shadowspill_task_fence_complete_locked(
+                runtime, allocation->retirement_fence, &complete
+            ) != 0) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                allocation->allocation_id,
+                0U
+            );
+            return changed;
+        }
         for (ShadowSpillEventRecord *event = allocation->retirement_events;
-             event != NULL; event = event->next) {
+             complete && event != NULL; event = event->next) {
             int event_complete = 0;
             if (runtime->backend.query_event(
                     runtime->backend.context, event->event, &event_complete
@@ -60,6 +85,7 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
             }
         }
         if (!complete) {
+            allocation = next;
             continue;
         }
         destroy_retirement_events_locked(runtime, allocation);
@@ -68,29 +94,9 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
             --runtime->pending_retirements;
         }
         changed = 1;
+        allocation = next;
     }
     return changed;
-}
-
-static void release_fence_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence
-) {
-    if (--fence->references != 0U) {
-        return;
-    }
-    if (runtime->backend.destroy_event(
-            runtime->backend.context, fence->event
-        ) != 0) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            0U
-        );
-    }
-    free(fence);
 }
 
 static void complete_action_locked(
@@ -106,7 +112,7 @@ static void complete_action_locked(
     if (runtime->action_tail == action) {
         runtime->action_tail = previous;
     }
-    release_fence_locked(runtime, action->fence);
+    shadowspill_release_task_fence_locked(runtime, action->fence);
     if (action->has_completion_event) {
         if (runtime->backend.destroy_event(
                 runtime->backend.context, action->completion_event
@@ -158,12 +164,16 @@ static int reserve_destination_locked(
         return 1;
     }
     int trigger_complete = 0;
-    if (event_complete_locked(
-            runtime,
-            action->fence->event,
-            action->object->object_id,
-            &trigger_complete
+    if (shadowspill_task_fence_complete_locked(
+            runtime, action->fence, &trigger_complete
         ) != 0) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            action->object->object_id,
+            action->object->allocation_id,
+            0U
+        );
         return -1;
     }
     if (!trigger_complete) {
@@ -417,10 +427,16 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
         if (action->state == SHADOWSPILL_ACTION_QUEUED) {
             if (action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
                 int complete = 0;
-                if (event_complete_locked(
-                        runtime, action->fence->event,
-                        object->object_id, &complete
+                if (shadowspill_task_fence_complete_locked(
+                        runtime, action->fence, &complete
                     ) != 0) {
+                    shadowspill_latch_failure_locked(
+                        runtime,
+                        SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                        object->object_id,
+                        object->allocation_id,
+                        0U
+                    );
                     return changed;
                 }
                 if (complete) {
@@ -603,6 +619,21 @@ static void timed_wait_locked(ShadowSpillRuntime *runtime) {
     );
 }
 
+static int has_actionable_retirement_locked(
+    const ShadowSpillRuntime *runtime
+) {
+    for (const ShadowSpillAllocationRecord *allocation =
+             runtime->active_allocations;
+         allocation != NULL; allocation = allocation->active_next) {
+        if (allocation->logical_freed && allocation->pointer != NULL &&
+            (allocation->retirement_events != NULL ||
+             allocation->retirement_fence != NULL)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void *shadowspill_progress_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     pthread_mutex_lock(&runtime->mutex);
@@ -614,7 +645,7 @@ void *shadowspill_progress_main(void *pointer) {
         }
         if (!changed && !runtime->worker_stop) {
             if (runtime->queued_actions == 0U &&
-                runtime->pending_retirements == 0U) {
+                !has_actionable_retirement_locked(runtime)) {
                 pthread_cond_wait(&runtime->condition, &runtime->mutex);
             } else {
                 timed_wait_locked(runtime);

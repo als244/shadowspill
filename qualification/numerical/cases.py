@@ -173,9 +173,7 @@ def build_case(
         model_type = PyTorchLlama3 if model_implementation == "pytorch" else MlopsLlama3
     elif family == "qwen35":
         config = replace(Qwen35Config.numerical(), max_seq_len=192)
-        model_type = (
-            PyTorchQwen35 if model_implementation == "pytorch" else MlopsQwen35
-        )
+        model_type = PyTorchQwen35 if model_implementation == "pytorch" else MlopsQwen35
     elif family == "olmoe":
         config = replace(OLMoEConfig.numerical(), max_seq_len=192)
         model_type = PyTorchOLMoE if model_implementation == "pytorch" else MlopsOLMoE
@@ -203,9 +201,7 @@ def build_case(
             or isinstance(shape_value, (str, bytes))
             or not shape_value
             or any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value <= 0
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
                 for value in shape_value
             )
         ):
@@ -218,9 +214,7 @@ def build_case(
             or isinstance(sequence_value, (str, bytes))
             or not sequence_value
             or any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value <= 0
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
                 for value in sequence_value
             )
         ):
