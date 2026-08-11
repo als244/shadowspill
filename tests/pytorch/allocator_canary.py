@@ -9,7 +9,13 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.pytorch._abi import AdapterStatistics
+from shadowspill.pytorch._abi import (
+    AdapterCapabilities,
+    AdapterStatistics,
+    ObjectBinding,
+    ObjectSnapshot,
+    RuntimeAction,
+)
 from shadowspill.pytorch._allocator import install_allocator
 
 
@@ -24,6 +30,12 @@ def main() -> int:
         host_arena_bytes=16 << 20,
         progress_poll_nanoseconds=10_000,
     )
+    capabilities = AdapterCapabilities()
+    installed.library.shadowspill_pytorch_adapter_capabilities(
+        ctypes.byref(capabilities)
+    )
+    if capabilities.storage_rebinding != 1:
+        raise AssertionError("canary requires the version-pinned storage adapter")
     source = torch.full((1024, 1024), 3.0, device="cuda")
     warm = source + 1.0
     torch.cuda.synchronize()
@@ -91,6 +103,161 @@ def main() -> int:
         raise AssertionError("a PyTorch callback missed the runtime allocation table")
     if statistics.cuda.device_allocations != 1:
         raise AssertionError("CUDA backend did not use exactly one device slab")
+
+    expected = torch.arange(2 << 20, dtype=torch.float32)
+    parameter = torch.nn.Parameter(expected.cuda())
+    view = parameter.view(1024, -1)
+    parameter_identity = id(parameter)
+    storage_identity = parameter.untyped_storage()._cdata
+    address = parameter.data_ptr()
+    size_bytes = parameter.untyped_storage().nbytes()
+    binding = ObjectBinding()
+    status = int(
+        library.shadowspill_pytorch_promote_allocation(
+            1001, address, size_bytes, ctypes.byref(binding)
+        )
+    )
+    if status != 0 or binding.pointer != address:
+        raise AssertionError("ordinary PyTorch allocation promotion failed")
+    try:
+        torch.ops.shadowspill._rebind_storage(
+            parameter, address, binding.object_id, binding.generation + 1
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("storage adapter accepted a stale generation")
+    if parameter.data_ptr() != address:
+        raise AssertionError("failed rebinding validation mutated the storage")
+
+    compute_stream = torch.cuda.current_stream().cuda_stream
+    torch.cuda._sleep(100_000_000)
+    offload = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 1))
+    status = int(
+        library.shadowspill_pytorch_after_task(
+            100,
+            compute_stream,
+            None,
+            0,
+            offload,
+            1,
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"offload submission failed with status {status}")
+    torch.ops.shadowspill._rebind_storage(
+        parameter, 0, binding.object_id, binding.generation
+    )
+    if parameter.data_ptr() != 0 or view.data_ptr() != 0:
+        raise AssertionError("alias storage was not dematerialized together")
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("offload did not complete")
+    snapshot = ObjectSnapshot()
+    if (
+        int(
+            library.shadowspill_pytorch_object_snapshot(
+                binding.object_id, ctypes.byref(snapshot)
+            )
+        )
+        != 0
+        or snapshot.residency != 0
+    ):
+        raise AssertionError("offload did not leave a host-only object")
+
+    blocker = torch.empty(2 << 20, dtype=torch.float32, device="cuda")
+    if blocker.data_ptr() != address:
+        raise AssertionError("canary failed to occupy the object's former slab range")
+    prefetch = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 2))
+    status = int(
+        library.shadowspill_pytorch_after_task(
+            101,
+            compute_stream,
+            None,
+            0,
+            prefetch,
+            1,
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"prefetch submission failed with status {status}")
+    object_ids = (ctypes.c_uint64 * 1)(binding.object_id)
+    rebound = (ObjectBinding * 1)()
+    status = int(
+        library.shadowspill_pytorch_before_task(
+            102,
+            compute_stream,
+            object_ids,
+            1,
+            rebound,
+            1,
+        )
+    )
+    if status != 0:
+        raise AssertionError(
+            f"prefetched input acquisition failed with status {status}"
+        )
+    if rebound[0].pointer in (None, 0, address, blocker.data_ptr()):
+        raise AssertionError("prefetch did not lease a different slab range")
+    if rebound[0].generation == binding.generation:
+        raise AssertionError("prefetch did not advance the allocation generation")
+    torch.ops.shadowspill._rebind_storage(
+        parameter,
+        rebound[0].pointer,
+        rebound[0].object_id,
+        rebound[0].generation,
+    )
+    if id(parameter) != parameter_identity:
+        raise AssertionError("Parameter identity changed during storage rebinding")
+    if parameter.untyped_storage()._cdata != storage_identity:
+        raise AssertionError("Storage identity changed during rebinding")
+    if view.untyped_storage()._cdata != storage_identity:
+        raise AssertionError("view alias identity changed during rebinding")
+    torch.testing.assert_close(parameter.cpu(), expected)
+
+    torch.cuda._sleep(100_000_000)
+    release = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 0))
+    status = int(
+        library.shadowspill_pytorch_after_task(
+            103,
+            compute_stream,
+            None,
+            0,
+            release,
+            1,
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"release submission failed with status {status}")
+    torch.ops.shadowspill._rebind_storage(
+        parameter, 0, rebound[0].object_id, rebound[0].generation
+    )
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("planned release did not complete")
+    del blocker, view, parameter
+    gc.collect()
+    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+        raise AssertionError("canary cleanup did not complete")
+    final_statistics = AdapterStatistics()
+    if (
+        int(
+            library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(final_statistics)
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("final statistics query failed")
+    if final_statistics.runtime.transfers_to_host != 1:
+        raise AssertionError("canary did not execute exactly one D2H transfer")
+    if final_statistics.runtime.transfers_to_device != 1:
+        raise AssertionError("canary did not execute exactly one H2D transfer")
+    if final_statistics.runtime.wait_events_inserted != 1:
+        raise AssertionError("prefetched input did not insert exactly one stream wait")
+    if (
+        final_statistics.pointer_lookup_failures != 0
+        or final_statistics.callback_failures != 0
+    ):
+        raise AssertionError("storage relocation caused an allocator callback failure")
     return 0
 
 

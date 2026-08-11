@@ -222,6 +222,28 @@ if(SHADOWSPILL_BUILD_CUDA)
         Threads::Threads
         shadowspill_build_options
     )
+    find_package(Torch QUIET)
+    if(Torch_FOUND)
+      target_sources(shadowspill_pytorch PRIVATE pytorch/csrc/storage.cpp)
+      target_link_libraries(shadowspill_pytorch PRIVATE ${TORCH_LIBRARIES})
+      target_compile_definitions(
+        shadowspill_pytorch
+        PRIVATE SHADOWSPILL_PYTORCH_STORAGE_ADAPTER=1
+      )
+      if(TORCH_CXX_FLAGS)
+        separate_arguments(
+          SHADOWSPILL_TORCH_CXX_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}"
+        )
+        target_compile_options(
+          shadowspill_pytorch PRIVATE ${SHADOWSPILL_TORCH_CXX_FLAGS}
+        )
+      endif()
+    else()
+      message(
+        STATUS
+        "PyTorch CMake package not found; building allocator connector without storage rebinding"
+      )
+    endif()
     set_target_properties(
       shadowspill_pytorch
       PROPERTIES

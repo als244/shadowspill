@@ -36,6 +36,9 @@ Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
 - [x] PyTorch's supported pluggable allocator is connected to the neutral slab
   with exact address lookup, full record-stream retirement, structured OOM
   propagation, and no Python monkey-patching.
+- [x] The narrow version-pinned storage adapter preserves Parameter, storage,
+  view, and alias identity while a planned object is dematerialized and later
+  rebound to a different slab address and allocation generation.
 
 ## Completed gates
 

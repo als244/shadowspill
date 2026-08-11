@@ -108,6 +108,46 @@ class AdapterStatistics(ctypes.Structure):
     ]
 
 
+class ObjectBinding(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("generation", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("authoritative_version", ctypes.c_uint64),
+        ("pointer", ctypes.c_void_p),
+    ]
+
+
+class ObjectUpdate(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("version_delta", ctypes.c_uint64),
+    ]
+
+
+class RuntimeAction(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("kind", ctypes.c_uint8),
+    ]
+
+
+class ObjectSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("size_bytes", ctypes.c_uint64),
+        ("generation", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("authoritative_version", ctypes.c_uint64),
+        ("device_version", ctypes.c_uint64),
+        ("host_version", ctypes.c_uint64),
+        ("residency", ctypes.c_uint8),
+        ("host_current", ctypes.c_uint8),
+        ("has_host_range", ctypes.c_uint8),
+        ("device_pointer", ctypes.c_void_p),
+    ]
+
+
 def configure_adapter_library(library: Any) -> None:
     """Assign every non-callback adapter signature in one place."""
 
@@ -129,3 +169,33 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_allocator_failure.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_wait_idle.argtypes = []
     library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_promote_allocation.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    library.shadowspill_pytorch_promote_allocation.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_before_task.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.c_uint32,
+        ctypes.POINTER(ObjectBinding),
+        ctypes.c_uint32,
+    ]
+    library.shadowspill_pytorch_before_task.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_after_task.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.POINTER(ObjectUpdate),
+        ctypes.c_uint32,
+        ctypes.POINTER(RuntimeAction),
+        ctypes.c_uint32,
+    ]
+    library.shadowspill_pytorch_after_task.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_object_snapshot.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectSnapshot),
+    ]
+    library.shadowspill_pytorch_object_snapshot.restype = ctypes.c_uint32

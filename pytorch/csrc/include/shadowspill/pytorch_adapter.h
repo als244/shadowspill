@@ -86,6 +86,58 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_wait_idle(void);
 
 /*
+ * Converts an existing ordinary PyTorch allocation into one plan-owned object
+ * and returns its current address generation. This is used only after graph
+ * output allocation and before the owning DataPtr is replaced.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_promote_allocation(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes,
+    ShadowSpillObjectBinding *binding
+);
+
+/* Private storage-operator guard over object identity/address/generation. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_validate_object_binding(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t generation
+);
+
+/*
+ * Private frontend bridge for exact runtime task boundaries. CUDA stream
+ * addresses are borrowed for the duration of each call and wrapped without
+ * transferring ownership.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_before_task(
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    const uint64_t *input_object_ids,
+    uint32_t input_count,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_after_task(
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    const ShadowSpillObjectUpdate *updates,
+    uint32_t update_count,
+    const ShadowSpillRuntimeAction *actions,
+    uint32_t action_count
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_object_snapshot(
+    uint64_t object_id,
+    ShadowSpillObjectSnapshot *snapshot
+);
+
+/*
  * Exact callback ABI consumed by torch.cuda.memory.CUDAPluggableAllocator.
  * These functions never throw across the C boundary. Failures are latched and
  * malloc returns NULL so PyTorch raises through its ordinary OOM path.

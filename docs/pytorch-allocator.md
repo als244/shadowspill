@@ -26,3 +26,30 @@ at task/API boundaries rather than assuming the construction call raised. Free
 and record-stream first resolve the exact live address and generation in the
 neutral allocator table; a missing address is a qualification failure rather
 than an ignored foreign allocation.
+
+## Storage rebinding
+
+The only PyTorch-specific C++ operation replaces a CUDA tensor storage's
+`DataPtr` with a non-owning current slab address or a null CUDA placeholder. It
+does not allocate, transfer, schedule work, or own runtime state. Before a swap,
+the adapter validates the logical object ID, current slab address, and
+generation against the neutral object table.
+
+All views of one storage observe the swap together. The existing `Parameter`,
+TensorImpl, StorageImpl, sizes, strides, offsets, registrations, and ties remain
+unchanged. The initial owning allocation is promoted to plan ownership before
+its owning `DataPtr` is cleared, so the normal PyTorch free callback cannot
+prematurely return it. Subsequent addresses are non-owning; annotated runtime
+actions own their physical lifetime.
+
+The private task-boundary bridge accepts borrowed CUDA stream addresses and
+delegates exact input acquisition and annotated action submission to the
+neutral runtime. It does not infer, reorder, or repair schedule directives.
+`before_task` returns the current address and generation after inserting every
+required H2D event wait; the frontend rebinds storages before argument lookup.
+
+The storage operation is compiled only when CMake finds the exact installed
+PyTorch package. Development and wheel builds therefore pass
+`torch.utils.cmake_prefix_path` as `CMAKE_PREFIX_PATH`. The release installer
+will make that handshake mandatory; an allocator-only build advertises
+`storage_rebinding = 0` and cannot construct a planned callable.

@@ -11,6 +11,10 @@ from shadowspill.pytorch._abi import (
     AdapterFailure,
     AdapterStatistics,
     CudaStatistics,
+    ObjectBinding,
+    ObjectSnapshot,
+    ObjectUpdate,
+    RuntimeAction,
     RuntimeFailure,
     RuntimeStatistics,
     configure_adapter_library,
@@ -33,6 +37,10 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
+    shadowspill_pytorch_promote_allocation = _Function()
+    shadowspill_pytorch_before_task = _Function()
+    shadowspill_pytorch_after_task = _Function()
+    shadowspill_pytorch_object_snapshot = _Function()
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
@@ -43,6 +51,10 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
     assert ctypes.sizeof(AdapterStatistics) == 328
+    assert ctypes.sizeof(ObjectBinding) == 40
+    assert ctypes.sizeof(ObjectUpdate) == 16
+    assert ctypes.sizeof(RuntimeAction) == 16
+    assert ctypes.sizeof(ObjectSnapshot) == 72
 
 
 def test_adapter_signatures_are_configured_together() -> None:
@@ -59,6 +71,28 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_promote_allocation.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    assert library.shadowspill_pytorch_before_task.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.c_uint32,
+        ctypes.POINTER(ObjectBinding),
+        ctypes.c_uint32,
+    ]
+    assert library.shadowspill_pytorch_after_task.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.POINTER(ObjectUpdate),
+        ctypes.c_uint32,
+        ctypes.POINTER(RuntimeAction),
+        ctypes.c_uint32,
+    ]
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:
