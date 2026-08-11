@@ -194,7 +194,7 @@ def replay_selected_schedule(
         transfer_keys.add(key)
         if transfer.direction is TransferDirection.HOST_TO_DEVICE:
             append(
-                transfer.start_ns,
+                interval_by_task[transfer.trigger_task_id].end_ns,
                 _SpatialEventKind.ALLOCATE_PREFETCH,
                 transfer.alias_group_id,
                 alias_size[transfer.alias_group_id],

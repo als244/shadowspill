@@ -85,6 +85,9 @@ typedef struct ShadowSpillQueuedAction {
     uint64_t task_id;
     uint8_t kind;
     uint8_t state;
+    uint8_t destination_reserved;
+    uint64_t destination_offset;
+    uint64_t destination_bytes;
     ShadowSpillObjectRecord *object;
     ShadowSpillTaskFence *fence;
     ShadowSpillBackendEvent completion_event;
@@ -197,6 +200,14 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,
     uint64_t alignment,
+    int plan_owned,
+    uint64_t origin_task_id,
+    ShadowSpillAllocationRecord **record
+);
+ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes,
+    uint64_t offset,
     int plan_owned,
     uint64_t origin_task_id,
     ShadowSpillAllocationRecord **record

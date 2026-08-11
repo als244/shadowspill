@@ -164,14 +164,14 @@ def test_interval_extension_matches_scalar_admission() -> None:
             "headroom-stall/packed-fifo",
             32,
         ),
-        (
-            10,
-            500,
-            "b2428807ae3801a4de45d312329683ad85a17ffa92b256c90c2aa5652baf005c",
-            326_000,
-            "headroom-stall/packed-fifo",
-            94,
-        ),
+            (
+                10,
+                500,
+                "35a9a4d89bc78a897a6b304efd0da4dcf9465b43adb369ad3519aab10b933a6d",
+                302_000,
+                "headroom-stall/packed-fifo",
+                98,
+            ),
     ),
 )
 def test_training_chain_schedule_artifacts_are_frozen(

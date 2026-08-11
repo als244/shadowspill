@@ -27,7 +27,7 @@ static int fixture_create(Fixture *fixture) {
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
         .device_slab_bytes = 128U,
-        .host_arena_bytes = 128U,
+        .host_arena_bytes = 256U,
         .minimum_alignment = 1U,
         .progress_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(fixture->mock),
@@ -61,7 +61,7 @@ static void sleep_milliseconds(uint64_t milliseconds) {
     (void)nanosleep(&delay, NULL);
 }
 
-static int prefetch_admission_follows_transfer_timeline(void) {
+static int prefetch_capacity_is_reserved_at_trigger(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -109,11 +109,13 @@ static int prefetch_admission_follows_transfer_timeline(void) {
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 0U ||
+        statistics.allocated_bytes != 0U ||
         statistics.transfers_to_device != 0U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 1U ||
+        statistics.allocated_bytes != 64U ||
         statistics.transfers_to_device != 1U;
     failed = failed || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -124,6 +126,113 @@ static int prefetch_admission_follows_transfer_timeline(void) {
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
+static int offload_capacity_is_reserved_at_trigger(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .d2h_delay_nanoseconds = 100000000U,
+        .event_delay_nanoseconds = 50000000U,
+    };
+    ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 128U,
+        .host_arena_bytes = 128U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 100000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    runtime_config.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+    const ShadowSpillObjectDescription objects[] = {
+        {.object_id = 1U, .size_bytes = 32U},
+        {.object_id = 2U, .size_bytes = 32U},
+    };
+    ShadowSpillAllocation allocations[2] = {{0}};
+    const ShadowSpillRuntimeAction actions[] = {
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_OFFLOAD},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_OFFLOAD},
+    };
+    int failed = 0;
+    for (uint32_t index = 0U; index < 2U; ++index) {
+        failed = failed || shadowspill_register_object(runtime, &objects[index]) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_allocate(
+                runtime, 32U, 1U, compute, &allocations[index]
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_bind_object(
+                runtime, objects[index].object_id,
+                allocations[index].allocation_id
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed || shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, actions, 2U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.host_allocated_bytes != 0U ||
+        statistics.transfers_to_host != 0U;
+    sleep_milliseconds(60U);
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.host_allocated_bytes != 64U ||
+        statistics.transfers_to_host != 1U;
+    failed = failed || shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.host_allocated_bytes != 64U ||
+        statistics.transfers_to_host != 2U;
+    shadowspill_runtime_destroy(runtime);
+    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
+static int trigger_reservation_failure_is_a_plan_violation(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription objects[] = {
+        {.object_id = 1U, .size_bytes = 80U, .initially_host_resident = 1U},
+        {.object_id = 2U, .size_bytes = 80U, .initially_host_resident = 1U},
+    };
+    const ShadowSpillRuntimeAction actions[] = {
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+    };
+    int failed = shadowspill_register_object(fixture.runtime, &objects[0]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(fixture.runtime, &objects[1]) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            fixture.runtime, 1U, fixture.compute, NULL, 0U, actions, 2U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(fixture.runtime) !=
+            SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+    ShadowSpillRuntimeFailure failure = {0};
+    failed = failed || shadowspill_runtime_failure(
+            fixture.runtime, &failure
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+        failure.object_id != 2U || failure.requested_bytes != 80U ||
+        failure.free_bytes != 48U ||
+        failure.largest_free_range_bytes != 48U;
+    fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
 
@@ -422,7 +531,9 @@ int main(void) {
             invalid_before_task(1U) == 0 && duplicate_action() == 0 &&
             output_allocation_handoff() == 0 &&
             valid_transition_paths() == 0 &&
-            prefetch_admission_follows_transfer_timeline() == 0
+            prefetch_capacity_is_reserved_at_trigger() == 0 &&
+            offload_capacity_is_reserved_at_trigger() == 0 &&
+            trigger_reservation_failure_is_a_plan_violation() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

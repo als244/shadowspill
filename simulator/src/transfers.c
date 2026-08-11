@@ -108,19 +108,8 @@ static int try_start_direction(
                 return 0;
             }
             if (state->device_allocated == 0U) {
-                uint64_t used = work->device_object_bytes[device] +
-                    work->device_workspace_bytes[device];
-                uint64_t total = 0U;
-                if (shadowspill_add_overflow_u64(
-                        used, program->alias_size_bytes[alias], &total
-                    ) || total > program->devices[device].capacity_bytes) {
-                    transfer->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
-                    return 0;
-                }
-                state->device_allocated = 1U;
-                state->device_ready = 0U;
-                work->device_object_bytes[device] +=
-                    program->alias_size_bytes[alias];
+                transfer->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+                return 0;
             }
         } else {
             if (state->device_ready == 0U) {
@@ -128,18 +117,7 @@ static int try_start_direction(
                 return 0;
             }
             if (state->host_allocated == 0U) {
-                uint64_t total = 0U;
-                if (shadowspill_add_overflow_u64(
-                        work->host_bytes,
-                        program->alias_size_bytes[alias],
-                        &total
-                    ) || total > program->host_capacity_bytes) {
-                    transfer->stall_mask |= SHADOWSPILL_STALL_HOST_CAPACITY;
-                    return 0;
-                }
-                state->host_allocated = 1U;
-                state->host_ready = 0U;
-                work->host_bytes = total;
+                return 0;
             }
         }
         transfer->state = SHADOWSPILL_TRANSFER_ACTIVE;
@@ -238,6 +216,31 @@ static int submit_action(
         }
         transfer->direction = SHADOWSPILL_TRANSFER_DEVICE_TO_HOST;
         transfer->sequence = work->d2h_sequence[device]++;
+        if (state->host_allocated == 0U) {
+            uint64_t total = 0U;
+            if (shadowspill_add_overflow_u64(
+                    work->host_bytes,
+                    program->alias_size_bytes[alias],
+                    &total
+                ) || total > program->host_capacity_bytes) {
+                shadowspill_set_capacity_error(
+                    result,
+                    SHADOWSPILL_SIMULATION_OFFLOAD_HOST_CAPACITY,
+                    work,
+                    task,
+                    alias,
+                    device,
+                    SHADOWSPILL_MEMORY_HOST,
+                    program->host_capacity_bytes,
+                    work->host_bytes,
+                    program->alias_size_bytes[alias]
+                );
+                return 0;
+            }
+            state->host_allocated = 1U;
+            state->host_ready = 0U;
+            work->host_bytes = total;
+        }
         state->d2h_pending = 1U;
     } else {
         if ((state->device_allocated != 0U && state->d2h_pending == 0U) ||
@@ -254,9 +257,35 @@ static int submit_action(
         }
         transfer->direction = SHADOWSPILL_TRANSFER_HOST_TO_DEVICE;
         transfer->sequence = work->h2d_sequence[device]++;
+        if (state->device_allocated == 0U) {
+            uint64_t used = work->device_object_bytes[device] +
+                work->device_workspace_bytes[device];
+            uint64_t total = 0U;
+            if (shadowspill_add_overflow_u64(
+                    used, program->alias_size_bytes[alias], &total
+                ) || total > program->devices[device].capacity_bytes) {
+                shadowspill_set_capacity_error(
+                    result,
+                    SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                    work,
+                    task,
+                    alias,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    used,
+                    program->alias_size_bytes[alias]
+                );
+                return 0;
+            }
+            state->device_allocated = 1U;
+            state->device_ready = 0U;
+            work->device_object_bytes[device] = total;
+        }
         state->h2d_pending = 1U;
     }
     transfer->state = SHADOWSPILL_TRANSFER_QUEUED;
+    shadowspill_update_peaks(program, work);
     return 1;
 }
 
@@ -331,10 +360,12 @@ int shadowspill_complete_transfer(
         state->host_ready = 1U;
         state->host_version = state->device_version;
         state->d2h_pending = 0U;
-        state->device_allocated = 0U;
         state->device_ready = 0U;
-        work->device_object_bytes[device] -=
-            program->alias_size_bytes[transfer->alias];
+        if (state->h2d_pending == 0U) {
+            state->device_allocated = 0U;
+            work->device_object_bytes[device] -=
+                program->alias_size_bytes[transfer->alias];
+        }
     }
     transfer->state = SHADOWSPILL_TRANSFER_COMPLETE;
     *active = -1;

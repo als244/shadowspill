@@ -424,6 +424,23 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
+                if not state.host_allocated:
+                    if (
+                        self.host_bytes + state.size_bytes
+                        > self.config.host_capacity_bytes
+                    ):
+                        self._raise_capacity(
+                            kind="offload-host-capacity",
+                            location="host",
+                            capacity=self.config.host_capacity_bytes,
+                            used=self.host_bytes,
+                            requested=state.size_bytes,
+                            task_id=action.trigger_task_id,
+                            aliases=(action.alias_group_id,),
+                        )
+                    state.host_allocated = True
+                    state.host_ready = False
+                    self.host_bytes += state.size_bytes
                 self._enqueue_transfer(
                     action_index,
                     action,
@@ -448,11 +465,32 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
+                if not state.device_allocated:
+                    device_id = state.device_id
+                    used = (
+                        self.device_object_bytes[device_id]
+                        + self.device_workspace_bytes[device_id]
+                    )
+                    capacity = self.device_config[device_id].capacity_bytes
+                    if used + state.size_bytes > capacity:
+                        self._raise_capacity(
+                            kind="prefetch-device-capacity",
+                            location=f"device:{device_id}",
+                            capacity=capacity,
+                            used=used,
+                            requested=state.size_bytes,
+                            task_id=action.trigger_task_id,
+                            aliases=(action.alias_group_id,),
+                        )
+                    state.device_allocated = True
+                    state.device_ready = False
+                    self.device_object_bytes[device_id] += state.size_bytes
                 self._enqueue_transfer(
                     action_index,
                     action,
                     TransferDirection.HOST_TO_DEVICE,
                 )
+            self._snapshot()
             self.next_action_index += 1
 
     def _complete_task(self, key: tuple[str, ResourceKind, int]) -> None:
@@ -507,28 +545,13 @@ class _Simulator:
                 pending.stall_reasons.add("source-readiness")
                 return False
             if not state.device_allocated:
-                used = (
-                    self.device_object_bytes[device_id]
-                    + self.device_workspace_bytes[device_id]
-                )
-                capacity = self.device_config[device_id].capacity_bytes
-                if used + state.size_bytes > capacity:
-                    pending.stall_reasons.add("device-capacity")
-                    return False
-                state.device_allocated = True
-                state.device_ready = False
-                self.device_object_bytes[device_id] += state.size_bytes
+                raise AssertionError("queued H2D has no trigger-time reservation")
         else:
             if not state.device_ready:
                 pending.stall_reasons.add("source-readiness")
                 return False
             if not state.host_allocated:
-                if self.host_bytes + state.size_bytes > self.config.host_capacity_bytes:
-                    pending.stall_reasons.add("host-capacity")
-                    return False
-                state.host_allocated = True
-                state.host_ready = False
-                self.host_bytes += state.size_bytes
+                raise AssertionError("queued D2H has no trigger-time reservation")
         queue.popleft()
         runtime = self._transfer_runtime_ns(state, direction)
         active_table[device_id] = _ActiveTransfer(
@@ -573,9 +596,10 @@ class _Simulator:
             state.host_ready = True
             state.host_version = state.device_version
             state.d2h_pending = False
-            state.device_allocated = False
             state.device_ready = False
-            self.device_object_bytes[device_id] -= state.size_bytes
+            if not state.h2d_pending:
+                state.device_allocated = False
+                self.device_object_bytes[device_id] -= state.size_bytes
         self.transfer_intervals.append(
             TransferInterval(
                 alias_group_id=pending.alias_group_id,

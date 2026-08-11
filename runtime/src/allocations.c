@@ -94,9 +94,29 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     if (range_status < 0) {
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
+    ShadowSpillRuntimeStatus status =
+        shadowspill_adopt_reserved_device_range_locked(
+            runtime, bytes, offset, plan_owned, origin_task_id, record
+        );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        (void)shadowspill_range_free(
+            &runtime->device_ranges, offset, charged
+        );
+    }
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes,
+    uint64_t offset,
+    int plan_owned,
+    uint64_t origin_task_id,
+    ShadowSpillAllocationRecord **record
+) {
+    const uint64_t charged = bytes == 0U ? 1U : bytes;
     ShadowSpillAllocationRecord *created = calloc(1U, sizeof(*created));
     if (created == NULL) {
-        (void)shadowspill_range_free(&runtime->device_ranges, offset, charged);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     created->allocation_id = runtime->next_allocation_id++;
@@ -128,9 +148,6 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
                    : SHADOWSPILL_ALLOCATION_ANONYMOUS
     );
     if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
-        (void)shadowspill_range_free(
-            &runtime->device_ranges, offset, charged
-        );
         runtime->allocations = created->next;
         runtime->requested_allocated_bytes -= bytes;
         --runtime->live_allocations;

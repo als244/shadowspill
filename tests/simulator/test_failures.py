@@ -139,6 +139,73 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
     assert error.requested_bytes == 128
 
 
+@pytest.mark.parametrize("record_timeline", [False, True])
+def test_prefetch_reserves_capacity_at_trigger_before_lane_head(
+    record_timeline: bool,
+) -> None:
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(
+            AliasGroupSpec("resident_storage", "cuda_0", 64),
+            AliasGroupSpec("first_host_storage", "cuda_0", 64),
+            AliasGroupSpec("second_host_storage", "cuda_0", 64),
+        ),
+        objects=(
+            ObjectSpec("resident", "resident_storage", 0, 64, ObjectRole.INPUT),
+            ObjectSpec("first", "first_host_storage", 0, 64, ObjectRole.INPUT),
+            ObjectSpec("second", "second_host_storage", 0, 64, ObjectRole.INPUT),
+        ),
+        profiles=(TaskProfile("trigger_profile", 10, 0, "trigger_abi"),),
+        tasks=(
+            TaskSpec(
+                "first_trigger",
+                compute,
+                "trigger_profile",
+                inputs=("resident",),
+            ),
+            TaskSpec(
+                "second_trigger",
+                compute,
+                "trigger_profile",
+                dependencies=("first_trigger",),
+                inputs=("resident",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(
+            ResidencySpec("resident_storage", MemoryLocation.DEVICE),
+            ResidencySpec("first_host_storage", MemoryLocation.HOST),
+            ResidencySpec("second_host_storage", MemoryLocation.HOST),
+        ),
+        actions=(
+            MemoryAction(
+                "first_trigger", "first_host_storage", MemoryActionKind.PREFETCH
+            ),
+            MemoryAction(
+                "second_trigger", "second_host_storage", MemoryActionKind.PREFETCH
+            ),
+        ),
+    )
+
+    with pytest.raises(SimulationInfeasibleError) as caught:
+        simulate(
+            program,
+            schedule,
+            config=calibrated_config(device_capacity_bytes=160),
+            record_timeline=record_timeline,
+        )
+
+    error = caught.value
+    assert error.kind == "prefetch-device-capacity"
+    assert error.time_ns == 20
+    assert error.task_id == "second_trigger"
+    assert error.alias_group_ids == ("second_host_storage",)
+    assert error.used_bytes == 128
+    assert error.requested_bytes == 64
+
+
 def test_task_workspace_and_outputs_are_admitted_together() -> None:
     with pytest.raises(SimulationInfeasibleError) as caught:
         simulate(

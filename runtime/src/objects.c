@@ -640,17 +640,6 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
             status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             break;
         }
-        if (actions[index].kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-            !object->has_host_range) {
-            uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
-            if (shadowspill_range_allocate(
-                    &runtime->host_ranges, charged, 1U, &object->host_offset
-                ) != 0) {
-                status = SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
-                break;
-            }
-            object->has_host_range = 1U;
-        }
         ShadowSpillQueuedAction *created = calloc(1U, sizeof(*created));
         if (created == NULL) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;

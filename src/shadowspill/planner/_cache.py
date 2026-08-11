@@ -26,7 +26,7 @@ from .model import (
 )
 from .pressurefit import pressurefit
 
-_SCHEMA = "shadowspill.pressurefit_selection/v1"
+_SCHEMA = "shadowspill.pressurefit_selection/v2"
 
 
 @dataclass(frozen=True, slots=True)

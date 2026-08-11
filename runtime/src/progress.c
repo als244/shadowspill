@@ -148,10 +148,71 @@ static int event_complete_locked(
     return 0;
 }
 
+static int reserve_destination_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillQueuedAction *action
+) {
+    if (action->destination_reserved ||
+        (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
+         action->object->has_host_range)) {
+        return 1;
+    }
+    int trigger_complete = 0;
+    if (event_complete_locked(
+            runtime,
+            action->fence->event,
+            action->object->object_id,
+            &trigger_complete
+        ) != 0) {
+        return -1;
+    }
+    if (!trigger_complete) {
+        return 0;
+    }
+    const uint64_t charged = action->object->size_bytes == 0U
+        ? 1U
+        : action->object->size_bytes;
+    uint64_t offset = 0U;
+    int range_status = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+        ? shadowspill_range_allocate_best_fit_low(
+            &runtime->device_ranges,
+            charged,
+            runtime->minimum_alignment,
+            &offset
+        )
+        : shadowspill_range_allocate(
+            &runtime->host_ranges, charged, 1U, &offset
+        );
+    if (range_status != 0) {
+        ShadowSpillRuntimeStatus status = range_status < 0
+            ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+            : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        shadowspill_latch_failure_locked(
+            runtime,
+            status,
+            action->object->object_id,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            action->object->size_bytes
+        );
+        return -1;
+    }
+    action->destination_reserved = 1U;
+    action->destination_offset = offset;
+    action->destination_bytes = charged;
+    pthread_cond_broadcast(&runtime->condition);
+    return 1;
+}
+
 static int dispatch_offload_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
+    for (ShadowSpillQueuedAction *earlier = runtime->action_head;
+         earlier != NULL && earlier != action; earlier = earlier->next) {
+        if (earlier->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+            return 0;
+        }
+    }
     ShadowSpillObjectRecord *object = action->object;
     if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
         return 0;
@@ -159,8 +220,7 @@ static int dispatch_offload_locked(
     ShadowSpillAllocationRecord *allocation = shadowspill_find_allocation(
         runtime, object->allocation_id
     );
-    if (allocation == NULL || allocation->pointer == NULL ||
-        !object->has_host_range) {
+    if (allocation == NULL || allocation->pointer == NULL) {
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_RUNTIME_INVALID_STATE,
@@ -169,6 +229,23 @@ static int dispatch_offload_locked(
             object->size_bytes
         );
         return -1;
+    }
+    int host_range_created = 0;
+    if (!object->has_host_range) {
+        if (!action->destination_reserved) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                object->object_id,
+                object->allocation_id,
+                object->size_bytes
+            );
+            return -1;
+        }
+        object->host_offset = action->destination_offset;
+        object->has_host_range = 1U;
+        action->destination_reserved = 0U;
+        host_range_created = 1;
     }
     int completion_created = 0;
     if (runtime->backend.wait_event(
@@ -211,6 +288,15 @@ backend_failure:
             runtime->backend.context, action->completion_event
         );
     }
+    if (host_range_created) {
+        const uint64_t charged = object->size_bytes == 0U
+            ? 1U
+            : object->size_bytes;
+        (void)shadowspill_range_free(
+            &runtime->host_ranges, object->host_offset, charged
+        );
+        object->has_host_range = 0U;
+    }
     shadowspill_latch_failure_locked(
         runtime,
         SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -231,31 +317,27 @@ static int dispatch_prefetch_locked(
             return 0;
         }
     }
-    int trigger_complete = 0;
-    if (event_complete_locked(
+    if (!action->destination_reserved) {
+        shadowspill_latch_failure_locked(
             runtime,
-            action->fence->event,
+            SHADOWSPILL_RUNTIME_INVALID_STATE,
             action->object->object_id,
-            &trigger_complete
-        ) != 0) {
+            SHADOWSPILL_RUNTIME_NO_ID,
+            action->object->size_bytes
+        );
         return -1;
-    }
-    if (!trigger_complete) {
-        return 0;
     }
     ShadowSpillObjectRecord *object = action->object;
     ShadowSpillAllocationRecord *allocation = NULL;
-    ShadowSpillRuntimeStatus allocation_status = shadowspill_allocate_locked(
+    ShadowSpillRuntimeStatus allocation_status =
+        shadowspill_adopt_reserved_device_range_locked(
         runtime,
         object->size_bytes,
-        1U,
+        action->destination_offset,
         1,
         action->task_id,
         &allocation
     );
-    if (allocation_status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
-        return 0;
-    }
     if (allocation_status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_failure_locked(
             runtime,
@@ -266,6 +348,7 @@ static int dispatch_prefetch_locked(
         );
         return -1;
     }
+    action->destination_reserved = 0U;
     int completion_created = 0;
     if (runtime->backend.wait_event(
             runtime->backend.context,
@@ -404,17 +487,19 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                     action = next;
                     continue;
                 }
-            } else if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
-                int dispatched = dispatch_offload_locked(runtime, action);
-                if (dispatched < 0) {
+            } else {
+                int reserved = reserve_destination_locked(runtime, action);
+                if (reserved < 0) {
                     return changed;
                 }
-                changed |= dispatched;
-                if (dispatched != 0) {
-                    pthread_cond_broadcast(&runtime->condition);
+                if (reserved == 0) {
+                    previous = action;
+                    action = next;
+                    continue;
                 }
-            } else {
-                int dispatched = dispatch_prefetch_locked(runtime, action);
+                int dispatched = action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
+                    ? dispatch_offload_locked(runtime, action)
+                    : dispatch_prefetch_locked(runtime, action);
                 if (dispatched < 0) {
                     return changed;
                 }

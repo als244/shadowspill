@@ -812,3 +812,58 @@ the ignored internal progress log before this tracked summary is updated.
   promised input-preserving strides while the explicit VJP returned contiguous
   gradients. Real and fake outputs now declare contiguous layouts explicitly,
   and `torch.library.opcheck` guards the complete operation contract.
+
+## 2026-08-11 — Causal destination-reservation incident
+
+- Exact optimized-Llama qualification exposed a timing-dependent admission
+  failure at task 71. The simulator placed a 525,336,576-byte optimizer-state
+  H2D at 53.137849 ms, after task 71's predicted 31.931168--35.025216 ms
+  interval. The real FIFO H2D lane reached and leased that destination before
+  task 71, leaving only 76,484,104 bytes free for task 71's second required
+  525,336,576-byte allocation. No pending event could make progress, so the
+  allocator correctly raised a diagnostic no-progress OOM.
+- The root cause is a semantic mismatch: the directive trigger queued work, but
+  simulator and spatial admission charged destination capacity only at the
+  predicted transfer start while runtime charged it at actual dispatch. Correct
+  admission therefore depended on exact relative compute/transfer timing.
+- H2D speculative runahead, Python lifetime leakage, missing logical free,
+  size-class incompatibility, and out-of-order dispatch were each disproved.
+  The complete two-sided ledger, timeline diagrams, and corrected causal
+  contract are documented in `docs/deadlock_example.md`.
+- Decision: destination capacity is reserved at the annotated trigger boundary;
+  binding/copy still occurs only at actual transfer-lane head. Simulator, exact
+  spatial replay, and runtime must share this lifetime. Timing may affect
+  overlap and makespan but never physical feasibility.
+
+## 2026-08-11 — Causal reservation implemented and replayed
+
+- The C and Python simulators now charge H2D device and D2H host destinations at
+  trigger completion. Exact slab admission places the same claims at trigger
+  task end, and the neutral C worker reserves ranges before dispatch while
+  retaining one physical transfer per direction. Dispatch consumes an existing
+  reservation; it creates no additional capacity demand.
+- Added a four-object isolated regression reproducing the false old admission:
+  120 bytes appears feasible when a queued destination is charged at transfer
+  start but requires 150 bytes under the true causal lifetime. Both simulator
+  implementations reject 120 with `used=100`, `requested=50`, and
+  `capacity=120`; at 150, compute still overlaps the first H2D and the second
+  H2D remains FIFO.
+- The full incident report now identifies the initial failing call exactly:
+  head/objective recomputation task `task_000071`, profile allocation ordinal
+  28, a 525,336,576-byte anonymous BF16 result of
+  `grad_logits.T @ hidden_chunk`. The preceding same-sized persistent gradient
+  allocation succeeded; the failing `malloc` had no object/allocation identity
+  because no range was returned.
+- Replaying the old 10-GiB optimized-Llama plan under corrected semantics
+  reconstructs 10,093,654,520 bytes of demand, exactly matching the runtime
+  ledger. The old schedule is rejected; a fresh selected plan has 1,039 actions,
+  7,078,196,088 D2H bytes, 1,197,678,816 H2D bytes, and completes a real
+  two-microbatch training step in 0.410 seconds.
+- The correctness rerun isolated planning latency: warm structural profiling
+  used 0.003 seconds and all capture/lowering/compilation phases about 12
+  seconds, while Python PressureFit used 297.478 of 315.327 total seconds. The
+  next performance milestone is therefore the fresh complete C PressureFit
+  implementation, not weaker graph partitioning or fewer transfer choices.
+- All 16 compiled gates, Ruff, MyPy, and 423 ordinary Python tests pass. Five
+  public CUDA tests conflict only when included after CUDA-initializing tests in
+  one process; all five pass through their required fresh-process CTest gates.

@@ -62,6 +62,17 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                 runtime->backend.context, action->completion_event
             );
         }
+        if (action->destination_reserved) {
+            ShadowSpillRangeAllocator *ranges =
+                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+                ? &runtime->device_ranges
+                : &runtime->host_ranges;
+            (void)shadowspill_range_free(
+                ranges,
+                action->destination_offset,
+                action->destination_bytes
+            );
+        }
         ShadowSpillTaskFence *fence = action->fence;
         if (--fence->references == 0U) {
             (void)runtime->backend.destroy_event(
