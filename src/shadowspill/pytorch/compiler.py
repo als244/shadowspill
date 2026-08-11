@@ -168,7 +168,22 @@ class CudaTaskProfiler:
             raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
 
         executable = self._compiled(artifact)
-        return self._measure_callable(executable)
+        digest = artifact.compatibility_digest
+        try:
+            measurement = self._measure_callable(executable)
+        except BaseException:
+            self._executables.pop(digest, None)
+            raise
+        else:
+            # The compiled function does not own its example arguments. Keeping
+            # every unique ABI's CUDA examples alive until take_functions()
+            # makes isolated profiling scale with the sum of model-stage
+            # inputs, rather than the largest ABI. Retain only the executable.
+            self._executables[digest] = CompiledTask(artifact, executable.function, ())
+            return measurement
+        finally:
+            del executable
+            gc.collect()
 
     def _measure_callable(self, executable: Callable[[], object]) -> TaskMeasurement:
         """Measure a warmed no-argument task through the allocator boundary."""

@@ -383,6 +383,12 @@ Phase 8 — public forward and training callables.
   Compiled simulator and planner paths must be supplied during coverage so
   their differential tests run rather than appearing as intentionally
   uncovered Python projections.
+- The first exact 1.180B planning attempt found that structural profiling kept
+  every compiled ABI's real CUDA example arguments alive until the end of the
+  phase. Profiling now retains only compiled functions after each measurement,
+  so physical demand is the largest isolated ABI rather than the sum of all
+  previously visited ABIs. A separate remaining blocker is the monolithic
+  all-parameter optimizer ABI; it is not being hidden by this fix.
 
 ## Gate rule
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+import gc
+import weakref
 from types import SimpleNamespace
 from typing import Any
 
@@ -248,3 +250,33 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     profiler._compiled(artifact)
     profiler._compiled(artifact)
     assert calls == [artifact.compatibility_digest, artifact.compatibility_digest]
+
+
+def test_measurement_releases_cuda_examples_between_structural_abis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.pytorch import compiler as compiler_module
+    from shadowspill.pytorch.profiling import TaskMeasurement
+
+    artifact = _artifact()
+    examples = [torch.ones(8)]
+    example_reference = weakref.ref(examples[0])
+
+    def compile_with_large_example(
+        value: GraphArtifact, *, device_ordinal: int
+    ) -> CompiledTask:
+        assert device_ordinal == 0
+        return CompiledTask(value, lambda *arguments: arguments, (examples[0],))
+
+    measurement = TaskMeasurement(1, 0, 0, (), (1,), "test")
+    monkeypatch.setattr(compiler_module, "compile_artifact", compile_with_large_example)
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    monkeypatch.setattr(profiler, "_measure_callable", lambda executable: measurement)
+
+    assert profiler.measure(artifact) is measurement
+    examples.clear()
+    gc.collect()
+    assert example_reference() is None
+    assert profiler._compiled(artifact).example_arguments == ()
