@@ -44,6 +44,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
   stream synchronization.
 - [x] CUDA admission telemetry reports per-process physical bytes through NVML,
   separately from logical slab occupancy, plus whole-device used/total bytes.
+- [x] Neutral physical admission computes explicit provider/workspace/host
+  leeway and replays complete allocation lifetimes through the production slab
+  policy without moving planner directives.
 
 ## Completed gates
 

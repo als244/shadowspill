@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import pytest
+
+from shadowspill.runtime import (
+    AdmissionError,
+    AllocationEvent,
+    AllocationOperation,
+    admit_physical_budget,
+    replay_slab_timeline,
+)
+
+MIB = 1 << 20
+GIB = 1 << 30
+
+
+def event(
+    position: int,
+    allocation_id: str,
+    operation: AllocationOperation,
+    bytes_: int,
+    alignment: int = 1,
+) -> AllocationEvent:
+    return AllocationEvent(position, allocation_id, operation, bytes_, alignment)
+
+
+def test_sequential_temporaries_are_charged_by_net_live_peak() -> None:
+    replay = replay_slab_timeline(
+        128,
+        (
+            event(0, "first", AllocationOperation.ALLOCATE, 96),
+            event(1, "first", AllocationOperation.FREE, 96),
+            event(2, "second", AllocationOperation.ALLOCATE, 112),
+            event(3, "second", AllocationOperation.FREE, 112),
+        ),
+    )
+    assert replay.peak_allocated_bytes == 112
+    assert replay.final_allocated_bytes == 0
+    assert replay.final_largest_free_range_bytes == 128
+
+
+def test_spatial_replay_reports_fragmentation_not_only_total_free() -> None:
+    timeline = (
+        event(0, "left", AllocationOperation.ALLOCATE, 32),
+        event(1, "middle", AllocationOperation.ALLOCATE, 32),
+        event(2, "right", AllocationOperation.ALLOCATE, 32),
+        event(3, "left", AllocationOperation.FREE, 32),
+        event(4, "right", AllocationOperation.FREE, 32),
+        event(5, "large", AllocationOperation.ALLOCATE, 48),
+    )
+    with pytest.raises(AdmissionError, match="largest range") as captured:
+        replay_slab_timeline(96, timeline)
+    assert captured.value.kind == "slab_fragmentation"
+    assert captured.value.free_bytes == 64
+    assert captured.value.largest_free_range_bytes == 32
+    assert captured.value.position == 5
+
+
+def test_physical_admission_exposes_every_subtraction() -> None:
+    admission, replay = admit_physical_budget(
+        device_budget_bytes=4 * GIB,
+        host_budget_bytes=3 * GIB,
+        context_bytes=500 * MIB,
+        observed_external_bytes=600 * MIB,
+        maximum_task_workspace_bytes=600 * MIB,
+        predicted_host_peak_bytes=1 * GIB,
+        allocation_timeline=(
+            event(0, "parameter", AllocationOperation.ALLOCATE, 1 * GIB, 256),
+            event(1, "parameter", AllocationOperation.FREE, 1 * GIB, 256),
+        ),
+    )
+    assert admission.provider_headroom_bytes == 704 * MIB
+    assert admission.slab_bytes == 4 * GIB - 500 * MIB - 704 * MIB
+    assert admission.workspace_reserve_bytes == 750 * MIB
+    assert admission.object_capacity_bytes == (
+        admission.slab_bytes - admission.workspace_reserve_bytes
+    )
+    assert admission.host_reservation_bytes == 1280 * MIB
+    assert replay.peak_allocated_bytes == 1 * GIB
+
+
+@pytest.mark.parametrize(
+    ("overrides", "kind"),
+    [
+        ({"device_budget_bytes": 1000 * MIB}, "fixed_device_budget"),
+        ({"maximum_task_workspace_bytes": 3 * GIB}, "workspace_budget"),
+        ({"host_budget_bytes": 1 * GIB}, "host_budget"),
+    ],
+)
+def test_admission_failures_identify_the_physical_category(
+    overrides: dict[str, int], kind: str
+) -> None:
+    arguments = {
+        "device_budget_bytes": 4 * GIB,
+        "host_budget_bytes": 3 * GIB,
+        "context_bytes": 500 * MIB,
+        "observed_external_bytes": 0,
+        "maximum_task_workspace_bytes": 128 * MIB,
+        "predicted_host_peak_bytes": 1 * GIB,
+    }
+    arguments.update(overrides)
+    with pytest.raises(AdmissionError) as captured:
+        admit_physical_budget(**arguments)
+    assert captured.value.kind == kind
+
+
+def test_invalid_timeline_lifetimes_are_rejected() -> None:
+    with pytest.raises(ValueError, match="not live"):
+        replay_slab_timeline(
+            64,
+            (event(0, "missing", AllocationOperation.FREE, 16),),
+        )
+    with pytest.raises(ValueError, match="non-decreasing"):
+        replay_slab_timeline(
+            64,
+            (
+                event(1, "allocation", AllocationOperation.ALLOCATE, 16),
+                event(0, "allocation", AllocationOperation.FREE, 16),
+            ),
+        )
