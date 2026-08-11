@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import hashlib
 import json
 import os
 import subprocess
@@ -15,6 +17,8 @@ from typing import Any
 import torch
 
 from shadowspill.pytorch import plan
+from shadowspill.pytorch._abi import AdapterStatistics
+from shadowspill.pytorch._allocator import installed_allocator
 
 from .cases import DEFAULT_DEVICE_BUDGETS, ModelImplementation, build_case
 from .metrics import compare_states, cpu_state, state_digest
@@ -61,10 +65,94 @@ def _cuda_microbatches(values: list[list[Any]]) -> list[list[Any]]:
     ]
 
 
+def _json_argument(value: str, *, description: str) -> Any:
+    source = value
+    if value.startswith("@"):
+        path = Path(value[1:]).expanduser().resolve()
+        if not path.is_file():
+            raise ValueError(f"{description} file does not exist: {path}")
+        source = path.read_text()
+    try:
+        return json.loads(source)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid {description} JSON: {exc}") from exc
+
+
+def _case_options(values: list[str]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for value in values:
+        name, separator, encoded = value.partition("=")
+        if separator == "" or not name:
+            raise ValueError("case options must use NAME=JSON")
+        result[name] = _json_argument(encoded, description=f"case option {name!r}")
+    return result
+
+
+def _case_identity(
+    *,
+    model_name: str,
+    model_implementation: ModelImplementation,
+    seed: int,
+    model_config: dict[str, Any],
+    data_geometry: list[dict[str, Any]] | None,
+    case_factory: str | None,
+    case_options: dict[str, Any],
+) -> str:
+    payload = {
+        "model_name": model_name,
+        "model_implementation": model_implementation,
+        "seed": seed,
+        "model_config": model_config,
+        "data_geometry": data_geometry,
+        "case_factory": case_factory,
+        "case_options": case_options,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _adapter_statistics() -> AdapterStatistics:
+    installed = installed_allocator()
+    if installed is None:
+        raise RuntimeError("ShadowSpill allocator is not installed")
+    result = AdapterStatistics()
+    status = int(
+        installed.library.shadowspill_pytorch_allocator_statistics(
+            ctypes.byref(result)
+        )
+    )
+    if status != 0:
+        raise RuntimeError(f"allocator statistics failed with status {status}")
+    return result
+
+
+def _check_physical_budget() -> int:
+    installed = installed_allocator()
+    if installed is None:
+        raise RuntimeError("ShadowSpill allocator is not installed")
+    return int(installed.library.shadowspill_pytorch_check_physical_budget())
+
+
 def _eager_worker(
-    family: str, model_implementation: ModelImplementation, output: Path
+    family: str,
+    model_implementation: ModelImplementation,
+    output: Path,
+    *,
+    seed: int,
+    model_config: dict[str, Any],
+    data_geometry: list[dict[str, Any]] | None,
+    case_factory: str | None,
+    case_options: dict[str, Any],
 ) -> None:
-    case = build_case(family, model_implementation=model_implementation)
+    case = build_case(
+        family,
+        model_implementation=model_implementation,
+        seed=seed,
+        model_config=model_config,
+        data_geometry=data_geometry,
+        case_factory=case_factory,
+        case_options=case_options,
+    )
     model = case.model.cuda()
     microbatches = _cuda_microbatches(case.microbatches)
     optimizer = case.optimizer(model.parameters())
@@ -86,6 +174,15 @@ def _eager_worker(
     artifact = {
         "family": family,
         "model_implementation": model_implementation,
+        "case_identity": _case_identity(
+            model_name=family,
+            model_implementation=model_implementation,
+            seed=seed,
+            model_config=model_config,
+            data_geometry=data_geometry,
+            case_factory=case_factory,
+            case_options=case_options,
+        ),
         "losses": losses,
         "step_seconds": timings,
         "model": cpu_state(model.state_dict()),
@@ -101,8 +198,31 @@ def _planned_worker(
     reference_path: Path,
     result_path: Path,
     device_budget: int,
+    *,
+    seed: int,
+    model_config: dict[str, Any],
+    data_geometry: list[dict[str, Any]] | None,
+    case_factory: str | None,
+    case_options: dict[str, Any],
 ) -> None:
-    case = build_case(family, model_implementation=model_implementation)
+    identity = _case_identity(
+        model_name=family,
+        model_implementation=model_implementation,
+        seed=seed,
+        model_config=model_config,
+        data_geometry=data_geometry,
+        case_factory=case_factory,
+        case_options=case_options,
+    )
+    case = build_case(
+        family,
+        model_implementation=model_implementation,
+        seed=seed,
+        model_config=model_config,
+        data_geometry=data_geometry,
+        case_factory=case_factory,
+        case_options=case_options,
+    )
     with case.implementations():
         planning_started = time.perf_counter()
         training = plan(
@@ -114,6 +234,8 @@ def _planned_worker(
             host_budget=_HOST_BUDGET,
         )
         planning_seconds = time.perf_counter() - planning_started
+        physical_statuses = [_check_physical_budget()]
+        execution_baseline = _adapter_statistics()
         losses: list[list[float]] = []
         timings: list[float] = []
         checkpoint: object | None = None
@@ -122,6 +244,7 @@ def _planned_worker(
             started = time.perf_counter()
             step_result = training(case.microbatches)
             torch.cuda.current_stream().synchronize()
+            physical_statuses.append(_check_physical_budget())
             timings.append(time.perf_counter() - started)
             values = [float(item) for item in step_result.objectives]
             losses.append(values)
@@ -138,20 +261,23 @@ def _planned_worker(
         for _step in range(2):
             step_result = training(case.microbatches)
             torch.cuda.current_stream().synchronize()
+            physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
+        runtime_statistics = _adapter_statistics()
         training.close()
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)
-    if reference.get("family") != family or reference.get(
-        "model_implementation"
-    ) != model_implementation:
+    if (
+        reference.get("family") != family
+        or reference.get("model_implementation") != model_implementation
+        or reference.get("case_identity") != identity
+    ):
         raise RuntimeError(
-            "eager reference identity differs from requested qualification: "
-            f"expected={model_implementation}/{family}, "
-            f"actual={reference.get('model_implementation')}/{reference.get('family')}"
+            "eager reference identity differs from requested qualification; "
+            "regenerate it without --reuse-eager"
         )
     tensor_results, exact_failures = compare_states(
         {"model": reference["model"], "optimizer": reference["optimizer"]},
@@ -168,8 +294,7 @@ def _planned_worker(
             relative = abs(actual - expected) / max(abs(expected), 1e-30)
             worst_loss_relative = max(worst_loss_relative, relative)
             if abs(actual - expected) > (
-                _LOSS_ABSOLUTE_TOLERANCE
-                + _LOSS_RELATIVE_TOLERANCE * abs(expected)
+                _LOSS_ABSOLUTE_TOLERANCE + _LOSS_RELATIVE_TOLERANCE * abs(expected)
             ):
                 loss_failures.append(
                     f"step {step} microbatch {microbatch}: "
@@ -184,9 +309,19 @@ def _planned_worker(
         (item.group_id, item.option_id) for item in report.execution_plan.selections
     )
     qualification_result = {
-        "schema": "shadowspill.numerical_qualification/v2",
+        "schema": "shadowspill.numerical_qualification/v3",
         "family": family,
         "model_implementation": model_implementation,
+        "case_identity": identity,
+        "case_request": {
+            "model_name": family,
+            "model_implementation": model_implementation,
+            "seed": seed,
+            "model_config": model_config,
+            "data_geometry": data_geometry,
+            "case_factory": case_factory,
+            "case_options": case_options,
+        },
         "device_budget_bytes": device_budget,
         "tolerances": {
             "loss_rtol": _LOSS_RELATIVE_TOLERANCE,
@@ -241,8 +376,47 @@ def _planned_worker(
             report.execution_plan.admission.predicted_fragmentation_bytes
         ),
         "fixed_slab_bytes": report.fixed_slab_bytes,
+        "physical_budget_statuses": physical_statuses,
+        "physical_budget_sealed": bool(runtime_statistics.physical_budget_sealed),
+        "peak_process_physical_bytes": int(
+            runtime_statistics.peak_process_physical_bytes
+        ),
+        "observed_external_high_water_bytes": int(
+            runtime_statistics.observed_external_high_water_bytes
+        ),
+        "slab_bytes": int(runtime_statistics.runtime.slab_bytes),
+        "slab_peak_allocated_bytes": int(
+            runtime_statistics.runtime.peak_allocated_bytes
+        ),
+        "host_arena_bytes": int(runtime_statistics.runtime.host_arena_bytes),
+        "host_peak_allocated_bytes": int(
+            runtime_statistics.runtime.host_peak_allocated_bytes
+        ),
+        "callback_failures": int(runtime_statistics.callback_failures),
+        "pointer_lookup_failures": int(
+            runtime_statistics.pointer_lookup_failures
+        ),
+        "allocation_event_overflow": bool(
+            runtime_statistics.runtime.allocation_event_overflow
+        ),
+        "cuda_device_allocations": int(
+            runtime_statistics.cuda.device_allocations
+        ),
+        "steady_state_cuda_device_allocations": int(
+            runtime_statistics.cuda.device_allocations
+            - execution_baseline.cuda.device_allocations
+        ),
+        "steady_state_pinned_host_allocations": int(
+            runtime_statistics.cuda.pinned_host_allocations
+            - execution_baseline.cuda.pinned_host_allocations
+        ),
         "profile_cache_hits": report.profile_cache_hits,
         "profile_cache_misses": report.profile_cache_misses,
+        "profile_unique_keys": report.profile_unique_keys,
+        "captured_stage_count": report.captured_stage_count,
+        "aot_unique_stage_abis": report.aot_unique_stage_abis,
+        "aot_graph_pair_cache_hits": report.aot_graph_pair_cache_hits,
+        "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "recomputation_cache_hits": report.recomputation_cache_hits,
         "recomputation_cache_misses": report.recomputation_cache_misses,
     }
@@ -255,6 +429,20 @@ def _planned_worker(
         and report.transfer_bytes_to_device > 0
         and qualification_result["selected_recomputation"]
         and report.predicted_device_peak_bytes <= device_budget
+        and not any(physical_statuses)
+        and qualification_result["physical_budget_sealed"]
+        and qualification_result["peak_process_physical_bytes"] <= device_budget
+        and qualification_result["slab_peak_allocated_bytes"]
+        <= qualification_result["slab_bytes"]
+        and qualification_result["host_peak_allocated_bytes"]
+        <= qualification_result["host_arena_bytes"]
+        <= _HOST_BUDGET
+        and qualification_result["callback_failures"] == 0
+        and qualification_result["pointer_lookup_failures"] == 0
+        and not qualification_result["allocation_event_overflow"]
+        and qualification_result["cuda_device_allocations"] == 1
+        and qualification_result["steady_state_cuda_device_allocations"] == 0
+        and qualification_result["steady_state_pinned_host_allocations"] == 0
     )
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
@@ -272,12 +460,25 @@ def _orchestrate(
     model_implementation: ModelImplementation,
     result_directory: Path,
     device_budget: int,
+    *,
+    seed: int,
+    model_config_argument: str,
+    data_geometry_argument: str | None,
+    case_factory: str | None,
+    case_option_arguments: list[str],
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
     reference = result_directory / f"{prefix}_eager.pt"
     result = result_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
+    options = ["--seed", str(seed), "--model-config", model_config_argument]
+    if data_geometry_argument is not None:
+        options.extend(("--data-geometry", data_geometry_argument))
+    if case_factory is not None:
+        options.extend(("--case-factory", case_factory))
+    for value in case_option_arguments:
+        options.extend(("--case-option", value))
     environment = dict(os.environ)
     subprocess.run(
         [
@@ -287,6 +488,7 @@ def _orchestrate(
             str(reference),
             "--model-implementation",
             model_implementation,
+            *options,
         ],
         check=True,
         env=environment,
@@ -301,6 +503,7 @@ def _orchestrate(
             str(device_budget),
             "--model-implementation",
             model_implementation,
+            *options,
         ],
         check=True,
         env=environment,
@@ -311,7 +514,7 @@ def _orchestrate(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("run", "_eager", "_planned"))
-    parser.add_argument("family", choices=tuple(DEFAULT_DEVICE_BUDGETS))
+    parser.add_argument("family", help="built-in family or custom model name")
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--device-budget", type=int)
     parser.add_argument(
@@ -320,22 +523,83 @@ def main() -> int:
         default="pytorch",
         help="pure PyTorch is the formal numerical authority",
     )
+    parser.add_argument("--seed", type=int, default=20_260_811)
+    parser.add_argument(
+        "--model-config",
+        default="{}",
+        metavar="JSON|@FILE",
+        help="built-in dataclass field overrides or custom-factory configuration",
+    )
+    parser.add_argument(
+        "--data-geometry",
+        metavar="JSON|@FILE",
+        help="microbatch geometry list; omitted uses the built-in two-shape gate",
+    )
+    parser.add_argument(
+        "--case-factory",
+        metavar="MODULE:FUNCTION",
+        help="factory for a model not in the built-in verification registry",
+    )
+    parser.add_argument(
+        "--case-option",
+        action="append",
+        default=[],
+        metavar="NAME=JSON",
+        help="repeatable custom-factory option",
+    )
     arguments = parser.parse_args()
     family = str(arguments.family)
     model_implementation = arguments.model_implementation
+    try:
+        model_config_value = _json_argument(
+            arguments.model_config, description="model config"
+        )
+        if not isinstance(model_config_value, dict):
+            raise ValueError("model config must decode to an object")
+        data_geometry_value = None
+        if arguments.data_geometry is not None:
+            decoded_geometry = _json_argument(
+                arguments.data_geometry, description="data geometry"
+            )
+            if not isinstance(decoded_geometry, list) or not all(
+                isinstance(item, dict) for item in decoded_geometry
+            ):
+                raise ValueError("data geometry must decode to a list of objects")
+            data_geometry_value = decoded_geometry
+        case_options_value = _case_options(arguments.case_option)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if family not in DEFAULT_DEVICE_BUDGETS and arguments.case_factory is None:
+        parser.error("unknown model name requires --case-factory MODULE:FUNCTION")
     if arguments.mode == "run":
         if len(arguments.paths) != 1:
             parser.error("run requires one result directory")
+        if arguments.device_budget is None and family not in DEFAULT_DEVICE_BUDGETS:
+            parser.error("custom model run requires --device-budget")
         _orchestrate(
             family,
             model_implementation,
             Path(arguments.paths[0]),
-            arguments.device_budget or DEFAULT_DEVICE_BUDGETS[family],
+            arguments.device_budget or DEFAULT_DEVICE_BUDGETS.get(family, 0),
+            seed=arguments.seed,
+            model_config_argument=arguments.model_config,
+            data_geometry_argument=arguments.data_geometry,
+            case_factory=arguments.case_factory,
+            case_option_arguments=arguments.case_option,
         )
     elif arguments.mode == "_eager":
         if len(arguments.paths) != 1:
             parser.error("_eager requires one output path")
-        _eager_worker(family, model_implementation, Path(arguments.paths[0]))
+        _eager_worker(
+            family,
+            model_implementation,
+            Path(arguments.paths[0]),
+            seed=arguments.seed,
+            model_config=model_config_value,
+            data_geometry=data_geometry_value,
+            case_factory=arguments.case_factory,
+            case_options=case_options_value,
+        )
     else:
         if len(arguments.paths) != 3:
             parser.error("_planned requires reference, result, and device budget")
@@ -345,6 +609,11 @@ def main() -> int:
             Path(arguments.paths[0]),
             Path(arguments.paths[1]),
             int(arguments.paths[2]),
+            seed=arguments.seed,
+            model_config=model_config_value,
+            data_geometry=data_geometry_value,
+            case_factory=arguments.case_factory,
+            case_options=case_options_value,
         )
     return 0
 

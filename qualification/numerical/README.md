@@ -23,4 +23,12 @@ The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint followed by bitwise replay,
 real D2H/H2D traffic, selected recomputation, numerical tolerances, and the
 physical device cap. The JSON artifact records all tolerances and planning
-phase timings used for that run.
+phase timings used for that run. Physical qualification checks the sealed cap
+after planning, after each of the five steps, and after both replay steps. It
+also requires the observed process high-water to remain within the public cap,
+one initial CUDA slab allocation, no steady-state device or pinned allocation,
+bounded slab/host peaks, and no allocator callback or pointer-lookup failure.
+
+For repeatable matrices and configurable/custom model cases, use
+`python -m verification.run_model_correctness`; its README documents model
+configuration, data geometry, factory, and case-option arguments.

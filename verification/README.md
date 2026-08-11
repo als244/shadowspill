@@ -1,0 +1,78 @@
+# Verification launchers
+
+Run the complete Llama 3, Qwen 3.5, and OLMoE correctness matrix for both the
+pure-PyTorch and external mlops implementations:
+
+```bash
+python -m verification.run_model_correctness \
+  --build-dir /tmp/shadowspill-build-full \
+  --cache-dir qualification/results/cache
+```
+
+Every case runs eager PyTorch and ShadowSpill in separate processes. The matrix
+requires five two-microbatch optimizer steps, eager numerical parity,
+step-three checkpoint/two-step bitwise replay, real D2H/H2D, selected
+recomputation, and measured physical-budget enforcement. Individual evidence
+and `summary.json` are written below `qualification/results/numerical_matrix`.
+
+Select a subset or override a budget without editing the script:
+
+```bash
+python -m verification.run_model_correctness \
+  --build-dir /tmp/shadowspill-build-full \
+  --models qwen35 olmoe \
+  --implementations pytorch mlops \
+  --budget qwen35=10GiB \
+  --budget olmoe=10GiB \
+  --reuse-eager \
+  --keep-going
+```
+
+`--reuse-eager` is opt-in because a newly generated eager reference is safer
+after model or optimizer changes. The per-case implementation remains in
+`qualification.numerical.run`; this launcher only orchestrates the matrix and
+summarizes its artifacts.
+
+Built-in model configuration and microbatch geometry can be supplied inline as
+JSON or loaded from a file by prefixing its path with `@`:
+
+```bash
+python -m verification.run_model_correctness \
+  --build-dir /tmp/shadowspill-build-full \
+  --models llama3 \
+  --implementations pytorch mlops \
+  --budget llama3=12GiB \
+  --model-config '{"n_layers": 16, "max_seq_len": 256}' \
+  --data-geometry '[
+    {"token_shape": [1, 128], "sequence_lengths": [31, 47, 50]},
+    {"token_shape": [2, 96], "sequence_lengths": [64, 64, 64]}
+  ]'
+```
+
+For a model outside the built-in registry, provide a stable model name, an
+explicit physical budget, and a factory:
+
+```bash
+python -m verification.run_model_correctness \
+  --build-dir /tmp/shadowspill-build-full \
+  --models diffusion_transformer \
+  --implementations pytorch \
+  --budget diffusion_transformer=24GiB \
+  --case-factory my_project.shadowspill_cases:build_case \
+  --model-config @configs/dit.json \
+  --data-geometry @configs/dit_microbatches.json \
+  --case-option objective='"flow_matching"' \
+  --case-option optimizer='{"name":"AdamW","lr":0.0001}'
+```
+
+The factory is called independently in eager and planned processes with the
+keyword arguments `model_name`, `model_implementation`, `seed`, `model_config`,
+`data_geometry`, and `case_options`. It returns an object exposing `model`,
+`microbatches`, `objective(model, *microbatch)`, `optimizer(parameters)`, and an
+`implementations()` context manager, plus matching `family` and
+`model_implementation` fields. This keeps model-, data-, objective-, optimizer-,
+and custom-operation policy outside the verification launcher.
+
+The eager artifact records a digest of the complete request. `--reuse-eager`
+is rejected if the model name, implementation, seed, model config, geometry,
+factory, or case options differ.
