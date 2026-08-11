@@ -128,6 +128,10 @@ class AdapterStatistics(ctypes.Structure):
         ("record_stream_callbacks", ctypes.c_uint64),
         ("pointer_lookup_failures", ctypes.c_uint64),
         ("callback_failures", ctypes.c_uint64),
+        ("physical_checks", ctypes.c_uint64),
+        ("peak_process_physical_bytes", ctypes.c_uint64),
+        ("observed_external_high_water_bytes", ctypes.c_uint64),
+        ("physical_budget_sealed", ctypes.c_uint64),
         ("runtime", RuntimeStatistics),
         ("cuda", CudaStatistics),
     ]
@@ -188,6 +192,10 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(PhysicalMemory)
     ]
     library.shadowspill_pytorch_physical_memory.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_seal_physical_budget.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_seal_physical_budget.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_check_physical_budget.argtypes = []
+    library.shadowspill_pytorch_check_physical_budget.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_bootstrap.argtypes = [
         ctypes.POINTER(AdapterConfig)
     ]

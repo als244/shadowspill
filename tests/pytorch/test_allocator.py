@@ -37,6 +37,8 @@ class _Library:
     shadowspill_pytorch_adapter_capabilities = _Function()
     shadowspill_pytorch_physical_admission = _Function()
     shadowspill_pytorch_physical_memory = _Function()
+    shadowspill_pytorch_seal_physical_budget = _Function()
+    shadowspill_pytorch_check_physical_budget = _Function()
     shadowspill_pytorch_allocator_bootstrap = _Function()
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
@@ -55,7 +57,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(CudaStatistics) == 16 * 8
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
-    assert ctypes.sizeof(AdapterStatistics) == 328
+    assert ctypes.sizeof(AdapterStatistics) == 360
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 16
@@ -74,6 +76,10 @@ def test_adapter_signatures_are_configured_together() -> None:
     assert library.shadowspill_pytorch_physical_memory.argtypes == [
         ctypes.POINTER(PhysicalMemory)
     ]
+    assert library.shadowspill_pytorch_seal_physical_budget.argtypes == [
+        ctypes.c_uint64
+    ]
+    assert library.shadowspill_pytorch_check_physical_budget.argtypes == []
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [
         ctypes.POINTER(AdapterConfig)
     ]

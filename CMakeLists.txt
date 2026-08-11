@@ -382,6 +382,19 @@ if(BUILD_TESTING)
         TIMEOUT 20
     )
     add_test(
+      NAME shadowspill_pytorch_physical_failure_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/physical_failure_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_physical_failure_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    add_test(
       NAME shadowspill_pytorch_allocator_oom_canary
       COMMAND
         ${Python3_EXECUTABLE}

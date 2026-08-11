@@ -267,6 +267,36 @@ def main() -> int:
         raise AssertionError("process exceeded the physical device cap")
     if physical.process_bytes < installed.admission.slab_bytes:
         raise AssertionError("physical ledger does not include the complete slab")
+    if (
+        int(
+            library.shadowspill_pytorch_seal_physical_budget(
+                installed.admission.provider_headroom_bytes
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("physical budget seal failed")
+    if int(library.shadowspill_pytorch_check_physical_budget()) != 0:
+        raise AssertionError("sealed physical budget check failed")
+    sealed_statistics = AdapterStatistics()
+    if (
+        int(
+            library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(sealed_statistics)
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("sealed statistics query failed")
+    if sealed_statistics.physical_budget_sealed != 1:
+        raise AssertionError("adapter did not retain the physical seal")
+    if sealed_statistics.physical_checks < 3:
+        raise AssertionError("adapter did not record physical reconciliation")
+    if (
+        sealed_statistics.peak_process_physical_bytes
+        > installed.admission.device_budget_bytes
+    ):
+        raise AssertionError("physical peak exceeded the device cap")
     return 0
 
 

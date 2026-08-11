@@ -50,6 +50,9 @@ Phase 6 — hard physical-budget admission and reconciliation.
 - [x] PyTorch allocator bootstrap accepts a physical cap, measures context
   bytes before slab creation, derives the slab internally, and rejects any
   bootstrap whose per-process NVML reading exceeds the cap.
+- [x] Physical sealing rejects provider requirements larger than the reserved
+  headroom; later per-process growth beyond either headroom or the total cap is
+  latched as a non-callback plan violation.
 
 ## Completed gates
 

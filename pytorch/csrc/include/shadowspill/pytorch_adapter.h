@@ -57,6 +57,10 @@ typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t record_stream_callbacks;
     uint64_t pointer_lookup_failures;
     uint64_t callback_failures;
+    uint64_t physical_checks;
+    uint64_t peak_process_physical_bytes;
+    uint64_t observed_external_high_water_bytes;
+    uint64_t physical_budget_sealed;
     ShadowSpillRuntimeStatistics runtime;
     ShadowSpillCudaBackendStatistics cuda;
 } ShadowSpillPytorchAdapterStatistics;
@@ -94,6 +98,19 @@ shadowspill_pytorch_physical_admission(
 /* Queries current per-process physical use for seal/diagnostic boundaries. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
+
+/*
+ * Confirms the profiled provider reserve fits the bootstrap reservation and
+ * seals the physical ledger. This call does not resize or weaken the budget.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_seal_physical_budget(
+    uint64_t required_provider_headroom_bytes
+);
+
+/* Reconciles current process bytes against the sealed or provisional cap. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_check_physical_budget(void);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_statistics(

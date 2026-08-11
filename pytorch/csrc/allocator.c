@@ -18,6 +18,10 @@ typedef struct ShadowSpillPytorchAdapterState {
     uint64_t record_stream_callbacks;
     uint64_t pointer_lookup_failures;
     uint64_t callback_failures;
+    uint64_t physical_checks;
+    uint64_t peak_process_physical_bytes;
+    uint64_t observed_external_high_water_bytes;
+    uint64_t physical_budget_sealed;
     ShadowSpillPytorchPhysicalAdmission admission;
     ShadowSpillPytorchAdapterFailure failure;
 } ShadowSpillPytorchAdapterState;
@@ -152,6 +156,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         .device_total_bytes = bootstrap_memory.device_total_bytes,
         .host_arena_bytes = config->host_arena_bytes,
     };
+    adapter.physical_checks = 1U;
+    adapter.peak_process_physical_bytes = bootstrap_memory.process_bytes;
+    adapter.observed_external_high_water_bytes =
+        bootstrap_memory.process_bytes >
+                context_memory.process_bytes + slab_bytes
+        ? bootstrap_memory.process_bytes - context_memory.process_bytes -
+            slab_bytes
+        : 0U;
+    adapter.physical_budget_sealed = 0U;
     memset(&adapter.failure, 0, sizeof(adapter.failure));
     adapter.failure.device_ordinal = config->device_ordinal;
     adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -193,6 +206,78 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_physical_memory(
         : SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
+    ShadowSpillCudaPhysicalMemory memory = {0};
+    pthread_mutex_lock(&adapter.mutex);
+    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    ShadowSpillPytorchPhysicalAdmission admission = adapter.admission;
+    pthread_mutex_unlock(&adapter.mutex);
+    if (cuda == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    if (shadowspill_cuda_physical_memory(cuda, &memory) != 0) {
+        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    }
+    uint64_t base = admission.context_bytes + admission.slab_bytes;
+    uint64_t external = memory.process_bytes > base
+        ? memory.process_bytes - base
+        : 0U;
+    ShadowSpillRuntimeStatus status =
+        memory.process_bytes <= admission.device_budget_bytes &&
+            external <= admission.provider_headroom_bytes
+        ? SHADOWSPILL_RUNTIME_OK
+        : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+    pthread_mutex_lock(&adapter.mutex);
+    ++adapter.physical_checks;
+    if (memory.process_bytes > adapter.peak_process_physical_bytes) {
+        adapter.peak_process_physical_bytes = memory.process_bytes;
+    }
+    if (external > adapter.observed_external_high_water_bytes) {
+        adapter.observed_external_high_water_bytes = external;
+    }
+    if (status != SHADOWSPILL_RUNTIME_OK &&
+        adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
+        adapter.failure.status = (uint32_t)status;
+        adapter.failure.requested_bytes = memory.process_bytes;
+        adapter.failure.runtime.status = (uint32_t)status;
+        adapter.failure.runtime.requested_bytes = memory.process_bytes;
+        adapter.failure.runtime.free_bytes =
+            admission.device_budget_bytes > memory.process_bytes
+            ? admission.device_budget_bytes - memory.process_bytes
+            : 0U;
+    }
+    pthread_mutex_unlock(&adapter.mutex);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
+    uint64_t required_provider_headroom_bytes
+) {
+    ShadowSpillRuntimeStatus status =
+        shadowspill_pytorch_check_physical_budget();
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    if (required_provider_headroom_bytes >
+        adapter.admission.provider_headroom_bytes) {
+        status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        if (adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
+            adapter.failure.status = (uint32_t)status;
+            adapter.failure.requested_bytes = required_provider_headroom_bytes;
+            adapter.failure.runtime.status = (uint32_t)status;
+            adapter.failure.runtime.requested_bytes =
+                required_provider_headroom_bytes;
+            adapter.failure.runtime.free_bytes =
+                adapter.admission.provider_headroom_bytes;
+        }
+    } else {
+        adapter.physical_budget_sealed = 1U;
+    }
+    pthread_mutex_unlock(&adapter.mutex);
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(
     ShadowSpillPytorchAdapterCapabilities *capabilities
 ) {
@@ -231,6 +316,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_statistics(
         .record_stream_callbacks = adapter.record_stream_callbacks,
         .pointer_lookup_failures = adapter.pointer_lookup_failures,
         .callback_failures = adapter.callback_failures,
+        .physical_checks = adapter.physical_checks,
+        .peak_process_physical_bytes = adapter.peak_process_physical_bytes,
+        .observed_external_high_water_bytes =
+            adapter.observed_external_high_water_bytes,
+        .physical_budget_sealed = adapter.physical_budget_sealed,
     };
     pthread_mutex_unlock(&adapter.mutex);
     if (runtime == NULL || cuda == NULL) {

@@ -25,6 +25,15 @@ and fails before allocator installation if the process exceeds the cap. The
 immutable bootstrap admission and current physical reading are available
 through the private adapter ABI for `PlanReport` and seal checks.
 
+Sealing compares the provider high-water learned during profiling with the
+headroom reserved at bootstrap; it cannot enlarge the reservation. A physical
+check reads current per-process bytes and derives external provider use as
+`process - context - slab`. Exceeding either the provider reservation or total
+cap latches a plan violation independently of allocator callback failures.
+Public callables check at planning seal and lifecycle boundaries; supported
+fixed-shape task ABIs must have already exposed all direct provider growth
+during warmup.
+
 Every callback is non-throwing. Allocation failure returns null through the
 ordinary PyTorch allocation path and latches the first structured runtime
 failure for diagnostics. PyTorch 2.13 may return an unmaterialized nonzero
