@@ -33,6 +33,9 @@ Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
 - [x] CUDA Driver API backend performs one conventional slab allocation, one
   pinned-host arena allocation, asynchronous copies/events/waits, and exposes
   capability and operation ledgers without VMM.
+- [x] PyTorch's supported pluggable allocator is connected to the neutral slab
+  with exact address lookup, full record-stream retirement, structured OOM
+  propagation, and no Python monkey-patching.
 
 ## Completed gates
 

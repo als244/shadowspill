@@ -201,6 +201,38 @@ if(SHADOWSPILL_BUILD_CUDA)
       FILES runtime/backends/cuda/include/shadowspill/backend_cuda.h
       DESTINATION shadowspill/include/shadowspill
     )
+
+    add_library(
+      shadowspill_pytorch
+      SHARED
+      pytorch/csrc/allocator.c
+    )
+    target_include_directories(
+      shadowspill_pytorch
+      PRIVATE
+        pytorch/csrc/include
+        runtime/include
+        runtime/backends/cuda/include
+    )
+    target_link_libraries(
+      shadowspill_pytorch
+      PRIVATE
+        shadowspill_runtime
+        shadowspill_backend_cuda
+        Threads::Threads
+        shadowspill_build_options
+    )
+    set_target_properties(
+      shadowspill_pytorch
+      PROPERTIES
+        OUTPUT_NAME shadowspill_pytorch
+        INSTALL_RPATH "$ORIGIN"
+    )
+    install(
+      TARGETS shadowspill_pytorch
+      LIBRARY DESTINATION shadowspill/lib
+      RUNTIME DESTINATION shadowspill/lib
+    )
   else()
     message(STATUS "CUDA Toolkit not found; skipping CUDA backend")
   endif()
@@ -276,6 +308,34 @@ if(BUILD_TESTING)
     set_tests_properties(
       shadowspill_cuda_backend_canary
       PROPERTIES LABELS "cuda"
+    )
+
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(
+      NAME shadowspill_pytorch_allocator_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/allocator_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_allocator_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    add_test(
+      NAME shadowspill_pytorch_allocator_oom_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/allocator_oom_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_allocator_oom_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
     )
   endif()
 endif()
