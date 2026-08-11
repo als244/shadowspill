@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, PhysicalAdmission
-from shadowspill.planner import pressurefit
+from shadowspill.planner._cache import PressureFitCache
 from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
@@ -198,17 +198,19 @@ def build_training(
                 d2h_latency_ns=5_000,
             )
         with timer.measure("pressurefit_simulation"):
-            recurrent_selected = pressurefit(
+            selection_cache = PressureFitCache()
+            recurrent_cached = selection_cache.resolve(
                 recurrent_lowered.program,
                 initial_residency=recurrent_lowered.initial_residency,
                 final_residency=recurrent_lowered.final_residency,
                 config=simulation_config,
             )
+            recurrent_selected = recurrent_cached.result
             needs_initial_plan = any(
                 item.created_on_first_step for item in initial_lowered.optimizer_objects
             )
-            initial_selected = (
-                pressurefit(
+            initial_cached = (
+                selection_cache.resolve(
                     initial_lowered.program,
                     initial_residency=initial_lowered.initial_residency,
                     final_residency=initial_lowered.final_residency,
@@ -217,6 +219,7 @@ def build_training(
                 if needs_initial_plan
                 else None
             )
+            initial_selected = None if initial_cached is None else initial_cached.result
         with timer.measure("host_admission"):
             _reconcile_host_arena(
                 installed,
@@ -305,6 +308,18 @@ def build_training(
                 tuple(timer.values),
                 started,
                 initial_execution_plan=initial_plan,
+                recomputation_cache_hits=(
+                    int(recurrent_cached.cache_hit)
+                    + (0 if initial_cached is None else int(initial_cached.cache_hit))
+                ),
+                recomputation_cache_misses=(
+                    int(not recurrent_cached.cache_hit)
+                    + (
+                        0
+                        if initial_cached is None
+                        else int(not initial_cached.cache_hit)
+                    )
+                ),
             )
             return PlannedTrainStep(
                 model, signatures, executor, state, optimizer, report
@@ -399,6 +414,8 @@ def _training_report(
     started: int,
     *,
     initial_execution_plan: Any = None,
+    recomputation_cache_hits: int = 0,
+    recomputation_cache_misses: int = 0,
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -424,6 +441,8 @@ def _training_report(
         profiling_provenance=report.profiling_provenance,
         phase_timings_ns=report.phase_timings_ns,
         initial_execution_plan=initial_execution_plan,
+        recomputation_cache_hits=recomputation_cache_hits,
+        recomputation_cache_misses=recomputation_cache_misses,
     )
 
 

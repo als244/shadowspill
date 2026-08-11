@@ -17,7 +17,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.ir import EntrypointSpec, MemoryActionKind, PhysicalAdmission
-from shadowspill.planner import pressurefit
+from shadowspill.planner._cache import PressureFitCache
 from shadowspill.runtime import AdmissionError, workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
@@ -161,12 +161,13 @@ def build_forward(
         )
 
     with timer.measure("pressurefit_simulation"):
-        selected = pressurefit(
+        cached_selection = PressureFitCache().resolve(
             lowered.program,
             initial_residency=lowered.initial_residency,
             final_residency=lowered.final_residency,
             config=simulation_config,
         )
+        selected = cached_selection.result
 
     with timer.measure("host_admission"):
         _reconcile_host_arena(
@@ -239,6 +240,7 @@ def build_forward(
                 profiles,
                 tuple(timer.values),
                 started,
+                recomputation_cache_hit=cached_selection.cache_hit,
             )
             return PlannedForward(model, signature, executor, state, report)
     except BaseException:
@@ -414,6 +416,8 @@ def _forward_report(
     profiles: Any,
     timings: tuple[tuple[str, int], ...],
     started: int,
+    *,
+    recomputation_cache_hit: bool = False,
 ) -> PlanReport:
     identity = {
         "mode": "forward",
@@ -454,6 +458,8 @@ def _forward_report(
             dict.fromkeys(item.provenance for item in profiles.measurements)
         ),
         phase_timings_ns=(*timings, ("total", elapsed)),
+        recomputation_cache_hits=int(recomputation_cache_hit),
+        recomputation_cache_misses=int(not recomputation_cache_hit),
     )
 
 

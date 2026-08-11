@@ -37,6 +37,21 @@ Candidate evaluation may run concurrently. Worker count never enters candidate
 identity or ordering. Once a candidate is selected, its action locations are
 immutable; physical admission may reject the result but cannot move a trigger.
 
+## Selection cache
+
+PyTorch planning persists a complete selected PressureFit result in
+`~/.cache/shadowspill/recomputation`, or in
+`SHADOWSPILL_RECOMPUTATION_CACHE` when configured. The content key includes the
+Program digest, initial/final residency, simulator capacities and transfer
+calibration, and every behavior-bearing planner option. Evaluation worker
+count is excluded because it cannot affect the deterministic result.
+
+A cache hit does not trust stale timing evidence: ShadowSpill validates the
+schedule against the current Program and selections, replays it through the
+standalone simulator, and requires the cached selected makespan to match. The
+cache restores complete candidate diagnostics and never reruns or modifies a
+selected transfer trigger. Writes use an atomic replacement.
+
 ## Results and errors
 
 `PressureFitResult` owns the selected schedule, recomputation choices, exact

@@ -1,10 +1,10 @@
 # ShadowSpill Progress
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 ## Current milestone
 
-Phase 8 — public forward and training callables.
+Phase 9 — model-scale numerical qualification and allocator diagnosis.
 
 ## Status
 
@@ -567,6 +567,22 @@ Phase 8 — public forward and training callables.
 - The admission milestone passes the complete Python suite, all 16 CTest
   canaries (including CUDA forward/training/overlap), Ruff, strict mypy, the
   production naming audit, and `git diff --check`.
+- Exact 1.180B Llama admission at 8.0 and 8.5 GiB selected different logical
+  residency schedules but both left the same 624,623,616-byte largest range
+  for a 634,400,768-byte task workspace. A 10-GiB run with shorter token
+  geometry also fragmented before the same workspace. Extra physical capacity
+  is not monotonic because PressureFit legitimately retains more objects; this
+  cannot be debugged by repeatedly increasing the cap.
+- Complete PressureFit selections now use a content-addressed atomic cache
+  independent of the structural task-profile cache. Hits revalidate the exact
+  immutable schedule, rerun the standalone simulator, restore full candidate
+  diagnostics, and report hit/miss counts. This makes repeated physical
+  admission experiments inexpensive without changing recomputation choices or
+  transfer triggers.
+- A fresh-process forward cache canary reduced the PressureFit phase from
+  8.86 ms cold to 0.84 ms warm with identical scheduling inputs. The complete
+  Python suite, all 16 CTest canaries, Ruff, strict mypy, naming, and whitespace
+  gates pass.
 
 ## Gate rule
 

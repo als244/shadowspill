@@ -128,6 +128,13 @@ and excluded from workspace without promoting them into permanent runtime
 objects. Content-addressed profiling invokes this machinery once per structural
 ABI; a warm cache launches no compilation or profiling kernels.
 
+Structural task profiles and complete PressureFit selections are cached
+independently. `PlanReport.profile_cache_hits` and `profile_cache_misses`
+describe executable ABI measurements; `recomputation_cache_hits` and
+`recomputation_cache_misses` describe complete simulator-validated schedule
+selections. A warm selection cache still runs one standalone simulator replay
+before physical slab admission.
+
 ## Canonical lowering
 
 Lowering assigns dense identities in encounter order and never serializes

@@ -36,6 +36,8 @@ class PlanReport:
     profiling_provenance: tuple[str, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
     initial_execution_plan: ExecutionPlan | None = None
+    recomputation_cache_hits: int = 0
+    recomputation_cache_misses: int = 0
 
     @property
     def predicted_device_peak_bytes(self) -> int:
