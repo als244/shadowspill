@@ -105,6 +105,7 @@ _ROLE_PRIORITY = {
 class _TensorInventory:
     def __init__(self, *, device_id: str) -> None:
         self._device_id = device_id
+        self._tensor_keepalive: list[torch.Tensor] = []
         self._alias_by_storage: dict[int, str] = {}
         self._alias_sizes: dict[str, int] = {}
         self._retain_host: set[str] = set()
@@ -131,6 +132,7 @@ class _TensorInventory:
         persistence: Persistence,
         retain_host_backing: bool = False,
     ) -> str:
+        self._tensor_keepalive.append(tensor)
         key = self.key(tensor)
         alias_id = self._alias_by_storage.get(key.storage_identity)
         storage_bytes = tensor.untyped_storage().nbytes()

@@ -89,6 +89,9 @@ Phase 8 — public forward and training callables.
 - [x] Captured objective graph pairs now have a small explicit executor that
   reconstructs loss/metrics and returns input-aligned gradients; both save and
   recompute ABIs match ordinary autograd on the same parameters and inputs.
+- [x] Capture inventories retain their FakeTensor storages until lowering ends,
+  preventing reclaimed StorageImpl identities from aliasing unrelated residual
+  extents across save/recompute variants.
 
 ## Completed gates
 
