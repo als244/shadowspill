@@ -219,6 +219,27 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
+    ShadowSpillObjectRecord *previous_owner = NULL;
+    for (ShadowSpillObjectRecord *candidate = runtime->objects;
+         candidate != NULL; candidate = candidate->next) {
+        if (candidate != object &&
+            candidate->allocation_id == allocation_id) {
+            if (previous_owner != NULL) {
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+                goto done;
+            }
+            previous_owner = candidate;
+        }
+    }
+    const uint64_t task_id = shadowspill_current_task_id(runtime);
+    if (previous_owner != NULL &&
+        (allocation->handoff_from_object_id != SHADOWSPILL_RUNTIME_NO_ID ||
+         task_id == SHADOWSPILL_RUNTIME_NO_ID ||
+         (previous_owner->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+          previous_owner->residency != SHADOWSPILL_OBJECT_PREFETCHING))) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
     allocation->plan_owned = 1;
     allocation->ever_plan_owned = 1;
     shadowspill_append_allocation_event_locked(
@@ -230,6 +251,11 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
         status = (ShadowSpillRuntimeStatus)runtime->failure.status;
         goto done;
+    }
+    if (previous_owner != NULL) {
+        allocation->handoff_from_object_id = previous_owner->object_id;
+        allocation->handoff_to_object_id = object->object_id;
+        allocation->handoff_task_id = task_id;
     }
     object->allocation_id = allocation_id;
     object->generation = allocation->generation;
@@ -501,6 +527,8 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
     ShadowSpillTaskFence *fence = NULL;
     ShadowSpillQueuedAction *head = NULL;
     ShadowSpillQueuedAction *tail = NULL;
+    uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
@@ -526,6 +554,32 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         object->authoritative_version += updates[index].version_delta;
         object->device_version = object->authoritative_version;
         object->host_current = 0U;
+    }
+    for (ShadowSpillAllocationRecord *allocation = runtime->allocations;
+         allocation != NULL; allocation = allocation->next) {
+        if (allocation->handoff_task_id != task_id) {
+            continue;
+        }
+        int matched_release = 0;
+        for (uint32_t index = 0; index < action_count; ++index) {
+            if (actions[index].object_id ==
+                    allocation->handoff_from_object_id &&
+                actions[index].kind == SHADOWSPILL_RUNTIME_RELEASE) {
+                matched_release = 1;
+                break;
+            }
+        }
+        if (!matched_release) {
+            status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+            shadowspill_latch_failure_locked(
+                runtime,
+                status,
+                allocation->handoff_to_object_id,
+                allocation->allocation_id,
+                allocation->requested_bytes
+            );
+            goto done;
+        }
     }
     if (action_count == 0U) {
         goto done;
@@ -557,6 +611,10 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         ShadowSpillObjectRecord *object = shadowspill_find_object(
             runtime, actions[index].object_id
         );
+        failure_object_id = actions[index].object_id;
+        failure_allocation_id = object == NULL
+            ? SHADOWSPILL_RUNTIME_NO_ID
+            : object->allocation_id;
         if (object == NULL || actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH) {
             status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
             break;
@@ -620,8 +678,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
             discard_actions_locked(runtime, head);
         }
         shadowspill_latch_failure_locked(
-            runtime, status, SHADOWSPILL_RUNTIME_NO_ID,
-            SHADOWSPILL_RUNTIME_NO_ID, 0U
+            runtime, status, failure_object_id, failure_allocation_id, 0U
         );
         goto done;
     }

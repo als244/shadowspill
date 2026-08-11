@@ -337,6 +337,42 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                         );
                         return changed;
                     }
+                    if (allocation->handoff_from_object_id ==
+                            object->object_id) {
+                        ShadowSpillObjectRecord *target =
+                            shadowspill_find_object(
+                                runtime,
+                                allocation->handoff_to_object_id
+                            );
+                        if (allocation->handoff_task_id != action->task_id ||
+                            target == NULL ||
+                            target->allocation_id != allocation->allocation_id) {
+                            shadowspill_latch_failure_locked(
+                                runtime,
+                                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                                object->object_id,
+                                allocation->allocation_id,
+                                allocation->requested_bytes
+                            );
+                            return changed;
+                        }
+                        object->retired_generation = object->generation;
+                        object->retired_device_pointer = allocation->pointer;
+                        object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                        object->residency = object->host_current
+                            ? SHADOWSPILL_OBJECT_HOST_ONLY
+                            : SHADOWSPILL_OBJECT_RELEASED;
+                        allocation->handoff_from_object_id =
+                            SHADOWSPILL_RUNTIME_NO_ID;
+                        allocation->handoff_to_object_id =
+                            SHADOWSPILL_RUNTIME_NO_ID;
+                        allocation->handoff_task_id =
+                            SHADOWSPILL_RUNTIME_NO_ID;
+                        complete_action_locked(runtime, previous, action);
+                        changed = 1;
+                        action = next;
+                        continue;
+                    }
                     object->retired_generation = object->generation;
                     object->retired_device_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;

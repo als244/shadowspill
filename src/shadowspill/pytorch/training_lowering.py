@@ -16,6 +16,7 @@ from shadowspill.ir import (
     MemoryLocation,
     MutationSpec,
     ObjectRole,
+    ObjectSpec,
     Persistence,
     Program,
     RecomputationGroup,
@@ -523,19 +524,7 @@ def lower_partitioned_training_program(
         )
         for binding in gradients
     }
-    produced_objects = {object_id for task in tasks for object_id in task.outputs}
-    initial_input_objects = {
-        object_id
-        for task in tasks
-        for object_id in task.inputs
-        if object_id not in produced_objects
-    }
-    input_aliases = {
-        item.alias_group_id
-        for item in objects
-        if item.object_id in initial_input_objects
-        and item.alias_group_id not in parameter_aliases
-    }
+    input_aliases = _external_input_aliases(objects, tuple(tasks), parameter_aliases)
     public_aliases = {
         next(item.alias_group_id for item in objects if item.object_id == object_id)
         for values in public_objects_by_position.values()
@@ -808,19 +797,7 @@ def lower_training_program(
         )
         for binding in gradients
     }
-    produced_objects = {object_id for task in tasks for object_id in task.outputs}
-    initial_input_objects = {
-        object_id
-        for task in tasks
-        for object_id in task.inputs
-        if object_id not in produced_objects
-    }
-    input_aliases = {
-        item.alias_group_id
-        for item in objects
-        if item.object_id in initial_input_objects
-        and item.alias_group_id not in parameter_aliases
-    }
+    input_aliases = _external_input_aliases(objects, tuple(tasks), parameter_aliases)
     public_aliases = {
         next(item.alias_group_id for item in objects if item.object_id == object_id)
         for values in public_objects_by_position.values()
@@ -1337,6 +1314,26 @@ def _gradient_outputs(
             raise CaptureError("parameter gradient has an invalid storage extent")
         results.append(TensorSlot(index, gradient_id))
     return tuple(results)
+
+
+def _external_input_aliases(
+    objects: tuple[ObjectSpec, ...],
+    tasks: tuple[TaskSpec, ...],
+    parameter_aliases: set[str],
+) -> set[str]:
+    """Return input storage bundles that no task in the program produces."""
+
+    alias_by_object = {item.object_id: item.alias_group_id for item in objects}
+    produced_aliases = {
+        alias_by_object[object_id] for task in tasks for object_id in task.outputs
+    }
+    return {
+        alias_by_object[object_id]
+        for task in tasks
+        for object_id in task.inputs
+        if alias_by_object[object_id] not in produced_aliases
+        and alias_by_object[object_id] not in parameter_aliases
+    }
 
 
 def _unique(values: Iterable[str]) -> tuple[str, ...]:

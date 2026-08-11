@@ -43,6 +43,9 @@ typedef struct ShadowSpillAllocationRecord {
     int plan_owned;
     int ever_plan_owned;
     int framework_free_seen;
+    uint64_t handoff_from_object_id;
+    uint64_t handoff_to_object_id;
+    uint64_t handoff_task_id;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
     struct ShadowSpillAllocationRecord *next;

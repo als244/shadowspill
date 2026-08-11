@@ -516,6 +516,32 @@ Phase 8 — public forward and training callables.
 - The second exact invocation reached an `after_task` plan violation. Thus the
   spatial allocation fix passes one full mathematical step, but multi-step
   correctness remains failed pending terminal-state/reset diagnosis.
+- The reduced program's initial-action rejection was a lowering bug: graph
+  values may use several object IDs for views of one storage, but external
+  inputs were classified by object ID rather than alias bundle. Both training
+  lowering paths now classify produced and external storage by alias identity;
+  no produced alias is admitted as an initial host input.
+- The next reduced failure exposed a legitimate zero-copy output case. AOT
+  backward returned an existing input allocation as a new logical cotangent at
+  the same task boundary that released the old logical value. The runtime now
+  performs a validated allocation-ownership handoff: the exact release action
+  remains in place, but it retires the old object identity without freeing the
+  range newly owned by the output. A native transition canary covers this
+  general allocator behavior.
+- Direct task-boundary failures now report the neutral runtime's first-cause
+  object and allocation, rather than only failures previously seen by an
+  allocator callback. This added no successful-path CUDA operation or device
+  synchronization.
+- The one-layer width-2,048/full-vocabulary model completes three accumulated
+  training steps and deterministic close at an 8-GiB diagnostic cap. Step one
+  took 0.210 seconds and recurrent steps took 0.105 seconds each; objectives
+  decreased across all three steps. Its 115 actions were preserved.
+- Tighter 4- and 5-GiB diagnostic plans still expose the unfinished physical
+  admission gate. The 4-GiB run missed a 525,336,576-byte contiguous workspace
+  by four bytes despite 1.39 GiB total free; the 5-GiB plan changed residency
+  and left only a 400,515,072-byte largest range. The session currently does
+  not feed its annotated allocation timeline through `replay_slab_timeline`.
+  This remains a separate admission bug; no PressureFit action was moved.
 
 ## Gate rule
 

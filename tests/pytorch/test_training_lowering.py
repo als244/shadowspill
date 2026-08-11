@@ -321,6 +321,18 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     alias_by_object = {
         item.object_id: item.alias_group_id for item in lowered.program.objects
     }
+    parameter_aliases = {
+        alias_by_object[binding.parameter_object_id] for binding in lowered.gradients
+    }
+    produced_aliases = {
+        alias_by_object[object_id]
+        for task in lowered.program.tasks
+        for object_id in task.outputs
+    }
+    initial_non_parameter_aliases = {
+        item.alias_group_id for item in lowered.initial_residency
+    } - parameter_aliases
+    assert initial_non_parameter_aliases.isdisjoint(produced_aliases)
     for task in lowered.program.tasks:
         if task.phase != "forward":
             continue

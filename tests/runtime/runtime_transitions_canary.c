@@ -75,6 +75,12 @@ static int invalid_action(
         ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
         result = -1;
     }
+    ShadowSpillRuntimeFailure failure = {0};
+    if (shadowspill_runtime_failure(fixture.runtime, &failure) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        failure.object_id != object.object_id) {
+        result = -1;
+    }
     fixture_destroy(&fixture);
     return result;
 }
@@ -132,6 +138,72 @@ static int duplicate_action(void) {
         ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
         result = -1;
     }
+    fixture_destroy(&fixture);
+    return result;
+}
+
+static int output_allocation_handoff(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription source = {
+        .object_id = 1U,
+        .size_bytes = 32U,
+    };
+    const ShadowSpillObjectDescription target = {
+        .object_id = 2U,
+        .size_bytes = 32U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillObjectBinding input = {0};
+    const uint64_t input_id = source.object_id;
+    const ShadowSpillRuntimeAction release = {
+        .object_id = source.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    int result = 0;
+    if (shadowspill_register_object(fixture.runtime, &source) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(fixture.runtime, &target) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 32U, 1U, fixture.compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_bind_object(
+            fixture.runtime, source.object_id, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_task(
+            fixture.runtime, 9U, fixture.compute, &input_id, 1U, &input, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_bind_object(
+            fixture.runtime, target.object_id, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            fixture.runtime, 9U, fixture.compute, NULL, 0U, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(fixture.runtime) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+        goto done;
+    }
+    ShadowSpillObjectSnapshot source_snapshot = {0};
+    ShadowSpillObjectSnapshot target_snapshot = {0};
+    if (shadowspill_object_snapshot(
+            fixture.runtime, source.object_id, &source_snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            fixture.runtime, target.object_id, &target_snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        source_snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+        source_snapshot.device_pointer != NULL ||
+        target_snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        target_snapshot.device_pointer != allocation.pointer ||
+        target_snapshot.allocation_id != allocation.allocation_id) {
+        result = -1;
+    }
+
+done:
     fixture_destroy(&fixture);
     return result;
 }
@@ -271,6 +343,7 @@ int main(void) {
             invalid_action(1U, SHADOWSPILL_RUNTIME_OFFLOAD) == 0 &&
             invalid_before_task(0U) == 0 &&
             invalid_before_task(1U) == 0 && duplicate_action() == 0 &&
+            output_allocation_handoff() == 0 &&
             valid_transition_paths() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;

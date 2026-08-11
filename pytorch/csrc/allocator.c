@@ -341,7 +341,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_failure(
     }
     pthread_mutex_lock(&adapter.mutex);
     *failure = adapter.failure;
+    ShadowSpillRuntime *runtime = adapter.runtime;
+    int32_t device_ordinal = adapter.device_ordinal;
     pthread_mutex_unlock(&adapter.mutex);
+    if (failure->status == SHADOWSPILL_RUNTIME_OK && runtime != NULL) {
+        ShadowSpillRuntimeFailure runtime_failure = {0};
+        if (shadowspill_runtime_failure(runtime, &runtime_failure) ==
+                SHADOWSPILL_RUNTIME_OK &&
+            runtime_failure.status != SHADOWSPILL_RUNTIME_OK) {
+            failure->status = runtime_failure.status;
+            failure->device_ordinal = device_ordinal;
+            failure->runtime = runtime_failure;
+        }
+    }
     return (ShadowSpillRuntimeStatus)failure->status;
 }
 

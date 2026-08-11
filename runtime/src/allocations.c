@@ -98,6 +98,9 @@ ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     created->offset = offset;
     created->origin_task_id = origin_task_id;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->pointer = (void *)((unsigned char *)runtime->device_slab + offset);
     created->plan_owned = plan_owned;
     created->next = runtime->allocations;
