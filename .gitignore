@@ -1,0 +1,30 @@
+# Local architecture plans, implementation journals, and investigation notes.
+/docs/internal/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+
+# Native and packaging outputs
+/build/
+/dist/
+/_skbuild/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.so
+*.a
+*.o
+
+# Qualification output is reproducible and intentionally local.
+/qualification/results/
+*.nsys-rep
+*.sqlite

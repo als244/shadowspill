@@ -1,0 +1,56 @@
+[build-system]
+requires = ["scikit-build-core>=0.11,<0.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "shadowspill"
+version = "0.1.0.dev0"
+description = "Transparent memory offload, prefetch, and recomputation planning"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+pytorch = ["torch>=2.13,<2.14"]
+dev = [
+  "hypothesis>=6.130",
+  "mypy>=1.15",
+  "numpy>=2.0",
+  "pytest>=8",
+  "pytest-cov>=6",
+  "ruff>=0.11",
+]
+
+[tool.scikit-build]
+cmake.version = ">=3.25"
+cmake.build-type = "RelWithDebInfo"
+wheel.packages = ["src/shadowspill"]
+build-dir = "build/{wheel_tag}"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "cuda: requires the qualified CUDA backend and accelerator",
+  "qualification: long-running numerical or performance gate",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["shadowspill"]
+
+[tool.coverage.run]
+branch = true
+source = ["shadowspill"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90

@@ -1,0 +1,40 @@
+{
+  "schema": "shadowspill-baseline-provenance/v1",
+  "sources": [
+    {
+      "role": "canonical plan",
+      "sha256": "09ed2e4b000118153c2c1d14a299daeebd20d79b3b079264be4c8e6569965c5b",
+      "size_bytes": 1154
+    },
+    {
+      "role": "llama3 correctness",
+      "sha256": "7db8e39303e3c6a325a0c58a2cedef37790e2fa0a195ae8c76bf0294e54a8a0b",
+      "size_bytes": 53797
+    },
+    {
+      "role": "qwen35 correctness",
+      "sha256": "21cc584e05f3967f9a81fce84dd542bdf7a16c0fd8b4ec64858c6f28bb154978",
+      "size_bytes": 47904
+    },
+    {
+      "role": "olmoe correctness",
+      "sha256": "ed87c9fd373672df6bae2dd9140611b7b83ab2608a6c4de1067c6871e7c49a92",
+      "size_bytes": 90301
+    },
+    {
+      "role": "llama3 throughput",
+      "sha256": "1a3d8cb9924706d771b1f2d61cfc623afa51aee5301c7c7365bf7b7a81b94fab",
+      "size_bytes": 495338
+    },
+    {
+      "role": "qwen35 throughput",
+      "sha256": "5d6e3350abea1fc90c8e019df7df6c712f52f6d0cb8cfb67bd1b1f0328f56bc9",
+      "size_bytes": 383440
+    },
+    {
+      "role": "olmoe throughput",
+      "sha256": "18642078881807969393c56ce22a90cc27f7688d7f09fc3cc521eb260c855aa6",
+      "size_bytes": 144021
+    }
+  ]
+}
