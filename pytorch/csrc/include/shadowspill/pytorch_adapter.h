@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 8U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 9U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -191,6 +191,10 @@ shadowspill_pytorch_transfer_output_to_caller(
     uint64_t object_id,
     ShadowSpillAllocation *allocation
 );
+
+/* Release one caller-owned allocation from the private owning DataPtr. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_release_caller_allocation(uint64_t allocation_id);
 
 /*
  * Converts an existing ordinary PyTorch allocation into one plan-owned object

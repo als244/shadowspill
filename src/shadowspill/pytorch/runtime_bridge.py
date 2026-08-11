@@ -10,13 +10,7 @@ import torch
 
 from shadowspill.ir import MemoryAction, MemoryActionKind, MutationSpec, Program
 
-from ._abi import (
-    AdapterFailure,
-    Allocation,
-    ObjectBinding,
-    ObjectUpdate,
-    RuntimeAction,
-)
+from ._abi import AdapterFailure, ObjectBinding, ObjectUpdate, RuntimeAction
 from .contracts import PlanningError
 
 
@@ -185,9 +179,55 @@ class RuntimeBridge:
                 bindings if input_alias_ids else None,
                 len(input_alias_ids),
             ),
-            "before task",
+            f"before task {task_id}",
         )
         return tuple(bindings)
+
+    def acquire_for_caller(
+        self,
+        alias_ids: tuple[str, ...],
+        tensors: tuple[torch.Tensor, ...],
+        *,
+        task_number: int,
+    ) -> tuple[ObjectBinding, ...]:
+        """Wait/rebind final caller outputs without host synchronization."""
+
+        if len(alias_ids) != len(tensors):
+            raise RuntimeExecutionError("caller output binding count differs")
+        stream = torch.cuda.current_stream()
+        identifiers = (ctypes.c_uint64 * len(alias_ids))(
+            *(_dense_id(value, "alias_") for value in alias_ids)
+        )
+        bindings = (ObjectBinding * len(alias_ids))()
+        task_open = False
+        try:
+            self._require(
+                self.library.shadowspill_pytorch_before_task(
+                    task_number,
+                    stream.cuda_stream,
+                    identifiers if alias_ids else None,
+                    len(alias_ids),
+                    bindings if alias_ids else None,
+                    len(alias_ids),
+                ),
+                "acquire caller outputs",
+            )
+            task_open = True
+            for alias_id, tensor, binding in zip(
+                alias_ids, tensors, bindings, strict=True
+            ):
+                self.rebind(tensor, alias_id, binding)
+            self._require(
+                self.library.shadowspill_pytorch_after_task(
+                    task_number, stream.cuda_stream, None, 0, None, 0
+                ),
+                "close caller output acquisition",
+            )
+            task_open = False
+            return tuple(bindings)
+        finally:
+            if task_open:
+                self.abort_task()
 
     def after_task(
         self,
@@ -255,15 +295,25 @@ class RuntimeBridge:
             "submit initial actions",
         )
 
-    def transfer_outputs_to_caller(self, alias_ids: Iterable[str]) -> None:
-        for alias_id in dict.fromkeys(alias_ids):
-            allocation = Allocation()
-            self._require(
-                self.library.shadowspill_pytorch_transfer_output_to_caller(
-                    _dense_id(alias_id, "alias_"), ctypes.byref(allocation)
-                ),
-                "transfer output to caller",
+    def transfer_outputs_to_caller(
+        self,
+        alias_ids: tuple[str, ...],
+        tensors: tuple[torch.Tensor, ...],
+        bindings: tuple[ObjectBinding, ...],
+    ) -> None:
+        if not (len(alias_ids) == len(tensors) == len(bindings)):
+            raise RuntimeExecutionError("caller output lease count differs")
+        seen: set[str] = set()
+        for alias_id, tensor, binding in zip(alias_ids, tensors, bindings, strict=True):
+            if alias_id in seen:
+                continue
+            torch.ops.shadowspill._transfer_storage_to_caller(
+                tensor,
+                _dense_id(alias_id, "alias_"),
+                binding.generation,
+                binding.allocation_id,
             )
+            seen.add(alias_id)
             self._registered.discard(alias_id)
 
     def rebind(
@@ -295,6 +345,13 @@ class RuntimeBridge:
 
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)
+
+    def adopt_registered(self, alias_ids: Iterable[str]) -> None:
+        """Adopt objects registered by a compatible provisional bridge."""
+
+        for alias_id in alias_ids:
+            self._size(alias_id)
+            self._registered.add(alias_id)
 
     def _size(self, alias_id: str) -> int:
         try:

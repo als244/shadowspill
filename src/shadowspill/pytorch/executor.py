@@ -70,18 +70,10 @@ class _ExecutingStage(nn.Module):
                 alias_id = self._bridge.alias_for_object(slot.object_id)
                 if alias_id not in input_aliases and alias_id not in produced:
                     binding = self._bridge.promote_output(alias_id, tensor)
+                    self._bridge.rebind(tensor, alias_id, binding)
                     self._state.generations[alias_id] = binding.generation
                     produced.add(alias_id)
                 self._state.object_store[alias_id] = tensor
-            try:
-                self._bridge.after_task(
-                    self._task.task_id,
-                    stream,
-                    self._task.mutations,
-                    self._actions,
-                )
-            finally:
-                task_open = False
             for action in self._actions:
                 if action.kind not in {
                     MemoryActionKind.RELEASE,
@@ -96,6 +88,15 @@ class _ExecutingStage(nn.Module):
                         f"action references unbound alias group {alias_id!r}"
                     )
                 self._bridge.dematerialize(tensor, alias_id, generation)
+            try:
+                self._bridge.after_task(
+                    self._task.task_id,
+                    stream,
+                    self._task.mutations,
+                    self._actions,
+                )
+            finally:
+                task_open = False
             return output
         except BaseException:
             if task_open:
@@ -171,7 +172,18 @@ class ForwardExecutor:
             [output_leaves[index] for index in self._user_output_indices],
             self._output_tree_spec,
         )
-        self._bridge.transfer_outputs_to_caller(self._caller_output_aliases)
+        caller_tensors = tuple(
+            self._state.object_store[alias_id]
+            for alias_id in self._caller_output_aliases
+        )
+        bindings = self._bridge.acquire_for_caller(
+            self._caller_output_aliases,
+            caller_tensors,
+            task_number=(1 << 59) + self._invocations,
+        )
+        self._bridge.transfer_outputs_to_caller(
+            self._caller_output_aliases, caller_tensors, bindings
+        )
         for alias_id in self._caller_output_aliases:
             self._state.object_store.pop(alias_id, None)
             self._state.generations.pop(alias_id, None)

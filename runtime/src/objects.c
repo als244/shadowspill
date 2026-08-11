@@ -291,6 +291,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         previous->next = object->next;
     }
     --runtime->registered_objects;
+    record->framework_free_seen = 0;
     record->plan_owned = 0;
     shadowspill_append_allocation_event_locked(
         runtime,

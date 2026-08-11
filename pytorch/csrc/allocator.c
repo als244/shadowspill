@@ -554,6 +554,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_output_to_caller(
           );
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
+    uint64_t allocation_id
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_free(
+              runtime, allocation_id, shadowspill_cuda_wrap_stream(0U)
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_promote_allocation(
     uint64_t object_id,
     uint64_t address,

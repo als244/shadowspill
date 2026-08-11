@@ -325,11 +325,11 @@ class MaterializedForwardState:
             binding = self.bridge.bind_registered_tensor(alias_id, owner)
             self.object_store[alias_id] = representative
             self.generations[alias_id] = binding.generation
+            self.bridge.dematerialize(representative, alias_id, binding.generation)
             self.bridge.submit_initial_actions(
                 (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),),
                 task_number=(1 << 61) + ordinal,
             )
-            self.bridge.dematerialize(representative, alias_id, binding.generation)
         self.bridge.wait_idle()
 
     def _registrations(self) -> tuple[_Registration, ...]:
