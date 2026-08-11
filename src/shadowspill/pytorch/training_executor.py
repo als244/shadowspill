@@ -13,7 +13,7 @@ from torch.utils._pytree import tree_flatten, tree_map
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
 from .capture import GraphArtifact
-from .optimizer import current_optimizer_bindings
+from .optimizer import OpaqueOptimizerArtifact, current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge, actions_by_task
 from .training_lowering import LoweredTrainingProgram, TrainingTaskEntrypoint
 from .training_materialization import TrainingMaterializedState
@@ -51,6 +51,9 @@ class TrainingExecutor:
         state: TrainingMaterializedState,
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
+        *,
+        optimizer_state_preinitialized: bool = False,
+        optimizer_state_was_lazy: bool = False,
     ) -> None:
         self._bridge = bridge
         self._state = state
@@ -64,7 +67,10 @@ class TrainingExecutor:
             for model_parameter in (state.model.get_parameter(item.parameter_name),)
         }
         self._invocations = 0
-        self._optimizer_state_initialized = initial is None
+        self._optimizer_state_initialized = not optimizer_state_was_lazy
+        self._optimizer_state_available = (
+            optimizer_state_preinitialized or not optimizer_state_was_lazy
+        )
         self._optimizer_size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in self._recurrent.plan.program.alias_groups
@@ -92,7 +98,7 @@ class TrainingExecutor:
         for entrypoint in run.entrypoints:
             task = run.tasks[entrypoint.task_id]
             if entrypoint.phase == "optimizer":
-                self._execute_optimizer(run, task)
+                self._execute_optimizer(run, entrypoint, task)
                 continue
             outputs = self._execute_graph(run, entrypoint, task)
             if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
@@ -134,11 +140,20 @@ class TrainingExecutor:
 
         if value and self._initial is None:
             self._optimizer_state_initialized = True
+            self._optimizer_state_available = True
             return
         self._optimizer_state_initialized = value
+        self._optimizer_state_available = value
 
     def optimizer_state_dict(self) -> dict[str, object]:
         """Synchronously snapshot optimizer state without stale CUDA pointers."""
+
+        if not self._optimizer_state_initialized:
+            raw = self.optimizer.state_dict()
+            return {
+                "state": {},
+                "param_groups": copy.deepcopy(raw["param_groups"]),
+            }
 
         exposed = self._expose_optimizer_state_cpu()
         try:
@@ -189,10 +204,25 @@ class TrainingExecutor:
         for item in planned:
             tensor = current[item.name].tensor
             if not tensor.is_cuda:
-                raise RuntimeError(
-                    f"spillable optimizer state {item.name!r} restored on "
-                    f"{tensor.device.type}, not the accelerator"
+                if tensor.device.type != "cpu":
+                    raise RuntimeError(
+                        f"spillable optimizer state {item.name!r} restored on "
+                        f"unsupported device {tensor.device.type}"
+                    )
+                layout = _TensorLayout(
+                    tuple(tensor.shape),
+                    tuple(tensor.stride()),
+                    int(tensor.storage_offset()),
+                    tensor.dtype,
                 )
+                owner = torch.empty(
+                    tensor.untyped_storage().nbytes(),
+                    dtype=torch.uint8,
+                    device=self._state.device,
+                )
+                destination = self._view(owner, layout)
+                destination.copy_(tensor)
+                tensor.data = destination
             alias_id = self._bridge.alias_for_object(item.object_id)
             binding = self._bridge.promote_output(alias_id, tensor)
             self._bridge.rebind(tensor, alias_id, binding)
@@ -332,7 +362,12 @@ class TrainingExecutor:
         if destinations:
             torch._foreach_add_(destinations, contributions)
 
-    def _execute_optimizer(self, run: _PlanRun, task: TaskSpec) -> None:
+    def _execute_optimizer(
+        self,
+        run: _PlanRun,
+        entrypoint: TrainingTaskEntrypoint,
+        task: TaskSpec,
+    ) -> None:
         stream = torch.cuda.current_stream()
         aliases = tuple(
             dict.fromkeys(
@@ -349,11 +384,32 @@ class TrainingExecutor:
                     raise RuntimeError(f"optimizer input {alias_id!r} is unbound")
                 self._bridge.rebind(tensor, alias_id, binding)
                 self._state.generations[alias_id] = binding.generation
-            with torch.no_grad():
-                self.optimizer.step()
-            if not self._optimizer_state_initialized:
+            artifact = entrypoint.artifact
+            eager = isinstance(artifact, OpaqueOptimizerArtifact) or not (
+                self._optimizer_state_available
+            )
+            if eager:
+                with torch.no_grad():
+                    self.optimizer.step()
+            else:
+                if not isinstance(artifact, GraphArtifact):
+                    raise RuntimeError("optimizer task has no executable artifact")
+                current = self._current_optimizer_bindings()
+                try:
+                    arguments = tuple(
+                        current[name].tensor
+                        for name in entrypoint.optimizer_binding_names
+                    )
+                except KeyError as exc:
+                    raise RuntimeError(
+                        f"optimizer tensor {exc.args[0]!r} is unbound"
+                    ) from exc
+                function = self._functions[artifact.compatibility_digest]
+                with torch.no_grad():
+                    function(*arguments)
+            if eager and not self._optimizer_state_available:
                 self._bind_created_optimizer_state(run.lowered)
-                self._optimizer_state_initialized = True
+                self._optimizer_state_available = True
             self._dematerialize_actions(run, task.task_id)
             self._bridge.after_task(
                 task.task_id,
@@ -363,15 +419,17 @@ class TrainingExecutor:
             )
             task_open = False
             self._forget_released_objects(run, task.task_id)
-            for parameter in self._gradients.values():
-                parameter.grad = None
-            for alias_id in self._gradients:
-                self._state.object_store.pop(alias_id, None)
-                self._state.generations.pop(alias_id, None)
-            for gradient_binding in run.lowered.gradients:
-                self._state.object_tensors.pop(
-                    gradient_binding.gradient_object_id, None
-                )
+            if task.task_id == run.lowered.optimizer_task_id:
+                self._optimizer_state_initialized = True
+                for parameter in self._gradients.values():
+                    parameter.grad = None
+                for alias_id in self._gradients:
+                    self._state.object_store.pop(alias_id, None)
+                    self._state.generations.pop(alias_id, None)
+                for gradient_binding in run.lowered.gradients:
+                    self._state.object_tensors.pop(
+                        gradient_binding.gradient_object_id, None
+                    )
         except BaseException:
             if task_open:
                 self._bridge.abort_task()
@@ -390,10 +448,25 @@ class TrainingExecutor:
                 )
             tensor = actual.tensor
             if not tensor.is_cuda:
-                raise RuntimeError(
-                    f"spillable optimizer state {item.name!r} was created on "
-                    f"{tensor.device.type}, not the accelerator"
+                if tensor.device.type != "cpu":
+                    raise RuntimeError(
+                        f"spillable optimizer state {item.name!r} was created on "
+                        f"unsupported device {tensor.device.type}"
+                    )
+                layout = _TensorLayout(
+                    tuple(tensor.shape),
+                    tuple(tensor.stride()),
+                    int(tensor.storage_offset()),
+                    tensor.dtype,
                 )
+                owner = torch.empty(
+                    tensor.untyped_storage().nbytes(),
+                    dtype=torch.uint8,
+                    device=self._state.device,
+                )
+                destination = self._view(owner, layout)
+                destination.copy_(tensor)
+                tensor.data = destination
             alias_id = self._bridge.alias_for_object(item.object_id)
             if alias_id not in produced:
                 binding = self._bridge.promote_output(alias_id, tensor)

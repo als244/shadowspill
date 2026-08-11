@@ -77,6 +77,7 @@ def _lowered() -> LoweredTrainingProgram:
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
         artifact.compatibility_digest: TaskMeasurement(
@@ -90,7 +91,7 @@ def _lowered() -> LoweredTrainingProgram:
 def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     lowered = _lowered()
     assert len(lowered.program.recomputation_groups) == 2
-    assert len(lowered.program.tasks) == 9
+    assert len(lowered.program.tasks) == 8 + len(lowered.optimizer_task_ids)
     assert len(lowered.gradients) == 2
     assert lowered.program.tasks[-1].phase == "optimizer"
     selections = tuple(
@@ -98,13 +99,13 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         for group in lowered.program.recomputation_groups
     )
     selected = lowered.program.selected_tasks(selections)
-    assert [task.phase for task in selected] == [
+    assert [task.phase for task in selected[:4]] == [
         "forward",
         "backward",
         "forward",
         "backward",
-        "optimizer",
     ]
+    assert all(task.phase == "optimizer" for task in selected[4:])
     assert selected[3].mutations
     assert selected[-1].mutations
     for entrypoint in lowered.entrypoints:
@@ -162,6 +163,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
         artifact.compatibility_digest: TaskMeasurement(
@@ -219,6 +221,7 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
         artifact.compatibility_digest: TaskMeasurement(
@@ -243,7 +246,11 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     assert initial.optimizer_objects
     assert initial.program.objects == recurrent.program.objects
     initial_task = initial.program.tasks[-1]
-    recurrent_task = recurrent.program.tasks[-1]
+    recurrent_tasks = tuple(
+        task
+        for task in recurrent.program.tasks
+        if task.task_id in recurrent.optimizer_task_ids
+    )
     created = {
         item.object_id
         for item in initial.optimizer_objects
@@ -251,9 +258,15 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     }
     assert created == set(initial_task.outputs)
     assert created.isdisjoint(initial_task.inputs)
-    assert created.issubset(recurrent_task.inputs)
     assert created.issubset(
-        {mutation.object_id for mutation in recurrent_task.mutations}
+        {object_id for task in recurrent_tasks for object_id in task.inputs}
+    )
+    assert created.issubset(
+        {
+            mutation.object_id
+            for task in recurrent_tasks
+            for mutation in task.mutations
+        }
     )
 
 
@@ -284,6 +297,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
         artifact.compatibility_digest: TaskMeasurement(

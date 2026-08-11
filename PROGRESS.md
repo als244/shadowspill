@@ -395,6 +395,20 @@ Phase 8 — public forward and training callables.
   rejects any failed boundary that already mutated parameter values. A
   two-parameter external `mlops.optim.AdamW` regression proves that both update
   operations and both complete state bundles enter the recurrent graph.
+- Recurrent optimizer graphs are now partitioned into dependency-closed tensor
+  components before Program construction. Independent per-parameter updates
+  become ordered tasks with bounded working sets; operations sharing mutable
+  state remain together, and opaque optimizers remain one eager task. A real
+  two-component external `mlops.optim.AdamW` public run passes three steps and
+  bitwise checkpoint replay without introducing an `mlops` core dependency.
+- Successful CPU discovery is probed first to preserve data-dependent opaque
+  classification, then recurrent graph capture is normalized to FakeTensor
+  CUDA. This fixed a stale CPU-kernel/CUDA-storage fault found by the first
+  component execution. Device-side scalar optimizer state is planned like any
+  other tensor; CPU-restored checkpoints are incrementally rematerialized.
+- Optimizers with registered step pre/post hooks remain bounded opaque tasks.
+  This preserves their Python-visible once-per-step semantics; tensor-only
+  component execution is used only when no such side-effect contract exists.
 
 ## Gate rule
 

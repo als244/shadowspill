@@ -106,15 +106,28 @@ class OptimizerCapture:
     first_step_is_opaque: bool
     created_state_names: tuple[str, ...]
     recurrent: OptimizerTaskArtifact | None
+    recurrent_tasks: tuple[OptimizerTask, ...]
     bindings: tuple[OptimizerTensorBinding, ...]
     mutation_names: tuple[str, ...]
     opaque_reason: str | None = None
+    initialized_state_dict: dict[str, Any] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def recurrent_is_opaque(self) -> bool:
         return self.recurrent is None or isinstance(
             self.recurrent, OpaqueOptimizerArtifact
         )
+
+
+@dataclass(frozen=True, slots=True)
+class OptimizerTask:
+    """One dependency-closed recurrent optimizer component."""
+
+    artifact: OptimizerTaskArtifact
+    binding_names: tuple[str, ...]
+    mutation_names: tuple[str, ...]
 
 
 def capture_optimizer(
@@ -150,6 +163,7 @@ def capture_optimizer(
             f"missing={missing}, extra={len(observed - expected)}"
         )
     optimizer_type = f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
+    initialized_state_dict: dict[str, Any] | None
     try:
         sandbox = _copy_optimizer(optimizer)
     except BaseException as exc:
@@ -158,6 +172,7 @@ def capture_optimizer(
             first_step_is_opaque=True,
             created_state_names=(),
             recurrent=None,
+            recurrent_tasks=(),
             bindings=(),
             mutation_names=(),
             opaque_reason=f"optimizer cannot be copied for capture: {exc}",
@@ -209,6 +224,7 @@ def capture_optimizer(
                 first_step_is_opaque=True,
                 created_state_names=(),
                 recurrent=None,
+                recurrent_tasks=(),
                 bindings=(),
                 mutation_names=(),
                 opaque_reason=f"optimizer discovery step failed: {exc}",
@@ -219,6 +235,7 @@ def capture_optimizer(
                 name_by_sandbox_id,
                 before_parameters,
             )
+            initialized_state_dict = sandbox.state_dict()
             sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
                 sandbox, name_by_sandbox_id
             )
@@ -228,6 +245,7 @@ def capture_optimizer(
                 first_step_is_opaque=True,
                 created_state_names=(),
                 recurrent=None,
+                recurrent_tasks=(),
                 bindings=(),
                 mutation_names=(),
                 opaque_reason=(
@@ -235,6 +253,8 @@ def capture_optimizer(
                     f"fake CUDA inventory failed: {fake_exc}"
                 ),
             )
+    else:
+        initialized_state_dict = None
     after_structure = _state_structure(sandbox, name_by_sandbox_id)
     first_step_is_opaque = after_structure != before_structure
     before_state_names = _state_tensor_names(optimizer, name_by_actual_id)
@@ -249,6 +269,74 @@ def capture_optimizer(
                 parameter.copy_(value)
                 if gradient is not None and parameter.grad is not None:
                     parameter.grad.copy_(gradient)
+
+    if _has_optimizer_step_hooks(optimizer):
+        hook_bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
+        hook_artifact = OpaqueOptimizerArtifact.capture(sandbox, hook_bindings)
+        return OptimizerCapture(
+            optimizer_type=optimizer_type,
+            first_step_is_opaque=first_step_is_opaque,
+            created_state_names=created_state_names,
+            recurrent=hook_artifact,
+            recurrent_tasks=(
+                OptimizerTask(
+                    hook_artifact,
+                    tuple(binding.name for binding in hook_bindings),
+                    tuple(
+                        binding.name for binding in hook_bindings if binding.mutable
+                    ),
+                ),
+            ),
+            bindings=hook_bindings,
+            mutation_names=tuple(
+                binding.name for binding in hook_bindings if binding.mutable
+            ),
+            opaque_reason="optimizer step hooks require ordinary eager execution",
+            initialized_state_dict=initialized_state_dict,
+        )
+
+    if initialized_state_dict is None:
+        probe_bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
+        probe_snapshots = {
+            id(binding.tensor): binding.tensor.detach().clone()
+            for binding in probe_bindings
+        }
+        probe_grad_enabled = torch.is_grad_enabled()
+        try:
+            _export_optimizer_graph(sandbox)
+        except BaseException as exc:
+            _restore_binding_values(probe_bindings, probe_snapshots)
+            opaque_artifact = OpaqueOptimizerArtifact.capture(
+                sandbox, probe_bindings
+            )
+            return OptimizerCapture(
+                optimizer_type=optimizer_type,
+                first_step_is_opaque=first_step_is_opaque,
+                created_state_names=created_state_names,
+                recurrent=opaque_artifact,
+                recurrent_tasks=(
+                    OptimizerTask(
+                        opaque_artifact,
+                        tuple(binding.name for binding in probe_bindings),
+                        tuple(
+                            binding.name
+                            for binding in probe_bindings
+                            if binding.mutable
+                        ),
+                    ),
+                ),
+                bindings=probe_bindings,
+                mutation_names=tuple(
+                    binding.name for binding in probe_bindings if binding.mutable
+                ),
+                opaque_reason=f"recurrent optimizer graph is opaque: {exc}",
+            )
+        finally:
+            torch.set_grad_enabled(probe_grad_enabled)
+        _restore_binding_values(probe_bindings, probe_snapshots)
+        sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
+            sandbox, name_by_sandbox_id
+        )
 
     bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
     snapshots = {
@@ -267,27 +355,39 @@ def capture_optimizer(
     except BaseException as exc:
         _restore_binding_values(bindings, snapshots)
         opaque_artifact = OpaqueOptimizerArtifact.capture(sandbox, bindings)
+        opaque_tasks = (
+            OptimizerTask(
+                opaque_artifact,
+                tuple(binding.name for binding in bindings),
+                tuple(binding.name for binding in bindings if binding.mutable),
+            ),
+        )
         return OptimizerCapture(
             optimizer_type=optimizer_type,
             first_step_is_opaque=first_step_is_opaque,
             created_state_names=created_state_names,
             recurrent=opaque_artifact,
+            recurrent_tasks=opaque_tasks,
             bindings=bindings,
             mutation_names=tuple(
                 binding.name for binding in bindings if binding.mutable
             ),
             opaque_reason=f"recurrent optimizer graph is opaque: {exc}",
+            initialized_state_dict=initialized_state_dict,
         )
     finally:
         torch.set_grad_enabled(grad_enabled)
     mutations = tuple(binding.name for binding in bindings if binding.mutable)
+    recurrent_tasks = _partition_optimizer_graph(artifact, bindings)
     return OptimizerCapture(
         optimizer_type=optimizer_type,
         first_step_is_opaque=first_step_is_opaque,
         created_state_names=created_state_names,
         recurrent=artifact,
+        recurrent_tasks=recurrent_tasks,
         bindings=bindings,
         mutation_names=mutations,
+        initialized_state_dict=initialized_state_dict,
     )
 
 
@@ -316,6 +416,13 @@ def _canonical_parameters(
             result[name] = parameter
             seen.add(id(parameter))
     return result
+
+
+def _has_optimizer_step_hooks(optimizer: torch.optim.Optimizer) -> bool:
+    return bool(
+        getattr(optimizer, "_optimizer_step_pre_hooks", None)
+        or getattr(optimizer, "_optimizer_step_post_hooks", None)
+    )
 
 
 def _copy_optimizer(optimizer: torch.optim.Optimizer) -> torch.optim.Optimizer:
@@ -638,11 +745,9 @@ def _tensor_bindings(
         if id(tensor) in seen:
             return
         seen.add(id(tensor))
-        # Scalar optimizer control values are deliberately not spill objects.
-        # PyTorch optimizers may keep them on the CPU (ordinary AdamW) or on the
-        # accelerator (capturable/custom optimizers).  In either case their
-        # bounded footprint belongs to task/provider admission, while tensor
-        # state such as moments remains fully planned and budgeted.
+        # Device-side control tensors belong in the physical plan even when
+        # scalar. Ordinary PyTorch optimizers intentionally keep some scalar
+        # counters on the CPU; those remain bounded host-side task inputs.
         spillable = (
             role
             in {
@@ -650,6 +755,7 @@ def _tensor_bindings(
                 OptimizerTensorRole.GRADIENT,
             }
             or tensor.ndim != 0
+            or tensor.device.type != "cpu"
         )
         bindings.append(OptimizerTensorBinding(name, role, tensor, mutable, spillable))
 
@@ -739,6 +845,138 @@ def _lift_optimizer_tensors(
         if hasattr(graph_module, target):
             delattr(graph_module, target)
     return graph_module
+
+
+def _partition_optimizer_graph(
+    artifact: GraphArtifact,
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> tuple[OptimizerTask, ...]:
+    """Split independent tensor updates without using optimizer semantics."""
+
+    graph_module = artifact.graph_module
+    placeholders = tuple(
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    )
+    if len(placeholders) != len(bindings):
+        raise CaptureError("optimizer placeholder inventory changed after lifting")
+    operations = tuple(
+        node
+        for node in graph_module.graph.nodes
+        if node.op not in {"placeholder", "output"}
+    )
+    if len(operations) < 2:
+        return (
+            OptimizerTask(
+                artifact,
+                tuple(binding.name for binding in bindings),
+                tuple(binding.name for binding in bindings if binding.mutable),
+            ),
+        )
+
+    operation_ids = {node: index for index, node in enumerate(operations)}
+    parent = list(range(len(operations)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    placeholder_dependencies: dict[torch.fx.Node, set[int]] = {
+        placeholder: set() for placeholder in placeholders
+    }
+    dependencies_by_operation: dict[torch.fx.Node, set[torch.fx.Node]] = {}
+    for operation in operations:
+        dependencies: set[torch.fx.Node] = set()
+        stack = list(operation.all_input_nodes)
+        while stack:
+            dependency = stack.pop()
+            if dependency in dependencies:
+                continue
+            dependencies.add(dependency)
+            if dependency in operation_ids:
+                union(operation_ids[operation], operation_ids[dependency])
+            if dependency.op == "placeholder":
+                placeholder_dependencies[dependency].add(operation_ids[operation])
+            else:
+                stack.extend(dependency.all_input_nodes)
+        dependencies_by_operation[operation] = dependencies
+
+    for placeholder, binding in zip(placeholders, bindings, strict=True):
+        if not binding.mutable:
+            continue
+        consumers = sorted(placeholder_dependencies[placeholder])
+        for consumer in consumers[1:]:
+            union(consumers[0], consumer)
+
+    components: dict[int, list[torch.fx.Node]] = {}
+    for operation in operations:
+        components.setdefault(find(operation_ids[operation]), []).append(operation)
+    ordered_components = tuple(
+        tuple(nodes)
+        for _root, nodes in sorted(
+            components.items(),
+            key=lambda item: min(operation_ids[node] for node in item[1]),
+        )
+    )
+    if len(ordered_components) == 1:
+        return (
+            OptimizerTask(
+                artifact,
+                tuple(binding.name for binding in bindings),
+                tuple(binding.name for binding in bindings if binding.mutable),
+            ),
+        )
+
+    tasks: list[OptimizerTask] = []
+    for component in ordered_components:
+        required_placeholders = {
+            dependency
+            for operation in component
+            for dependency in dependencies_by_operation[operation]
+            if dependency.op == "placeholder"
+        }
+        positions = tuple(
+            index
+            for index, placeholder in enumerate(placeholders)
+            if placeholder in required_placeholders
+        )
+        component_graph = torch.fx.Graph()
+        environment: dict[torch.fx.Node, torch.fx.Node] = {}
+        for position in positions:
+            original = placeholders[position]
+            environment[original] = component_graph.placeholder(str(original.target))
+        for operation in component:
+            environment[operation] = component_graph.node_copy(
+                operation, environment.__getitem__
+            )
+        mutable_positions = tuple(
+            position for position in positions if bindings[position].mutable
+        )
+        component_graph.output(
+            tuple(environment[placeholders[position]] for position in mutable_positions)
+        )
+        component_module = GraphModule(graph_module, component_graph)
+        component_artifact = GraphArtifact.capture(
+            kind="optimizer",
+            graph_module=component_module,
+            example_inputs=tuple(
+                artifact.example_arguments[position] for position in positions
+            ),
+        )
+        tasks.append(
+            OptimizerTask(
+                component_artifact,
+                tuple(bindings[position].name for position in positions),
+                tuple(bindings[position].name for position in mutable_positions),
+            )
+        )
+    return tuple(tasks)
 
 
 def _restore_binding_values(

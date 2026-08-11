@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -33,6 +33,7 @@ from .contracts import CaptureError
 from .lowering import RegistrationBinding, TensorSlot, _TensorInventory
 from .optimizer import (
     OptimizerCapture,
+    OptimizerTask,
     OptimizerTaskArtifact,
     OptimizerTensorRole,
 )
@@ -75,6 +76,7 @@ class TrainingTaskEntrypoint:
     output_slots: tuple[TensorSlot, ...]
     gradient_output_slots: tuple[TensorSlot, ...] = ()
     public_output_count: int = 0
+    optimizer_binding_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +90,11 @@ class LoweredTrainingProgram:
     gradients: tuple[GradientBinding, ...]
     optimizer_objects: tuple[OptimizerObjectBinding, ...]
     fixed_tensors: tuple[FixedTensorBinding, ...]
-    optimizer_task_id: str
+    optimizer_task_ids: tuple[str, ...]
+
+    @property
+    def optimizer_task_id(self) -> str:
+        return self.optimizer_task_ids[-1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,51 +498,16 @@ def lower_partitioned_training_program(
         for stage_index in range(len(position_variants))
     )
 
-    optimizer_task_id = f"task_{len(tasks):06d}"
-    optimizer_inputs = (
-        tuple(item.parameter_object_id for item in gradients)
-        + tuple(item.gradient_object_id for item in gradients)
-        + tuple(
-            item.object_id
-            for item in optimizer_objects
-            if optimizer_phase == "recurrent" or not item.created_on_first_step
-        )
-    )
-    optimizer_outputs = tuple(
-        item.object_id
-        for item in optimizer_objects
-        if optimizer_phase == "initial" and item.created_on_first_step
-    )
-    optimizer_mutations = tuple(
-        MutationSpec(item.parameter_object_id) for item in gradients
-    ) + tuple(
-        MutationSpec(item.object_id)
-        for item in optimizer_objects
-        if item.mutable
-        and (optimizer_phase == "recurrent" or not item.created_on_first_step)
-    )
-    tasks.append(
-        TaskSpec(
-            optimizer_task_id,
-            ResourceSpec(device_id, ResourceKind.COMPUTE),
-            profile_id(optimizer.recurrent),
-            dependencies=tuple(all_backward_ids),
-            inputs=optimizer_inputs,
-            outputs=optimizer_outputs,
-            mutations=optimizer_mutations,
-            phase="optimizer",
-        )
-    )
-    entrypoints.append(
-        TrainingTaskEntrypoint(
-            optimizer_task_id,
-            "optimizer",
-            None,
-            None,
-            optimizer.recurrent,
-            (),
-            (),
-        )
+    optimizer_task_ids = _append_optimizer_tasks(
+        tasks,
+        entrypoints,
+        optimizer,
+        optimizer_objects,
+        gradients,
+        optimizer_phase=optimizer_phase,
+        dependencies=tuple(all_backward_ids),
+        device_id=device_id,
+        profile_id=profile_id,
     )
 
     alias_groups = inventory.alias_groups()
@@ -609,7 +580,7 @@ def lower_partitioned_training_program(
         gradients,
         optimizer_objects,
         tuple(fixed_tensors.values()),
-        optimizer_task_id,
+        optimizer_task_ids,
     )
 
 
@@ -812,51 +783,16 @@ def lower_training_program(
             for task_id in (option_task_ids[variant][1],)
         )
 
-    optimizer_task_id = f"task_{len(tasks):06d}"
-    optimizer_inputs = (
-        tuple(item.parameter_object_id for item in gradients)
-        + tuple(item.gradient_object_id for item in gradients)
-        + tuple(
-            item.object_id
-            for item in optimizer_objects
-            if optimizer_phase == "recurrent" or not item.created_on_first_step
-        )
-    )
-    optimizer_outputs = tuple(
-        item.object_id
-        for item in optimizer_objects
-        if optimizer_phase == "initial" and item.created_on_first_step
-    )
-    optimizer_mutations = tuple(
-        MutationSpec(item.parameter_object_id) for item in gradients
-    ) + tuple(
-        MutationSpec(item.object_id)
-        for item in optimizer_objects
-        if item.mutable
-        and (optimizer_phase == "recurrent" or not item.created_on_first_step)
-    )
-    tasks.append(
-        TaskSpec(
-            optimizer_task_id,
-            ResourceSpec(device_id, ResourceKind.COMPUTE),
-            profile_id(optimizer.recurrent),
-            dependencies=tuple(all_backward_ids),
-            inputs=optimizer_inputs,
-            outputs=optimizer_outputs,
-            mutations=optimizer_mutations,
-            phase="optimizer",
-        )
-    )
-    entrypoints.append(
-        TrainingTaskEntrypoint(
-            optimizer_task_id,
-            "optimizer",
-            None,
-            None,
-            optimizer.recurrent,
-            (),
-            (),
-        )
+    optimizer_task_ids = _append_optimizer_tasks(
+        tasks,
+        entrypoints,
+        optimizer,
+        optimizer_objects,
+        gradients,
+        optimizer_phase=optimizer_phase,
+        dependencies=tuple(all_backward_ids),
+        device_id=device_id,
+        profile_id=profile_id,
     )
 
     alias_groups = inventory.alias_groups()
@@ -929,8 +865,102 @@ def lower_training_program(
         gradients,
         optimizer_objects,
         tuple(fixed_tensors.values()),
-        optimizer_task_id,
+        optimizer_task_ids,
     )
+
+
+def _append_optimizer_tasks(
+    tasks: list[TaskSpec],
+    entrypoints: list[TrainingTaskEntrypoint],
+    optimizer: OptimizerCapture,
+    optimizer_objects: tuple[OptimizerObjectBinding, ...],
+    gradients: tuple[GradientBinding, ...],
+    *,
+    optimizer_phase: Literal["initial", "recurrent"],
+    dependencies: tuple[str, ...],
+    device_id: str,
+    profile_id: Callable[..., str],
+) -> tuple[str, ...]:
+    """Append dependency-closed optimizer components in semantic order."""
+
+    if optimizer.recurrent is None:
+        raise CaptureError("optimizer has no recurrent artifact")
+    object_by_name = {
+        **{item.parameter_name: item.parameter_object_id for item in gradients},
+        **{
+            f"gradient.{item.parameter_name}": item.gradient_object_id
+            for item in gradients
+        },
+        **{item.name: item.object_id for item in optimizer_objects},
+    }
+    object_binding = {item.name: item for item in optimizer_objects}
+    has_lazy_outputs = any(item.created_on_first_step for item in optimizer_objects)
+    components = (
+        (
+            OptimizerTask(
+                optimizer.recurrent,
+                tuple(binding.name for binding in optimizer.bindings),
+                optimizer.mutation_names,
+            ),
+        )
+        if optimizer_phase == "initial" and has_lazy_outputs
+        else optimizer.recurrent_tasks
+    )
+    if not components:
+        raise CaptureError("optimizer has no executable task components")
+
+    result: list[str] = []
+    preceding = dependencies
+    for component in components:
+        task_id = f"task_{len(tasks):06d}"
+        component_objects = tuple(
+            object_by_name[name]
+            for name in component.binding_names
+            if name in object_by_name
+        )
+        outputs = tuple(
+            object_by_name[name]
+            for name in component.mutation_names
+            if name in object_binding
+            and optimizer_phase == "initial"
+            and object_binding[name].created_on_first_step
+        )
+        mutations = tuple(
+            MutationSpec(object_by_name[name])
+            for name in component.mutation_names
+            if name in object_by_name and object_by_name[name] not in outputs
+        )
+        tasks.append(
+            TaskSpec(
+                task_id,
+                ResourceSpec(device_id, ResourceKind.COMPUTE),
+                profile_id(component.artifact),
+                dependencies=preceding,
+                inputs=tuple(
+                    object_id
+                    for object_id in component_objects
+                    if object_id not in outputs
+                ),
+                outputs=outputs,
+                mutations=mutations,
+                phase="optimizer",
+            )
+        )
+        entrypoints.append(
+            TrainingTaskEntrypoint(
+                task_id,
+                "optimizer",
+                None,
+                None,
+                component.artifact,
+                (),
+                (),
+                optimizer_binding_names=component.binding_names,
+            )
+        )
+        result.append(task_id)
+        preceding = _unique((*dependencies, task_id))
+    return tuple(result)
 
 
 def _register_model(
@@ -1017,7 +1047,11 @@ def _register_optimizer_objects(
 ) -> tuple[OptimizerObjectBinding, ...]:
     parameter_names = {item.parameter_name for item in gradients}
     gradient_names = {f"gradient.{item.parameter_name}" for item in gradients}
-    created = set(optimizer.created_state_names)
+    created = (
+        set()
+        if optimizer.initialized_state_dict is not None
+        else set(optimizer.created_state_names)
+    )
     results: list[OptimizerObjectBinding] = []
     for binding in optimizer.bindings:
         if binding.role is OptimizerTensorRole.PARAMETER:

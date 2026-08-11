@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 from functools import partial
 
@@ -251,3 +252,83 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     training.close()
     for planned, eager in zip(model.parameters(), reference.parameters(), strict=True):
         torch.testing.assert_close(planned, eager)
+
+
+@pytest.mark.cuda
+def test_public_training_partitions_cuda_only_optimizer_and_replays(
+    tmp_path: object,
+) -> None:
+    mlops = pytest.importorskip("mlops")
+    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
+        pytest.skip("the built PyTorch adapter was not provided")
+    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+
+    class Network(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.first = nn.Linear(8, 12, bias=False, dtype=torch.bfloat16)
+            self.second = nn.Linear(12, 4, bias=False, dtype=torch.bfloat16)
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return self.second(torch.relu(self.first(value)))
+
+    def objective(
+        model: nn.Module, value: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.nn.functional.mse_loss(model(value).float(), target.float())
+
+    def inputs(seed: int) -> list[list[torch.Tensor]]:
+        torch.manual_seed(seed)
+        return [
+            [
+                torch.randn(2, 8, dtype=torch.bfloat16),
+                torch.randn(2, 4, dtype=torch.bfloat16),
+            ],
+            [
+                torch.randn(3, 8, dtype=torch.bfloat16),
+                torch.randn(3, 4, dtype=torch.bfloat16),
+            ],
+        ]
+
+    torch.manual_seed(91)
+    model = Network()
+    training = plan(
+        model,
+        objective=objective,
+        opt=partial(
+            mlops.optim.AdamW,
+            lr=3e-3,
+            state_dtype=torch.bfloat16,
+            master_parameter_dtype=torch.bfloat16,
+        ),
+        example_inputs=inputs(92),
+        device_budget=2 << 30,
+        host_budget=1 << 30,
+    )
+    assert training.plan_report.initial_execution_plan is None
+    optimizer_tasks = tuple(
+        task
+        for task in training.plan_report.execution_plan.program.tasks
+        if task.phase == "optimizer"
+    )
+    assert len(optimizer_tasks) == 2
+    assert training.state_dict()["optimizer"]["state"] == {}
+
+    training(inputs(93))
+    checkpoint = copy.deepcopy(training.state_dict())
+    training(inputs(94))
+    uninterrupted = copy.deepcopy(training.state_dict())
+    training.load_state_dict(checkpoint)
+    training(inputs(94))
+    replayed = training.state_dict()
+
+    for name, value in uninterrupted["model"].items():
+        assert torch.equal(value, replayed["model"][name])
+    for parameter_id, parameter_state in uninterrupted["optimizer"]["state"].items():
+        for name, value in parameter_state.items():
+            other = replayed["optimizer"]["state"][parameter_id][name]
+            if isinstance(value, torch.Tensor):
+                assert torch.equal(value, other)
+            else:
+                assert value == other
+    training.close()

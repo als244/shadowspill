@@ -16,6 +16,7 @@ from shadowspill.ir import MemoryAction, MemoryActionKind
 from .aot import TrainingCapture
 from .contracts import PlanningError
 from .lowering import RegistrationBinding
+from .optimizer import current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge
 from .training_lowering import LoweredTrainingProgram, TrainingStorageLayout
 
@@ -112,7 +113,11 @@ class TrainingMaterializedState:
         self._model_on_cpu = False
 
     def adopt_execution_plan(
-        self, bridge: RuntimeBridge, lowered: LoweredTrainingProgram
+        self,
+        bridge: RuntimeBridge,
+        lowered: LoweredTrainingProgram,
+        *,
+        optimizer: torch.optim.Optimizer,
     ) -> None:
         """Switch from provisional identities and install fixed graph inputs."""
 
@@ -154,7 +159,63 @@ class TrainingMaterializedState:
                 binding.generation,
                 (1 << 20) + ordinal,
             )
+        self._materialize_optimizer_state(optimizer, lowered)
         bridge.wait_idle()
+
+    def _materialize_optimizer_state(
+        self,
+        optimizer: torch.optim.Optimizer,
+        lowered: LoweredTrainingProgram,
+    ) -> None:
+        current = {
+            item.name: item
+            for item in current_optimizer_bindings(
+                dict(self.model.named_parameters()), optimizer
+            )
+        }
+        entries: dict[str, list[tuple[str, torch.Tensor]]] = {}
+        for item in lowered.optimizer_objects:
+            actual = current.get(item.name)
+            if actual is None:
+                if item.created_on_first_step:
+                    continue
+                raise PlanningError(
+                    f"optimizer state {item.name!r} is absent after initialization"
+                )
+            alias_id = self.bridge.alias_for_object(item.object_id)
+            entries.setdefault(alias_id, []).append((item.object_id, actual.tensor))
+
+        for ordinal, (alias_id, values) in enumerate(entries.items()):
+            source = values[0][1]
+            if source.device.type != "cpu":
+                raise PlanningError(
+                    f"optimizer state for {alias_id!r} must begin on the CPU"
+                )
+            source_owner = torch.empty(0, dtype=torch.uint8, device="cpu")
+            source_owner.set_(source.untyped_storage())
+            self.bridge.register_host_tensor(
+                alias_id, source_owner, retain_host_backing=True
+            )
+            owner = torch.empty(
+                source_owner.numel(), dtype=torch.uint8, device=self.device
+            )
+            representative: torch.Tensor = owner
+            assigned: set[int] = set()
+            for object_id, tensor in values:
+                if id(tensor) not in assigned:
+                    tensor.data = self._cuda_view(owner, tensor)
+                    assigned.add(id(tensor))
+                self.object_tensors[object_id] = tensor
+                representative = tensor
+            binding = self.bridge.bind_registered_tensor(alias_id, owner)
+            self.object_store[alias_id] = representative
+            self.generations[alias_id] = binding.generation
+            self._release_placeholder(
+                alias_id,
+                representative,
+                binding.generation,
+                (1 << 21) + ordinal,
+            )
 
     def refresh_inputs(self, values: Sequence[Sequence[Any]]) -> None:
         """Write every guarded microbatch into its persistent host slot."""

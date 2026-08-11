@@ -22,7 +22,7 @@ from .contracts import ObjectiveResult, PlanningError
 from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
 from .materialization import representative_cpu_inputs
-from .optimizer import capture_optimizer
+from .optimizer import OptimizerTaskArtifact, capture_optimizer
 from .partition import partition_training_capture
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import PlannedTrainStep, PlanReport
@@ -117,6 +117,8 @@ def build_training(
             optimizer_capture = capture_optimizer(
                 dict(model.named_parameters()), optimizer
             )
+            if optimizer_capture.initialized_state_dict is not None:
+                optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
             for parameter in model.parameters():
                 parameter.grad = None
             state.restore_cuda_placeholders_after_optimizer_capture()
@@ -126,16 +128,22 @@ def build_training(
                     f"{optimizer_capture.opaque_reason}"
                 )
 
-        artifacts = (
-            *{
+        artifact_by_digest: dict[str, OptimizerTaskArtifact] = {
                 artifact.compatibility_digest: artifact
                 for capture in partitioned_captures
                 for stage in capture.stages
                 for pair in (stage.save_pair, stage.recompute_pair)
                 for artifact in (pair.forward, pair.backward)
-            }.values(),
-            optimizer_capture.recurrent,
-        )
+            }
+        for optimizer_task in optimizer_capture.recurrent_tasks:
+            artifact_by_digest[optimizer_task.artifact.compatibility_digest] = (
+                optimizer_task.artifact
+            )
+        if optimizer_capture.initialized_state_dict is None:
+            artifact_by_digest[optimizer_capture.recurrent.compatibility_digest] = (
+                optimizer_capture.recurrent
+            )
+        artifacts = tuple(artifact_by_digest.values())
         profiler = CudaTaskProfiler(installed.library, device_ordinal=0)
         with timer.measure("structural_profiling"):
             profiles = profile_unique_artifacts(
@@ -245,7 +253,11 @@ def build_training(
         )
         final_bridge = RuntimeBridge(installed.library, recurrent_plan.program)
         with timer.measure("plan_adoption"):
-            state.adopt_execution_plan(final_bridge, recurrent_lowered)
+            state.adopt_execution_plan(
+                final_bridge,
+                recurrent_lowered,
+                optimizer=optimizer,
+            )
         with timer.measure("physical_sealing"):
             _seal_physical_budget(installed)
         with timer.measure("callable_construction"):
@@ -256,6 +268,12 @@ def build_training(
                 state,
                 functions,
                 optimizer,
+                optimizer_state_preinitialized=(
+                    optimizer_capture.initialized_state_dict is not None
+                ),
+                optimizer_state_was_lazy=bool(
+                    optimizer_capture.created_state_names
+                ),
             )
             report = _training_report(
                 tuple(signature.digest for signature in signatures),

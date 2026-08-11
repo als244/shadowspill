@@ -68,8 +68,8 @@ def materialize_example_arguments(
 ) -> tuple[object, ...]:
     """Create real CUDA values while preserving tensor storage aliases."""
 
-    device = torch.device("cuda", device_ordinal)
-    storages: dict[int, torch.Tensor] = {}
+    cuda_device = torch.device("cuda", device_ordinal)
+    storages: dict[tuple[int, str], torch.Tensor] = {}
     results: list[object] = []
     with torch.no_grad():
         for argument in arguments:
@@ -81,15 +81,18 @@ def materialize_example_arguments(
                     "compiled task examples currently require strided tensors"
                 )
             source_storage = argument.untyped_storage()
-            key = source_storage._cdata
+            target_device = (
+                cuda_device if argument.device.type == "cuda" else argument.device
+            )
+            key = (source_storage._cdata, str(target_device))
             storage = storages.get(key)
             if storage is None:
                 storage = torch.empty(
-                    source_storage.nbytes(), dtype=torch.uint8, device=device
+                    source_storage.nbytes(), dtype=torch.uint8, device=target_device
                 )
                 storage.zero_()
                 storages[key] = storage
-            tensor = torch.empty(0, dtype=argument.dtype, device=device)
+            tensor = torch.empty(0, dtype=argument.dtype, device=target_device)
             tensor.set_(
                 storage.untyped_storage(),
                 argument.storage_offset(),
