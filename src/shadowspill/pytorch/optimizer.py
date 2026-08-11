@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -129,15 +130,39 @@ def capture_optimizer(
         with torch.no_grad():
             sandbox.step()
     except BaseException as exc:
-        return OptimizerCapture(
-            optimizer_type=optimizer_type,
-            first_step_is_opaque=True,
-            created_state_names=(),
-            recurrent=None,
-            bindings=(),
-            mutation_names=(),
-            opaque_reason=f"optimizer discovery step failed: {exc}",
-        )
+        # CUDA-only registered operators commonly reject the CPU discovery
+        # sandbox *after* creating lazy optimizer state.  That state inventory
+        # is still authoritative.  Re-run capture with FakeTensor CUDA values
+        # so the operator's registered fake/meta contract describes the
+        # recurrent task without allocating a second real model.
+        after_structure = _state_structure(sandbox, name_by_sandbox_id)
+        if after_structure == before_structure:
+            return OptimizerCapture(
+                optimizer_type=optimizer_type,
+                first_step_is_opaque=True,
+                created_state_names=(),
+                recurrent=None,
+                bindings=(),
+                mutation_names=(),
+                opaque_reason=f"optimizer discovery step failed: {exc}",
+            )
+        try:
+            sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
+                sandbox, name_by_sandbox_id
+            )
+        except BaseException as fake_exc:
+            return OptimizerCapture(
+                optimizer_type=optimizer_type,
+                first_step_is_opaque=True,
+                created_state_names=(),
+                recurrent=None,
+                bindings=(),
+                mutation_names=(),
+                opaque_reason=(
+                    f"optimizer discovery step failed: {exc}; "
+                    f"fake CUDA inventory failed: {fake_exc}"
+                ),
+            )
     after_structure = _state_structure(sandbox, name_by_sandbox_id)
     first_step_is_opaque = after_structure != before_structure
     before_state_names = _state_tensor_names(optimizer, name_by_actual_id)
@@ -244,6 +269,91 @@ def _optimizer_parameters(
             seen.add(id(parameter))
             result.append(parameter)
     return tuple(result)
+
+
+def _fake_cuda_optimizer(
+    optimizer: torch.optim.Optimizer,
+    name_by_id: Mapping[int, str],
+) -> tuple[torch.optim.Optimizer, dict[int, str]]:
+    """Replace serializable optimizer tensors with FakeTensor CUDA values.
+
+    PyTorch's optimizer protocol defines parameters through ``param_groups``
+    and per-parameter tensors through ``state``.  Restricting conversion to
+    that protocol keeps this fallback independent of optimizer classes while
+    allowing registered CUDA-only operations to participate through their fake
+    implementations.  Undeclared tensor closures are rejected later when the
+    FX graph is lifted.
+    """
+
+    parameters = _optimizer_parameters(optimizer)
+    replacements: dict[int, torch.Tensor] = {}
+    fake_names: dict[int, str] = {}
+    mode = torch._subclasses.fake_tensor.FakeTensorMode(allow_non_fake_inputs=True)
+
+    def fake_tensor(value: torch.Tensor, *, parameter: bool = False) -> torch.Tensor:
+        existing = replacements.get(id(value))
+        if existing is not None:
+            return existing
+        if value.layout is not torch.strided:
+            raise CaptureError("optimizer fake capture requires strided tensors")
+        with mode:
+            raw = torch.empty_strided(
+                tuple(value.shape),
+                tuple(value.stride()),
+                dtype=value.dtype,
+                device="cuda",
+            )
+            result: torch.Tensor
+            if parameter:
+                result = torch.nn.Parameter(raw, requires_grad=value.requires_grad)
+            else:
+                result = raw.requires_grad_(value.requires_grad)
+        replacements[id(value)] = result
+        return result
+
+    fake_parameters: dict[int, torch.nn.Parameter] = {}
+    for value in parameters:
+        converted = fake_tensor(value, parameter=True)
+        if not isinstance(converted, torch.nn.Parameter):
+            raise AssertionError("parameter conversion changed tensor type")
+        if value.grad is not None:
+            converted.grad = fake_tensor(value.grad)
+        fake_parameters[id(value)] = converted
+        name = name_by_id.get(id(value))
+        if name is not None:
+            fake_names[id(converted)] = name
+
+    for group in optimizer.param_groups:
+        group["params"] = [fake_parameters[id(value)] for value in group["params"]]
+
+    original_state = optimizer.state
+    converted_state: defaultdict[torch.Tensor, dict[str, Any]] = defaultdict(dict)
+    for parameter, value in original_state.items():
+        fake_parameter = fake_parameters.get(id(parameter))
+        if fake_parameter is None:
+            raise CaptureError("optimizer state is keyed by an unknown parameter")
+        converted = _map_optimizer_tensors(value, fake_tensor)
+        if not isinstance(converted, dict):
+            raise CaptureError("per-parameter optimizer state must be a mapping")
+        converted_state[fake_parameter] = converted
+    optimizer.state = converted_state
+    return optimizer, fake_names
+
+
+def _map_optimizer_tensors(value: Any, convert: Any) -> Any:
+    """Preserve optimizer state containers while replacing tensor leaves."""
+
+    if isinstance(value, torch.Tensor):
+        return convert(value)
+    if isinstance(value, dict):
+        return {
+            key: _map_optimizer_tensors(item, convert) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_map_optimizer_tensors(item, convert) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_map_optimizer_tensors(item, convert) for item in value)
+    return copy.deepcopy(value)
 
 
 def _tensor_leaves(

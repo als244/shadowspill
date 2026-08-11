@@ -90,6 +90,42 @@ def test_lazy_state_gets_distinct_opaque_first_step_without_mutation() -> None:
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
+def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
+    mlops = pytest.importorskip("mlops")
+    parameter = torch.nn.Parameter(torch.ones(8))
+    parameter.grad = torch.ones_like(parameter)
+    optimizer = mlops.optim.AdamW([parameter], lr=1e-3)
+
+    captured = capture_optimizer({"weight": parameter}, optimizer)
+
+    assert captured.first_step_is_opaque
+    assert captured.recurrent is not None
+    assert "mlops.master_adamw_.default" in captured.recurrent.operator_targets
+    assert captured.created_state_names == (
+        "optimizer.weight.exp_avg",
+        "optimizer.weight.exp_avg_sq",
+        "optimizer.weight.master_parameter",
+        "optimizer.weight.step",
+    )
+    assert optimizer.state == {}
+    assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
+
+
+def test_optimizer_state_container_conversion_preserves_structure() -> None:
+    source = torch.ones(2)
+    converted = optimizer_module._map_optimizer_tensors(
+        {"list": [source, 3], "tuple": (source, "value")},
+        lambda tensor: tensor + 1,
+    )
+
+    assert isinstance(converted, dict)
+    assert isinstance(converted["list"], list)
+    assert isinstance(converted["tuple"], tuple)
+    torch.testing.assert_close(converted["list"][0], torch.full((2,), 2.0))
+    assert converted["list"][1] == 3
+    assert converted["tuple"][1] == "value"
+
+
 class _CustomOptimizer(torch.optim.Optimizer):
     def __init__(self, parameters: object, scale: float = 0.25) -> None:
         super().__init__(parameters, {"scale": scale})

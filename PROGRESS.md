@@ -336,6 +336,17 @@ Phase 8 — public forward and training callables.
 - Remaining qualification work is bounded opaque optimizer task admission,
   external mlops AdamW, stressed recomputation/offload tests, and the
   approximately-1B/full-model gates.
+- CUDA-only registered optimizer operations no longer require a real duplicate
+  model during discovery. If the copied optimizer creates its lazy state and
+  then rejects the CPU sandbox, ShadowSpill converts the standard optimizer
+  parameter/state inventory to FakeTensor CUDA values and captures through the
+  operation's registered fake/meta contract. This is optimizer-agnostic and
+  introduces no production dependency on `mlops`.
+- External `mlops.optim.AdamW` now passes both isolated capture and a real
+  three-step public `plan()` smoke test, including lazy BF16 moment/master
+  state, two accumulated microbatches, checkpoint serialization, reload, and
+  CPU restoration. The original optimizer and model remain unmodified by the
+  discovery pass.
 
 ## Gate rule
 
