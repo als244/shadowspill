@@ -369,7 +369,7 @@ def emit_schedule(
             if location is not None
         ),
     )
-    schedule.validate(facts.program, facts.selections)
+    schedule._validate_selected(facts.program, facts.tasks)
     return schedule
 
 

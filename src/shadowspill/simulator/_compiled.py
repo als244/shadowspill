@@ -12,6 +12,7 @@ from shadowspill.ir import (
     Program,
     RecomputationSelection,
     ResourceKind,
+    TaskSpec,
 )
 
 from ._capi import (
@@ -110,13 +111,29 @@ class _Projection:
     task_resources: tuple[tuple[ResourceKind, int], ...]
 
 
-def _project(
+@dataclass(frozen=True, slots=True)
+class CompiledSimulationTemplate:
+    """Immutable dense topology reused across schedule candidates."""
+
+    program: CProgram
+    buffers: tuple[object, ...]
+    task_ids: tuple[str, ...]
+    task_index: dict[str, int]
+    alias_ids: tuple[str, ...]
+    alias_index: dict[str, int]
+    device_ids: tuple[str, ...]
+    task_resources: tuple[tuple[ResourceKind, int], ...]
+
+
+def compile_simulation_template(
     program: Program,
-    schedule: MemorySchedule,
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
-) -> _Projection:
-    schedule.validate(program, selections)
+    *,
+    selected_tasks: tuple[TaskSpec, ...] | None = None,
+) -> CompiledSimulationTemplate:
+    """Project schedule-invariant program geometry exactly once."""
+
     configured = {item.device_id: item for item in config.devices}
     device_ids = tuple(item.device_id for item in program.devices)
     if set(configured) != set(device_ids):
@@ -131,7 +148,11 @@ def _project(
         item.object_id: alias_index[item.alias_group_id] for item in program.objects
     }
     profiles = {item.profile_id: item for item in program.profiles}
-    tasks = program.selected_tasks(selections)
+    tasks = (
+        program.selected_tasks(selections)
+        if selected_tasks is None
+        else selected_tasks
+    )
     task_ids = tuple(item.task_id for item in tasks)
     task_index = {value: index for index, value in enumerate(task_ids)}
     dependencies = tuple(
@@ -215,33 +236,16 @@ def _project(
     mutation_offsets_buffer = u32(mutation_offsets)
     mutation_buffer = u32(mutation_values)
     mutation_delta_buffer = u64(mutation_deltas)
-    action_tasks = u32(
-        tuple(task_index[item.trigger_task_id] for item in schedule.actions)
-    )
-    action_aliases = u32(
-        tuple(alias_index[item.alias_group_id] for item in schedule.actions)
-    )
-    action_kinds = u8(tuple(_ACTION_CODE[item.kind] for item in schedule.actions))
-    initial_aliases = u32(
-        tuple(alias_index[item.alias_group_id] for item in schedule.initial_residency)
-    )
-    initial_locations = u8(
-        tuple(_LOCATION_CODE[item.location] for item in schedule.initial_residency)
-    )
-    final_aliases = u32(
-        tuple(alias_index[item.alias_group_id] for item in schedule.final_residency)
-    )
-    final_locations = u8(
-        tuple(_LOCATION_CODE[item.location] for item in schedule.final_residency)
-    )
+    empty_u32 = u32(())
+    empty_u8 = u8(())
     c_program = CProgram(
         abi_version=ABI_VERSION,
         device_count=len(device_ids),
         alias_count=len(alias_ids),
         task_count=len(tasks),
-        action_count=len(schedule.actions),
-        initial_count=len(schedule.initial_residency),
-        final_count=len(schedule.final_residency),
+        action_count=0,
+        initial_count=0,
+        final_count=0,
         dependency_count=len(dependency_values),
         input_count=len(input_values),
         output_count=len(output_values),
@@ -266,21 +270,103 @@ def _project(
         mutation_offsets=mutation_offsets_buffer,
         mutation_aliases=mutation_buffer,
         mutation_version_deltas=mutation_delta_buffer,
-        action_trigger_tasks=action_tasks,
-        action_aliases=action_aliases,
-        action_kinds=action_kinds,
-        initial_aliases=initial_aliases,
-        initial_locations=initial_locations,
-        final_aliases=final_aliases,
-        final_locations=final_locations,
+        action_trigger_tasks=empty_u32,
+        action_aliases=empty_u32,
+        action_kinds=empty_u8,
+        initial_aliases=empty_u32,
+        initial_locations=empty_u8,
+        final_aliases=empty_u32,
+        final_locations=empty_u8,
     )
-    return _Projection(
+    return CompiledSimulationTemplate(
         c_program,
         tuple(buffers),
         task_ids,
+        task_index,
         alias_ids,
+        alias_index,
         device_ids,
         tuple((item.resource.kind, item.resource.lane) for item in tasks),
+    )
+
+
+def _bind_schedule(
+    template: CompiledSimulationTemplate,
+    schedule: MemorySchedule,
+) -> _Projection:
+    """Bind candidate-only arrays to one immutable compiled topology."""
+
+    action_tasks = _u32_array(
+        tuple(
+            template.task_index[item.trigger_task_id] for item in schedule.actions
+        )
+    )
+    action_aliases = _u32_array(
+        tuple(
+            template.alias_index[item.alias_group_id] for item in schedule.actions
+        )
+    )
+    action_kinds = _u8_array(
+        tuple(_ACTION_CODE[item.kind] for item in schedule.actions)
+    )
+    initial_aliases = _u32_array(
+        tuple(
+            template.alias_index[item.alias_group_id]
+            for item in schedule.initial_residency
+        )
+    )
+    initial_locations = _u8_array(
+        tuple(_LOCATION_CODE[item.location] for item in schedule.initial_residency)
+    )
+    final_aliases = _u32_array(
+        tuple(
+            template.alias_index[item.alias_group_id]
+            for item in schedule.final_residency
+        )
+    )
+    final_locations = _u8_array(
+        tuple(_LOCATION_CODE[item.location] for item in schedule.final_residency)
+    )
+    c_program = CProgram.from_buffer_copy(template.program)
+    c_program.action_count = len(schedule.actions)
+    c_program.initial_count = len(schedule.initial_residency)
+    c_program.final_count = len(schedule.final_residency)
+    c_program.action_trigger_tasks = action_tasks
+    c_program.action_aliases = action_aliases
+    c_program.action_kinds = action_kinds
+    c_program.initial_aliases = initial_aliases
+    c_program.initial_locations = initial_locations
+    c_program.final_aliases = final_aliases
+    c_program.final_locations = final_locations
+    return _Projection(
+        c_program,
+        (
+            template,
+            action_tasks,
+            action_aliases,
+            action_kinds,
+            initial_aliases,
+            initial_locations,
+            final_aliases,
+            final_locations,
+        ),
+        template.task_ids,
+        template.alias_ids,
+        template.device_ids,
+        template.task_resources,
+    )
+
+
+def _project(
+    program: Program,
+    schedule: MemorySchedule,
+    selections: tuple[RecomputationSelection, ...],
+    config: SimulationConfig,
+) -> _Projection:
+    schedule.validate(program, selections)
+    return _bind_schedule(
+        compile_simulation_template(program, selections, config),
+        schedule,
     )
 
 
@@ -332,6 +418,22 @@ def simulate_compiled(
     """Replay through `libshadowspill_simulator.so`."""
 
     projection = _project(program, schedule, selections, config)
+    return _simulate_projection(projection, schedule)
+
+
+def simulate_compiled_template(
+    template: CompiledSimulationTemplate,
+    schedule: MemorySchedule,
+) -> SimulationResult:
+    """Replay a validated schedule using cached dense program geometry."""
+
+    return _simulate_projection(_bind_schedule(template, schedule), schedule)
+
+
+def _simulate_projection(
+    projection: _Projection,
+    schedule: MemorySchedule,
+) -> SimulationResult:
     task_buffer = (CTaskInterval * max(1, len(projection.task_ids)))()
     transfer_buffer = (CTransferInterval * max(1, len(schedule.actions)))()
     peak_buffer = (CDevicePeak * len(projection.device_ids))()
@@ -414,4 +516,9 @@ def simulate_compiled(
     )
 
 
-__all__ = ["simulate_compiled"]
+__all__ = [
+    "CompiledSimulationTemplate",
+    "compile_simulation_template",
+    "simulate_compiled",
+    "simulate_compiled_template",
+]

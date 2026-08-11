@@ -420,6 +420,14 @@ Phase 8 — public forward and training callables.
   its planning process remains CPU-bound beyond the 90-second cold-planning
   gate. Phase attribution and structural-key counts are required before that
   scale run can qualify; the latency is not being accepted as expected cost.
+- Exact-scale geometry explains the first latency component: 24 independent
+  recomputation groups yield about 98 bounded selections, and the fixed
+  40-policy portfolio evaluates roughly 3,920 simulator-verified candidates.
+  Threads do not accelerate its Python schedule construction. Instead, each
+  recomputation selection now projects immutable task/object/resource geometry
+  to the compiled simulator once; candidates bind only action and residency
+  arrays. A controlled serial portfolio improved 3.7x with identical schedule
+  digest and makespan. Explicit worker modes remain unchanged.
 
 ## Gate rule
 

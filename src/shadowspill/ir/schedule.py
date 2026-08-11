@@ -17,7 +17,7 @@ from ._validation import (
     require_identifier,
     require_tuple,
 )
-from .program import Program, RecomputationSelection
+from .program import Program, RecomputationSelection, TaskSpec
 
 SCHEDULE_SCHEMA = "shadowspill.memory_schedule/v1"
 
@@ -183,7 +183,15 @@ class MemorySchedule:
         program: Program,
         selections: tuple[RecomputationSelection, ...] = (),
     ) -> None:
-        active_tasks = program.selected_tasks(selections)
+        self._validate_selected(program, program.selected_tasks(selections))
+
+    def _validate_selected(
+        self,
+        program: Program,
+        active_tasks: tuple[TaskSpec, ...],
+    ) -> None:
+        """Validate against an already-validated recomputation projection."""
+
         task_order = {task.task_id: index for index, task in enumerate(active_tasks)}
         alias_ids = {group.alias_group_id for group in program.alias_groups}
         object_alias = {item.object_id: item.alias_group_id for item in program.objects}

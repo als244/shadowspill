@@ -19,6 +19,12 @@ from shadowspill.simulator import (
     SimulationResult,
     simulate,
 )
+from shadowspill.simulator._capi import simulator_library_path
+from shadowspill.simulator._compiled import (
+    CompiledSimulationTemplate,
+    compile_simulation_template,
+    simulate_compiled_template,
+)
 
 from ._actions import emit_schedule
 from ._facts import PlanningFacts, build_facts
@@ -42,6 +48,7 @@ class _SelectionContext:
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
     facts: PlanningFacts
+    compiled_template: CompiledSimulationTemplate | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,7 +229,7 @@ def _delay_prefetch(
         )
     )
     repaired = replace(schedule, actions=tuple(actions))
-    repaired.validate(facts.program, facts.selections)
+    repaired._validate_selected(facts.program, facts.tasks)
     return repaired
 
 
@@ -306,11 +313,15 @@ def _evaluate_candidate(
         restart_reduction = False
         while True:
             try:
-                simulation = simulate(
-                    facts.program,
-                    schedule,
-                    selections=facts.selections,
-                    config=config,
+                simulation = (
+                    simulate_compiled_template(spec.context.compiled_template, schedule)
+                    if spec.context.compiled_template is not None
+                    else simulate(
+                        facts.program,
+                        schedule,
+                        selections=facts.selections,
+                        config=config,
+                    )
                 )
             except SimulationInfeasibleError as error:
                 if repairs < options.max_repair_attempts:
@@ -371,6 +382,7 @@ def _build_contexts(
 ) -> tuple[_SelectionContext, ...]:
     contexts: list[_SelectionContext] = []
     failures: list[PressureFitInfeasibleError] = []
+    compiled_available = simulator_library_path() is not None
     for selections in _selection_portfolio(program):
         try:
             facts = build_facts(
@@ -384,7 +396,23 @@ def _build_contexts(
         except PressureFitInfeasibleError as error:
             failures.append(error)
             continue
-        contexts.append(_SelectionContext(selections, _selection_id(selections), facts))
+        contexts.append(
+            _SelectionContext(
+                selections,
+                _selection_id(selections),
+                facts,
+                (
+                    compile_simulation_template(
+                        program,
+                        selections,
+                        config,
+                        selected_tasks=facts.tasks,
+                    )
+                    if compiled_available
+                    else None
+                ),
+            )
+        )
     if contexts:
         return tuple(contexts)
     if failures:

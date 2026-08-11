@@ -122,19 +122,23 @@ class CResult(ctypes.Structure):
     ]
 
 
-def _library_candidates() -> tuple[Path, ...]:
-    explicit = os.environ.get("SHADOWSPILL_SIMULATOR_LIBRARY")
+def _library_candidates(explicit: str | None) -> tuple[Path, ...]:
     packaged = Path(__file__).resolve().parents[1] / "lib/libshadowspill_simulator.so"
     if explicit:
         return (Path(explicit).expanduser().resolve(), packaged)
     return (packaged,)
 
 
-def simulator_library_path() -> Path | None:
-    for candidate in _library_candidates():
+@cache
+def _resolved_library_path(explicit: str | None) -> Path | None:
+    for candidate in _library_candidates(explicit):
         if candidate.is_file():
             return candidate
     return None
+
+
+def simulator_library_path() -> Path | None:
+    return _resolved_library_path(os.environ.get("SHADOWSPILL_SIMULATOR_LIBRARY"))
 
 
 @cache
