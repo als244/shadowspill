@@ -194,6 +194,15 @@ static int valid_transition_paths(void) {
         result = -1;
         goto done;
     }
+    if (shadowspill_unregister_object(
+            fixture.runtime, retained.object_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            fixture.runtime, retained.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
+        result = -1;
+        goto done;
+    }
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = temporary_host.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,

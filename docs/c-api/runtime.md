@@ -6,7 +6,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The ABI is version 3. All public functions return an enum status except
+The ABI is version 5. All public functions return an enum status except
 idempotent destroy functions and read-only mock controls. Call
 `shadowspill_runtime_abi_version()` and validate the backend ABI before creating
 a runtime.
@@ -46,6 +46,18 @@ returns its still-live allocation. The allocation becomes ordinary rather than
 plan-owned and must eventually pass through `shadowspill_free`; the transition
 does not wait for device work or change the address. It rejects queued actions,
 missing generations, and non-ready residency.
+
+`shadowspill_unregister_object` removes a host-only or released logical object
+after all queued actions have drained and returns its pinned-host range to the
+arena. `shadowspill_write_host_object` and `shadowspill_read_host_object` copy
+between caller-owned CPU storage and retained host backing; both validate the
+exact object extent and authoritative version.
+
+A completed release or offload retains one retired address/generation token in
+the object record. This token exists only so a framework may safely replace a
+just-retired non-owning storage pointer after asynchronous progress wins the
+race with frontend dematerialization. It does not restore residency, extend the
+allocation lifetime, or make that address usable by numerical work.
 
 ## Allocation profiling
 

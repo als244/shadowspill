@@ -61,6 +61,8 @@ typedef struct ShadowSpillObjectRecord {
     uint8_t residency;
     ShadowSpillBackendEvent readiness_event;
     uint8_t has_readiness_event;
+    uint64_t retired_generation;
+    void *retired_device_pointer;
     struct ShadowSpillObjectRecord *next;
 } ShadowSpillObjectRecord;
 

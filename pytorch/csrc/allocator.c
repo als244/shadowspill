@@ -443,6 +443,59 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
     );
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_write_host_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint64_t source_address
+) {
+    if (size_bytes != 0U && source_address == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_write_host_object(
+              runtime,
+              object_id,
+              (const void *)(uintptr_t)source_address,
+              size_bytes
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_read_host_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint64_t destination_address
+) {
+    if (size_bytes != 0U && destination_address == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_read_host_object(
+              runtime,
+              object_id,
+              (void *)(uintptr_t)destination_address,
+              size_bytes
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_unregister_object(
+    uint64_t object_id
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_unregister_object(runtime, object_id);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_bind_registered_allocation(
     uint64_t object_id,
     uint64_t address,
@@ -568,9 +621,13 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_validate_object_binding(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    if (snapshot.generation != generation ||
-        (address != 0U &&
-         snapshot.device_pointer != (void *)(uintptr_t)address)) {
+    const int current_matches = snapshot.generation == generation &&
+        (address == 0U ||
+         snapshot.device_pointer == (void *)(uintptr_t)address);
+    const int retired_matches = address != 0U &&
+        snapshot.retired_generation == generation &&
+        snapshot.retired_device_pointer == (void *)(uintptr_t)address;
+    if (!current_matches && !retired_matches) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     return SHADOWSPILL_RUNTIME_OK;

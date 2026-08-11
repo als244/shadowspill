@@ -337,6 +337,8 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                         );
                         return changed;
                     }
+                    object->retired_generation = object->generation;
+                    object->retired_device_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
                     shadowspill_release_allocation_locked(runtime, allocation);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -391,6 +393,8 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                         );
                         return changed;
                     }
+                    object->retired_generation = object->generation;
+                    object->retired_device_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
                     shadowspill_release_allocation_locked(runtime, allocation);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;

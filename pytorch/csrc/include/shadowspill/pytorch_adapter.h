@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 5U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 8U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -155,6 +155,26 @@ shadowspill_pytorch_register_host_object(
     uint8_t retain_host_backing,
     uint64_t source_address
 );
+
+/* Replace one existing HOST_ONLY object's current pinned payload. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_write_host_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint64_t source_address
+);
+
+/* Copy one current HOST_ONLY payload into borrowed caller memory. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_read_host_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint64_t destination_address
+);
+
+/* Remove one terminal object and reclaim any retained host range. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_unregister_object(uint64_t object_id);
 
 /* Bind an already registered object to one ordinary framework allocation. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus

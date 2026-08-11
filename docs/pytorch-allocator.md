@@ -52,6 +52,12 @@ does not allocate, transfer, schedule work, or own runtime state. Before a swap,
 the adapter validates the logical object ID, current slab address, and
 generation against the neutral object table.
 
+Release progress may finish between `after_task` and frontend
+dematerialization. The runtime therefore retains one retired binding token;
+the adapter accepts it only when replacing that exact stale non-owning pointer
+with a null placeholder. This closes the timing race without delaying the
+release, synchronizing a stream, or changing a planner directive.
+
 All views of one storage observe the swap together. The existing `Parameter`,
 TensorImpl, StorageImpl, sizes, strides, offsets, registrations, and ties remain
 unchanged. The initial owning allocation is promoted to plan ownership before

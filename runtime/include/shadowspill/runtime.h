@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 3U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 5U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -167,6 +167,8 @@ typedef struct ShadowSpillObjectSnapshot {
     uint8_t host_current;
     uint8_t has_host_range;
     void *device_pointer;
+    uint64_t retired_generation;
+    void *retired_device_pointer;
 } ShadowSpillObjectSnapshot;
 
 /*
@@ -247,6 +249,16 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_record_stream(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectDescription *description
+);
+
+/*
+ * Removes a HOST_ONLY or RELEASED object with no live allocation or queued
+ * action, reclaiming retained host backing. Intended for deterministic plan
+ * teardown after final writeback.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id
 );
 
 /*

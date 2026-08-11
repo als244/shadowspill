@@ -71,6 +71,59 @@ done:
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_unregister_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillObjectRecord *previous = NULL;
+    ShadowSpillObjectRecord *object = runtime->objects;
+    while (object != NULL && object->object_id != object_id) {
+        previous = object;
+        object = object->next;
+    }
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (object == NULL || object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID ||
+        (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY &&
+         object->residency != SHADOWSPILL_OBJECT_RELEASED)) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    for (ShadowSpillQueuedAction *action = runtime->action_head;
+         action != NULL; action = action->next) {
+        if (action->object == object) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
+        }
+    }
+    if (object->has_host_range) {
+        uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
+        if (shadowspill_range_free(
+                &runtime->host_ranges, object->host_offset, charged
+            ) != 0) {
+            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            goto done;
+        }
+    }
+    if (previous == NULL) {
+        runtime->objects = object->next;
+    } else {
+        previous->next = object->next;
+    }
+    --runtime->registered_objects;
+    free(object);
+
+done:
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_write_host_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -287,6 +340,8 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         .host_current = object->host_current,
         .has_host_range = object->has_host_range,
         .device_pointer = allocation == NULL ? NULL : allocation->pointer,
+        .retired_generation = object->retired_generation,
+        .retired_device_pointer = object->retired_device_pointer,
     };
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;

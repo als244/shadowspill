@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 5
+ADAPTER_ABI_VERSION: Final = 8
 
 
 class AdapterConfig(ctypes.Structure):
@@ -203,6 +203,8 @@ class ObjectSnapshot(ctypes.Structure):
         ("host_current", ctypes.c_uint8),
         ("has_host_range", ctypes.c_uint8),
         ("device_pointer", ctypes.c_void_p),
+        ("retired_generation", ctypes.c_uint64),
+        ("retired_device_pointer", ctypes.c_void_p),
     ]
 
 
@@ -261,6 +263,20 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.c_uint64,
     ]
     library.shadowspill_pytorch_register_host_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_write_host_object.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
+    library.shadowspill_pytorch_write_host_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_read_host_object.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
+    library.shadowspill_pytorch_read_host_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_unregister_object.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_unregister_object.restype = ctypes.c_uint32
     library.shadowspill_pytorch_bind_registered_allocation.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,
