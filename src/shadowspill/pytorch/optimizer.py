@@ -214,6 +214,11 @@ def capture_optimizer(
                 opaque_reason=f"optimizer discovery step failed: {exc}",
             )
         try:
+            _complete_failed_state_discovery(
+                sandbox,
+                name_by_sandbox_id,
+                before_parameters,
+            )
             sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
                 sandbox, name_by_sandbox_id
             )
@@ -411,6 +416,72 @@ def _fake_cuda_optimizer(
     return optimizer, fake_names
 
 
+def _complete_failed_state_discovery(
+    optimizer: torch.optim.Optimizer,
+    name_by_id: Mapping[int, str],
+    parameter_snapshots: tuple[
+        tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...
+    ],
+) -> None:
+    """Discover lazy state hidden behind a failing per-parameter operation.
+
+    A CUDA-only operation can reject the CPU sandbox after its optimizer has
+    initialized one parameter's state. Optimizers commonly visit parameters in
+    sequence, so one failed call does not establish the complete recurrent
+    tensor inventory. Retry with gradients enabled only for parameters whose
+    state is still empty. Every failed attempt must leave parameter values
+    unchanged; otherwise the failure boundary is not safe to use for capture.
+    """
+
+    parameters = _optimizer_parameters(optimizer)
+    gradients = {id(parameter): parameter.grad for parameter in parameters}
+    previous_structure = _state_structure(optimizer, name_by_id)
+    try:
+        while True:
+            pending = tuple(
+                parameter
+                for parameter in parameters
+                if parameter.requires_grad
+                and gradients[id(parameter)] is not None
+                and not optimizer.state.get(parameter)
+            )
+            if not pending:
+                return
+            pending_ids = {id(parameter) for parameter in pending}
+            for parameter in parameters:
+                parameter.grad = (
+                    gradients[id(parameter)]
+                    if id(parameter) in pending_ids
+                    else None
+                )
+            try:
+                with torch.no_grad():
+                    optimizer.step()
+            except BaseException:
+                _require_unchanged_discovery_parameters(parameter_snapshots)
+                current_structure = _state_structure(optimizer, name_by_id)
+                if current_structure == previous_structure:
+                    return
+                previous_structure = current_structure
+            else:
+                return
+    finally:
+        for parameter in parameters:
+            parameter.grad = gradients[id(parameter)]
+
+
+def _require_unchanged_discovery_parameters(
+    snapshots: tuple[
+        tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...
+    ],
+) -> None:
+    for parameter, value, _gradient in snapshots:
+        if not torch.equal(parameter, value):
+            raise CaptureError(
+                "optimizer discovery failed after mutating a parameter"
+            )
+
+
 def _map_optimizer_tensors(value: Any, convert: Any) -> Any:
     """Preserve optimizer state containers while replacing tensor leaves."""
 
@@ -520,7 +591,7 @@ def _tensor_leaves(
         for key in sorted(value, key=str):
             child = f"{prefix}.{key}" if prefix else str(key)
             yield from _tensor_leaves(value[key], child)
-    elif isinstance(value, (tuple, list)):
+    elif isinstance(value, tuple | list):
         for index, item in enumerate(value):
             child = f"{prefix}.{index}" if prefix else str(index)
             yield from _tensor_leaves(item, child)

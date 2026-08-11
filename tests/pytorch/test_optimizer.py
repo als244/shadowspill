@@ -111,6 +111,45 @@ def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
     assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
 
 
+def test_cuda_only_discovery_inventories_every_parameter() -> None:
+    mlops = pytest.importorskip("mlops")
+    first = torch.nn.Parameter(torch.ones(8))
+    second = torch.nn.Parameter(torch.full((4,), 2.0))
+    first.grad = torch.ones_like(first)
+    second.grad = torch.ones_like(second)
+    optimizer = mlops.optim.AdamW([first, second], lr=1e-3)
+
+    captured = capture_optimizer(
+        {"first": first, "second": second},
+        optimizer,
+    )
+
+    expected_suffixes = {
+        "exp_avg",
+        "exp_avg_sq",
+        "master_parameter",
+        "step",
+    }
+    state_names = {
+        binding.name for binding in captured.bindings if binding.role == "state"
+    }
+    assert state_names == {
+        f"optimizer.{name}.{suffix}"
+        for name in ("first", "second")
+        for suffix in expected_suffixes
+    }
+    assert captured.created_state_names == tuple(sorted(state_names))
+    assert captured.recurrent is not None
+    assert sum(
+        node.op == "call_function"
+        and str(node.target) == "mlops.master_adamw_.default"
+        for node in captured.recurrent.graph_module.graph.nodes
+    ) == 2
+    assert optimizer.state == {}
+    torch.testing.assert_close(first, torch.ones_like(first))
+    torch.testing.assert_close(second, torch.full_like(second, 2.0))
+
+
 def test_optimizer_state_container_conversion_preserves_structure() -> None:
     source = torch.ones(2)
     converted = optimizer_module._map_optimizer_tensors(

@@ -389,6 +389,12 @@ Phase 8 — public forward and training callables.
   so physical demand is the largest isolated ABI rather than the sum of all
   previously visited ABIs. A separate remaining blocker is the monolithic
   all-parameter optimizer ABI; it is not being hidden by this fix.
+- CUDA-only lazy-state discovery now inventories every gradient-bearing
+  parameter, rather than stopping after the first registered operation rejects
+  the CPU sandbox. Discovery retries only parameters with empty state and
+  rejects any failed boundary that already mutated parameter values. A
+  two-parameter external `mlops.optim.AdamW` regression proves that both update
+  operations and both complete state bundles enter the recurrent graph.
 
 ## Gate rule
 
