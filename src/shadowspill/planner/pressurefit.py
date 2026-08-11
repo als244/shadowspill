@@ -584,13 +584,21 @@ def _run_candidates(
 ) -> tuple[_CandidateOutcome, ...]:
     if options.workers == 1 or len(specs) <= 1:
         return tuple(_evaluate_candidate(spec, config, options) for spec in specs)
+    batches: list[list[_CandidateSpec]] = []
+    for spec in specs:
+        if not batches or batches[-1][0].context is not spec.context:
+            batches.append([])
+        batches[-1].append(spec)
+
+    def evaluate_batch(batch: list[_CandidateSpec]) -> tuple[_CandidateOutcome, ...]:
+        return tuple(_evaluate_candidate(spec, config, options) for spec in batch)
+
     workers = None if options.workers == 0 else options.workers
     with ThreadPoolExecutor(max_workers=workers) as executor:
         results = tuple(
-            executor.map(
-                lambda spec: _evaluate_candidate(spec, config, options),
-                specs,
-            )
+            outcome
+            for batch_results in executor.map(evaluate_batch, batches)
+            for outcome in batch_results
         )
     return tuple(sorted(results, key=lambda item: item.spec.ordinal))
 
