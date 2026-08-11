@@ -5,6 +5,17 @@ from dataclasses import replace
 import pytest
 
 from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner._facts import build_facts
+from shadowspill.planner._residency import (
+    ResidencyPlan,
+    Span,
+    _pressure_by_device,
+    boundary_bytes,
+    extend_interval_entries,
+    reduce_pressure,
+    seed_residency,
+)
+from shadowspill.planner.model import InitialPlacement
 
 from ._examples import (
     config,
@@ -60,6 +71,70 @@ def test_names_do_not_affect_schedule_geometry_or_makespan() -> None:
 
     assert original.schedule == other.schedule
     assert original.simulation.makespan_ns == other.simulation.makespan_ns
+
+
+@pytest.mark.parametrize("prefetch_headroom", [False, True])
+def test_pressure_sweep_matches_scalar_boundaries(
+    prefetch_headroom: bool,
+) -> None:
+    program = training_chain_program(10)
+    initial = training_chain_initial(10)
+    selected_config = training_chain_config(500)
+    facts = build_facts(program, (), initial, (), selected_config)
+    seed = seed_residency(facts, selected_config, InitialPlacement.GREEDY)
+    plan = reduce_pressure(facts, selected_config, seed, "tight-stall")
+
+    swept = _pressure_by_device(
+        facts,
+        plan,
+        prefetch_headroom=prefetch_headroom,
+    )
+    for device_id in facts.object_capacity_by_device:
+        assert swept[device_id] == tuple(
+            boundary_bytes(
+                facts,
+                plan,
+                boundary,
+                device_id,
+                prefetch_headroom=prefetch_headroom,
+            )
+            for boundary in range(-1, facts.last_boundary + 1)
+        )
+
+
+def test_interval_extension_matches_scalar_admission() -> None:
+    program = training_chain_program(10)
+    initial = training_chain_initial(10)
+    selected_config = training_chain_config(500)
+    facts = build_facts(program, (), initial, (), selected_config)
+    seed = seed_residency(facts, selected_config, InitialPlacement.GREEDY)
+    plan = reduce_pressure(facts, selected_config, seed, "tight-stall")
+
+    scalar = plan
+    for alias in range(len(facts.alias_ids)):
+        span_index = 1
+        while span_index < len(scalar.spans[alias]):
+            span = scalar.spans[alias][span_index]
+            previous = scalar.spans[alias][span_index - 1]
+            candidate_start = span.start - 1
+            if candidate_start <= previous.end:
+                span_index += 1
+                continue
+            spans = list(scalar.spans)
+            alias_spans = list(spans[alias])
+            alias_spans[span_index] = Span(candidate_start, span.end)
+            spans[alias] = tuple(alias_spans)
+            proposed = ResidencyPlan(tuple(spans), scalar.anchors)
+            device_id = facts.alias_devices[alias]
+            if (
+                boundary_bytes(facts, proposed, candidate_start, device_id)
+                <= facts.object_capacity_by_device[device_id]
+            ):
+                scalar = proposed
+                continue
+            span_index += 1
+
+    assert extend_interval_entries(facts, plan) == scalar
 
 
 @pytest.mark.parametrize(

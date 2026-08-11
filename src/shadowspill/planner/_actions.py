@@ -14,7 +14,7 @@ from shadowspill.ir import (
 from shadowspill.simulator import SimulationConfig
 
 from ._facts import PlanningFacts
-from ._residency import ResidencyPlan, Span, boundary_bytes
+from ._residency import ResidencyPlan, Span, _pressure_by_device
 from .model import PressureFitInfeasibleError
 
 
@@ -153,30 +153,62 @@ def _fit_clamped_triggers(
     prefetch_headroom: bool,
 ) -> dict[Reload, int]:
     result = dict(selected)
+    base_pressure = _pressure_by_device(
+        facts,
+        plan,
+        prefetch_headroom=prefetch_headroom,
+    )
+    active_by_device = {
+        device_id: [dict[Reload, None]() for _ in range(len(facts.tasks))]
+        for device_id in facts.object_capacity_by_device
+    }
+    alias_counts = {
+        device_id: [dict[int, int]() for _ in range(len(facts.tasks))]
+        for device_id in facts.object_capacity_by_device
+    }
+    used = {
+        device_id: list(values)
+        for device_id, values in base_pressure.items()
+    }
+
+    def add_active(reload: Reload, trigger: int) -> None:
+        device_id = facts.alias_devices[reload.alias]
+        for boundary in range(max(trigger, 0), reload.entry_boundary):
+            if plan.resident(reload.alias, boundary):
+                continue
+            active_by_device[device_id][boundary][reload] = None
+            counts = alias_counts[device_id][boundary]
+            previous = counts.get(reload.alias, 0)
+            counts[reload.alias] = previous + 1
+            if previous == 0:
+                used[device_id][boundary + 1] += facts.alias_sizes[reload.alias]
+
+    def move_active(reload: Reload, old_trigger: int, new_trigger: int) -> None:
+        device_id = facts.alias_devices[reload.alias]
+        for boundary in range(max(old_trigger, 0), max(new_trigger, 0)):
+            if plan.resident(reload.alias, boundary):
+                continue
+            active_by_device[device_id][boundary].pop(reload)
+            counts = alias_counts[device_id][boundary]
+            remaining = counts[reload.alias] - 1
+            if remaining == 0:
+                del counts[reload.alias]
+                used[device_id][boundary + 1] -= facts.alias_sizes[reload.alias]
+            else:
+                counts[reload.alias] = remaining
+
+    for reload, trigger in result.items():
+        add_active(reload, trigger)
+
     while True:
         changed = False
         for device_id, capacity in facts.object_capacity_by_device.items():
             for boundary in range(0, facts.last_boundary + 1):
-                active = [
-                    reload
-                    for reload, trigger in result.items()
-                    if facts.alias_devices[reload.alias] == device_id
-                    and trigger <= boundary < reload.entry_boundary
-                    and not plan.resident(reload.alias, boundary)
-                ]
-                active_aliases = {reload.alias for reload in active}
-                used = boundary_bytes(
-                    facts,
-                    plan,
-                    boundary,
-                    device_id,
-                    prefetch_headroom=prefetch_headroom,
-                ) + sum(facts.alias_sizes[alias] for alias in active_aliases)
-                if used <= capacity:
+                if used[device_id][boundary + 1] <= capacity:
                     continue
                 movable = [
                     reload
-                    for reload in active
+                    for reload in active_by_device[device_id][boundary]
                     if result[reload] < reload.latest_trigger
                 ]
                 if not movable:
@@ -189,7 +221,10 @@ def _fit_clamped_triggers(
                         reload.alias,
                     ),
                 )
-                result[chosen] = min(boundary + 1, chosen.latest_trigger)
+                old_trigger = result[chosen]
+                new_trigger = min(boundary + 1, chosen.latest_trigger)
+                result[chosen] = new_trigger
+                move_active(chosen, old_trigger, new_trigger)
                 changed = True
                 break
             if changed:

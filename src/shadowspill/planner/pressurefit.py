@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from itertools import product
 
 from shadowspill.ir import (
@@ -29,6 +29,8 @@ from shadowspill.simulator._compiled import (
 from ._actions import emit_schedule
 from ._facts import PlanningFacts, build_facts
 from ._residency import (
+    Cut,
+    ResidencyPlan,
     assert_required_floor,
     extend_interval_entries,
     reduce_pressure,
@@ -48,7 +50,23 @@ class _SelectionContext:
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
     facts: PlanningFacts
+    seed: ResidencyPlan
     compiled_template: CompiledSimulationTemplate | None
+    cut_scores: dict[tuple[Cut, str], tuple[int, ...]] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
+    residency_plans: dict[str, ResidencyPlan] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
+    interval_plans: dict[str, ResidencyPlan] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,29 +275,38 @@ def _evaluate_candidate(
     options: PressureFitOptions,
 ) -> _CandidateOutcome:
     facts = spec.context.facts
-    seed = seed_residency(
-        facts,
-        config,
-        options.initial_placement,
-        # Initial placement is a property of the program and public capacity,
-        # not of a later residency heuristic's speculative headroom.  Applying
-        # strategy headroom here evicts an otherwise valid early-use weight and
-        # changes every candidate's starting state.
-        initial_capacity_by_device=facts.object_capacity_by_device,
-    )
+    seed = spec.context.seed
     extra_pressure: dict[tuple[str, int], int] = {}
     repairs = 0
     while True:
         try:
-            residency = reduce_pressure(
-                facts,
-                config,
-                seed,
-                spec.strategy,
-                extra_pressure=extra_pressure,
+            residency = (
+                spec.context.residency_plans.get(spec.strategy)
+                if not extra_pressure
+                else None
             )
+            if residency is None:
+                residency = reduce_pressure(
+                    facts,
+                    config,
+                    seed,
+                    spec.strategy,
+                    extra_pressure=extra_pressure,
+                    score_cache=spec.context.cut_scores,
+                )
+                if not extra_pressure:
+                    spec.context.residency_plans[spec.strategy] = residency
             if spec.prefetch_rule == "interval-entry":
-                residency = extend_interval_entries(facts, residency)
+                extended = (
+                    spec.context.interval_plans.get(spec.strategy)
+                    if not extra_pressure
+                    else None
+                )
+                if extended is None:
+                    extended = extend_interval_entries(facts, residency)
+                    if not extra_pressure:
+                        spec.context.interval_plans[spec.strategy] = extended
+                residency = extended
             schedule = emit_schedule(
                 facts,
                 config,
@@ -379,6 +406,7 @@ def _build_contexts(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
+    options: PressureFitOptions,
 ) -> tuple[_SelectionContext, ...]:
     contexts: list[_SelectionContext] = []
     failures: list[PressureFitInfeasibleError] = []
@@ -401,6 +429,14 @@ def _build_contexts(
                 selections,
                 _selection_id(selections),
                 facts,
+                seed_residency(
+                    facts,
+                    config,
+                    options.initial_placement,
+                    # Initial placement is a property of the program and public
+                    # capacity, not a later strategy's speculative headroom.
+                    initial_capacity_by_device=facts.object_capacity_by_device,
+                ),
                 (
                     compile_simulation_template(
                         program,
@@ -489,7 +525,13 @@ def pressurefit(
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
     selected_options = options or PressureFitOptions()
-    contexts = _build_contexts(program, initial_residency, final_residency, config)
+    contexts = _build_contexts(
+        program,
+        initial_residency,
+        final_residency,
+        config,
+        selected_options,
+    )
     specs = _candidate_specs(contexts, selected_options)
     outcomes = _run_candidates(specs, config, selected_options)
     valid = tuple(

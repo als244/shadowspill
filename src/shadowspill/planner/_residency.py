@@ -43,14 +43,6 @@ class Cut:
         return max(self.end - self.start + 1, 0)
 
 
-def _with_anchor(
-    anchors: tuple[frozenset[int], ...], alias: int, boundary: int
-) -> tuple[frozenset[int], ...]:
-    changed = list(anchors)
-    changed[alias] = frozenset((*changed[alias], boundary))
-    return tuple(changed)
-
-
 def _seed_from_anchors(anchors: tuple[frozenset[int], ...]) -> ResidencyPlan:
     spans: list[tuple[Span, ...]] = []
     for values in anchors:
@@ -113,13 +105,139 @@ def boundary_bytes(
 def pressure_by_boundary(
     facts: PlanningFacts, plan: ResidencyPlan
 ) -> tuple[dict[str, int], ...]:
+    pressure = _pressure_by_device(facts, plan)
     return tuple(
         {
-            device_id: boundary_bytes(facts, plan, boundary, device_id)
+            device_id: pressure[device_id][boundary + 1]
             for device_id in facts.object_capacity_by_device
         }
         for boundary in range(-1, facts.last_boundary + 1)
     )
+
+
+def _charged_span(
+    facts: PlanningFacts,
+    alias: int,
+    span: Span,
+    *,
+    prefetch_headroom: bool,
+) -> Span | None:
+    start = span.start
+    if (
+        prefetch_headroom
+        and start > -1
+        and start not in facts.production_boundaries[alias]
+    ):
+        start -= 1
+    end = span.end
+    if end >= 0 and facts.final_locations[alias] is not MemoryLocation.DEVICE:
+        has_future_access = any(
+            task > end
+            for anchor, task in facts.access_events[alias]
+            if span.start <= anchor <= span.end
+        )
+        if not has_future_access:
+            end -= 1
+    return None if end < start else Span(start, end)
+
+
+def _pressure_by_device(
+    facts: PlanningFacts,
+    plan: ResidencyPlan,
+    *,
+    prefetch_headroom: bool = False,
+) -> dict[str, tuple[int, ...]]:
+    """Sweep all charged spans once instead of scanning aliases per boundary."""
+
+    boundary_count = len(facts.tasks) + 1
+    differences = {
+        device_id: [0] * (boundary_count + 1)
+        for device_id in facts.object_capacity_by_device
+    }
+    charged_spans: list[tuple[Span, ...]] = []
+    for alias, spans in enumerate(plan.spans):
+        charged_values: list[Span] = []
+        for span in spans:
+            interval = _charged_span(
+                facts,
+                alias,
+                span,
+                prefetch_headroom=prefetch_headroom,
+            )
+            if interval is not None:
+                charged_values.append(interval)
+        charged = tuple(charged_values)
+        charged_spans.append(charged)
+        difference = differences[facts.alias_devices[alias]]
+        size = facts.alias_sizes[alias]
+        for interval in charged:
+            start = interval.start + 1
+            end = interval.end + 1
+            difference[start] += size
+            difference[end + 1] -= size
+
+    pressure: dict[str, tuple[int, ...]] = {}
+    for device_id, difference in differences.items():
+        values: list[int] = []
+        current = 0
+        for index in range(boundary_count):
+            current += difference[index]
+            values.append(current)
+        pressure[device_id] = tuple(values)
+
+    mutable = {device_id: list(values) for device_id, values in pressure.items()}
+    for task, reservations in enumerate(facts.output_reservations):
+        boundary = task - 1
+        for alias in reservations:
+            if any(span.contains(boundary) for span in charged_spans[alias]):
+                continue
+            mutable[facts.alias_devices[alias]][task] += facts.alias_sizes[alias]
+    return {device_id: tuple(values) for device_id, values in mutable.items()}
+
+
+def _update_pressure_for_alias(
+    facts: PlanningFacts,
+    previous: ResidencyPlan,
+    current: ResidencyPlan,
+    alias: int,
+    pressure: dict[str, list[int]],
+    *,
+    prefetch_headroom: bool,
+) -> None:
+    """Update a pressure sweep after one alias's residency spans change."""
+
+    def charged(plan: ResidencyPlan) -> tuple[Span, ...]:
+        values: list[Span] = []
+        for span in plan.spans[alias]:
+            interval = _charged_span(
+                facts,
+                alias,
+                span,
+                prefetch_headroom=prefetch_headroom,
+            )
+            if interval is not None:
+                values.append(interval)
+        return tuple(values)
+
+    previous_spans = charged(previous)
+    current_spans = charged(current)
+    device_pressure = pressure[facts.alias_devices[alias]]
+    size = facts.alias_sizes[alias]
+    for boundary in range(-1, facts.last_boundary + 1):
+        task = boundary + 1
+        reserved = (
+            0 <= task < len(facts.output_reservations)
+            and alias in facts.output_reservations[task]
+        )
+        previous_contributes = reserved or any(
+            span.contains(boundary) for span in previous_spans
+        )
+        current_contributes = reserved or any(
+            span.contains(boundary) for span in current_spans
+        )
+        device_pressure[boundary + 1] += size * (
+            int(current_contributes) - int(previous_contributes)
+        )
 
 
 def seed_residency(
@@ -131,8 +249,7 @@ def seed_residency(
 ) -> ResidencyPlan:
     """Build the anchor hull and optionally preplace fitting host objects."""
 
-    anchors = facts.anchors
-    seed = _seed_from_anchors(anchors)
+    seed = _seed_from_anchors(facts.anchors)
     if placement is InitialPlacement.REQUIRED:
         return seed
 
@@ -198,15 +315,17 @@ def seed_residency(
         for device_id in facts.object_capacity_by_device
     }
     initial_capacity = initial_capacity_by_device or facts.object_capacity_by_device
+    anchors = list(facts.anchors)
+    spans = list(seed.spans)
     for alias in candidates:
         device_id = facts.alias_devices[alias]
         proposed_bytes = initial_bytes[device_id] + facts.alias_sizes[alias]
         if proposed_bytes > initial_capacity[device_id]:
             continue
-        anchors = _with_anchor(anchors, alias, -1)
-        seed = _seed_from_anchors(anchors)
+        anchors[alias] = frozenset((*anchors[alias], -1))
+        spans[alias] = (Span(min(anchors[alias]), max(anchors[alias])),)
         initial_bytes[device_id] = proposed_bytes
-    return seed
+    return ResidencyPlan(tuple(spans), tuple(anchors))
 
 
 def _gap_containing(
@@ -317,14 +436,7 @@ def _cut_score(
     deadline_task = min(entry + 1, len(facts.tasks) - 1)
     deadline = facts.task_ideal_end_ns[deadline_task - 1] if deadline_task > 0 else 0
     exposed = max(departure_time + d2h_ns + h2d_ns - deadline, 0)
-    first_use_task = min(
-        (
-            task
-            for boundary, task in facts.access_events[cut.alias]
-            if boundary == task - 1
-        ),
-        default=len(facts.tasks),
-    )
+    first_use_task = facts.first_input_tasks[cut.alias]
     common = (
         writeback,
         -int(cut.start <= -1),
@@ -340,16 +452,18 @@ def _cut_score(
 
 
 def apply_cut(plan: ResidencyPlan, cut: Cut) -> ResidencyPlan:
-    spans = [list(values) for values in plan.spans]
-    original = spans[cut.alias].pop(cut.span_index)
+    spans = list(plan.spans)
+    alias_spans = list(spans[cut.alias])
+    original = alias_spans.pop(cut.span_index)
     replacements: list[Span] = []
     if original.start < cut.start:
         replacements.append(Span(original.start, cut.start - 1))
     if cut.end < original.end:
         replacements.append(Span(cut.end + 1, original.end))
-    spans[cut.alias].extend(replacements)
-    spans[cut.alias].sort()
-    return ResidencyPlan(tuple(tuple(values) for values in spans), plan.anchors)
+    alias_spans.extend(replacements)
+    alias_spans.sort()
+    spans[cut.alias] = tuple(alias_spans)
+    return ResidencyPlan(tuple(spans), plan.anchors)
 
 
 def strategy_object_capacity(
@@ -368,23 +482,27 @@ def reduce_pressure(
     strategy: str,
     *,
     extra_pressure: dict[tuple[str, int], int] | None = None,
+    score_cache: dict[tuple[Cut, str], tuple[int, ...]] | None = None,
 ) -> ResidencyPlan:
     """Greedily remove anchor-free residency until analytic capacity fits."""
 
     plan = seed
     additions = extra_pressure or {}
     score_kind = "min-transfer" if strategy.endswith("transfer") else "min-stall"
+    prefetch_headroom = strategy.startswith("headroom")
+    pressure = {
+        device_id: list(values)
+        for device_id, values in _pressure_by_device(
+            facts,
+            plan,
+            prefetch_headroom=prefetch_headroom,
+        ).items()
+    }
     while True:
         selected: tuple[str, int, int, int] | None = None
         for boundary in range(-1, facts.last_boundary + 1):
             for device_id in facts.object_capacity_by_device:
-                used = boundary_bytes(
-                    facts,
-                    plan,
-                    boundary,
-                    device_id,
-                    prefetch_headroom=strategy.startswith("headroom"),
-                )
+                used = pressure[device_id][boundary + 1]
                 used += additions.get((device_id, boundary), 0)
                 capacity = strategy_object_capacity(facts, device_id, strategy)
                 if used <= capacity:
@@ -418,11 +536,28 @@ def reduce_pressure(
                 required_bytes=used,
                 capacity_bytes=facts.object_capacity_by_device[device_id],
             )
-        chosen = min(
-            cuts,
-            key=lambda cut: _cut_score(facts, config, cut, score_kind),
-        )
+        def score(cut: Cut) -> tuple[int, ...]:
+            if score_cache is None:
+                return _cut_score(facts, config, cut, score_kind)
+            key = (cut, score_kind)
+            cached = score_cache.get(key)
+            if cached is not None:
+                return cached
+            value = _cut_score(facts, config, cut, score_kind)
+            score_cache[key] = value
+            return value
+
+        chosen = min(cuts, key=score)
+        previous = plan
         plan = apply_cut(plan, chosen)
+        _update_pressure_for_alias(
+            facts,
+            previous,
+            plan,
+            chosen.alias,
+            pressure,
+            prefetch_headroom=prefetch_headroom,
+        )
 
 
 def extend_interval_entries(
@@ -432,6 +567,10 @@ def extend_interval_entries(
     """Move later entries earlier only while exact analytic pressure fits."""
 
     current = plan
+    pressure = {
+        device_id: list(values)
+        for device_id, values in _pressure_by_device(facts, current).items()
+    }
     for alias in range(len(facts.alias_ids)):
         span_index = 1
         while span_index < len(current.spans[alias]):
@@ -441,17 +580,26 @@ def extend_interval_entries(
             if candidate_start <= previous.end:
                 span_index += 1
                 continue
-            spans = [list(values) for values in current.spans]
-            spans[alias][span_index] = Span(candidate_start, span.end)
+            spans = list(current.spans)
+            alias_spans = list(spans[alias])
+            alias_spans[span_index] = Span(candidate_start, span.end)
+            spans[alias] = tuple(alias_spans)
             proposed = ResidencyPlan(
-                tuple(tuple(values) for values in spans), current.anchors
+                tuple(spans), current.anchors
             )
             device_id = facts.alias_devices[alias]
+            task = candidate_start + 1
+            reserved = (
+                0 <= task < len(facts.output_reservations)
+                and alias in facts.output_reservations[task]
+            )
+            added = 0 if reserved else facts.alias_sizes[alias]
             if (
-                boundary_bytes(facts, proposed, candidate_start, device_id)
-                <= (facts.object_capacity_by_device[device_id])
+                pressure[device_id][candidate_start + 1] + added
+                <= facts.object_capacity_by_device[device_id]
             ):
                 current = proposed
+                pressure[device_id][candidate_start + 1] += added
                 continue
             span_index += 1
     return current
@@ -467,9 +615,10 @@ def assert_required_floor(facts: PlanningFacts) -> None:
         ),
         facts.anchors,
     )
+    pressure = _pressure_by_device(facts, minimal)
     for boundary in range(-1, facts.last_boundary + 1):
         for device_id, capacity in facts.object_capacity_by_device.items():
-            required = boundary_bytes(facts, minimal, boundary, device_id)
+            required = pressure[device_id][boundary + 1]
             if required > capacity:
                 task_index = boundary + 1
                 task_id = (

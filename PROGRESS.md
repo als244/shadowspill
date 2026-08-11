@@ -435,6 +435,13 @@ Phase 8 — public forward and training callables.
   final complete audit to catch illegal gradless mutation. This reduces
   unchanged verification from quadratic to linear tensor bytes without
   specializing the optimizer or operation.
+- The first complete exact 1.180B timing report after these fixes is 429.99 s:
+  capture/lowering 13.07 s, optimizer capture 3.51 s, compilation 4.82 s, and
+  PressureFit/simulation 403.90 s. Dense projection, pressure sweeps, cached
+  initial placement/residency/interval plans, incremental packed-fit admission,
+  and cached cut scores preserve all frozen schedules but do not meet the
+  latency gate. The remaining dense candidate/repair loop must execute in the
+  compiled planner; reducing the portfolio or changing directives is rejected.
 
 ## Gate rule
 

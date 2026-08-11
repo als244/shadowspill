@@ -34,6 +34,7 @@ class PlanningFacts:
     production_boundaries: tuple[frozenset[int], ...]
     write_boundaries: tuple[tuple[int, ...], ...]
     output_reservations: tuple[tuple[int, ...], ...]
+    first_input_tasks: tuple[int, ...]
     object_capacity_by_device: dict[str, int]
     task_ideal_end_ns: tuple[int, ...]
 
@@ -187,6 +188,13 @@ def build_facts(
         production_boundaries=tuple(frozenset(values) for values in productions),
         write_boundaries=tuple(tuple(sorted(values)) for values in writes),
         output_reservations=tuple(reservations),
+        first_input_tasks=tuple(
+            min(
+                (task for boundary, task in values if boundary == task - 1),
+                default=len(tasks),
+            )
+            for values in accesses
+        ),
         object_capacity_by_device=object_capacity,
         task_ideal_end_ns=tuple(ideal_end),
     )
