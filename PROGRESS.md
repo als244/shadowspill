@@ -30,6 +30,9 @@ Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
 - [x] Framework-neutral slab runtime, deterministic mock backend, stream-safe
   allocation retirement, object residency/version state machine, and public C
   API implemented.
+- [x] CUDA Driver API backend performs one conventional slab allocation, one
+  pinned-host arena allocation, asynchronous copies/events/waits, and exposes
+  capability and operation ledgers without VMM.
 
 ## Completed gates
 

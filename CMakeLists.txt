@@ -165,6 +165,47 @@ install(
   DESTINATION shadowspill/include/shadowspill
 )
 
+option(SHADOWSPILL_BUILD_CUDA "Build the CUDA slab backend" ON)
+if(SHADOWSPILL_BUILD_CUDA)
+  find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    add_library(
+      shadowspill_backend_cuda
+      SHARED
+      runtime/backends/cuda/src/backend_cuda.c
+    )
+    target_include_directories(
+      shadowspill_backend_cuda
+      PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/backends/cuda/include>
+        $<INSTALL_INTERFACE:shadowspill/include>
+    )
+    target_link_libraries(
+      shadowspill_backend_cuda
+      PRIVATE CUDA::cuda_driver Threads::Threads shadowspill_build_options
+    )
+    set_target_properties(
+      shadowspill_backend_cuda
+      PROPERTIES
+        OUTPUT_NAME shadowspill_backend_cuda
+        VERSION ${PROJECT_VERSION}
+        SOVERSION 0
+    )
+    install(
+      TARGETS shadowspill_backend_cuda
+      LIBRARY DESTINATION shadowspill/lib
+      RUNTIME DESTINATION shadowspill/lib
+    )
+    install(
+      FILES runtime/backends/cuda/include/shadowspill/backend_cuda.h
+      DESTINATION shadowspill/include/shadowspill
+    )
+  else()
+    message(STATUS "CUDA Toolkit not found; skipping CUDA backend")
+  endif()
+endif()
+
 if(BUILD_TESTING)
   add_executable(shadowspill_build_canary tests/native/build_canary.c)
   target_link_libraries(shadowspill_build_canary PRIVATE shadowspill_build_options)
@@ -215,4 +256,26 @@ if(BUILD_TESTING)
       COMMAND shadowspill_runtime_${runtime_test}_canary
     )
   endforeach()
+
+  if(TARGET shadowspill_backend_cuda)
+    add_executable(
+      shadowspill_cuda_backend_canary
+      tests/runtime/cuda_backend_canary.c
+    )
+    target_link_libraries(
+      shadowspill_cuda_backend_canary
+      PRIVATE
+        shadowspill_runtime
+        shadowspill_backend_cuda
+        shadowspill_build_options
+    )
+    add_test(
+      NAME shadowspill_cuda_backend_canary
+      COMMAND shadowspill_cuda_backend_canary
+    )
+    set_tests_properties(
+      shadowspill_cuda_backend_canary
+      PROPERTIES LABELS "cuda"
+    )
+  endif()
 endif()
