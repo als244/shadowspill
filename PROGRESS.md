@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 3 — deterministic PressureFit and recomputation planning.
+Phase 4 — framework-neutral runtime and deterministic mock backend.
 
 ## Status
 
@@ -23,6 +23,10 @@ Phase 3 — deterministic PressureFit and recomputation planning.
   framework, model, or accelerator dependencies.
 - [x] Frozen compiled simulator decomposed into focused C modules without an
   ABI or behavior change.
+- [x] Deterministic PressureFit, recomputation portfolio, simulator-verified
+  candidate selection, and canonical ExecutionPlan construction implemented.
+- [x] Public planner C ABI, header, compiled selector, documentation, and
+  frozen schedule artifacts added.
 
 ## Completed gates
 
@@ -81,6 +85,26 @@ Phase 3 — deterministic PressureFit and recomputation planning.
   retained-host/device copies and invalidate retained host contents after
   output writes. Stale host generations cannot source a prefetch or satisfy
   final residency; the behavior has dedicated Python and public-C canaries.
+
+### Phase 3
+
+- PressureFit is operation-, framework-, optimizer-, and model-independent. It
+  plans stable alias/task identities, workspace admission, tentative initial
+  placement, residency cuts, dirty writeback, packed H2D, and bounded
+  recomputation alternatives entirely from canonical IR.
+- Every returned schedule is accepted by the standalone simulator. Candidate
+  workers preserve identical schedules, digests, diagnostics, and tie breaks.
+- The retained 10-layer pressure artifact matches 326 us, 94 ordered actions,
+  and the A0/A1/A2 activation offloads. The 5-layer artifact is also logically
+  identical. A simulator-valid earlier head prefetch improves the 2-layer
+  artifact from the retained 114 us to 110 us; the dominant result is frozen
+  and documented rather than intentionally regressed.
+- `libshadowspill_planner.so` provides a stable compiled candidate-verification
+  and selection boundary over the public simulator ABI. It contains no Python,
+  framework, backend, model, or operation dependency.
+- 101 Python tests pass with 92.10% branch coverage. C warnings-as-errors,
+  native canaries, Clang ASan/UBSan, strict mypy, Ruff, naming, external-oracle,
+  isolated wheel, RPATH, public-header, and exported-symbol gates pass.
 
 ## Gate rule
 

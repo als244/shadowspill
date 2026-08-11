@@ -1,0 +1,44 @@
+{
+  "schema": "shadowspill-pressurefit-contract/v1",
+  "captured_at": "2026-08-10",
+  "training_chain": [
+    {
+      "layers": 1,
+      "device_capacity_bytes": 224,
+      "schedule_digest": "bb1c105fac1dbe146b417bfc5dc862b0f35e9324d35480bef9d79b5708699e61",
+      "selected_candidate": "tight-stall/packed-fit",
+      "makespan_ns": 56000,
+      "action_count": 13,
+      "legacy_makespan_ns": 56000
+    },
+    {
+      "layers": 2,
+      "device_capacity_bytes": 224,
+      "schedule_digest": "69553a599141e41c6b655ba23fa941bedd61f44a4bfc4ffc3dc0cd5d17f52af9",
+      "selected_candidate": "tight-stall/packed-fit",
+      "makespan_ns": 110000,
+      "action_count": 24,
+      "legacy_makespan_ns": 114000,
+      "difference": "Earlier simulator-valid head-weight prefetch removes 4 us of exposed H2D."
+    },
+    {
+      "layers": 5,
+      "device_capacity_bytes": 800,
+      "schedule_digest": "2714536a200d65afb2840223fb03563ec93c912338e8b19cffb8481708a8e362",
+      "selected_candidate": "headroom-stall/packed-fifo",
+      "makespan_ns": 152000,
+      "action_count": 32,
+      "legacy_makespan_ns": 152000
+    },
+    {
+      "layers": 10,
+      "device_capacity_bytes": 500,
+      "schedule_digest": "b2428807ae3801a4de45d312329683ad85a17ffa92b256c90c2aa5652baf005c",
+      "selected_candidate": "headroom-stall/packed-fifo",
+      "makespan_ns": 326000,
+      "action_count": 94,
+      "legacy_makespan_ns": 326000,
+      "offloaded_aliases": ["A_0", "A_1", "A_2"]
+    }
+  ]
+}

@@ -60,6 +60,43 @@ install(
   DESTINATION shadowspill/include/shadowspill
 )
 
+add_library(
+  shadowspill_planner
+  SHARED
+  planner/src/selector.c
+  planner/src/status.c
+)
+target_include_directories(
+  shadowspill_planner
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/planner/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/simulator/include>
+    $<INSTALL_INTERFACE:shadowspill/include>
+  PRIVATE planner/src
+)
+target_link_libraries(
+  shadowspill_planner
+  PRIVATE shadowspill_simulator shadowspill_build_options
+)
+set_target_properties(
+  shadowspill_planner
+  PROPERTIES
+    OUTPUT_NAME shadowspill_planner
+    VERSION ${PROJECT_VERSION}
+    SOVERSION 0
+    INSTALL_RPATH "$ORIGIN"
+)
+
+install(
+  TARGETS shadowspill_planner
+  LIBRARY DESTINATION shadowspill/lib
+  RUNTIME DESTINATION shadowspill/lib
+)
+install(
+  FILES planner/include/shadowspill/planner.h
+  DESTINATION shadowspill/include/shadowspill
+)
+
 if(BUILD_TESTING)
   add_executable(shadowspill_build_canary tests/native/build_canary.c)
   target_link_libraries(shadowspill_build_canary PRIVATE shadowspill_build_options)
@@ -74,4 +111,11 @@ if(BUILD_TESTING)
     PRIVATE shadowspill_simulator shadowspill_build_options
   )
   add_test(NAME shadowspill_simulator_canary COMMAND shadowspill_simulator_canary)
+
+  add_executable(shadowspill_planner_canary tests/planner/planner_canary.c)
+  target_link_libraries(
+    shadowspill_planner_canary
+    PRIVATE shadowspill_planner shadowspill_build_options
+  )
+  add_test(NAME shadowspill_planner_canary COMMAND shadowspill_planner_canary)
 endif()
