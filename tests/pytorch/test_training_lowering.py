@@ -43,6 +43,19 @@ class _MultiLinearModel(nn.Module):
         return self.second(torch.relu(self.first(value)))
 
 
+class _LongLivedBoundaryModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = nn.Linear(3, 8)
+        self.second = nn.Linear(8, 8)
+        self.third = nn.Linear(8, 2)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        early = torch.relu(self.first(value))
+        middle = torch.relu(self.second(early))
+        return self.third(middle + early)
+
+
 def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
@@ -342,6 +355,55 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
             measurements,
             replace(optimizer_capture, recurrent=None),
         )
+
+
+def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
+    real_model = _LongLivedBoundaryModel()
+    optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        capture = partition_training_capture(
+            capture_training(
+                model,
+                _objective,
+                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+            )
+        )
+    artifacts = (
+        *(
+            artifact
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+    )
+    measurements = {
+        artifact.compatibility_digest: TaskMeasurement(
+            100, 10, 10, (10,), (100,), "unit-test"
+        )
+        for artifact in artifacts
+        if artifact is not None
+    }
+
+    lowered = lower_partitioned_training_program(
+        model, (capture,), measurements, optimizer_capture
+    )
+    producers: dict[str, list[str]] = {}
+    for task in lowered.program.tasks:
+        for object_id in task.inputs:
+            candidates = producers.get(object_id, ())
+            if candidates:
+                assert any(candidate in task.dependencies for candidate in candidates)
+        for object_id in task.outputs:
+            producers.setdefault(object_id, []).append(task.task_id)
 
 
 def test_training_lowering_rejects_empty_templates() -> None:

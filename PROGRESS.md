@@ -409,6 +409,17 @@ Phase 8 — public forward and training callables.
 - Optimizers with registered step pre/post hooks remain bounded opaque tasks.
   This preserves their Python-visible once-per-step semantics; tensor-only
   component execution is used only when no such side-effect contract exists.
+- The first exact-scale retry after optimizer partitioning exposed a missing
+  dependency for long-lived forward boundaries. A skip value produced by an
+  earlier stage could pass through an intermediate stage and become an input
+  to a later stage, while lowering depended only on the immediately preceding
+  stage. Forward tasks now include every actual input object's known producer
+  in addition to the sequential stage edge. This is a DAG-correctness fix; it
+  does not alter task order, PressureFit choices, or annotated action triggers.
+- An exact 1.180B Llama retry is now progressing beyond Program validation, but
+  its planning process remains CPU-bound beyond the 90-second cold-planning
+  gate. Phase attribution and structural-key counts are required before that
+  scale run can qualify; the latency is not being accepted as expected cost.
 
 ## Gate rule
 

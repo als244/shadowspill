@@ -358,11 +358,14 @@ def lower_partitioned_training_program(
                 input_aliases = {
                     inventory.alias_id(slot.object_id) for slot in item.forward_inputs
                 }
+                dependencies = list(previous_forward_ids)
+                for slot in item.forward_inputs:
+                    dependencies.extend(object_producers.get(slot.object_id, ()))
                 task = TaskSpec(
                     task_id,
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
                     profile_id(item.pair.forward),
-                    dependencies=previous_forward_ids,
+                    dependencies=_unique(dependencies),
                     inputs=_unique(slot.object_id for slot in item.forward_inputs),
                     outputs=_unique(
                         slot.object_id
