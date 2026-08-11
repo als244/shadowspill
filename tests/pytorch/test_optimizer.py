@@ -95,13 +95,31 @@ def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
     assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
 
 
-def test_cuda_only_discovery_inventories_every_parameter() -> None:
+def test_cuda_only_discovery_inventories_every_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     mlops = pytest.importorskip("mlops")
     first = torch.nn.Parameter(torch.ones(8))
     second = torch.nn.Parameter(torch.full((4,), 2.0))
     first.grad = torch.ones_like(first)
     second.grad = torch.ones_like(second)
     optimizer = mlops.optim.AdamW([first, second], lr=1e-3)
+    audited_sizes: list[int] = []
+    require_unchanged = optimizer_module._require_unchanged_discovery_parameters
+
+    def track_audit(
+        snapshots: tuple[
+            tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...
+        ],
+    ) -> None:
+        audited_sizes.append(len(snapshots))
+        require_unchanged(snapshots)
+
+    monkeypatch.setattr(
+        optimizer_module,
+        "_require_unchanged_discovery_parameters",
+        track_audit,
+    )
 
     captured = capture_optimizer(
         {"first": first, "second": second},
@@ -141,6 +159,7 @@ def test_cuda_only_discovery_inventories_every_parameter() -> None:
     assert optimizer.state == {}
     torch.testing.assert_close(first, torch.ones_like(first))
     torch.testing.assert_close(second, torch.full_like(second, 2.0))
+    assert audited_sizes == [1, 2]
 
 
 def test_optimizer_state_container_conversion_preserves_structure() -> None:

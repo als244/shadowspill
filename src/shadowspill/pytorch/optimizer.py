@@ -542,6 +542,10 @@ def _complete_failed_state_discovery(
 
     parameters = _optimizer_parameters(optimizer)
     gradients = {id(parameter): parameter.grad for parameter in parameters}
+    snapshots_by_id = {
+        id(parameter): (parameter, value, gradient)
+        for parameter, value, gradient in parameter_snapshots
+    }
     previous_structure = _state_structure(optimizer, name_by_id)
     try:
         while True:
@@ -554,18 +558,18 @@ def _complete_failed_state_discovery(
             )
             if not pending:
                 return
-            pending_ids = {id(parameter) for parameter in pending}
+            selected = pending[0]
             for parameter in parameters:
                 parameter.grad = (
-                    gradients[id(parameter)]
-                    if id(parameter) in pending_ids
-                    else None
+                    gradients[id(parameter)] if parameter is selected else None
                 )
             try:
                 with torch.no_grad():
                     optimizer.step()
             except BaseException:
-                _require_unchanged_discovery_parameters(parameter_snapshots)
+                _require_unchanged_discovery_parameters(
+                    (snapshots_by_id[id(selected)],)
+                )
                 current_structure = _state_structure(optimizer, name_by_id)
                 if current_structure == previous_structure:
                     return
@@ -575,6 +579,10 @@ def _complete_failed_state_discovery(
     finally:
         for parameter in parameters:
             parameter.grad = gradients[id(parameter)]
+        # One final complete audit catches optimizers that mutate tensors whose
+        # gradient was absent. Per-failure checks stay linear in total tensor
+        # bytes instead of rescanning the complete model for every parameter.
+        _require_unchanged_discovery_parameters(parameter_snapshots)
 
 
 def _require_unchanged_discovery_parameters(

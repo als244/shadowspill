@@ -428,6 +428,13 @@ Phase 8 — public forward and training callables.
   to the compiled simulator once; candidates bind only action and residency
   arrays. A controlled serial portfolio improved 3.7x with identical schedule
   digest and makespan. Explicit worker modes remain unchanged.
+- A qualification-only stack watchdog identified a separate exact-scale
+  optimizer-discovery cost: after each CUDA-only per-parameter failure, capture
+  compared every parameter tensor against its snapshot. Discovery now enables
+  and audits one still-uninitialized parameter at a time, then performs one
+  final complete audit to catch illegal gradless mutation. This reduces
+  unchanged verification from quadratic to linear tensor bytes without
+  specializing the optimizer or operation.
 
 ## Gate rule
 
