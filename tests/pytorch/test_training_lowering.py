@@ -26,6 +26,16 @@ class _Model(nn.Module):
         return self.projection(value)
 
 
+class _MultiLinearModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = nn.Linear(3, 8)
+        self.second = nn.Linear(8, 2)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return self.second(torch.relu(self.first(value)))
+
+
 def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
@@ -90,6 +100,11 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     ]
     assert selected[3].mutations
     assert selected[-1].mutations
+    for entrypoint in lowered.entrypoints:
+        if entrypoint.phase == "backward":
+            assert tuple(slot.leaf_index for slot in entrypoint.input_slots) == tuple(
+                range(len(entrypoint.input_slots))
+            )
 
     config = SimulationConfig.single_device(
         "cuda_0",
@@ -110,3 +125,60 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
 
 def test_training_lowering_is_deterministic() -> None:
     assert _lowered().program.to_json() == _lowered().program.to_json()
+
+
+def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
+    real_model = _MultiLinearModel()
+    optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    assert optimizer_capture.recurrent is not None
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        captures = tuple(
+            capture_training(
+                model,
+                _objective,
+                fake_cuda_inputs([torch.randn(rows, 3), torch.randn(rows, 2)], mode),
+            )
+            for rows in (4, 5)
+        )
+    artifacts = (
+        *(
+            artifact
+            for capture in captures
+            for pair in (capture.save_pair, capture.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+    )
+    measurements = {
+        artifact.compatibility_digest: TaskMeasurement(
+            100, 10, 10, (10,), (100,), "unit-test"
+        )
+        for artifact in artifacts
+    }
+    lowered = lower_training_program(model, captures, measurements, optimizer_capture)
+    parameter_aliases = {
+        next(
+            item.alias_group_id
+            for item in lowered.program.objects
+            if item.object_id == binding.parameter_object_id
+        )
+        for binding in lowered.gradients
+    }
+    produced_aliases = {
+        next(
+            item.alias_group_id
+            for item in lowered.program.objects
+            if item.object_id == object_id
+        )
+        for task in lowered.program.tasks
+        if task.phase == "forward"
+        for object_id in task.outputs
+    }
+    assert parameter_aliases.isdisjoint(produced_aliases)

@@ -255,6 +255,37 @@ Phase 8 — public forward and training callables.
   repeated execution, exact metadata guards, state reload, caller-retained
   output lifetime, and idempotent close; full branch coverage is 90.42%.
 
+### Phase 8 training integration (active)
+
+- Canonical accumulated lowering now carries explicit fixed loss-tangent
+  bindings and a deterministic provisional model/input layout. This permits
+  incremental CUDA placeholder materialization before the one allowed optimizer
+  factory invocation, without requiring the complete model to be resident.
+- The selected-task executor implements two forward/backward contributions,
+  planned gradient storage, in-place accumulation, one optimizer mutation, and
+  caller ownership for detached loss/metric tensors. Public checkpoint and
+  close lifecycle plumbing is present but not yet qualified.
+- A fresh-process gate found that AOT may save a parameter *view* as a forward
+  residual. Excluding only identical input object IDs falsely declared the view
+  a produced allocation. Lowering now excludes every output whose alias group
+  is already an input; a multi-linear regression covers this case.
+- Promoted outputs now surrender PyTorch allocator ownership immediately while
+  retaining their current address as a non-owning task binding. Caller results
+  receive an explicit owning slab lease; this prevents address-reuse races with
+  PyTorch's private pluggable-allocator pointer map.
+- Fixed non-tensor inputs are guarded publicly but specialized out of compiled
+  graph ABIs. Original tensor-primal positions remain recorded so AOT backward
+  gradients still map correctly when static inputs contributed `None` leaves.
+- The fresh-process training gate passes five steps against eager PyTorch with
+  two heterogeneous microbatches, exact optimizer-call count, string metadata,
+  tensor/static metrics, bitwise checkpoint replay, Parameter identity, CPU
+  restoration, one slab, one pinned arena, and zero allocator callback errors.
+- Sixteen CTests and 176 Python tests pass at 90.01% branch coverage. ASan,
+  UBSan, and ThreadSanitizer pass all neutral-runtime canaries.
+- Stateful lazy optimizers still require the planned initial/recurrent
+  optimizer-state transition and are not accepted yet; the present numerical
+  gate uses graphable state-free SGD.
+
 ## Gate rule
 
 No later phase is declared active until the current phase passes all of its

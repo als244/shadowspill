@@ -13,8 +13,10 @@ import torch.nn as nn
 from shadowspill.ir import ExecutionPlan, MemoryAction, TaskProfile
 
 from .executor import ForwardExecutor
-from .guards import InputSignature
+from .guards import InputSignature, validate_training_inputs
 from .materialization import MaterializedForwardState
+from .training_executor import TrainingExecutor
+from .training_materialization import TrainingMaterializedState
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +111,95 @@ class PlannedForward:
         self.close()
 
 
-__all__ = ["PlanReport", "PlannedForward"]
+@dataclass(frozen=True, slots=True)
+class StepResult:
+    """Detached device results for every microbatch in one logical step."""
+
+    objectives: tuple[torch.Tensor, ...]
+    metrics: tuple[Any, ...]
+    step_number: int
+    diagnostics: object | None = None
+
+
+class PlannedTrainStep:
+    """Accumulated training callable returned by :func:`plan`."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        signatures: tuple[InputSignature, ...],
+        executor: TrainingExecutor,
+        state: TrainingMaterializedState,
+        optimizer: torch.optim.Optimizer,
+        report: PlanReport,
+    ) -> None:
+        self._model = model
+        self._signatures = signatures
+        self._executor = executor
+        self._state = state
+        self._optimizer = optimizer
+        self.plan_report = report
+        self._step = 0
+        self._closed = False
+
+    def __call__(self, inputs: Sequence[Sequence[Any]]) -> StepResult:
+        if self._closed:
+            raise RuntimeError("planned training callable is closed")
+        validate_training_inputs(inputs, self._signatures)
+        objectives, metrics = self._executor(inputs)
+        self._step += 1
+        return StepResult(objectives, metrics, self._step)
+
+    def state_dict(self) -> dict[str, object]:
+        """Synchronously snapshot model, optimizer, and logical step state."""
+
+        if self._closed:
+            model_state = OrderedDict(self._model.state_dict())
+        else:
+            model_state = self._state.state_dict()
+        return {
+            "model": model_state,
+            "optimizer": self._optimizer.state_dict(),
+            "step": self._step,
+        }
+
+    def load_state_dict(self, state: Mapping[str, object]) -> None:
+        """Restore an exact state produced by :meth:`state_dict`."""
+
+        if set(state) != {"model", "optimizer", "step"}:
+            raise RuntimeError("training state_dict keys differ")
+        model_state = state["model"]
+        optimizer_state = state["optimizer"]
+        step = state["step"]
+        if not isinstance(model_state, Mapping) or not isinstance(
+            optimizer_state, Mapping
+        ):
+            raise TypeError("training checkpoint model/optimizer must be mappings")
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            raise TypeError("training checkpoint step must be non-negative")
+        self._state.load_model_state(model_state)
+        self._optimizer.load_state_dict(dict(optimizer_state))
+        self._step = step
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        for parameter in self._model.parameters():
+            parameter.grad = None
+        self._state.restore_cpu_and_unregister()
+        self._closed = True
+
+    def __enter__(self) -> PlannedTrainStep:
+        if self._closed:
+            raise RuntimeError("planned training callable is closed")
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        del exception
+        self.close()
+
+
+__all__ = ["PlanReport", "PlannedForward", "PlannedTrainStep", "StepResult"]
 
 
 def forward_pass(
@@ -137,4 +227,36 @@ def forward_pass(
     )
 
 
-__all__ = ["PlanReport", "PlannedForward", "forward_pass"]
+def plan(
+    model: nn.Module,
+    *,
+    objective: Any,
+    opt: Any,
+    example_inputs: Sequence[Sequence[Any]],
+    device_budget: int,
+    host_budget: int,
+    partition: str = "auto",
+) -> PlannedTrainStep:
+    """Plan a fixed accumulated forward/objective/backward/update program."""
+
+    from .training_session import build_training
+
+    return build_training(
+        model,
+        objective=objective,
+        opt=opt,
+        example_inputs=example_inputs,
+        device_budget=device_budget,
+        host_budget=host_budget,
+        partition=partition,
+    )
+
+
+__all__ = [
+    "PlanReport",
+    "PlannedForward",
+    "PlannedTrainStep",
+    "StepResult",
+    "forward_pass",
+    "plan",
+]

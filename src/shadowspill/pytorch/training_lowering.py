@@ -45,6 +45,14 @@ class GradientBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class FixedTensorBinding:
+    """Frontend-owned constant tensor input required by a captured task."""
+
+    object_id: str
+    value: torch.Tensor
+
+
+@dataclass(frozen=True, slots=True)
 class TrainingTaskEntrypoint:
     task_id: str
     phase: str
@@ -66,13 +74,50 @@ class LoweredTrainingProgram:
     root_input_slots: tuple[tuple[TensorSlot, ...], ...]
     entrypoints: tuple[TrainingTaskEntrypoint, ...]
     gradients: tuple[GradientBinding, ...]
+    fixed_tensors: tuple[FixedTensorBinding, ...]
     optimizer_task_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingStorageLayout:
+    """Deterministic model/input identities needed before optimizer capture."""
+
+    program: Program
+    registrations: tuple[RegistrationBinding, ...]
+    root_input_slots: tuple[tuple[TensorSlot, ...], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _PairValues:
     forward_outputs: tuple[object, ...]
     backward_outputs: tuple[object, ...]
+
+
+def lower_training_storage_layout(
+    model: nn.Module,
+    captures: tuple[TrainingCapture, ...],
+    *,
+    device_ordinal: int = 0,
+) -> TrainingStorageLayout:
+    """Assign stable model/input IDs before the optimizer factory is invoked."""
+
+    if not captures:
+        raise CaptureError("training storage layout requires a microbatch")
+    device_id = f"cuda_{device_ordinal}"
+    inventory = _TensorInventory(device_id=device_id)
+    registrations, _parameter_objects = _register_model(model, inventory)
+    root_slots, _initial_inputs = _register_microbatch_inputs(captures, inventory)
+    return TrainingStorageLayout(
+        Program(
+            devices=(DeviceSpec(device_id, "process_0", "cuda", device_ordinal),),
+            alias_groups=inventory.alias_groups(),
+            objects=inventory.objects(),
+            profiles=(),
+            tasks=(),
+        ),
+        registrations,
+        root_slots,
+    )
 
 
 def lower_training_program(
@@ -138,6 +183,7 @@ def lower_training_program(
     public_objects_by_position: dict[int, tuple[str, ...]] = {}
     previous_backward_ids: tuple[str, ...] = ()
     all_backward_ids: list[str] = []
+    fixed_tensors: dict[str, FixedTensorBinding] = {}
     gradient_bytes = sum(
         next(
             item.size_bytes
@@ -166,13 +212,14 @@ def lower_training_program(
                 inventory,
                 public_objects_by_position,
             )
-            backward_inputs = _backward_inputs(
+            backward_inputs, fixed = _backward_inputs(
                 pair,
                 values,
                 inventory,
                 forward_output_slots,
                 capture,
             )
+            fixed_tensors.setdefault(fixed.object_id, fixed)
             gradient_slots = _gradient_outputs(
                 pair,
                 values.backward_outputs,
@@ -181,7 +228,9 @@ def lower_training_program(
                 gradient_by_parameter,
             )
             backward_inputs_objects = [slot.object_id for slot in backward_inputs]
-            forward_input_ids = {slot.object_id for slot in forward_inputs}
+            forward_input_aliases = {
+                inventory.alias_id(slot.object_id) for slot in forward_inputs
+            }
             outputs = (
                 tuple(item.gradient_object_id for item in gradients)
                 if position == 0
@@ -207,7 +256,8 @@ def lower_training_program(
                         outputs=_unique(
                             slot.object_id
                             for slot in forward_output_slots
-                            if slot.object_id not in forward_input_ids
+                            if inventory.alias_id(slot.object_id)
+                            not in forward_input_aliases
                         ),
                         phase="forward",
                     ),
@@ -360,6 +410,7 @@ def lower_training_program(
         root_slots,
         tuple(entrypoints),
         gradients,
+        tuple(fixed_tensors.values()),
         optimizer_task_id,
     )
 
@@ -511,9 +562,12 @@ def _backward_inputs(
     inventory: _TensorInventory,
     forward_slots: tuple[TensorSlot, ...],
     capture: TrainingCapture,
-) -> tuple[TensorSlot, ...]:
+) -> tuple[tuple[TensorSlot, ...], FixedTensorBinding]:
     public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
-    residual_slots = forward_slots[public_count:]
+    residual_slots = tuple(
+        TensorSlot(index, slot.object_id)
+        for index, slot in enumerate(forward_slots[public_count:])
+    )
     tangent = pair.backward.example_arguments[-1]
     if not isinstance(tangent, torch.Tensor):
         raise CaptureError("AOT backward tangent is not a tensor")
@@ -523,7 +577,10 @@ def _backward_inputs(
         persistence=Persistence.STEP,
         retain_host_backing=True,
     )
-    return (*residual_slots, TensorSlot(len(residual_slots), tangent_id))
+    return (
+        (*residual_slots, TensorSlot(len(residual_slots), tangent_id)),
+        FixedTensorBinding(tangent_id, tangent),
+    )
 
 
 def _gradient_outputs(
@@ -538,12 +595,14 @@ def _gradient_outputs(
         for value in pair.forward.example_arguments
         if isinstance(value, torch.Tensor)
     )
-    if len(values) != len(tensor_primals):
-        raise CaptureError("AOT backward gradient/primal count differs")
-    results: list[TensorSlot] = []
-    for index, (primal, gradient) in enumerate(
-        zip(tensor_primals, values, strict=True)
+    positions = pair.forward.tensor_argument_positions
+    if len(positions) != len(tensor_primals) or any(
+        position >= len(values) for position in positions
     ):
+        raise CaptureError("AOT backward gradient/primal positions differ")
+    results: list[TensorSlot] = []
+    for index, primal in zip(positions, tensor_primals, strict=True):
+        gradient = values[index]
         parameter_id = parameter_objects.get(
             (primal.untyped_storage()._cdata, int(primal.storage_offset()))
         )
@@ -566,8 +625,11 @@ def _unique(values: Iterable[str]) -> tuple[str, ...]:
 
 
 __all__ = [
+    "FixedTensorBinding",
     "GradientBinding",
     "LoweredTrainingProgram",
+    "TrainingStorageLayout",
     "TrainingTaskEntrypoint",
     "lower_training_program",
+    "lower_training_storage_layout",
 ]

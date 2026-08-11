@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import torch
 from torch.fx import GraphModule
-from torch.fx.node import Node
+from torch.fx.node import Node, map_arg
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from .contracts import ObjectiveError, ObjectiveResult
@@ -54,6 +54,7 @@ class GraphArtifact:
     argument_count: int
     output_count: int
     operator_targets: tuple[str, ...]
+    tensor_argument_positions: tuple[int, ...]
     compatibility_digest: str
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
 
@@ -65,6 +66,9 @@ class GraphArtifact:
         graph_module: GraphModule,
         example_inputs: tuple[object, ...],
     ) -> GraphArtifact:
+        graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
+            graph_module, example_inputs
+        )
         tensor_inputs = tuple(
             TensorGeometry.from_tensor(value)
             for value in example_inputs
@@ -88,6 +92,7 @@ class GraphArtifact:
             "graph": _canonical_graph(graph_module),
             "inputs": [geometry.identity() for geometry in tensor_inputs],
             "argument_count": len(example_inputs),
+            "tensor_argument_positions": tensor_positions,
             "output_count": len(outputs),
             "operators": operators,
             "torch": torch.__version__,
@@ -101,9 +106,57 @@ class GraphArtifact:
             argument_count=len(example_inputs),
             output_count=len(outputs),
             operator_targets=operators,
+            tensor_argument_positions=tensor_positions,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
             example_arguments=example_inputs,
         )
+
+
+def _specialize_static_inputs(
+    graph_module: GraphModule, example_inputs: tuple[object, ...]
+) -> tuple[GraphModule, tuple[object, ...], tuple[int, ...]]:
+    """Replace guarded non-tensor placeholders with their captured constants."""
+
+    placeholders = tuple(
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    )
+    if len(placeholders) != len(example_inputs):
+        raise ValueError("graph placeholder count differs from example arguments")
+    tensor_positions = tuple(
+        index
+        for index, value in enumerate(example_inputs)
+        if isinstance(value, torch.Tensor)
+    )
+    if len(tensor_positions) == len(example_inputs):
+        return graph_module, example_inputs, tensor_positions
+    specialized = copy.deepcopy(graph_module)
+    specialized_placeholders = tuple(
+        node for node in specialized.graph.nodes if node.op == "placeholder"
+    )
+    for placeholder, value in zip(
+        specialized_placeholders, example_inputs, strict=True
+    ):
+        if isinstance(value, torch.Tensor):
+            continue
+
+        def replace(
+            node: Node,
+            target: Node = placeholder,
+            replacement: object = value,
+        ) -> Any:
+            return replacement if node is target else node
+
+        for user in tuple(placeholder.users):
+            user.args = map_arg(user.args, replace)
+            user.kwargs = map_arg(user.kwargs, replace)
+        specialized.graph.erase_node(placeholder)
+    specialized.graph.lint()
+    specialized.recompile()
+    return (
+        specialized,
+        tuple(value for value in example_inputs if isinstance(value, torch.Tensor)),
+        tensor_positions,
+    )
 
 
 def _canonical_graph(graph_module: GraphModule) -> list[dict[str, object]]:
