@@ -67,6 +67,10 @@ Phase 7 — PyTorch capture, lowering, and structural profiling.
   and keys profiling by structural ABI rather than layer/task position.
 - [x] Atomic content-addressed profile caching scatters one unique measurement
   to all matching task positions; a warm cache invokes no measurement kernels.
+- [x] Optimizer capture is allowlist-free: lazy state discovery, first/recurrent
+  task distinction, tensor-state lifting, and bounded opaque fallback work for
+  AdamW, Adam, SGD, and an unrelated custom optimizer without changing the
+  caller's optimizer.
 
 ## Completed gates
 

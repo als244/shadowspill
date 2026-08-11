@@ -56,3 +56,20 @@ Registered custom operators are accepted when their normal PyTorch contracts
 are complete: schema, fake/meta implementation, alias and mutation declaration,
 and—when differentiated—an autograd implementation. ShadowSpill does not
 special-case operation libraries.
+
+## Optimizers
+
+Optimizer capture has no class allowlist. The optimizer created by the caller's
+factory is inventoried by parameter identity, then copied into a capture
+sandbox. A discovery update identifies lazy state without mutating the caller's
+parameters or optimizer. The first update remains a separately profiled opaque
+task when it creates Python or tensor state. Once the state structure is stable,
+parameters, gradients, tensor state, and tensor-valued group options are lifted
+into an explicit recurrent graph when PyTorch can represent the update.
+
+An optimizer whose Python behavior cannot be copied or represented as a graph
+remains a bounded, profiled opaque task. This preserves generality without
+claiming that unknown workspace or external device allocations are free. The
+runtime executes lifted optimizer graphs under `torch.no_grad()`, matching the
+ordinary `Optimizer.step()` mutation contract. ShadowSpill contains no `mlops`
+import; an externally supplied optimized optimizer uses this same boundary.
