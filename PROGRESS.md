@@ -4,8 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 2 cleanup — behavior-preserving compiled simulator decomposition before
-Phase 3 planning.
+Phase 3 — deterministic PressureFit and recomputation planning.
 
 ## Status
 
@@ -22,6 +21,8 @@ Phase 3 planning.
 - [x] Standalone integer-time simulator implemented in Python and C.
 - [x] Installed wheel selects the versioned compiled simulator without planner,
   framework, model, or accelerator dependencies.
+- [x] Frozen compiled simulator decomposed into focused C modules without an
+  ABI or behavior change.
 
 ## Completed gates
 
@@ -65,6 +66,17 @@ Phase 3 planning.
 - 83 Python tests pass; full source branch coverage is 94%.
 - C11 warnings-as-errors, ASan, UBSan, native canaries, Ruff, strict mypy,
   naming, isolated wheel build/install, and compiled public-API smoke gates pass.
+
+### Phase 2 structural gate
+
+- The compiled simulator is split into validation, memory/state, task,
+  transfer, event, diagnostics, status, and orchestration modules behind one
+  private internal header.
+- Normal, external-oracle, compiled differential, deterministic-concurrency,
+  packaging, naming, and public-symbol results are unchanged.
+- Fresh separate Clang ASan and UBSan builds pass both native canaries and the
+  compiled Python differential suite. This avoids an intermittent GCC 13 ASan
+  signal-handler loop observed even around a trivial canary on this host.
 
 ## Gate rule
 
