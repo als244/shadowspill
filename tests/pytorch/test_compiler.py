@@ -10,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from shadowspill.pytorch import compiler as compiler_module
 from shadowspill.pytorch._abi import Allocation
 from shadowspill.pytorch._telemetry import AllocationTelemetryError
 from shadowspill.pytorch.capture import GraphArtifact
@@ -110,6 +111,7 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
     assert len(measurement.samples_ns) == 2
     assert measurement.workspace_charged_bytes == 256
     assert measurement.provenance.startswith("cuda-events")
+    assert "+torch-inductor" in measurement.provenance
 
     environment = profile_environment(device_ordinal=0, provider_id="test")
     assert environment.compute_capability == torch.cuda.get_device_capability(0)
@@ -143,8 +145,6 @@ class _Stream:
 def test_workspace_boundary_always_stops_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.pytorch import compiler as compiler_module
-
     calls: list[str] = []
     sentinel = object()
     monkeypatch.setattr(
@@ -296,8 +296,6 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
 def test_compiler_function_transfer_deduplicates_structural_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.pytorch import compiler as compiler_module
-
     artifact = _artifact()
     calls: list[str] = []
 
@@ -322,7 +320,6 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
 def test_measurement_releases_cuda_examples_between_structural_abis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.pytorch import compiler as compiler_module
     from shadowspill.pytorch.profiling import TaskMeasurement
 
     artifact = _artifact()
@@ -340,7 +337,11 @@ def test_measurement_releases_cuda_examples_between_structural_abis(
     profiler = CudaTaskProfiler(
         object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
-    monkeypatch.setattr(profiler, "_measure_callable", lambda executable: measurement)
+    monkeypatch.setattr(
+        profiler,
+        "_measure_callable",
+        lambda executable, **options: measurement,
+    )
 
     assert profiler.measure(artifact) is measurement
     examples.clear()

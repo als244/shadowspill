@@ -727,3 +727,27 @@ the ignored internal progress log before this tracked summary is updated.
   sign agreement 0.993844. Under the requested modest additional leeway, the
   formal relative-L2 limit becomes 0.025 globally. No model-, tensor-, or
   optimizer-state exception is introduced.
+
+## 2026-08-11 — Structural compilation and profiling lifetime audit
+
+- The pure-PyTorch 1.007B Qwen eager authority completed, but its first planned
+  construction remained active for more than twenty minutes. A second
+  instrumented attempt reached structural profiling and was interrupted inside
+  `gc.collect()`, not inside an accelerator kernel or Inductor.
+- Planning retained the complete AOT artifact forest while invoking global
+  collection after individual measurements and executable transfer. Each
+  collection repeatedly traversed very large, still-live FX graphs and reclaimed
+  no corresponding graph storage, making the phase effectively quadratic.
+- ShadowSpill now relies on explicit reference release throughout profiling and
+  performs no global garbage collection in the compiler/profiler. The existing
+  weak-reference regression proves representative CUDA arguments are released
+  between structural ABIs.
+- A 2,000-node eager-FX fallback was evaluated, not accepted. It made progress
+  after the GC correction but measured one 9,013-node derivative at 8.59 seconds
+  per invocation, which would destroy runtime throughput. The fallback has been
+  removed; task graphs remain compiled and provider plus node-count provenance
+  is retained for diagnosis and cache identity.
+- This is a planning-latency correction, not a schedule change: PressureFit
+  actions, transfer triggers, task ordering, and runtime synchronization remain
+  untouched. Qwen then exposed a separate upstream lowering defect, recorded in
+  the internal log and addressed as an independent change.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import ctypes
-import gc
 import statistics
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -35,6 +34,8 @@ class CompiledTask:
     artifact: GraphArtifact
     function: Callable[..., object]
     example_arguments: tuple[object, ...]
+    execution_provider: str = "torch-inductor"
+    graph_node_count: int = 0
 
     def __call__(self) -> object:
         # GraphArtifact training derivatives are explicit AOT forward/backward
@@ -53,7 +54,7 @@ def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvi
         cuda_version=torch.version.cuda,
         device_name=properties.name,
         compute_capability=(properties.major, properties.minor),
-        compiler_id="torch-inductor-compile-fx",
+        compiler_id="shadowspill-structural-compiler/v2:torch-inductor",
         provider_id=provider_id,
     )
 
@@ -122,13 +123,20 @@ def compile_artifact(
             value.detach() if isinstance(value, torch.Tensor) else value
             for value in examples
         )
+    graph_module = copy.deepcopy(artifact.graph_module)
+    node_count = len(tuple(graph_module.graph.nodes))
     try:
-        graph_module = copy.deepcopy(artifact.graph_module)
         compiler: Any = compile_fx
         compiled: Callable[..., object] = compiler(graph_module, list(examples))
     except BaseException as exc:
         raise CaptureError(f"Inductor task compilation failed: {exc}") from exc
-    return CompiledTask(artifact, compiled, examples)
+    return CompiledTask(
+        artifact,
+        compiled,
+        examples,
+        "torch-inductor",
+        node_count,
+    )
 
 
 class CudaTaskProfiler:
@@ -168,7 +176,13 @@ class CudaTaskProfiler:
         executable = self._compiled(artifact)
         digest = artifact.compatibility_digest
         try:
-            measurement = self._measure_callable(executable)
+            measurement = self._measure_callable(
+                executable,
+                execution_provider=(
+                    f"{executable.execution_provider}"
+                    f"[fx_nodes={executable.graph_node_count}]"
+                ),
+            )
         except AllocationTelemetryError as exc:
             self._executables.pop(digest, None)
             raise AllocationTelemetryError(
@@ -184,13 +198,23 @@ class CudaTaskProfiler:
             # every unique ABI's CUDA examples alive until take_functions()
             # makes isolated profiling scale with the sum of model-stage
             # inputs, rather than the largest ABI. Retain only the executable.
-            self._executables[digest] = CompiledTask(artifact, executable.function, ())
+            self._executables[digest] = CompiledTask(
+                artifact,
+                executable.function,
+                (),
+                executable.execution_provider,
+                executable.graph_node_count,
+            )
             return measurement
         finally:
             del executable
-            gc.collect()
 
-    def _measure_callable(self, executable: Callable[[], object]) -> TaskMeasurement:
+    def _measure_callable(
+        self,
+        executable: Callable[[], object],
+        *,
+        execution_provider: str = "bounded-eager",
+    ) -> TaskMeasurement:
         """Measure a warmed no-argument task through the allocator boundary."""
 
         torch.cuda.set_device(self._device_ordinal)
@@ -214,7 +238,6 @@ class CudaTaskProfiler:
             finish.synchronize()
             samples.append(max(0, round(start.elapsed_time(finish) * 1_000_000)))
             del output
-            gc.collect()
             persistent_high_water = max(
                 persistent_high_water, self._requested_allocated_bytes()
             )
@@ -236,7 +259,7 @@ class CudaTaskProfiler:
             workspace_extent_bytes=workspace.peak_extent_bytes,
             samples_ns=tuple(samples),
             provenance=(
-                "cuda-events+shadowspill-allocation-telemetry"
+                f"cuda-events+shadowspill-allocation-telemetry+{execution_provider}"
                 + ("+bounded-retention-audit" if fixed_extents else "")
             ),
             allocation_trace=workspace.allocation_trace,
@@ -303,10 +326,11 @@ class CudaTaskProfiler:
             with torch.no_grad():
                 return profiled_optimizer.step()
 
-        measurement = self._measure_callable(update)
+        measurement = self._measure_callable(
+            update, execution_provider="opaque-optimizer"
+        )
         del update
         del optimizer
-        gc.collect()
         return measurement
 
     def take_functions(
@@ -331,7 +355,6 @@ class CudaTaskProfiler:
                     artifact, device_ordinal=self._device_ordinal
                 )
             result[digest] = executable.function
-        gc.collect()
         return result
 
     def _compiled(self, artifact: GraphArtifact) -> CompiledTask:
@@ -371,7 +394,6 @@ class CudaTaskProfiler:
             stream.synchronize()
             output_allocations = self._output_allocation_leaves(output)
             output = None
-            gc.collect()
         except BaseException:
             if task_open:
                 self._library.shadowspill_pytorch_abort_task_range()
@@ -414,5 +436,7 @@ class CudaTaskProfiler:
 
     @staticmethod
     def _discard_output(output: object) -> None:
+        # Tensor/storage lifetime is reference-counted. A process-wide cyclic
+        # collection here traverses every retained FX graph once per warmup and
+        # turns profiling large structural ABIs into quadratic CPU work.
         del output
-        gc.collect()
