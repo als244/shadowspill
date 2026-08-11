@@ -363,6 +363,27 @@ Phase 8 — public forward and training callables.
   naming audit. Neutral ASan and UBSan canaries pass; GCC TSan canaries pass
   with ASLR disabled so its fixed shadow address is available on this host.
 
+### Phase 9 reference model families (active)
+
+- Fresh `models/pytorch` implementations now cover Llama 3, Qwen 3.5 dense,
+  and OLMoE without importing ShadowSpill or `mlops`. Their approximately-1B
+  configurations contain exactly 1,179,699,200, 1,006,955,408, and 975,766,528
+  parameters, respectively; compact variants exercise eager forward and
+  backward semantics.
+- Matching `models/mlops` implementations use the separately installed
+  semantic operation package and retain byte-for-byte compatible state-dict
+  keys and tensor geometries. Tiny reference/optimized pairs match forward
+  results, objectives, and every parameter gradient for all three families.
+- Qwen uses the intended `LLLF` hybrid schedule, partial rotary attention, and
+  Gated DeltaNet recurrence. OLMoE functionally returns each layer's router
+  auxiliary loss instead of storing a live tensor on a module, preserving a
+  capture-friendly graph while retaining the pure reference semantics.
+- The complete gate passes 199 Python tests at 90.08% branch coverage, all 16
+  native/CUDA canaries, Ruff, strict mypy, and the production naming audit.
+  Compiled simulator and planner paths must be supplied during coverage so
+  their differential tests run rather than appearing as intentionally
+  uncovered Python projections.
+
 ## Gate rule
 
 No later phase is declared active until the current phase passes all of its
