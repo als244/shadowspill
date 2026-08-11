@@ -4,7 +4,7 @@ Last updated: 2026-08-10
 
 ## Current milestone
 
-Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
+Phase 6 — hard physical-budget admission and reconciliation.
 
 ## Status
 
@@ -152,6 +152,33 @@ Phase 5 — CUDA slab backend and PyTorch allocator/storage adapter.
   headers. A clean virtual environment loads ABI version 1 and compiles/runs a
   consumer against only the installed artifacts. The full 101-test Python
   suite remains at 92.10% branch coverage.
+
+### Phase 5
+
+- The CUDA backend owns one conventional `cuMemAlloc` slab and one bounded
+  `cuMemHostAlloc` arena per context. Its progress service uses independent H2D
+  and D2H streams, events, queries, and stream waits without VMM or a
+  steady-state device allocation.
+- PyTorch's supported pluggable allocator routes ordinary tensor, compiler, and
+  workspace allocations through the neutral slab. Logical free, exact address
+  lookup, and `record_stream` prevent early range reuse; impossible OOM retains
+  complete no-progress diagnostics even though PyTorch 2.13 may construct a
+  null-data tensor before the public boundary checks the failure latch.
+- The private version-pinned C++ operation only swaps StorageImpl DataPtrs. A
+  real CUDA canary proves one Parameter and its view retain object/storage
+  identity across D2H, null dematerialization, and H2D into a different address
+  and generation; stale generations fail before mutation.
+- A three-stream CUDA canary proves two unfinished inputs insert two waits and
+  that H2D and D2H transfers complete while an independent compute kernel is
+  still running. No transfer-stream synchronization occurs at steady task
+  boundaries.
+- Nsight Systems records the documented task, storage-rebind, allocation,
+  event-wait, H2D, and D2H NVTX ranges. The automated trace audit finds one
+  slab allocation, one pinned arena, real bidirectional overlap, no VMM entry
+  point, and no device/context-wide synchronization.
+- The private adapter exports only its versioned `shadowspill_pytorch_*` ABI.
+  All eleven CTest cases, all 105 Python tests (91.00% coverage), Ruff, strict
+  mypy, naming, installed-wheel relocation, and symbol gates pass.
 
 ## Gate rule
 
