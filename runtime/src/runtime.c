@@ -74,6 +74,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             );
         }
         shadowspill_release_task_fence_locked(runtime, action->fence);
+        shadowspill_object_release(action->object);
         free(action);
         action = next;
     }

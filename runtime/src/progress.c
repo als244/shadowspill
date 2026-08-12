@@ -136,6 +136,7 @@ static void complete_action_locked(
             );
         }
     }
+    shadowspill_object_release(action->object);
     free(action);
     if (runtime->queued_actions != 0U) {
         --runtime->queued_actions;

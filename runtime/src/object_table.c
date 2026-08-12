@@ -36,7 +36,11 @@ void shadowspill_object_table_destroy(ShadowSpillObjectTable *table) {
     ShadowSpillObjectRecord *object = table->owned_head;
     while (object != NULL) {
         ShadowSpillObjectRecord *next = object->ownership_next;
-        free(object);
+        object->ownership_next = NULL;
+        object->ownership_previous_link = NULL;
+        object->id_index_next = NULL;
+        atomic_store_explicit(&object->detached, 1U, memory_order_release);
+        shadowspill_object_release(object);
         object = next;
     }
     free(table->by_id);
@@ -107,5 +111,24 @@ int shadowspill_object_table_remove(
     }
     object->ownership_next = NULL;
     object->ownership_previous_link = NULL;
+    atomic_store_explicit(&object->detached, 1U, memory_order_release);
     return 0;
+}
+
+void shadowspill_object_retain(ShadowSpillObjectRecord *object) {
+    if (object != NULL) {
+        (void)atomic_fetch_add_explicit(
+            &object->references, 1U, memory_order_relaxed
+        );
+    }
+}
+
+void shadowspill_object_release(ShadowSpillObjectRecord *object) {
+    if (object == NULL || atomic_fetch_sub_explicit(
+            &object->references, 1U, memory_order_acq_rel
+        ) != 1U) {
+        return;
+    }
+    pthread_mutex_destroy(&object->lock);
+    free(object);
 }

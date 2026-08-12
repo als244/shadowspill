@@ -369,6 +369,7 @@ ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     created->allocation_id = runtime->next_allocation_id++;
+    atomic_init(&created->references, 1U);
     created->generation = runtime->next_generation++;
     created->requested_bytes = bytes;
     created->charged_bytes = charged;

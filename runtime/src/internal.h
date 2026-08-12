@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
 
 #include <shadowspill/runtime.h>
@@ -43,6 +44,7 @@ typedef struct ShadowSpillAllocationRecord {
     uint64_t origin_task_id;
     uint64_t release_task_id;
     void *pointer;
+    _Atomic uint32_t references;
     int logical_freed;
     int plan_owned;
     int ever_plan_owned;
@@ -65,6 +67,9 @@ typedef struct ShadowSpillAllocationRecord {
 typedef struct ShadowSpillObjectRecord {
     uint64_t object_id;
     uint64_t size_bytes;
+    _Atomic uint32_t references;
+    _Atomic uint8_t detached;
+    pthread_mutex_t lock;
     uint64_t generation;
     uint64_t authoritative_version;
     uint64_t device_version;
@@ -253,6 +258,8 @@ int shadowspill_object_table_remove(
     ShadowSpillObjectTable *table,
     ShadowSpillObjectRecord *object
 );
+void shadowspill_object_retain(ShadowSpillObjectRecord *object);
+void shadowspill_object_release(ShadowSpillObjectRecord *object);
 ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,

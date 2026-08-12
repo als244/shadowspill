@@ -21,6 +21,18 @@
   interface. This is a literal move under the existing global lock; focused
   runtime failure and transition tests pass.
 
+## 2026-08-12 — Stable object lifetime foundation
+
+- Added atomic reference and detached state plus a future per-object mutex to
+  every neutral alias-bundle record. The table owns one reference and queued
+  actions retain their objects independently, so detaching identity no longer
+  implies immediate destruction.
+- Allocation records now carry a stable reference counter in preparation for
+  completion payloads. The counter does not alter current allocation reuse or
+  teardown behavior yet.
+- The global runtime lock remains authoritative during this milestone. All
+  focused runtime, allocator, overlap, OOM, and training canaries pass.
+
 Last updated: 2026-08-11
 
 ## Current milestone

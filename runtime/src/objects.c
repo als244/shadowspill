@@ -33,6 +33,13 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
+    atomic_init(&created->references, 1U);
+    atomic_init(&created->detached, 0U);
+    if (pthread_mutex_init(&created->lock, NULL) != 0) {
+        free(created);
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto done;
+    }
     created->object_id = description->object_id;
     created->size_bytes = description->size_bytes;
     created->authoritative_version = description->initial_version;
@@ -48,6 +55,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         if (shadowspill_range_allocate(
                 &runtime->host_ranges, charged, 1U, &created->host_offset
             ) != 0) {
+            pthread_mutex_destroy(&created->lock);
             free(created);
             status = SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
             goto done;
@@ -65,6 +73,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
                 &runtime->host_ranges, created->host_offset, charged
             );
         }
+        pthread_mutex_destroy(&created->lock);
         free(created);
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -116,7 +125,7 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
         goto done;
     }
     --runtime->registered_objects;
-    free(object);
+    shadowspill_object_release(object);
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
@@ -325,7 +334,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         .charged_bytes = record->charged_bytes,
         .pointer = record->pointer,
     };
-    free(object);
+    shadowspill_object_release(object);
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
@@ -507,6 +516,7 @@ static void discard_actions_locked(
     while (head != NULL) {
         ShadowSpillQueuedAction *next = head->next;
         shadowspill_release_task_fence_locked(runtime, head->fence);
+        shadowspill_object_release(head->object);
         free(head);
         head = next;
     }
@@ -661,6 +671,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         created->task_id = task_id;
         created->kind = actions[index].kind;
         created->object = object;
+        shadowspill_object_retain(object);
         created->fence = fence;
         ++fence->references;
         if (tail == NULL) {
