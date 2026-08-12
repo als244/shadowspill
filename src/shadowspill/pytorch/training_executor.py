@@ -1146,98 +1146,136 @@ class TrainingExecutor:
     ) -> _PreparedTask:
         """Acquire, rebind, and assemble one complete frontend task boundary."""
 
+        prepared = self._prepare_task(run, entrypoint)
+        try:
+            self._record_compute_start(prepared.stream)
+            self._record_task_start(prepared.timing, prepared.stream)
+            return prepared
+        except BaseException as error:
+            self._abort_task(prepared, error)
+            self._finish_task_timing(prepared.timing)
+            raise
+
+    def _prepare_task(
+        self,
+        run: _PlanRun,
+        entrypoint: TrainingTaskEntrypoint,
+    ) -> _PreparedTask:
+        """Perform preparation while keeping its trace before compute start."""
+
         task_timing = self._begin_task_timing(entrypoint)
         task = run.tasks[entrypoint.task_id]
-        stream = torch.cuda.current_stream()
-        input_aliases = run.input_aliases_by_task[task.task_id]
         trace_label = self._task_trace_labels[task.task_id]
-        runtime_scope_open = False
-        try:
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            self._record_task_readiness(task_timing, stream)
+        with self._nvtx(f"shadowspill.before_task.{trace_label}"):
+            stream = torch.cuda.current_stream()
+            input_aliases = run.input_aliases_by_task[task.task_id]
+            runtime_scope_open = False
             try:
-                with self._nvtx(f"shadowspill.before_task.{trace_label}"):
-                    bindings = self._bridge.before_task(
-                        task.task_id, stream, input_aliases
-                    )
-            except RuntimeError as error:
-                states = self._bridge.input_failure_states(input_aliases)
-                detail = "; ".join(states) if states else "all snapshots device-ready"
-                raise RuntimeError(f"{error}; input_states=[{detail}]") from error
-            if task_timing is not None:
-                task_timing.host_native_before_task_ns = (
-                    time.perf_counter_ns() - started_ns
+                started_ns = (
+                    time.perf_counter_ns() if task_timing is not None else 0
                 )
-            runtime_scope_open = True
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
-                binding_by_alias = dict(zip(input_aliases, bindings, strict=True))
-                for alias_id, binding in binding_by_alias.items():
-                    tensor = self._state.object_store.get(alias_id)
-                    if tensor is None:
-                        raise RuntimeError(
-                            f"task input {alias_id!r} has no tensor binding"
+                self._record_task_readiness(task_timing, stream)
+                try:
+                    with self._nvtx(
+                        f"shadowspill.runtime.before_task.{trace_label}"
+                    ):
+                        bindings = self._bridge.before_task(
+                            task.task_id, stream, input_aliases
                         )
-                    self._bridge.rebind(tensor, alias_id, binding)
-                    self._state.generations[alias_id] = binding.generation
-                artifact = entrypoint.artifact
-                eager_optimizer = entrypoint.phase == "optimizer" and (
-                    isinstance(artifact, OpaqueOptimizerArtifact)
-                    or not self._optimizer_state_available
+                except RuntimeError as error:
+                    states = self._bridge.input_failure_states(input_aliases)
+                    detail = (
+                        "; ".join(states)
+                        if states
+                        else "all snapshots device-ready"
+                    )
+                    raise RuntimeError(
+                        f"{error}; input_states=[{detail}]"
+                    ) from error
+                if task_timing is not None:
+                    task_timing.host_native_before_task_ns = (
+                        time.perf_counter_ns() - started_ns
+                    )
+                runtime_scope_open = True
+                started_ns = (
+                    time.perf_counter_ns() if task_timing is not None else 0
                 )
-                function: Callable[..., object] | None = None
-                if entrypoint.phase == "optimizer":
-                    arguments: Sequence[object] = ()
-                    if not eager_optimizer:
+                with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
+                    binding_by_alias = dict(
+                        zip(input_aliases, bindings, strict=True)
+                    )
+                    for alias_id, binding in binding_by_alias.items():
+                        tensor = self._state.object_store.get(alias_id)
+                        if tensor is None:
+                            raise RuntimeError(
+                                f"task input {alias_id!r} has no tensor binding"
+                            )
+                        self._bridge.rebind(tensor, alias_id, binding)
+                        self._state.generations[alias_id] = binding.generation
+                    artifact = entrypoint.artifact
+                    eager_optimizer = entrypoint.phase == "optimizer" and (
+                        isinstance(artifact, OpaqueOptimizerArtifact)
+                        or not self._optimizer_state_available
+                    )
+                    function: Callable[..., object] | None = None
+                    if entrypoint.phase == "optimizer":
+                        arguments: Sequence[object] = ()
+                        if not eager_optimizer:
+                            if not isinstance(artifact, GraphArtifact):
+                                raise RuntimeError(
+                                    "optimizer task has no executable artifact"
+                                )
+                            current = self._optimizer_bindings()
+                            try:
+                                arguments = tuple(
+                                    current[name].tensor
+                                    for name in entrypoint.optimizer_binding_names
+                                )
+                            except KeyError as exc:
+                                raise RuntimeError(
+                                    f"optimizer tensor {exc.args[0]!r} is unbound"
+                                ) from exc
+                            function = self._functions[
+                                artifact.compatibility_digest
+                            ]
+                    else:
+                        eager_optimizer = False
                         if not isinstance(artifact, GraphArtifact):
                             raise RuntimeError(
-                                "optimizer task has no executable artifact"
+                                "graph task has no captured artifact"
                             )
-                        current = self._optimizer_bindings()
-                        try:
-                            arguments = tuple(
-                                current[name].tensor
-                                for name in entrypoint.optimizer_binding_names
+                        graph_arguments = list(artifact.example_arguments)
+                        for slot in entrypoint.input_slots:
+                            graph_arguments[slot.leaf_index] = (
+                                self._state.object_tensors[slot.object_id]
                             )
-                        except KeyError as exc:
-                            raise RuntimeError(
-                                f"optimizer tensor {exc.args[0]!r} is unbound"
-                            ) from exc
-                        function = self._functions[artifact.compatibility_digest]
-                else:
-                    eager_optimizer = False
-                    if not isinstance(artifact, GraphArtifact):
-                        raise RuntimeError("graph task has no captured artifact")
-                    graph_arguments = list(artifact.example_arguments)
-                    for slot in entrypoint.input_slots:
-                        graph_arguments[slot.leaf_index] = self._state.object_tensors[
-                            slot.object_id
+                        arguments = graph_arguments
+                        function = self._functions[
+                            artifact.compatibility_digest
                         ]
-                    arguments = graph_arguments
-                    function = self._functions[artifact.compatibility_digest]
-            if task_timing is not None:
-                task_timing.host_rebind_ns = time.perf_counter_ns() - started_ns
-            self._record_compute_start(stream)
-            self._record_task_start(task_timing, stream)
-            return _PreparedTask(
-                run=run,
-                entrypoint=entrypoint,
-                task=task,
-                stream=stream,
-                input_aliases=input_aliases,
-                trace_label=trace_label,
-                arguments=arguments,
-                function=function,
-                eager_optimizer=eager_optimizer,
-                timing=task_timing,
-            )
-        except BaseException as error:
-            if runtime_scope_open:
-                self._bridge.abort_task_after_failure(
-                    f"prepare task {task.task_id}", error
+                if task_timing is not None:
+                    task_timing.host_rebind_ns = (
+                        time.perf_counter_ns() - started_ns
+                    )
+                return _PreparedTask(
+                    run=run,
+                    entrypoint=entrypoint,
+                    task=task,
+                    stream=stream,
+                    input_aliases=input_aliases,
+                    trace_label=trace_label,
+                    arguments=arguments,
+                    function=function,
+                    eager_optimizer=eager_optimizer,
+                    timing=task_timing,
                 )
-            self._finish_task_timing(task_timing)
-            raise
+            except BaseException as error:
+                if runtime_scope_open:
+                    self._bridge.abort_task_after_failure(
+                        f"prepare task {task.task_id}", error
+                    )
+                self._finish_task_timing(task_timing)
+                raise
 
     def _run_compiled_task(self, prepared: _PreparedTask) -> object:
         """Dispatch only the numerical task represented by ``prepared``."""
@@ -1267,7 +1305,57 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         """Publish outputs, actions, and cleanup for one frontend task."""
 
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        with self._nvtx(f"shadowspill.after_task.{prepared.trace_label}"):
+            started_ns = (
+                time.perf_counter_ns() if prepared.timing is not None else 0
+            )
+            with self._nvtx(
+                f"shadowspill.output_processing.{prepared.trace_label}"
+            ):
+                outputs = self._process_task_outputs(prepared, raw_outputs)
+                del raw_outputs
+                self._dematerialize_actions(
+                    prepared.run, prepared.task.task_id
+                )
+            if prepared.timing is not None:
+                prepared.timing.host_postprocess_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
+
+            started_ns = (
+                time.perf_counter_ns() if prepared.timing is not None else 0
+            )
+            with self._nvtx(
+                f"shadowspill.runtime.after_task.{prepared.trace_label}"
+            ):
+                self._bridge.after_task(
+                    prepared.task.task_id,
+                    prepared.stream,
+                    prepared.task.mutations,
+                    prepared.run.actions.get(prepared.task.task_id, ()),
+                )
+            prepared.runtime_scope_open = False
+            if prepared.timing is not None:
+                prepared.timing.host_native_after_task_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
+
+            started_ns = (
+                time.perf_counter_ns() if prepared.timing is not None else 0
+            )
+            with self._nvtx(f"shadowspill.cleanup.{prepared.trace_label}"):
+                self._cleanup_after_task(prepared)
+            if prepared.timing is not None:
+                prepared.timing.host_cleanup_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
+            return outputs
+
+    def _process_task_outputs(
+        self,
+        prepared: _PreparedTask,
+        raw_outputs: object,
+    ) -> tuple[torch.Tensor, ...]:
         outputs: tuple[torch.Tensor, ...] = ()
         if prepared.entrypoint.phase == "optimizer":
             if prepared.eager_optimizer and not self._optimizer_state_available:
@@ -1290,26 +1378,9 @@ class TrainingExecutor:
             else:
                 self._accumulate_gradients(prepared.entrypoint, leaves)
             del leaves
-        del raw_outputs
-        self._dematerialize_actions(prepared.run, prepared.task.task_id)
-        if prepared.timing is not None:
-            prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
+        return outputs
 
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        with self._nvtx(f"shadowspill.after_task.{prepared.trace_label}"):
-            self._bridge.after_task(
-                prepared.task.task_id,
-                prepared.stream,
-                prepared.task.mutations,
-                prepared.run.actions.get(prepared.task.task_id, ()),
-            )
-        prepared.runtime_scope_open = False
-        if prepared.timing is not None:
-            prepared.timing.host_native_after_task_ns = (
-                time.perf_counter_ns() - started_ns
-            )
-
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+    def _cleanup_after_task(self, prepared: _PreparedTask) -> None:
         self._forget_released_objects(prepared.run, prepared.task.task_id)
         if prepared.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._optimizer_state_initialized = True
@@ -1323,9 +1394,6 @@ class TrainingExecutor:
                     gradient_binding.gradient_object_id, None
                 )
             self._optimizer_binding_cache = None
-        if prepared.timing is not None:
-            prepared.timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
-        return outputs
 
     def _abort_task(
         self,

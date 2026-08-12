@@ -1984,3 +1984,25 @@ the ignored internal progress log before this tracked summary is updated.
   Their kernels are generally unchanged within tens of microseconds while
   instrumented host calls grow by 0.4--1.6 ms. This is host launch/profiler
   variance, not extra plan work, transfer directives, or retirement scanning.
+
+## 2026-08-12 — Full frontend task-boundary scopes
+
+- Made training `_before_task()` and `_after_task()` the complete frontend
+  orchestration boundaries. `before_task` now contains native acquisition,
+  readiness, storage rebinding, and argument assembly. `after_task` contains
+  output/gradient processing, dematerialization, native action submission, and
+  cleanup. Nested ranges retain component attribution; `compiled_call` remains
+  a disjoint numerical range.
+- The first instrumentation ordering was rejected. It recorded the
+  `before_task_compute` CUDA event before popping the outer `before_task` NVTX
+  range, putting one host NVTX operation into every measured task interval.
+  Qwen selected spans rose to 316.009--319.892 ms and task sums to
+  298.680--302.128 ms despite unchanged compiled graphs.
+- Corrected ordering: full preparation and its NVTX scope close first;
+  `_before_task()` then records `before_task_compute` and returns. The repeated
+  frozen control measured 308.941, 309.116, and 313.543 ms selected spans
+  (309.116-ms median), with 291.723--295.456-ms task sums and a 467.562-ms
+  reset-inclusive untraced median. Program/schedule digests, 129 tasks, and
+  1,415 actions remain exact.
+- Focused lowering/training tests, the CUDA training canary, Ruff, and strict
+  mypy pass. No storage batching or task arithmetic changed in this milestone.
