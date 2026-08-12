@@ -554,14 +554,22 @@ static int handle_action(
                         pthread_mutex_unlock(&object->lock);
                         return -1;
                     }
-                    if (allocation->handoff_from_object_id ==
-                            object->object_id) {
+                    if (object->handoff_task_id !=
+                            SHADOWSPILL_RUNTIME_NO_ID) {
+                        if (allocation->handoff_head_object_id !=
+                                object->object_id) {
+                            shadowspill_memory_pool_unlock_reclamation(
+                                shadowspill_execution_pool(runtime)
+                            );
+                            pthread_mutex_unlock(&object->lock);
+                            return 0;
+                        }
                         ShadowSpillObject *target =
                             shadowspill_find_object(
                                 runtime,
-                                allocation->handoff_to_object_id
+                                object->handoff_destination_object_id
                             );
-                        if (allocation->handoff_task_id != action->task_id ||
+                        if (object->handoff_task_id != action->task_id ||
                             target == NULL ||
                             target->allocation_id != allocation->allocation_id) {
                             shadowspill_memory_pool_unlock_reclamation(
@@ -585,11 +593,18 @@ static int handle_action(
                         object->residency = shadowspill_spill_location(runtime, object)->current
                             ? SHADOWSPILL_OBJECT_SPILL_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
-                        allocation->handoff_from_object_id =
+                        allocation->handoff_head_object_id =
+                            object->handoff_next_source_object_id;
+                        if (allocation->handoff_head_object_id ==
+                                SHADOWSPILL_RUNTIME_NO_ID) {
+                            allocation->handoff_tail_object_id =
+                                SHADOWSPILL_RUNTIME_NO_ID;
+                        }
+                        object->handoff_destination_object_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
-                        allocation->handoff_to_object_id =
+                        object->handoff_task_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
-                        allocation->handoff_task_id =
+                        object->handoff_next_source_object_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
                         shadowspill_memory_pool_unlock_reclamation(
                             shadowspill_execution_pool(runtime)

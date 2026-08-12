@@ -63,6 +63,9 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->authoritative_version = description->initial_version;
     created->retain_spill_copy = description->retain_spill_copy;
     created->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_destination_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_next_source_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->residency = description->initially_spill_resident
         ? SHADOWSPILL_OBJECT_SPILL_ONLY
         : SHADOWSPILL_OBJECT_RELEASED;
@@ -291,7 +294,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     }
     const uint64_t task_id = shadowspill_current_task_id(runtime);
     if (previous_owner != NULL &&
-        (allocation->handoff_from_object_id != SHADOWSPILL_RUNTIME_NO_ID ||
+        (previous_owner->handoff_task_id != SHADOWSPILL_RUNTIME_NO_ID ||
          task_id == SHADOWSPILL_RUNTIME_NO_ID ||
          (previous_owner->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
           previous_owner->residency != SHADOWSPILL_OBJECT_PREFETCHING))) {
@@ -311,9 +314,28 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         goto done;
     }
     if (previous_owner != NULL) {
-        allocation->handoff_from_object_id = previous_owner->object_id;
-        allocation->handoff_to_object_id = object->object_id;
-        allocation->handoff_task_id = task_id;
+        ShadowSpillObject *tail = NULL;
+        if (allocation->handoff_tail_object_id !=
+                SHADOWSPILL_RUNTIME_NO_ID) {
+            tail = shadowspill_find_object(
+                runtime, allocation->handoff_tail_object_id
+            );
+            if (tail == NULL || tail->handoff_next_source_object_id !=
+                    SHADOWSPILL_RUNTIME_NO_ID) {
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+                goto done;
+            }
+        }
+        previous_owner->handoff_destination_object_id = object->object_id;
+        previous_owner->handoff_task_id = task_id;
+        previous_owner->handoff_next_source_object_id =
+            SHADOWSPILL_RUNTIME_NO_ID;
+        if (tail == NULL) {
+            allocation->handoff_head_object_id = previous_owner->object_id;
+        } else {
+            tail->handoff_next_source_object_id = previous_owner->object_id;
+        }
+        allocation->handoff_tail_object_id = previous_owner->object_id;
     }
     object->allocation_id = allocation_id;
     shadowspill_execution_location(runtime, object)->lease = allocation;
@@ -775,27 +797,50 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
     for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
-        if (allocation->handoff_task_id != task_id) {
-            continue;
-        }
-        int matched_release = 0;
-        for (uint32_t index = 0; index < action_count; ++index) {
-            if (actions[index].object_id ==
-                    allocation->handoff_from_object_id &&
-                actions[index].kind == SHADOWSPILL_RUNTIME_RELEASE) {
-                matched_release = 1;
+        uint64_t source_id = allocation->handoff_head_object_id;
+        uint64_t traversed = 0U;
+        while (source_id != SHADOWSPILL_RUNTIME_NO_ID) {
+            ShadowSpillObject *source = shadowspill_find_object(
+                runtime, source_id
+            );
+            if (source == NULL || ++traversed >
+                    atomic_load_explicit(
+                        &runtime->registered_objects, memory_order_acquire
+                    )) {
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+                shadowspill_latch_failure_locked(
+                    runtime,
+                    status,
+                    source_id,
+                    allocation->allocation_id,
+                    allocation->requested_bytes
+                );
                 break;
             }
+            if (source->handoff_task_id == task_id) {
+                int matched_release = 0;
+                for (uint32_t index = 0; index < action_count; ++index) {
+                    if (actions[index].object_id == source->object_id &&
+                        actions[index].kind == SHADOWSPILL_RUNTIME_RELEASE) {
+                        matched_release = 1;
+                        break;
+                    }
+                }
+                if (!matched_release) {
+                    status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                    shadowspill_latch_failure_locked(
+                        runtime,
+                        status,
+                        source->handoff_destination_object_id,
+                        allocation->allocation_id,
+                        allocation->requested_bytes
+                    );
+                    break;
+                }
+            }
+            source_id = source->handoff_next_source_object_id;
         }
-        if (!matched_release) {
-            status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-            shadowspill_latch_failure_locked(
-                runtime,
-                status,
-                allocation->handoff_to_object_id,
-                allocation->allocation_id,
-                allocation->requested_bytes
-            );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
             break;
         }
     }

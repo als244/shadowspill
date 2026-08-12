@@ -409,6 +409,114 @@ done:
     return result;
 }
 
+static int chained_output_allocation_handoff(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        /* Keep the first release pending while the dispatcher submits the
+         * second zero-copy handoff on the same ordered compute stream. */
+        .event_delay_nanoseconds = 50000000U,
+    };
+    ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    runtime_config.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription objects[] = {
+        {.object_id = 1U, .size_bytes = 32U},
+        {.object_id = 2U, .size_bytes = 32U},
+        {.object_id = 3U, .size_bytes = 32U},
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillObjectBinding binding = {0};
+    const uint64_t first_input = 1U;
+    const uint64_t second_input = 2U;
+    const ShadowSpillRuntimeAction first_release = {
+        .object_id = 1U,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const ShadowSpillRuntimeAction second_release = {
+        .object_id = 2U,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const ShadowSpillExecutionDescription first_execution = {
+        .task_id = 9U,
+        .input_object_ids = &first_input,
+        .input_count = 1U,
+        .actions = &first_release,
+        .action_count = 1U,
+    };
+    const ShadowSpillExecutionDescription second_execution = {
+        .task_id = 10U,
+        .input_object_ids = &second_input,
+        .input_count = 1U,
+        .actions = &second_release,
+        .action_count = 1U,
+    };
+    int failed = 0;
+    for (uint32_t index = 0U; index < 3U; ++index) {
+        failed = failed || shadowspill_register_object(runtime, &objects[index]) !=
+            SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed || shadowspill_allocate(
+            runtime, 32U, 1U, compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+            runtime, 1U, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            runtime, &first_execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            runtime, &second_execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            runtime, 9U, compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+            runtime, 2U, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            runtime, 9U, compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            runtime, 10U, compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+            runtime, 3U, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            runtime, 10U, compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_RUNTIME_OK;
+
+    ShadowSpillObjectSnapshot snapshots[3] = {{0}};
+    for (uint32_t index = 0U; index < 3U; ++index) {
+        failed = failed || shadowspill_object_snapshot(
+                runtime, objects[index].object_id, &snapshots[index]
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed || snapshots[0].residency != SHADOWSPILL_OBJECT_RELEASED ||
+        snapshots[1].residency != SHADOWSPILL_OBJECT_RELEASED ||
+        snapshots[2].residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        snapshots[2].execution_pointer != allocation.pointer ||
+        snapshots[2].allocation_id != allocation.allocation_id;
+
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int valid_transition_paths(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -839,6 +947,7 @@ int main(void) {
             invalid_before_task(0U) == 0 &&
             invalid_before_task(1U) == 0 && duplicate_action() == 0 &&
             output_allocation_handoff() == 0 &&
+            chained_output_allocation_handoff() == 0 &&
             valid_transition_paths() == 0 &&
             prefetch_window_is_enqueued_without_host_blocking() == 0 &&
             offload_window_is_enqueued_without_host_serialization() == 0 &&

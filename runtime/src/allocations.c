@@ -391,9 +391,8 @@ ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
     created->origin_task_id = origin_task_id;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     if (shadowspill_memory_pool_adopt_lease_locked(
             shadowspill_execution_pool(runtime), created, bytes, offset
         ) != 0) {
@@ -539,9 +538,8 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         split->origin_task_id = origin_task_id;
         split->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->pointer =
             shadowspill_memory_pool_pointer(
                 shadowspill_execution_pool(runtime), allocation_offset
@@ -610,9 +608,8 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     selected->origin_task_id = origin_task_id;
     selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->logical_freed = 0;
     selected->state = SHADOWSPILL_LEASE_ACTIVE;
     selected->framework_free_seen = 0;
@@ -672,6 +669,8 @@ void shadowspill_release_execution_lease_locked(
     allocation->logical_freed = 1;
     allocation->plan_owned = 0;
     allocation->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    allocation->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    allocation->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->requested_allocated_bytes -= requested_bytes;
     if (runtime->live_allocations != 0U) {
         --runtime->live_allocations;

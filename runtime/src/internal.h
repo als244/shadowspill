@@ -127,9 +127,13 @@ typedef struct ShadowSpillMemoryLease {
     int ever_plan_owned;
     int framework_free_seen;
     uint64_t bound_object_id;
-    uint64_t handoff_from_object_id;
-    uint64_t handoff_to_object_id;
-    uint64_t handoff_task_id;
+    /*
+     * Zero-copy task outputs may hand this lease through several logical
+     * objects before the worker observes the first completion fence.  The
+     * source objects form an intrusive FIFO; the lease owns only its ends.
+     */
+    uint64_t handoff_head_object_id;
+    uint64_t handoff_tail_object_id;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
     ShadowSpillTaskFence *retirement_fence;
@@ -198,6 +202,9 @@ typedef struct ShadowSpillObject {
     uint8_t has_readiness_event;
     uint64_t retired_generation;
     void *retired_execution_pointer;
+    uint64_t handoff_destination_object_id;
+    uint64_t handoff_task_id;
+    uint64_t handoff_next_source_object_id;
     struct ShadowSpillObject *ownership_next;
     struct ShadowSpillObject **ownership_previous_link;
     struct ShadowSpillObject *id_index_next;

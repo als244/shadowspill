@@ -66,15 +66,31 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
     for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
-        if (allocation->handoff_task_id != record->task_id) {
-            continue;
+        uint64_t source_id = allocation->handoff_head_object_id;
+        uint64_t traversed = 0U;
+        while (source_id != SHADOWSPILL_RUNTIME_NO_ID) {
+            ShadowSpillObject *source = shadowspill_find_object(
+                runtime, source_id
+            );
+            if (source == NULL || ++traversed >
+                    atomic_load_explicit(
+                        &runtime->registered_objects, memory_order_acquire
+                    )) {
+                *failure_object_id = source_id;
+                *failure_allocation_id = allocation->allocation_id;
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+                break;
+            }
+            if (source->handoff_task_id == record->task_id &&
+                !action_releases_object(record, source->object_id)) {
+                *failure_object_id = source->handoff_destination_object_id;
+                *failure_allocation_id = allocation->allocation_id;
+                status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                break;
+            }
+            source_id = source->handoff_next_source_object_id;
         }
-        if (!action_releases_object(
-                record, allocation->handoff_from_object_id
-            )) {
-            *failure_object_id = allocation->handoff_to_object_id;
-            *failure_allocation_id = allocation->allocation_id;
-            status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        if (status != SHADOWSPILL_RUNTIME_OK) {
             break;
         }
     }

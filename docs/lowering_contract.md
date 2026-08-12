@@ -154,6 +154,16 @@ by alias bundle, not individual view object: if any view of an alias is
 produced by a task, another view cannot cause that same alias to be treated as
 an external input.
 
+An executable input-root output is a zero-copy lease handoff when the
+cross-task source and destination are intentionally distinct canonical
+objects. The source remains valid through the task-completion fence; the
+destination becomes the current owner immediately for subsequent same-stream
+dispatch. Several consecutive tasks may therefore form an ordered handoff
+chain before the worker observes the first completion. The runtime represents
+that chain as an intrusive FIFO on the one memory lease. Completion retires
+sources in FIFO order and never copies, synchronizes the host dispatcher, or
+changes the PressureFit schedule.
+
 ## Mutation semantics without copies
 
 Export normally represents state mutation as a fresh returned replacement.
@@ -203,6 +213,32 @@ A Qwen backward task returned task input 16. No allocator callback correctly
 occurred, but the prior fallback invented a fresh output from separately
 captured FakeTensor storage. The executable contract now records an input root
 and physical reconciliation requires the observed input pointer.
+
+### Consecutive cotangent passthroughs exceeded one runtime handoff slot
+
+The formal mlops OLMoE run exposed a runtime contract omission after lowering
+correctly identified an input alias. In
+`microbatch_0000.stage_0013.backward.recompute`, output leaf 15 is a four-byte
+float32 cotangent whose GraphLowering root is exactly backward input 38. It
+therefore requires no allocation or copy. The task hands the existing lease
+from canonical alias 957 to alias 953.
+
+The preceding backward task had already handed that same lease from an earlier
+cotangent to alias 957. PyTorch correctly ran ahead on its ordered compute
+stream before the worker observed the preceding task fence. The old runtime
+stored only one pending `source -> destination` transition on a lease, so the
+second bind failed even though both transitions were causally ordered and the
+selected schedule was valid.
+
+The corrected lease stores a FIFO of source objects. Each source records its
+destination, trigger task, and next source; the lease stores only the FIFO
+head and tail. The worker retires a source only after its own task fence and
+same-task release action complete. Thus `A -> B -> C` may be submitted without
+waiting for `A` to retire, while physical ownership cannot be released out of
+order. An admitted-runtime regression holds the first mock completion for 50
+ms, submits the second handoff, and proves that `A` and `B` retire while `C`
+retains the original address. The pressured OLMoE schedule then completed five
+steps and bitwise checkpoint replay without adding a copy.
 
 ### Synthetic sharing differed from compiled sharing
 
