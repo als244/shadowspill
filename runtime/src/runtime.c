@@ -127,7 +127,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_create(
+ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **output
 ) {
@@ -243,7 +243,7 @@ fail:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
+ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     ShadowSpillRuntime *runtime
 ) {
     if (runtime == NULL) {
@@ -262,14 +262,14 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena(
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
     ShadowSpillRuntime *runtime,
     uint64_t host_arena_bytes
 ) {
     if (runtime == NULL || host_arena_bytes > SIZE_MAX) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle_legacy(runtime);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
@@ -327,7 +327,9 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_close(ShadowSpillRuntime *runtime) {
+ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
+    ShadowSpillRuntime *runtime
+) {
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
@@ -383,11 +385,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close(ShadowSpillRuntime *runtime) 
     return status;
 }
 
-void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
+void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     if (runtime == NULL) {
         return;
     }
-    (void)shadowspill_runtime_close(runtime);
+    (void)shadowspill_runtime_close_legacy(runtime);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     free(runtime);

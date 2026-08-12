@@ -12,6 +12,10 @@
 - This is a mechanical ownership extraction only: the global lock, statement
   order, actions, synchronization, and runtime behavior are unchanged. All 16
   canaries and focused runtime/training tests pass.
+- Extracted the public create/wait/resize/close/destroy entrypoints through a
+  dedicated lifecycle component using the same compatibility technique. The
+  legacy bodies and resource teardown order remain unchanged; all focused
+  runtime, allocator, overlap, OOM, and training canaries pass.
 
 Last updated: 2026-08-11
 
