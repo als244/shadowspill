@@ -1136,3 +1136,34 @@ the ignored internal progress log before this tracked summary is updated.
   field is false only because the stressed gate intentionally requires both
   D2H and H2D schedule traffic; this diagnostic schedule reported no
   in-schedule H2D.
+
+## 2026-08-11 — Compute-only timing separates dispatch from writeback
+
+- Added qualification-only CUDA events that begin immediately before the
+  first compiled task launch, after its readiness waits, and end immediately
+  after the final optimizer launch. They exclude initial placement and
+  terminal writeback while retaining kernels, inter-task GPU-idle gaps,
+  mid-program waits, and staged frontend/runtime dispatch overhead. Ordinary
+  planned calls create or record no timing event.
+- The fresh-process accumulated-training canary exercises the bracket and the
+  compiled standard-PyTorch reference records the equivalent event interval.
+  Focused qualification/verification tests and the CUDA training canary pass.
+- For the 30-GiB pure-Qwen control, the standard-allocator compute-event steady
+  median is 292.141 ms. The simulator's final compute task ends at 275.975 ms,
+  followed by a 224.546-ms simulated D2H tail to the 500.521-ms makespan. Real
+  ShadowSpill compute-only events are
+  488.773/490.257/493.626/493.874/495.860 ms (493.626-ms median).
+- Thus the non-cyclic handoff explains why public wall time exceeds the
+  simulator's complete-schedule clock, but it does not explain the remaining
+  compute-path gap: staged ShadowSpill is 201.485 ms slower than the standard
+  compute event and 217.651 ms slower than the simulated compute lane. NSYS
+  must attribute Python task dispatch, task-boundary calls, storage rebinding,
+  allocator/lock work, action submission, and D2H/compute contention before a
+  behavior-preserving optimization is selected.
+- Decision: report startup wait, startup transfer, compute interval, cooldown,
+  reset-inclusive steady cycle, and public-call wall independently. Measure
+  startup/cooldown but leave cyclic optimization outside the current agenda.
+  Before the 100-step real-data approximately-1B correctness and full-model
+  throughput gates, freeze the five supported cold model/provider cells, then
+  make the complete C PressureFit exactly match and outperform those direct
+  PressureFit goldens.

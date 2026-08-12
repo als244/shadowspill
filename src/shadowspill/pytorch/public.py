@@ -160,6 +160,16 @@ class PlannedTrainStep:
         self._step += 1
         return StepResult(objectives, metrics, self._step)
 
+    def _arm_compute_timing(self) -> None:
+        """Arm qualification-only first-task-to-final-optimizer timing."""
+
+        self._executor.arm_compute_timing()
+
+    def _collect_compute_seconds(self) -> float:
+        """Collect a previously armed qualification timing interval."""
+
+        return self._executor.collect_compute_seconds()
+
     def state_dict(self) -> dict[str, object]:
         """Synchronously snapshot model, optimizer, and logical step state."""
 

@@ -202,19 +202,25 @@ def _reference_worker(
     )
     losses: list[list[float]] = []
     timings: list[float] = []
+    compute_timings: list[float] = []
     with case.implementations():
         for step in range(5):
             optimizer.zero_grad(set_to_none=True)
+            compute_start = torch.cuda.Event(enable_timing=True)
+            compute_end = torch.cuda.Event(enable_timing=True)
             started = time.perf_counter()
+            compute_start.record(torch.cuda.current_stream())
             step_losses: list[float] = []
             for microbatch in microbatches:
                 loss = compiled_objective(*microbatch)
                 loss.backward()
                 step_losses.append(float(loss.detach()))
             optimizer.step()
+            compute_end.record(torch.cuda.current_stream())
             torch.cuda.current_stream().synchronize()
             elapsed = time.perf_counter() - started
             timings.append(elapsed)
+            compute_timings.append(float(compute_start.elapsed_time(compute_end)) / 1e3)
             losses.append(step_losses)
             print(
                 f"reference {model_implementation}/{family} "
@@ -237,6 +243,7 @@ def _reference_worker(
         ),
         "losses": losses,
         "step_seconds": timings,
+        "compute_step_seconds": compute_timings,
         "model": cpu_state(model.state_dict()),
         "optimizer": cpu_state(optimizer.state_dict()),
     }
@@ -303,14 +310,17 @@ def _planned_worker(
         execution_baseline = _adapter_statistics()
         losses: list[list[float]] = []
         timings: list[float] = []
+        compute_timings: list[float] = []
         checkpoint: object | None = None
         expected_replay: list[list[float]] = []
         for step in range(5):
+            training._arm_compute_timing()
             started = time.perf_counter()
             step_result = training(case.microbatches)
             torch.cuda.current_stream().synchronize()
             physical_statuses.append(_check_physical_budget())
             timings.append(time.perf_counter() - started)
+            compute_timings.append(training._collect_compute_seconds())
             values = [float(item) for item in step_result.objectives]
             losses.append(values)
             print(
@@ -424,7 +434,9 @@ def _planned_worker(
         ),
         "pressurefit_seconds": phase_seconds.get("pressurefit_simulation", 0.0),
         "planned_step_seconds": timings,
+        "planned_compute_seconds": compute_timings,
         "reference_step_seconds": reference["step_seconds"],
+        "reference_compute_seconds": reference.get("compute_step_seconds", []),
         "planned_losses": losses,
         "reference_losses": reference["losses"],
         "worst_loss_relative": worst_loss_relative,

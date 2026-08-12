@@ -75,6 +75,11 @@ class TrainingExecutor:
             item.alias_group_id: item.size_bytes
             for item in self._recurrent.plan.program.alias_groups
         }
+        self._compute_timing_events: (
+            tuple[torch.cuda.Event, torch.cuda.Event] | None
+        ) = None
+        self._compute_timing_started = False
+        self._compute_timing_finished = False
 
     def __call__(
         self, inputs: Sequence[Sequence[Any]]
@@ -135,6 +140,55 @@ class TrainingExecutor:
             )
         self._invocations += 1
         return tuple(losses), tuple(metrics)
+
+    def arm_compute_timing(self) -> None:
+        """Bracket the next invocation's numerical compute stream only.
+
+        This qualification-only measurement begins after the first task's
+        readiness waits and ends after the final optimizer launch. It excludes
+        invocation-start staging and terminal writeback without synchronizing
+        ordinary execution.
+        """
+
+        if self._compute_timing_events is not None:
+            raise RuntimeError("a compute timing measurement is already armed")
+        event_factory: Any = torch.cuda.Event
+        self._compute_timing_events = (
+            event_factory(enable_timing=True),
+            event_factory(enable_timing=True),
+        )
+        self._compute_timing_started = False
+        self._compute_timing_finished = False
+
+    def collect_compute_seconds(self) -> float:
+        """Synchronize and return the armed compute-only interval."""
+
+        events = self._compute_timing_events
+        if events is None or not self._compute_timing_started:
+            raise RuntimeError("no compute timing measurement has started")
+        if not self._compute_timing_finished:
+            raise RuntimeError("the compute timing measurement has not finished")
+        start, end = events
+        end.synchronize()
+        seconds = float(start.elapsed_time(end)) / 1_000.0
+        self._compute_timing_events = None
+        self._compute_timing_started = False
+        self._compute_timing_finished = False
+        return seconds
+
+    def _record_compute_start(self, stream: torch.cuda.Stream) -> None:
+        events = self._compute_timing_events
+        if events is None or self._compute_timing_started:
+            return
+        events[0].record(stream)
+        self._compute_timing_started = True
+
+    def _record_compute_end(self, stream: torch.cuda.Stream) -> None:
+        events = self._compute_timing_events
+        if events is None or self._compute_timing_finished:
+            return
+        events[1].record(stream)
+        self._compute_timing_finished = True
 
     @property
     def optimizer_state_initialized(self) -> bool:
@@ -291,6 +345,7 @@ class TrainingExecutor:
                 arguments[slot.leaf_index] = self._state.object_tensors[slot.object_id]
             # AOTAutograd already produced the explicit derivative program.
             # Dispatcher autograd here would duplicate custom-op saved state.
+            self._record_compute_start(stream)
             with torch.no_grad():
                 raw = function(*arguments)
             leaves, _ = tree_flatten(raw)
@@ -439,6 +494,8 @@ class TrainingExecutor:
                 function = self._functions[artifact.compatibility_digest]
                 with torch.no_grad():
                     function(*arguments)
+            if task.task_id == run.lowered.optimizer_task_id:
+                self._record_compute_end(stream)
             if eager and not self._optimizer_state_available:
                 self._bind_created_optimizer_state(run.lowered)
                 self._optimizer_state_available = True

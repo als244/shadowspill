@@ -149,7 +149,13 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 result.loss.backward()
                 reference_losses.append(result.loss.detach())
             reference_optimizer.step()
+            if step == 0:
+                planned._arm_compute_timing()
             actual = planned(microbatches)
+            if step == 0 and planned._collect_compute_seconds() <= 0.0:
+                raise AssertionError(
+                    "compute-only qualification timing is not positive"
+                )
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
                 raise AssertionError("StepResult has the wrong logical step")
             for loss, expected in zip(actual.objectives, reference_losses, strict=True):

@@ -421,6 +421,20 @@ ShadowSpill with the pressured schedule. Whole-objective compiled PyTorch
 versus non-cyclic pressured ShadowSpill is an end-to-end comparison, not an
 allocator microbenchmark.
 
+A subsequent qualification-only CUDA-event bracket removes the ambiguous call
+boundary. It starts after the first task's readiness waits, immediately before
+its compiled launch, and ends after the final optimizer launch. The standard
+compiled reference's steady median is 292.141 ms. The simulator ends compute at
+275.975 ms, while real ShadowSpill ends compute at a 493.626-ms median. The
+simulator then predicts 224.546 ms of terminal D2H, ending at 500.521 ms.
+
+The event result proves that non-cyclic reset traffic explains only part of the
+public wall time. A separate 201.485-ms compute-path gap remains between real
+ShadowSpill and standard PyTorch. This interval includes staged dispatch and
+task-boundary/runtime overhead but excludes startup and terminal writeback.
+NSYS attribution is required before assigning that gap to the allocator or
+choosing an optimization.
+
 ### Corrected ledger progression
 
 | Boundary | Allocator state | Event-pool change | Progress-thread work |
