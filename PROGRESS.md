@@ -1549,3 +1549,10 @@ the ignored internal progress log before this tracked summary is updated.
   for the empty `shadowspill_build_canary`; GDB suppresses the failure. This is
   therefore classified as sanitizer-host infrastructure rather than a runtime
   lifetime failure. Repeated normal canaries and UBSan remain clean.
+- Re-ran the exact frozen 30-GiB Qwen case. Program digest
+  `65300023e849...` and schedule digest `e349ce5f7c2a...` remain unchanged,
+  with 129 execution tasks and 1,415 actions. The selected-task span improved
+  from 325.128 ms to 311.976 ms, passing the 312.4-ms gate; inter-task gaps
+  fell from 27.616 ms to 23.080 ms and the untraced recurrent interval from
+  480.857 ms to 469.041 ms. Allocation requests (37,563), frees (37,443),
+  zero-byte requests (120), and readiness waits (26) are identical.
