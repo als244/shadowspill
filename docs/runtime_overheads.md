@@ -898,33 +898,35 @@ class is not always known at `malloc`. A fixed physical partition would also
 strand capacity between workspace and Program objects under tight budgets. One
 generic device `MemoryPool` retains exact sharing and the same physical cap.
 
-The resulting trace is
-`qualification/results/phase1/qwen35_retirement_queue_dispatcher_priority.nsys-rep`:
+The commit-specific resulting trace is
+`qualification/results/phase1/qwen35_memory_pool_priority_18584ef.nsys-rep`:
 
 | Allocator metric | Before queue | Direct queue | Pool priority |
 |---|---:|---:|---:|
 | Callback count | 37,563 | 37,563 | 37,563 |
-| Median | 0.349 us | 0.453 us | 0.511 us |
-| p99 | 2.805 us | 2.701 us | 2.787 us |
+| Median | 0.349 us | 0.453 us | 0.499 us |
+| p99 | 2.805 us | 2.701 us | 2.991 us |
 | Genuine callbacks above 50 us | 5 | 1 | 0 |
-| Nested mutex wait | 0.895 ms | 0.338 ms | 0.200 ms |
-| Aggregate allocator NVTX time | 23.438 ms | 27.105 ms | 29.137 ms |
+| Nested mutex wait | 0.895 ms | 0.338 ms | 0.286 ms |
+| Aggregate allocator NVTX time | 23.438 ms | 27.105 ms | 28.335 ms |
 
-The three pool-priority callbacks apparently above 100 us contain 103.5--115.2
-us of NSYS `Chunk Allocation` overhead on the same thread. After subtracting
-that observer work, none exceeds 50 us. The increased aggregate and median are
-the trace-visible cost of a `pthread_mutex_trylock` on the foreground fast
-path. This is bounded rather than a tail stall.
+The one pool-priority callback apparently above 50 us is 119.605 us and
+contains 115.499 us of NSYS `Chunk Allocation` overhead on the same thread.
+After subtracting that observer work, none exceeds 50 us. The increased
+aggregate and median are the trace-visible cost of a `pthread_mutex_trylock` on
+the foreground fast path. This is bounded rather than a tail stall.
 
-NSYS selected span is 471.577 ms versus 460.310 ms before the queue. Kernel
-union changes by only +0.553 ms. Summed task intervals add 6.603 ms and
-inter-task idle adds 4.668 ms; the allocator-range aggregate itself adds 5.699
-ms under instrumentation and explains most of the within-task launch-spacing
-increase. Production-like controls are materially smaller: the first accepted
-run measured 307.783--309.521 ms selected spans and 287.913--290.724 ms task
-sums; an abstraction-equivalent repetition measured 311.384--314.125 ms and
-292.806--293.228 ms. Both retain exact plan identity and are recorded to expose
-run-to-run spread.
+NSYS StepDiagnostics selected span is 471.637 ms versus 460.325 ms before the
+queue. Kernel union changes by +1.614 ms. Summed task-event intervals add 9.002
+ms and between-task spacing adds 2.310 ms; the allocator-range aggregate itself
+adds 4.896 ms under instrumentation and explains much of the within-task launch
+spacing. The largest interval changes are recurrent backward tasks whose
+kernels are generally unchanged within tens of microseconds while their
+instrumented host calls add 0.4--1.6 ms. Production-like controls are
+materially smaller: the first accepted run measured 307.783--309.521 ms
+selected spans and 287.913--290.724 ms task sums; an abstraction-equivalent
+repetition measured 311.384--314.125 ms and 292.806--293.228 ms. Both retain
+exact plan identity and are recorded to expose run-to-run spread.
 
 ### Current inter-task gap
 

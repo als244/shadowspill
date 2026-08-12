@@ -1956,3 +1956,31 @@ the ignored internal progress log before this tracked summary is updated.
   suite, Ruff, and strict package mypy pass. The first manual mypy invocation
   incorrectly included generated Inductor cache trees and reported duplicate
   generated module names; the configured package-only strict invocation passes.
+
+## 2026-08-12 — Commit-specific retirement NSYS confirmation
+
+- Accepted implementation commit: `18584ef` (`Prioritize allocator clients
+  over retirement work`). The commit contains the direct retirement queue and
+  generic `MemoryPool` priority policy; it contains none of the transitional
+  runtime waiter helpers or bitmask result handling.
+- Captured that exact binary as
+  `qualification/results/phase1/qwen35_memory_pool_priority_18584ef.nsys-rep`
+  with SQLite, extracted semantic JSON, and StepDiagnostics siblings. Frozen
+  Program/schedule identity, 129 tasks, and 1,415 actions remain unchanged.
+- Of 37,563 allocator callbacks, none has more than 50 us of real work after
+  subtracting same-thread profiler overhead. The only displayed callback above
+  50 us is 119.605 us with 115.499 us of NSYS `Chunk Allocation` overhead.
+  Median/p95/p99 are 0.499/2.120/2.991 us. Allocator-nested mutex wait is
+  0.286 ms versus 0.895 ms before and 0.338 ms for the direct-queue-only
+  candidate.
+- Commit-specific NSYS selected span/task-event sum are 471.637/442.490 ms
+  versus 460.325/433.488 ms before. Compute kernel union is 75.678 ms versus
+  74.064 ms. Thus 1.614 ms is changed kernel occupancy, 9.002 ms is inside task
+  event intervals, and 2.310 ms is additional between-task spacing. The
+  allocator NVTX aggregate grows by 4.896 ms because the traced foreground
+  path includes a priority `trylock`; this accounts for much of the intra-task
+  launch-spacing change without recreating a long mutex tail.
+- The largest interval increases occur in recurrent backward execution tasks.
+  Their kernels are generally unchanged within tens of microseconds while
+  instrumented host calls grow by 0.4--1.6 ms. This is host launch/profiler
+  variance, not extra plan work, transfer directives, or retirement scanning.
