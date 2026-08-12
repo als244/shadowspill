@@ -1041,9 +1041,22 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_clear_execution_plan(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_clear_execution_plan(runtime);
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    const ShadowSpillRuntimeStatus status =
+        shadowspill_clear_execution_plan(runtime);
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        /*
+         * Physical admission is sealed for one admitted plan, not for the
+         * process-global allocator lifetime. A later exclusive planning
+         * session must be able to validate and seal its own provider use.
+         */
+        pthread_mutex_lock(&adapter.mutex);
+        adapter.physical_budget_sealed = 0U;
+        pthread_mutex_unlock(&adapter.mutex);
+    }
+    return status;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_resolve_execution(

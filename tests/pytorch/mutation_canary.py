@@ -36,7 +36,10 @@ def main() -> int:
         value = torch.randn(4, 64)
         runtime = Runtime(
             pools={
-                "execution": device(physical_capacity=2 << 30),
+                "execution": device(
+                    physical_capacity=2 << 30,
+                    provider_headroom=512 << 20,
+                ),
                 "spill": pinned_host(capacity=1 << 30),
             },
             library_path=adapter,

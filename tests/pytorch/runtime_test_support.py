@@ -11,7 +11,10 @@ def public_test_runtime() -> Runtime:
     if _RUNTIME is None:
         _RUNTIME = Runtime(
             pools={
-                "execution": device(physical_capacity=2 << 30),
+                "execution": device(
+                    physical_capacity=2 << 30,
+                    provider_headroom=512 << 20,
+                ),
                 "spill": pinned_host(capacity=1 << 30),
             }
         )

@@ -11,6 +11,12 @@ capacity and may only reduce the capacity exposed to this plan. It cannot
 increase the physical cap. `spill_budget` has equivalent semantics for the
 selected spill pool.
 
+`device()` reserves 1,280 MiB of provider headroom by default. This value is
+reported and can be overridden before runtime initialization; it is never
+added above `physical_capacity`. Reserving it up front is required by the
+single conventional-slab design because provider-retained allocator pointers
+make later slab relocation unsafe.
+
 Physical accounting includes:
 
 - provider context and fixed service cost;

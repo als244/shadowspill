@@ -154,8 +154,8 @@ def test_physical_admission_exposes_every_subtraction() -> None:
             event(1, "parameter", AllocationOperation.FREE, 1 * GIB, 256),
         ),
     )
-    assert admission.provider_headroom_bytes == 704 * MIB
-    assert admission.slab_bytes == 4 * GIB - 500 * MIB - 704 * MIB
+    assert admission.provider_headroom_bytes == 1280 * MIB
+    assert admission.slab_bytes == 4 * GIB - 500 * MIB - 1280 * MIB
     assert admission.workspace_reserve_bytes == 750 * MIB
     assert admission.object_capacity_bytes == (
         admission.slab_bytes - admission.workspace_reserve_bytes

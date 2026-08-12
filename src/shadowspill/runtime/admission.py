@@ -75,7 +75,7 @@ class SlabReplay:
 class AdmissionPolicy:
     """Conservative v1 leeway, kept explicit for reports and tests."""
 
-    minimum_provider_headroom_bytes: int = 512 * MIB
+    minimum_provider_headroom_bytes: int = 1280 * MIB
     provider_growth_margin_bytes: int = 64 * MIB
     provider_granularity_bytes: int = 64 * MIB
     minimum_workspace_reserve_bytes: int = 512 * MIB

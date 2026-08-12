@@ -25,6 +25,14 @@ and fails before allocator installation if the process exceeds the cap. The
 immutable bootstrap admission and current physical reading are available
 through the private adapter ABI for `PlanReport` and seal checks.
 
+The default provider headroom is 1,280 MiB. It is an explicit subdivision of
+the physical cap, not extra memory. A conventional CUDA slab cannot be resized
+after compiler or provider code retains even one allocator-owned pointer, so
+this allowance must exist before CUDA initialization. Users with a measured
+smaller or larger provider footprint may set `provider_headroom=` on
+`shadowspill.memory.device()`. Final sealing still measures actual external
+use and fails closed if the configured allowance is insufficient.
+
 Sealing compares the provider high-water learned during profiling with the
 headroom reserved at bootstrap; it cannot enlarge the reservation. A physical
 check reads current per-process bytes and derives external provider use as

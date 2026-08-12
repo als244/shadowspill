@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-_DEFAULT_PROVIDER_HEADROOM = 512 << 20
+# A conventional CUDA slab cannot be resized after a compiler/provider keeps
+# even one allocator-owned pointer alive. Reserve this physical allowance
+# before initialization; it remains inside the user's physical cap and is
+# reported explicitly in PlanReport. Small test/runtime configurations may
+# choose a lower value when their provider footprint is known.
+_DEFAULT_PROVIDER_HEADROOM = 1280 << 20
 
 
 def _positive_bytes(value: int, name: str) -> int:
