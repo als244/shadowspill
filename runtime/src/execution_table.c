@@ -46,12 +46,9 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
         shadowspill_object_release(record->actions[index].object);
     }
     free(record->inputs);
-    free(record->input_object_ids);
     free(record->unique_inputs);
     free(record->updates);
-    free(record->legacy_updates);
     free(record->actions);
-    free(record->legacy_actions);
     free(record);
 }
 
@@ -116,23 +113,23 @@ static int same_description(
         return 0;
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
-        if (record->input_object_ids[index] !=
+        if (record->inputs[index]->object_id !=
             description->input_object_ids[index]) {
             return 0;
         }
     }
     for (uint32_t index = 0U; index < record->update_count; ++index) {
-        if (record->legacy_updates[index].object_id !=
+        if (record->updates[index].object->object_id !=
                 description->updates[index].object_id ||
-            record->legacy_updates[index].version_delta !=
+            record->updates[index].version_delta !=
                 description->updates[index].version_delta) {
             return 0;
         }
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (record->legacy_actions[index].object_id !=
+        if (record->actions[index].object->object_id !=
                 description->actions[index].object_id ||
-            record->legacy_actions[index].kind !=
+            record->actions[index].kind !=
                 description->actions[index].kind) {
             return 0;
         }
@@ -154,32 +151,20 @@ static ShadowSpillExecutionRecord *create_record(
     record->action_count = description->action_count;
     if (record->input_count != 0U) {
         record->inputs = calloc(record->input_count, sizeof(*record->inputs));
-        record->input_object_ids = calloc(
-            record->input_count, sizeof(*record->input_object_ids)
-        );
         record->unique_inputs = calloc(
             record->input_count, sizeof(*record->unique_inputs)
         );
     }
     if (record->update_count != 0U) {
         record->updates = calloc(record->update_count, sizeof(*record->updates));
-        record->legacy_updates = calloc(
-            record->update_count, sizeof(*record->legacy_updates)
-        );
     }
     if (record->action_count != 0U) {
         record->actions = calloc(record->action_count, sizeof(*record->actions));
-        record->legacy_actions = calloc(
-            record->action_count, sizeof(*record->legacy_actions)
-        );
     }
     if ((record->input_count != 0U &&
-         (record->inputs == NULL || record->input_object_ids == NULL ||
-          record->unique_inputs == NULL)) ||
-        (record->update_count != 0U &&
-         (record->updates == NULL || record->legacy_updates == NULL)) ||
-        (record->action_count != 0U &&
-         (record->actions == NULL || record->legacy_actions == NULL))) {
+         (record->inputs == NULL || record->unique_inputs == NULL)) ||
+        (record->update_count != 0U && record->updates == NULL) ||
+        (record->action_count != 0U && record->actions == NULL)) {
         destroy_record(record);
         return NULL;
     }
@@ -192,7 +177,6 @@ static ShadowSpillExecutionRecord *create_record(
             return NULL;
         }
         record->inputs[index] = object;
-        record->input_object_ids[index] = object->object_id;
         int duplicate = 0;
         for (uint32_t previous = 0U;
              previous < record->unique_input_count; ++previous) {
@@ -217,7 +201,6 @@ static ShadowSpillExecutionRecord *create_record(
             .object = object,
             .version_delta = description->updates[index].version_delta,
         };
-        record->legacy_updates[index] = description->updates[index];
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         ShadowSpillObjectRecord *object = shadowspill_object_table_acquire(
@@ -231,7 +214,6 @@ static ShadowSpillExecutionRecord *create_record(
             .object = object,
             .kind = description->actions[index].kind,
         };
-        record->legacy_actions[index] = description->actions[index];
     }
     return record;
 }
@@ -444,13 +426,5 @@ ShadowSpillRuntimeStatus shadowspill_after_execution(
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    return shadowspill_after_task_legacy(
-        runtime,
-        task_id,
-        compute_stream,
-        record->legacy_updates,
-        record->update_count,
-        record->legacy_actions,
-        record->action_count
-    );
+    return shadowspill_after_execution_record(runtime, record, compute_stream);
 }

@@ -192,15 +192,12 @@ typedef struct ShadowSpillExecutionAction {
 typedef struct ShadowSpillExecutionRecord {
     uint64_t task_id;
     ShadowSpillObjectRecord **inputs;
-    uint64_t *input_object_ids;
     uint32_t input_count;
     ShadowSpillObjectRecord **unique_inputs;
     uint32_t unique_input_count;
     ShadowSpillExecutionUpdate *updates;
-    ShadowSpillObjectUpdate *legacy_updates;
     uint32_t update_count;
     ShadowSpillExecutionAction *actions;
-    ShadowSpillRuntimeAction *legacy_actions;
     uint32_t action_count;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
@@ -432,6 +429,11 @@ void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table);
 ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
     ShadowSpillExecutionTable *table,
     uint64_t task_id
+);
+ShadowSpillRuntimeStatus shadowspill_after_execution_record(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record,
+    ShadowSpillBackendStream compute_stream
 );
 void *shadowspill_progress_main(void *pointer);
 

@@ -1689,3 +1689,16 @@ the ignored internal progress log before this tracked summary is updated.
   This checkpoint intentionally preserves its readiness waiting and global
   transition serialization; moving those transitions to per-object ownership
   is a separate gate.
+
+## 2026-08-12 — Admitted after-task path consumes direct topology
+
+- The admitted after-task boundary now executes explicit mutation publication,
+  allocation-handoff validation, task-fence creation, ordered-action
+  instantiation, retirement attachment, and queue publication phases.
+- Every phase consumes stable object references from the immutable execution
+  record. Recurrent tasks no longer hash mutation/action object IDs or retain
+  duplicate legacy array projections.
+- The exported boundary is a short ordered orchestrator; the named helpers keep
+  failure attribution and ownership cleanup local to the phase that can fail.
+  The global transition lock is still intentionally retained at this checkpoint
+  so this lookup refactor cannot change worker/dispatcher ordering.
