@@ -1107,3 +1107,32 @@ the ignored internal progress log before this tracked summary is updated.
   pool, 76 peak leases, zero steady-state driver event creations, and zero
   growth rejections. Steps are 0.521/0.612/0.611/0.517/0.615 seconds (0.611
   median), retaining the same numerical and physical-budget evidence.
+
+## 2026-08-11 — 30-GiB Qwen control exposes non-cyclic reset accounting
+
+- Repeated the corrected pure-PyTorch Qwen qualification with a 30-GiB
+  physical cap. Five measured steps were 0.560/0.606/0.635/0.563/0.641
+  seconds (0.606-second median), versus the compiled standard-allocator
+  steady-state median of 0.297 seconds. Increasing the cap therefore did not
+  remove the remaining wall-time gap.
+- This was not a transfer-free allocator control. The recurrent Program still
+  declares all 395 initial aliases host-resident and all but two terminal
+  aliases host-resident. Its selected schedule contains 388 offloads totaling
+  6,041,733,224 bytes D2H, 1,028 releases, no in-schedule H2D, and selected
+  recomputation. The executor waits for the prior invocation to become idle
+  and submits the next invocation's initial prefetches outside the annotated
+  MemorySchedule.
+- Consequently, the reported 0.501-second simulated makespan and zero H2D
+  bytes do not describe all work on the measured recurrent call boundary. The
+  0.606-second result cannot be attributed to allocator callbacks alone: it
+  includes the intentionally non-cyclic terminal writeback/startup-prefetch
+  protocol, 129 staged task dispatches, storage rebinding, and runtime task
+  boundaries. This simulator/reporting contract gap must be corrected before
+  using simulator error to optimize the remaining runtime.
+- The 30-GiB process peak was 31,797,018,624 bytes under the
+  32,212,254,720-byte cap, with a 31,153,192,960-byte slab and a
+  10,546,162,360-byte slab allocation peak. Numerical tolerances and bitwise
+  checkpoint replay passed. The qualification artifact's overall `passed`
+  field is false only because the stressed gate intentionally requires both
+  D2H and H2D schedule traffic; this diagnostic schedule reported no
+  in-schedule H2D.

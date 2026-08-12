@@ -396,6 +396,31 @@ issue; it is no longer hidden beneath a 42-second allocator artifact.
 Compilation, Python task dispatch, and transfer/runtime overhead must be
 separated with NSYS before the throughput gate can pass.
 
+### 30-GiB diagnostic: not an allocator-only control
+
+A follow-up run raised the physical cap from 10 GiB to 30 GiB. Its five step
+times were 0.560, 0.606, 0.635, 0.563, and 0.641 seconds, for a 0.606-second
+median. This superficially looks like evidence that the slab allocator alone
+costs roughly 0.31 seconds relative to the 0.297-second standard-allocator
+reference. That interpretation is incorrect.
+
+The 30-GiB recurrent Program still declares all 395 initial aliases on host.
+Its schedule performs 388 terminal offloads totaling 6,041,733,224 bytes and
+1,028 releases. Before a later invocation, the executor calls `wait_idle()`
+and submits the initial prefetches outside the annotated `MemorySchedule`.
+Thus the measured call boundary contains terminal D2H and invocation-reset H2D
+traffic even though `PlanReport` reports zero scheduled H2D bytes. It also
+contains 129 Python-dispatched planned tasks and their task-boundary/storage
+rebinding work. The 0.501-second simulator prediction does not yet include the
+complete reset protocol.
+
+A valid allocator attribution therefore requires the same staged compiled
+executables and task boundaries under three conditions: standard allocation,
+ShadowSpill with persistent fully resident objects and no memory actions, and
+ShadowSpill with the pressured schedule. Whole-objective compiled PyTorch
+versus non-cyclic pressured ShadowSpill is an end-to-end comparison, not an
+allocator microbenchmark.
+
 ### Corrected ledger progression
 
 | Boundary | Allocator state | Event-pool change | Progress-thread work |
