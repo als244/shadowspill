@@ -223,11 +223,12 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-static void attach_task_retirements_locked(
+static ShadowSpillRuntimeStatus attach_task_retirements_locked(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillTaskFence *fence
 ) {
+    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
@@ -239,8 +240,13 @@ static void attach_task_retirements_locked(
         }
         allocation->retirement_fence = fence;
         shadowspill_retain_task_fence(fence);
+        status = shadowspill_retirement_enqueue_locked(runtime, allocation);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            break;
+        }
     }
     pthread_mutex_unlock(&runtime->device_pool.lock);
+    return status;
 }
 
 static void publish_action_batch_locked(
@@ -343,7 +349,11 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
             );
         }
         if (status == SHADOWSPILL_RUNTIME_OK) {
-            attach_task_retirements_locked(runtime, record->task_id, fence);
+            status = attach_task_retirements_locked(
+                runtime, record->task_id, fence
+            );
+        }
+        if (status == SHADOWSPILL_RUNTIME_OK) {
             publish_action_batch_locked(runtime, record, &batch);
             pthread_cond_broadcast(&runtime->condition);
         }

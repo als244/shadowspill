@@ -323,6 +323,11 @@ static ShadowSpillRuntimeStatus fence_task_retirements_locked(
         }
         allocation->retirement_fence = fence;
         shadowspill_retain_task_fence(fence);
+        const ShadowSpillRuntimeStatus enqueue_status =
+            shadowspill_retirement_enqueue_locked(runtime, allocation);
+        if (enqueue_status != SHADOWSPILL_RUNTIME_OK) {
+            return enqueue_status;
+        }
     }
     pthread_cond_broadcast(&runtime->condition);
     return SHADOWSPILL_RUNTIME_OK;
@@ -678,7 +683,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     if (runtime == NULL || allocation == NULL || alignment == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     while (status == SHADOWSPILL_RUNTIME_OK) {
         ShadowSpillAllocationRecord *record = NULL;
@@ -783,7 +788,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         );
         status = shadowspill_current_status_locked(runtime);
     }
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
     return status;
 }
 
@@ -795,11 +800,11 @@ ShadowSpillRuntimeStatus shadowspill_allocation_for_pointer(
     if (runtime == NULL || pointer == NULL || allocation == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     ShadowSpillAllocationRecord *record =
         shadowspill_find_allocation_by_pointer(runtime, pointer);
     if (record == NULL) {
-        pthread_mutex_unlock(&runtime->device_pool.lock);
+        shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     *allocation = (ShadowSpillAllocation){
@@ -809,7 +814,7 @@ ShadowSpillRuntimeStatus shadowspill_allocation_for_pointer(
         .charged_bytes = record->charged_bytes,
         .pointer = record->pointer,
     };
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -841,7 +846,7 @@ ShadowSpillRuntimeStatus shadowspill_record_stream(
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     ShadowSpillAllocationRecord *allocation = shadowspill_find_allocation(
         runtime, allocation_id
     );
@@ -851,7 +856,7 @@ ShadowSpillRuntimeStatus shadowspill_record_stream(
     } else if (append_stream(allocation, stream) != 0) {
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
     return status;
 }
 
@@ -947,7 +952,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     ShadowSpillAllocationRecord *allocation = shadowspill_find_allocation(
         runtime, allocation_id
     );
@@ -1023,7 +1028,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
         SHADOWSPILL_ALLOCATION_ANONYMOUS
     );
     ++runtime->pending_retirements;
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
 
     ShadowSpillEventRecord *events = NULL;
     status = record_retirement_events(
@@ -1031,7 +1036,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
     );
     free(snapshot.streams);
 
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     allocation = shadowspill_find_allocation(runtime, allocation_id);
     if (allocation == NULL || allocation->generation != generation ||
         !allocation->retirement_preparing) {
@@ -1044,6 +1049,9 @@ ShadowSpillRuntimeStatus shadowspill_free(
         allocation->retirement_preparing = 0U;
         if (status == SHADOWSPILL_RUNTIME_OK) {
             index_reusable_locked(runtime, allocation);
+            status = shadowspill_retirement_enqueue_locked(
+                runtime, allocation
+            );
         }
     }
     if (status != SHADOWSPILL_RUNTIME_OK) {
@@ -1057,7 +1065,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
     }
 
 done:
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
     return status;
 }
 
@@ -1068,7 +1076,7 @@ void shadowspill_finalize_aborted_task_retirements(
     if (runtime == NULL || task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return;
     }
-    pthread_mutex_lock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_lock_foreground(&runtime->device_pool);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
@@ -1115,8 +1123,20 @@ void shadowspill_finalize_aborted_task_retirements(
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
             break;
         }
+        const ShadowSpillRuntimeStatus enqueue_status =
+            shadowspill_retirement_enqueue_locked(runtime, allocation);
+        if (enqueue_status != SHADOWSPILL_RUNTIME_OK) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                enqueue_status,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                allocation->allocation_id,
+                0U
+            );
+            break;
+        }
     }
     pthread_cond_broadcast(&runtime->condition);
     pthread_cond_broadcast(&runtime->device_pool.capacity_changed);
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    shadowspill_memory_pool_unlock_foreground(&runtime->device_pool);
 }

@@ -855,6 +855,77 @@ The required correction is a retirement/completion queue of stable allocation
 references. A completed frontier should directly identify records to retire;
 the worker must not rediscover them by scanning every live allocation.
 
+### Direct retirement queue and foreground priority
+
+The correction creates a retirement record as soon as an allocation receives
+its stream events or shared task fence. The record contains the allocation
+generation and retained completion requirements. The worker detaches the queue,
+tests already-published completion state without the pool lock, and enters the
+pool only to validate the generation and release/coalesce the range. It never
+walks `active_allocations` to rediscover retirement work.
+
+The first direct-queue trace exposed a second ownership issue. POSIX mutexes do
+not promise handoff fairness: while releasing a completed batch one record at a
+time, the worker could unlock and immediately reacquire before an already
+waiting PyTorch allocator callback ran. One callback still spent 104.222 us of
+its 109.804 us range in the mutex while the worker processed roughly 30 ready
+records.
+
+Priority is now a generic `MemoryPool` property:
+
+```text
+foreground lock:
+    trylock succeeds -> enter with no shared waiter update
+    trylock fails    -> publish waiter -> blocking lock -> clear waiter
+
+background lock:
+    foreground waiter exists -> defer
+    trylock fails             -> defer
+    lock acquired but waiter arrived -> unlock and defer
+    otherwise                 -> perform one range mutation
+```
+
+After each background mutation, the next acquisition repeats this policy. Thus
+a foreground callback waits behind at most a mutation already in progress; the
+worker cannot reacquire across an entire ready batch ahead of it. With no
+foreground waiter, terminal retirement remains a fast batch. Completion
+discovery, queue traversal, event operations, and CUDA calls never hold the
+pool lock.
+
+A physically separate workspace pool was rejected. An allocation created
+inside a compiled task may later be promoted to a declared output, so its final
+class is not always known at `malloc`. A fixed physical partition would also
+strand capacity between workspace and Program objects under tight budgets. One
+generic device `MemoryPool` retains exact sharing and the same physical cap.
+
+The resulting trace is
+`qualification/results/phase1/qwen35_retirement_queue_dispatcher_priority.nsys-rep`:
+
+| Allocator metric | Before queue | Direct queue | Pool priority |
+|---|---:|---:|---:|
+| Callback count | 37,563 | 37,563 | 37,563 |
+| Median | 0.349 us | 0.453 us | 0.511 us |
+| p99 | 2.805 us | 2.701 us | 2.787 us |
+| Genuine callbacks above 50 us | 5 | 1 | 0 |
+| Nested mutex wait | 0.895 ms | 0.338 ms | 0.200 ms |
+| Aggregate allocator NVTX time | 23.438 ms | 27.105 ms | 29.137 ms |
+
+The three pool-priority callbacks apparently above 100 us contain 103.5--115.2
+us of NSYS `Chunk Allocation` overhead on the same thread. After subtracting
+that observer work, none exceeds 50 us. The increased aggregate and median are
+the trace-visible cost of a `pthread_mutex_trylock` on the foreground fast
+path. This is bounded rather than a tail stall.
+
+NSYS selected span is 471.577 ms versus 460.310 ms before the queue. Kernel
+union changes by only +0.553 ms. Summed task intervals add 6.603 ms and
+inter-task idle adds 4.668 ms; the allocator-range aggregate itself adds 5.699
+ms under instrumentation and explains most of the within-task launch-spacing
+increase. Production-like controls are materially smaller: the first accepted
+run measured 307.783--309.521 ms selected spans and 287.913--290.724 ms task
+sums; an abstraction-equivalent repetition measured 311.384--314.125 ms and
+292.806--293.228 ms. Both retain exact plan identity and are recorded to expose
+run-to-run spread.
+
 ### Current inter-task gap
 
 The Python executor now has real `_before_task()`, `_run_compiled_task()`, and
@@ -987,8 +1058,12 @@ timing-disabled driver events.
   the repeated admitted boundary no longer parses task IDs or hashes input
   object IDs.
 - Added FIFO CUDA completion frontiers and event leases, reducing the Qwen
-  worker from 223,208 event queries to 1,317. This does not yet remove the
-  allocation-retirement population scan described above.
+  worker from 223,208 event queries to 1,317. That earlier milestone did not
+  yet remove the allocation-retirement population scan described above.
+- Replaced that population scan with direct generation-tagged retirement
+  records and centralized foreground/background acquisition policy in the
+  generic `MemoryPool`. Updated NSYS contains no genuine allocator callback
+  above 50 us.
 - Split device/host memory pools and H2D/D2H transfer-lane ownership and named
   the pure-C worker `shadowspill.wkr`.
 - Fixed the idle-barrier lost-notification race in `ad2f4ef` without changing
@@ -997,9 +1072,6 @@ timing-disabled driver events.
 
 ### Current corrections
 
-- Replace the remaining active-allocation retirement scan with direct stable
-  retirement/completion records; no worker scan may hold `device_pool.lock`
-  against PyTorch allocator callbacks.
 - Finish replacing residual global/cross-owner locking with the central
   ownership structures above.
 - Make full frontend `_before_task()` and `_after_task()` ranges enclose all

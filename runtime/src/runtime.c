@@ -99,6 +99,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
         );
         runtime->completions_initialized = 0U;
     }
+    shadowspill_retirement_queue_destroy(runtime, &runtime->retirements);
     destroy_actions(runtime);
     destroy_allocations(runtime);
     destroy_objects(runtime);
@@ -225,6 +226,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->completions_initialized = 1U;
+    if (shadowspill_retirement_queue_initialize(
+            &runtime->retirements
+        ) != 0) {
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
     if (pthread_mutex_init(&runtime->actions.lock, NULL) != 0) {
         release_resources(runtime);
         free(runtime);

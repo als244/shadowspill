@@ -29,6 +29,7 @@ int shadowspill_memory_pool_initialize(
     pool->base = base;
     pool->minimum_alignment = minimum_alignment;
     pool->kind = kind;
+    atomic_init(&pool->foreground_waiters, 0U);
     pool->initialized = 1U;
     return 0;
 }
@@ -41,6 +42,42 @@ void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool) {
     pthread_cond_destroy(&pool->capacity_changed);
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};
+}
+
+void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool) {
+    if (pthread_mutex_trylock(&pool->lock) == 0) {
+        return;
+    }
+    (void)atomic_fetch_add_explicit(
+        &pool->foreground_waiters, 1U, memory_order_relaxed
+    );
+    pthread_mutex_lock(&pool->lock);
+    (void)atomic_fetch_sub_explicit(
+        &pool->foreground_waiters, 1U, memory_order_relaxed
+    );
+}
+
+void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool) {
+    pthread_mutex_unlock(&pool->lock);
+}
+
+int shadowspill_memory_pool_try_lock_background(ShadowSpillMemoryPool *pool) {
+    if (atomic_load_explicit(
+            &pool->foreground_waiters, memory_order_relaxed
+        ) != 0U || pthread_mutex_trylock(&pool->lock) != 0) {
+        return 0;
+    }
+    if (atomic_load_explicit(
+            &pool->foreground_waiters, memory_order_relaxed
+        ) != 0U) {
+        pthread_mutex_unlock(&pool->lock);
+        return 0;
+    }
+    return 1;
+}
+
+void shadowspill_memory_pool_unlock_background(ShadowSpillMemoryPool *pool) {
+    pthread_mutex_unlock(&pool->lock);
 }
 
 int shadowspill_memory_pool_reserve_locked(

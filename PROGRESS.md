@@ -1912,3 +1912,47 @@ the ignored internal progress log before this tracked summary is updated.
 - Detailed standalone evidence and the remaining corrective order are in
   `docs/runtime_overheads.md`. No polling/condition semantics have been changed
   during this investigation.
+
+## 2026-08-12 — Direct retirement queue removes allocator starvation
+
+- Replaced the progress worker's full `active_allocations` retirement scan
+  with a direct queue populated when an allocation receives its stream events
+  or task fence. Completion checks read already-published event state outside
+  the device pool; the pool lock is entered only for a generation-validated
+  range release. Program digest, schedule digest, 129 tasks, and 1,415 actions
+  remain exact.
+- Two rejected intermediates are retained as design evidence. Releasing only
+  one completed range per worker pass inflated reset/cooldown to roughly
+  0.914 seconds because thousands of terminal retirements became serialized by
+  poll intervals. An always-on foreground-waiter atomic restored priority but
+  touched a contended cache line on every allocator callback and increased the
+  selected-task span to 314.350--316.299 ms. Neither design was accepted.
+- The accepted policy belongs to the generic `MemoryPool`, not to retirement:
+  foreground callers first take an uncontended `trylock` fast path and publish
+  waiter intent only after real contention; background reclamation uses a
+  nonblocking pool acquisition that refuses to reacquire while a foreground
+  waiter exists. A foreground `malloc` can therefore wait behind at most the
+  already-running range mutation, while background terminal draining remains
+  batched when no foreground caller is waiting.
+- Production-like controls recorded selected spans of
+  307.783--309.521 ms in the first run and 311.384--314.125 ms in the repeated
+  abstraction-equivalent run. Corresponding task sums were
+  287.913--290.724 and 292.806--293.228 ms. The reset-inclusive untraced
+  medians were 467.205 and 469.027 ms. Both preserve the frozen plan; the
+  repeated spread is recorded rather than selecting only the faster sample.
+- The updated NSYS artifact is
+  `qualification/results/phase1/qwen35_retirement_queue_dispatcher_priority.nsys-rep`.
+  Genuine allocator callbacks above 50 us fell from five before the change and
+  one in the first direct-queue candidate to zero. The three apparent callbacks
+  above 100 us are 103.5--115.2-us NSYS `Chunk Allocation` observer overhead.
+  Nested allocator mutex wait fell from 0.895 ms to 0.200 ms.
+- NSYS selected span changed from 460.310 to 471.577 ms: kernel union increased
+  only 0.553 ms, summed task intervals increased 6.603 ms, and inter-task idle
+  increased 4.668 ms. The allocator NVTX aggregate increased 5.699 ms under
+  instrumentation because every callback now includes the priority `trylock`;
+  this accounts for most of the within-task launch-spacing change. Unprofiled
+  task sums return to the prior range and remain the performance authority.
+- All 17 warnings-as-errors native/CUDA/PyTorch canaries, the default Python
+  suite, Ruff, and strict package mypy pass. The first manual mypy invocation
+  incorrectly included generated Inductor cache trees and reported duplicate
+  generated module names; the configured package-only strict invocation passes.

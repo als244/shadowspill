@@ -783,8 +783,22 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         }
         allocation->retirement_fence = fence;
         shadowspill_retain_task_fence(fence);
+        status = shadowspill_retirement_enqueue_locked(runtime, allocation);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            break;
+        }
     }
     pthread_mutex_unlock(&runtime->device_pool.lock);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            status,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            0U
+        );
+        goto done;
+    }
     if (head != NULL) {
         for (ShadowSpillQueuedAction *queued = head; queued != NULL;
              queued = queued->next) {

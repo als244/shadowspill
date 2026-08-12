@@ -83,11 +83,14 @@ typedef enum ShadowSpillMemoryPlacement {
  * Owns one bounded physical arena and its suballocation geometry. Device and
  * pinned-host memory are two configured instances of this same abstraction.
  * Allocation records, stream retirement, and object residency deliberately
- * remain clients of the pool rather than being embedded in it.
+ * remain clients of the pool rather than being embedded in it. Foreground
+ * allocator callbacks have priority over background reclamation whenever
+ * both need to mutate range geometry.
  */
 typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
     pthread_cond_t capacity_changed;
+    _Atomic uint64_t foreground_waiters;
     ShadowSpillRangeAllocator ranges;
     void *base;
     uint64_t minimum_alignment;
@@ -118,6 +121,7 @@ typedef struct ShadowSpillAllocationRecord {
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
     ShadowSpillTaskFence *retirement_fence;
+    uint64_t retirement_enqueued_generation;
     struct ShadowSpillAllocationRecord *next;
     struct ShadowSpillAllocationRecord *id_index_next;
     struct ShadowSpillAllocationRecord *pointer_index_next;
@@ -126,6 +130,33 @@ typedef struct ShadowSpillAllocationRecord {
     struct ShadowSpillAllocationRecord **active_previous_link;
     uint8_t in_reusable_index;
 } ShadowSpillAllocationRecord;
+
+typedef struct ShadowSpillRetirementRecord {
+    ShadowSpillAllocationRecord *allocation;
+    uint64_t allocation_generation;
+    ShadowSpillEventLease **events;
+    uint32_t event_count;
+    ShadowSpillTaskFence *fence;
+    struct ShadowSpillRetirementRecord *next;
+} ShadowSpillRetirementRecord;
+
+/*
+ * Producers publish only fully described retirements.  The progress worker
+ * detaches the complete list before inspecting event state, so neither event
+ * polling nor pending-list traversal holds this lock.  Device-pool ownership
+ * is entered separately and only for the final validated range release.
+ */
+typedef struct ShadowSpillRetirementQueue {
+    pthread_mutex_t lock;
+    ShadowSpillRetirementRecord *head;
+    ShadowSpillRetirementRecord *tail;
+    _Atomic uint64_t count;
+    uint8_t lock_initialized;
+} ShadowSpillRetirementQueue;
+
+typedef struct ShadowSpillRetirementProgress {
+    uint8_t pool_busy;
+} ShadowSpillRetirementProgress;
 
 typedef struct ShadowSpillObjectRecord {
     uint64_t object_id;
@@ -292,6 +323,7 @@ struct ShadowSpillRuntime {
     ShadowSpillExecutionTable execution;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
+    ShadowSpillRetirementQueue retirements;
     ShadowSpillActionQueue actions;
     ShadowSpillTransferLane h2d_lane;
     ShadowSpillTransferLane d2h_lane;
@@ -386,6 +418,10 @@ int shadowspill_memory_pool_initialize(
     uint64_t minimum_alignment
 );
 void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);
+int shadowspill_memory_pool_try_lock_background(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_unlock_background(ShadowSpillMemoryPool *pool);
 int shadowspill_memory_pool_reserve_locked(
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
@@ -478,6 +514,21 @@ void shadowspill_finalize_aborted_task_retirements(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
 );
+int shadowspill_retirement_queue_initialize(
+    ShadowSpillRetirementQueue *queue
+);
+void shadowspill_retirement_queue_destroy(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRetirementQueue *queue
+);
+ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillAllocationRecord *allocation
+);
+ShadowSpillRetirementProgress shadowspill_progress_retirements(
+    ShadowSpillRuntime *runtime
+);
+int shadowspill_has_actionable_retirement(ShadowSpillRuntime *runtime);
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,

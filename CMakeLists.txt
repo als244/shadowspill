@@ -113,6 +113,7 @@ add_library(
   runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/progress.c
+  runtime/src/retirement_queue.c
   runtime/src/idle_wakeup.c
   runtime/src/ranges.c
   runtime/src/runtime.c
