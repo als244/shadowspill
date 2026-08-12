@@ -7,6 +7,8 @@
 
 #include <shadowspill/runtime.h>
 
+#include "internal/failure_state.h"
+
 typedef struct ShadowSpillRange {
     uint64_t offset;
     uint64_t bytes;
@@ -283,16 +285,6 @@ int shadowspill_task_fence_complete_locked(
 void shadowspill_finalize_aborted_task_retirements(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
-);
-void shadowspill_latch_failure_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillRuntimeStatus status,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    uint64_t requested_bytes
-);
-ShadowSpillRuntimeStatus shadowspill_current_status_locked(
-    ShadowSpillRuntime *runtime
 );
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(

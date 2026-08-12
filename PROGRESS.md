@@ -16,6 +16,10 @@
   dedicated lifecycle component using the same compatibility technique. The
   legacy bodies and resource teardown order remain unchanged; all focused
   runtime, allocator, overlap, OOM, and training canaries pass.
+- Moved failure latching, status observation, and failure snapshots out of the
+  status-string module into a dedicated failure-state component with a private
+  interface. This is a literal move under the existing global lock; focused
+  runtime failure and transition tests pass.
 
 Last updated: 2026-08-11
 
