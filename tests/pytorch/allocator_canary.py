@@ -154,6 +154,25 @@ def main() -> int:
         raise AssertionError("storage adapter accepted a stale generation")
     if parameter.data_ptr() != address:
         raise AssertionError("failed rebinding validation mutated the storage")
+    try:
+        torch.ops.shadowspill._rebind_storages(
+            [parameter, parameter],
+            [0, 0],
+            [binding.object_id, binding.object_id],
+            [binding.generation, binding.generation + 1],
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("batch adapter accepted a stale generation")
+    if parameter.data_ptr() != address:
+        raise AssertionError("failed batch validation partially mutated storage")
+    torch.ops.shadowspill._rebind_storages(
+        [parameter],
+        [address],
+        [binding.object_id],
+        [binding.generation],
+    )
 
     compute_stream = torch.cuda.current_stream().cuda_stream
     torch.cuda._sleep(100_000_000)

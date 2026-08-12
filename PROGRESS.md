@@ -2006,3 +2006,30 @@ the ignored internal progress log before this tracked summary is updated.
   1,415 actions remain exact.
 - Focused lowering/training tests, the CUDA training canary, Ruff, and strict
   mypy pass. No storage batching or task arithmetic changed in this milestone.
+
+## 2026-08-12 — Transactional batched storage boundaries
+
+- Added one private PyTorch adapter operation that validates an entire storage
+  rebinding request before changing any Tensor storage, then applies the batch.
+  A stale object generation therefore cannot partially mutate a task boundary.
+  The scalar operation remains available for isolated lifecycle operations and
+  compatibility canaries.
+- Training and forward execution now issue one batch for distinct task inputs
+  and one batch for release/offload dematerialization. Declared forward
+  outputs, first gradient objects, and lazily created optimizer state are also
+  rebound in batches after their allocator records have been promoted.
+- The adapter, allocator, forward, and training canaries pass, including a new
+  all-or-nothing stale-generation test. Ruff and strict mypy pass on the
+  affected Python modules.
+- Frozen Qwen control
+  `qualification/results/phase1/qwen35_batched_storage_control.json`
+  preserves Program `65300023...d7e3`, schedule `e349ce5f...f3ed`, 129
+  tasks, and 1,415 actions. Across the final traced sample, total frontend
+  rebinding fell from 6.956 to 5.401 ms and postprocessing from 15.082 to
+  13.746 ms relative to the prior full-boundary control.
+- The same run measured 315.518--317.826 ms selected spans and
+  299.443--299.696 ms task sums. These are roughly 6 ms above the prior
+  three-sample distribution despite byte-identical numerical graphs and
+  schedule; no semantic conclusion is drawn from this intermediate run. The
+  final repeated control after predecoded task records remains the acceptance
+  measurement.

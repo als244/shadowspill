@@ -7,6 +7,7 @@
 #include <nvtx3/nvToolsExt.h>
 
 #include <cstdint>
+#include <vector>
 #include <utility>
 
 namespace {
@@ -75,6 +76,79 @@ at::Tensor rebind_storage(
   return tensor;
 }
 
+void rebind_storages(
+    at::TensorList tensors,
+    at::IntArrayRef target_addresses,
+    at::IntArrayRef object_ids,
+    at::IntArrayRef generations
+) {
+  nvtxRangePushA("shadowspill.pytorch.storage_rebind_batch");
+  struct RangeGuard {
+    ~RangeGuard() { nvtxRangePop(); }
+  } range_guard;
+  const size_t count = tensors.size();
+  TORCH_CHECK(
+      target_addresses.size() == count && object_ids.size() == count &&
+          generations.size() == count,
+      "storage rebinding batch fields must have equal lengths");
+
+  std::vector<uint64_t> current_addresses;
+  current_addresses.reserve(count);
+
+  // Validate the complete request before changing any Tensor storage. A bad
+  // entry therefore cannot leave a partially rebound task boundary.
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    const int64_t target_address = target_addresses[index];
+    const int64_t object_id = object_ids[index];
+    const int64_t generation = generations[index];
+    TORCH_CHECK(tensor.is_cuda(), "storage rebinding requires CUDA tensors");
+    TORCH_CHECK(target_address >= 0, "storage address must be nonnegative");
+    TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
+    TORCH_CHECK(generation >= 0, "allocation generation must be nonnegative");
+
+    const c10::DataPtr& current = tensor.storage().data_ptr();
+    const uint64_t current_address =
+        static_cast<uint64_t>(reinterpret_cast<uintptr_t>(current.get()));
+    current_addresses.push_back(current_address);
+    if (current_address != 0U) {
+      const ShadowSpillRuntimeStatus status =
+          shadowspill_pytorch_validate_object_binding(
+              static_cast<uint64_t>(object_id),
+              current_address,
+              static_cast<uint64_t>(generation));
+      TORCH_CHECK(
+          status == SHADOWSPILL_RUNTIME_OK,
+          "current storage does not match the planned object generation: ",
+          shadowspill_runtime_status_string(status));
+    }
+    if (target_address != 0) {
+      const ShadowSpillRuntimeStatus status =
+          shadowspill_pytorch_validate_object_binding(
+              static_cast<uint64_t>(object_id),
+              static_cast<uint64_t>(target_address),
+              static_cast<uint64_t>(generation));
+      TORCH_CHECK(
+          status == SHADOWSPILL_RUNTIME_OK,
+          "target storage does not match the planned object generation: ",
+          shadowspill_runtime_status_string(status));
+    }
+    TORCH_CHECK(
+        current_address != 0U || target_address != 0,
+        "storage is already dematerialized");
+  }
+
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    c10::Storage storage = tensor.storage();
+    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+        reinterpret_cast<void*>(
+            static_cast<uintptr_t>(target_addresses[index])),
+        tensor.device()));
+    prior.clear();
+  }
+}
+
 at::Tensor transfer_storage_to_caller(
     const at::Tensor& tensor,
     int64_t object_id,
@@ -134,12 +208,16 @@ TORCH_LIBRARY(shadowspill, library) {
       "_rebind_storage(Tensor(a!) tensor, int address, int object_id, "
       "int generation) -> Tensor(a!)");
   library.def(
+      "_rebind_storages(Tensor(a!)[] tensors, int[] addresses, "
+      "int[] object_ids, int[] generations) -> ()");
+  library.def(
       "_transfer_storage_to_caller(Tensor(a!) tensor, int object_id, "
       "int generation, int allocation_id) -> Tensor(a!)");
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
   library.impl("_rebind_storage", TORCH_FN(rebind_storage));
+  library.impl("_rebind_storages", TORCH_FN(rebind_storages));
   library.impl(
       "_transfer_storage_to_caller", TORCH_FN(transfer_storage_to_caller));
 }

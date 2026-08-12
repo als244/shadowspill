@@ -15,7 +15,7 @@ from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
-from ._abi import AdapterStatistics
+from ._abi import AdapterStatistics, ObjectBinding
 from ._runtime_trace import RuntimeTraceEvent, RuntimeTraceEventKind
 from ._telemetry import CapturedAllocationEvent
 from .capture import GraphArtifact
@@ -1201,16 +1201,18 @@ class TrainingExecutor:
                     time.perf_counter_ns() if task_timing is not None else 0
                 )
                 with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
-                    binding_by_alias = dict(
-                        zip(input_aliases, bindings, strict=True)
-                    )
-                    for alias_id, binding in binding_by_alias.items():
+                    rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+                    for alias_id, binding in zip(
+                        input_aliases, bindings, strict=True
+                    ):
                         tensor = self._state.object_store.get(alias_id)
                         if tensor is None:
                             raise RuntimeError(
                                 f"task input {alias_id!r} has no tensor binding"
                             )
-                        self._bridge.rebind(tensor, alias_id, binding)
+                        rebound.append((tensor, alias_id, binding))
+                    self._bridge.rebind_many(rebound)
+                    for _, alias_id, binding in rebound:
                         self._state.generations[alias_id] = binding.generation
                     artifact = entrypoint.artifact
                     eager_optimizer = entrypoint.phase == "optimizer" and (
@@ -1413,16 +1415,19 @@ class TrainingExecutor:
         input_aliases: tuple[str, ...],
     ) -> None:
         produced: set[str] = set()
+        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
         for slot in entrypoint.output_slots:
             tensor = outputs[slot.leaf_index]
             alias_id = self._bridge.alias_for_object(slot.object_id)
             if alias_id not in input_aliases and alias_id not in produced:
                 binding = self._bridge.promote_output(alias_id, tensor)
-                self._bridge.rebind(tensor, alias_id, binding)
-                self._state.generations[alias_id] = binding.generation
+                rebound.append((tensor, alias_id, binding))
                 produced.add(alias_id)
             self._state.object_store.setdefault(alias_id, tensor)
             self._state.object_tensors[slot.object_id] = tensor
+        self._bridge.rebind_many(rebound)
+        for _, alias_id, binding in rebound:
+            self._state.generations[alias_id] = binding.generation
 
     def _accumulate_gradients(
         self, entrypoint: TrainingTaskEntrypoint, leaves: list[object]
@@ -1451,9 +1456,16 @@ class TrainingExecutor:
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
+        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+        first_bindings: list[
+            tuple[str, str, torch.Tensor, ObjectBinding]
+        ] = []
         for object_id, alias_id, contribution in first:
             binding = self._bridge.promote_output(alias_id, contribution)
-            self._bridge.rebind(contribution, alias_id, binding)
+            rebound.append((contribution, alias_id, binding))
+            first_bindings.append((object_id, alias_id, contribution, binding))
+        self._bridge.rebind_many(rebound)
+        for object_id, alias_id, contribution, binding in first_bindings:
             self._state.object_store[alias_id] = contribution
             self._state.object_tensors[object_id] = contribution
             self._state.generations[alias_id] = binding.generation
@@ -1466,6 +1478,8 @@ class TrainingExecutor:
     def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
         current = self._current_optimizer_bindings()
         produced: set[str] = set()
+        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+        bound: list[tuple[str, torch.Tensor, str, ObjectBinding]] = []
         for item in lowered.optimizer_objects:
             if not item.created_on_first_step:
                 continue
@@ -1498,11 +1512,16 @@ class TrainingExecutor:
             alias_id = self._bridge.alias_for_object(item.object_id)
             if alias_id not in produced:
                 binding = self._bridge.promote_output(alias_id, tensor)
-                self._bridge.rebind(tensor, alias_id, binding)
-                self._state.object_store[alias_id] = tensor
-                self._state.generations[alias_id] = binding.generation
+                rebound.append((tensor, alias_id, binding))
+                bound.append((item.object_id, tensor, alias_id, binding))
                 produced.add(alias_id)
-            self._state.object_tensors[item.object_id] = tensor
+            else:
+                self._state.object_tensors[item.object_id] = tensor
+        self._bridge.rebind_many(rebound)
+        for object_id, tensor, alias_id, binding in bound:
+            self._state.object_store[alias_id] = tensor
+            self._state.object_tensors[object_id] = tensor
+            self._state.generations[alias_id] = binding.generation
 
     def _current_optimizer_bindings(self) -> dict[str, Any]:
         return {
@@ -1600,6 +1619,7 @@ class TrainingExecutor:
         )
 
     def _dematerialize_actions(self, run: _PlanRun, task_id: str) -> None:
+        pending: list[tuple[torch.Tensor, str, int]] = []
         for action in run.actions.get(task_id, ()):
             if action.kind not in {MemoryActionKind.RELEASE, MemoryActionKind.OFFLOAD}:
                 continue
@@ -1608,13 +1628,17 @@ class TrainingExecutor:
             generation = self._state.generations.get(alias_id)
             if tensor is None or generation is None:
                 raise RuntimeError(f"action references unbound object {alias_id!r}")
-            try:
-                self._bridge.dematerialize(tensor, alias_id, generation)
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    f"failed to dematerialize {alias_id!r} after {task_id!r} "
-                    f"at generation {generation} from address {tensor.data_ptr()}"
-                ) from exc
+            pending.append((tensor, alias_id, generation))
+        try:
+            self._bridge.dematerialize_many(pending)
+        except RuntimeError as exc:
+            detail = ", ".join(
+                f"{alias_id}@generation={generation}:address={tensor.data_ptr()}"
+                for tensor, alias_id, generation in pending
+            )
+            raise RuntimeError(
+                f"failed to dematerialize objects after {task_id!r}: {detail}"
+            ) from exc
 
     def _forget_released_objects(self, run: _PlanRun, task_id: str) -> None:
         for action in run.actions.get(task_id, ()):

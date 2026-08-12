@@ -11,6 +11,7 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
+from ._abi import ObjectBinding
 from .lowering import LoweredForwardProgram, TaskEntrypoint
 from .materialization import MaterializedForwardState
 from .partition import PartitionedExport
@@ -67,6 +68,7 @@ class _ExecutingStage(nn.Module):
                 self._task.task_id, stream, input_aliases
             )
             runtime_scope_open = True
+            rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
             for slot, alias_id, binding in zip(
                 self._entrypoint.input_slots,
                 input_aliases,
@@ -76,7 +78,9 @@ class _ExecutingStage(nn.Module):
                 tensor = leaves[slot.leaf_index]
                 if not isinstance(tensor, torch.Tensor):
                     raise RuntimeError("task tensor input became static")
-                self._bridge.rebind(tensor, alias_id, binding)
+                rebound.append((tensor, alias_id, binding))
+            self._bridge.rebind_many(rebound)
+            for tensor, alias_id, binding in rebound:
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = binding.generation
             return _PreparedForwardTask(arguments, input_aliases, stream)
@@ -100,6 +104,7 @@ class _ExecutingStage(nn.Module):
     ) -> object:
         output_leaves, _ = tree_flatten(output)
         produced: set[str] = set()
+        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
         for slot in self._entrypoint.output_slots:
             tensor = output_leaves[slot.leaf_index]
             if not isinstance(tensor, torch.Tensor):
@@ -107,10 +112,13 @@ class _ExecutingStage(nn.Module):
             alias_id = self._bridge.alias_for_object(slot.object_id)
             if alias_id not in prepared.input_aliases and alias_id not in produced:
                 binding = self._bridge.promote_output(alias_id, tensor)
-                self._bridge.rebind(tensor, alias_id, binding)
-                self._state.generations[alias_id] = binding.generation
+                rebound.append((tensor, alias_id, binding))
                 produced.add(alias_id)
             self._state.object_store[alias_id] = tensor
+        self._bridge.rebind_many(rebound)
+        for _, alias_id, binding in rebound:
+            self._state.generations[alias_id] = binding.generation
+        dematerialized: list[tuple[torch.Tensor, str, int]] = []
         for action in self._actions:
             if action.kind not in {
                 MemoryActionKind.RELEASE,
@@ -124,7 +132,8 @@ class _ExecutingStage(nn.Module):
                 raise RuntimeError(
                     f"action references unbound alias group {alias_id!r}"
                 )
-            self._bridge.dematerialize(tensor, alias_id, generation)
+            dematerialized.append((tensor, alias_id, generation))
+        self._bridge.dematerialize_many(dematerialized)
         self._bridge.after_task(
             self._task.task_id,
             prepared.stream,
