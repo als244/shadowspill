@@ -1556,3 +1556,33 @@ the ignored internal progress log before this tracked summary is updated.
   fell from 27.616 ms to 23.080 ms and the untraced recurrent interval from
   480.857 ms to 469.041 ms. Allocation requests (37,563), frees (37,443),
   zero-byte requests (120), and readiness waits (26) are identical.
+
+## 2026-08-12 — Allocation-pool ownership isolated
+
+- Introduced an allocation-pool mutex and capacity condition that exclusively
+  own slab geometry, allocation hashes, reusable records, accounting, and
+  retirement membership. PyTorch `malloc`, logical `free`, pointer lookup,
+  `record_stream`, and allocation-pressure waits no longer acquire the legacy
+  runtime/action mutex.
+- Added atomic pending-retirement and pending-capacity-action counters so a
+  blocked allocator can distinguish possible progress from an impossible OOM
+  without scanning the transfer queue under a second lock. Device free and
+  largest-range snapshots likewise let failure reporting remain independent
+  of allocation ownership.
+- Moved worker retirement processing behind the allocation owner, but narrowed
+  transfer dispatch and completion commits so CUDA copy/event submission never
+  holds the allocation-pool lock. Allocation geometry is locked only while a
+  prefetch range is reserved/adopted or an offloaded/released range is returned.
+- Made first-failure publication independent through a dedicated cold-path
+  lock plus an atomic status latch. Trace and allocation-telemetry append slots
+  now use bounded atomic cursors, so diagnostics do not require either runtime
+  state lock.
+- The CUDA backend's sealed physical event pool remains the source of event
+  handles. Runtime event-lease creation in steady state only borrows a pooled
+  handle and creates a generation-tagged metadata owner; it does not call
+  `cuEventCreate` after admission.
+- All 17 warnings-as-errors CTest canaries, the complete Python suite, Ruff,
+  and strict mypy pass. Backend calls used to record ordinary non-task
+  retirement fences are the remaining allocation-path snapshot/commit work;
+  this checkpoint intentionally does not claim that the full lock redesign is
+  complete.

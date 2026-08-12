@@ -20,9 +20,13 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
         free(lease);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
-    lease->generation = runtime->next_event_generation++;
+    lease->generation = atomic_fetch_add_explicit(
+        &runtime->next_event_generation, 1U, memory_order_relaxed
+    );
     if (lease->generation == 0U) {
-        lease->generation = runtime->next_event_generation++;
+        lease->generation = atomic_fetch_add_explicit(
+            &runtime->next_event_generation, 1U, memory_order_relaxed
+        );
     }
     atomic_init(&lease->references, 1U);
     atomic_init(&lease->completion_known, 0U);

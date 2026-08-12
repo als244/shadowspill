@@ -45,14 +45,32 @@ void shadowspill_append_allocation_event_locked(
     ShadowSpillAllocationEventKind kind,
     ShadowSpillAllocationCategory category
 ) {
-    if (!runtime->allocation_telemetry_active ||
-        runtime->allocation_event_overflow) {
+    if (atomic_load_explicit(
+            &runtime->allocation_telemetry_active, memory_order_acquire
+        ) == 0U || atomic_load_explicit(
+            &runtime->allocation_event_overflow, memory_order_relaxed
+        ) != 0U) {
         return;
     }
-    if (runtime->allocation_event_count >=
-        runtime->allocation_event_capacity) {
-        runtime->allocation_event_overflow = 1;
-        if (!runtime->trace_active) {
+    uint64_t slot = atomic_load_explicit(
+        &runtime->allocation_event_count, memory_order_relaxed
+    );
+    while (slot < runtime->allocation_event_capacity &&
+           !atomic_compare_exchange_weak_explicit(
+               &runtime->allocation_event_count,
+               &slot,
+               slot + 1U,
+               memory_order_acq_rel,
+               memory_order_relaxed
+           )) {
+    }
+    if (slot >= runtime->allocation_event_capacity) {
+        atomic_store_explicit(
+            &runtime->allocation_event_overflow, 1U, memory_order_release
+        );
+        if (atomic_load_explicit(
+                &runtime->trace_active, memory_order_acquire
+            ) == 0U) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
@@ -71,9 +89,9 @@ void shadowspill_append_allocation_event_locked(
     } else if (kind == SHADOWSPILL_ALLOCATION_RELEASED) {
         task_id = allocation->release_task_id;
     }
-    runtime->allocation_events[runtime->allocation_event_count++] =
+    runtime->allocation_events[slot] =
         (ShadowSpillAllocationEvent){
-            .sequence = runtime->next_allocation_event_sequence++,
+            .sequence = slot,
             .task_id = task_id,
             .allocation_id = allocation->allocation_id,
             .generation = allocation->generation,

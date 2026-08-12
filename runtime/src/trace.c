@@ -25,17 +25,34 @@ void shadowspill_append_trace_event_locked(
     uint64_t detail_0,
     uint64_t detail_1
 ) {
-    if (!runtime->trace_active || runtime->trace_event_overflow) {
+    if (atomic_load_explicit(&runtime->trace_active, memory_order_acquire) == 0U ||
+        atomic_load_explicit(
+            &runtime->trace_event_overflow, memory_order_relaxed
+        ) != 0U) {
         return;
     }
-    if (runtime->trace_event_count >= runtime->trace_event_capacity) {
-        runtime->trace_event_overflow = 1;
+    uint64_t slot = atomic_load_explicit(
+        &runtime->trace_event_count, memory_order_relaxed
+    );
+    while (slot < runtime->trace_event_capacity &&
+           !atomic_compare_exchange_weak_explicit(
+               &runtime->trace_event_count,
+               &slot,
+               slot + 1U,
+               memory_order_acq_rel,
+               memory_order_relaxed
+           )) {
+    }
+    if (slot >= runtime->trace_event_capacity) {
+        atomic_store_explicit(
+            &runtime->trace_event_overflow, 1U, memory_order_release
+        );
         return;
     }
     const uint64_t timestamp = monotonic_nanoseconds();
-    runtime->trace_events[runtime->trace_event_count++] =
+    runtime->trace_events[slot] =
         (ShadowSpillTraceEvent){
-            .sequence = runtime->next_trace_event_sequence++,
+            .sequence = slot,
             .timestamp_ns = timestamp,
             .step_id = runtime->trace_step_id,
             .task_id = task_id,

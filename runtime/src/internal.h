@@ -64,6 +64,16 @@ typedef struct ShadowSpillCompletionTracker {
     uint64_t pending;
 } ShadowSpillCompletionTracker;
 
+/*
+ * Owns slab-allocation membership, geometry, retirement, and capacity waits.
+ * The records remain embedded in ShadowSpillRuntime during the staged
+ * migration, but no allocator callback may use the legacy state mutex.
+ */
+typedef struct ShadowSpillAllocationPool {
+    pthread_mutex_t lock;
+    pthread_cond_t capacity_changed;
+} ShadowSpillAllocationPool;
+
 typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
 
 typedef struct ShadowSpillAllocationRecord {
@@ -154,13 +164,16 @@ typedef struct ShadowSpillQueuedAction {
 } ShadowSpillQueuedAction;
 
 struct ShadowSpillRuntime {
+    /* Cold lifecycle and the still-unmigrated action-list owner. */
     pthread_mutex_t mutex;
     pthread_cond_t condition;
+    pthread_mutex_t failure_lock;
     pthread_t progress_thread;
     int progress_started;
-    int closing;
-    int closed;
-    int worker_stop;
+    _Atomic uint8_t closing;
+    _Atomic uint8_t closed;
+    _Atomic uint8_t worker_stop;
+    _Atomic uint32_t failure_status;
     uint64_t progress_poll_nanoseconds;
     uint64_t minimum_alignment;
 
@@ -173,6 +186,10 @@ struct ShadowSpillRuntime {
     int d2h_stream_created;
 
     ShadowSpillRangeAllocator device_ranges;
+    ShadowSpillAllocationPool allocation_pool;
+    uint8_t allocation_pool_initialized;
+    _Atomic uint64_t device_free_bytes_snapshot;
+    _Atomic uint64_t device_largest_free_snapshot;
     ShadowSpillRangeAllocator host_ranges;
     ShadowSpillAllocationRecord *allocations;
     ShadowSpillAllocationRecord *active_allocations;
@@ -189,12 +206,13 @@ struct ShadowSpillRuntime {
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
-    uint64_t next_event_generation;
+    _Atomic uint64_t next_event_generation;
     uint64_t requested_allocated_bytes;
     uint64_t peak_requested_allocated_bytes;
     uint64_t live_allocations;
     uint64_t blocked_allocators;
-    uint64_t pending_retirements;
+    _Atomic uint64_t pending_retirements;
+    _Atomic uint64_t pending_capacity_actions;
     uint64_t registered_objects;
     uint64_t queued_actions;
     uint64_t transfers_to_device;
@@ -204,22 +222,22 @@ struct ShadowSpillRuntime {
     uint64_t wait_events_inserted;
     uint64_t event_query_epoch;
     ShadowSpillAllocationEvent *allocation_events;
-    uint64_t allocation_event_count;
+    _Atomic uint64_t allocation_event_count;
     uint64_t allocation_event_capacity;
-    uint64_t next_allocation_event_sequence;
-    int allocation_telemetry_active;
-    int allocation_event_overflow;
+    _Atomic uint64_t next_allocation_event_sequence;
+    _Atomic uint8_t allocation_telemetry_active;
+    _Atomic uint8_t allocation_event_overflow;
     ShadowSpillTraceEvent *trace_events;
-    uint64_t trace_event_count;
+    _Atomic uint64_t trace_event_count;
     uint64_t trace_event_capacity;
-    uint64_t next_trace_event_sequence;
+    _Atomic uint64_t next_trace_event_sequence;
     uint64_t trace_step_id;
     uint64_t trace_begin_timestamp_ns;
     uint64_t trace_end_timestamp_ns;
     uint64_t trace_allocation_event_capacity;
-    int trace_prepared;
-    int trace_active;
-    int trace_event_overflow;
+    _Atomic uint8_t trace_prepared;
+    _Atomic uint8_t trace_active;
+    _Atomic uint8_t trace_event_overflow;
     ShadowSpillRuntimeFailure failure;
 };
 
@@ -351,6 +369,7 @@ void shadowspill_append_trace_event_locked(
     uint64_t detail_1
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
+void shadowspill_publish_device_geometry_locked(ShadowSpillRuntime *runtime);
 void *shadowspill_progress_main(void *pointer);
 
 #endif

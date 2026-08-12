@@ -3,6 +3,7 @@
 
 #include <shadowspill/runtime.h>
 
+/* Thread-safe first-cause publication; callers need not hold another lock. */
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatus status,
@@ -13,6 +14,10 @@ void shadowspill_latch_failure_locked(
 
 ShadowSpillRuntimeStatus shadowspill_current_status_locked(
     ShadowSpillRuntime *runtime
+);
+
+ShadowSpillRuntimeStatus shadowspill_failure_status(
+    const ShadowSpillRuntime *runtime
 );
 
 #endif

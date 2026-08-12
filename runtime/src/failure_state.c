@@ -9,7 +9,11 @@ void shadowspill_latch_failure_locked(
     uint64_t allocation_id,
     uint64_t requested_bytes
 ) {
-    if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
+    pthread_mutex_lock(&runtime->failure_lock);
+    if (atomic_load_explicit(
+            &runtime->failure_status, memory_order_acquire
+        ) != SHADOWSPILL_RUNTIME_OK) {
+        pthread_mutex_unlock(&runtime->failure_lock);
         return;
     }
     runtime->failure = (ShadowSpillRuntimeFailure){
@@ -17,10 +21,17 @@ void shadowspill_latch_failure_locked(
         .object_id = object_id,
         .allocation_id = allocation_id,
         .requested_bytes = requested_bytes,
-        .free_bytes = shadowspill_range_free_bytes(&runtime->device_ranges),
-        .largest_free_range_bytes =
-            shadowspill_range_largest_free(&runtime->device_ranges),
+        .free_bytes = atomic_load_explicit(
+            &runtime->device_free_bytes_snapshot, memory_order_acquire
+        ),
+        .largest_free_range_bytes = atomic_load_explicit(
+            &runtime->device_largest_free_snapshot, memory_order_acquire
+        ),
     };
+    atomic_store_explicit(
+        &runtime->failure_status, (uint32_t)status, memory_order_release
+    );
+    pthread_mutex_unlock(&runtime->failure_lock);
     shadowspill_append_trace_event_locked(
         runtime,
         SHADOWSPILL_TRACE_FAILURE_LATCHED,
@@ -32,16 +43,29 @@ void shadowspill_latch_failure_locked(
         runtime->failure.free_bytes
     );
     pthread_cond_broadcast(&runtime->condition);
+    if (runtime->allocation_pool_initialized) {
+        pthread_cond_broadcast(&runtime->allocation_pool.capacity_changed);
+    }
+}
+
+ShadowSpillRuntimeStatus shadowspill_failure_status(
+    const ShadowSpillRuntime *runtime
+) {
+    return (ShadowSpillRuntimeStatus)atomic_load_explicit(
+        &runtime->failure_status, memory_order_acquire
+    );
 }
 
 ShadowSpillRuntimeStatus shadowspill_current_status_locked(
     ShadowSpillRuntime *runtime
 ) {
-    if (runtime->closed || runtime->closing) {
+    if (atomic_load_explicit(&runtime->closed, memory_order_acquire) != 0U ||
+        atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U) {
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
-        return (ShadowSpillRuntimeStatus)runtime->failure.status;
+    const ShadowSpillRuntimeStatus failure = shadowspill_failure_status(runtime);
+    if (failure != SHADOWSPILL_RUNTIME_OK) {
+        return failure;
     }
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -53,8 +77,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_failure(
     if (runtime == NULL || failure == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->mutex);
+    pthread_mutex_lock(&runtime->failure_lock);
     *failure = runtime->failure;
-    pthread_mutex_unlock(&runtime->mutex);
+    failure->status = (uint32_t)shadowspill_failure_status(runtime);
+    pthread_mutex_unlock(&runtime->failure_lock);
     return SHADOWSPILL_RUNTIME_OK;
 }

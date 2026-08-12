@@ -162,9 +162,26 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->minimum_alignment = config->minimum_alignment;
     runtime->next_allocation_id = 1U;
     runtime->next_generation = 1U;
-    runtime->next_event_generation = 1U;
+    atomic_init(&runtime->next_event_generation, 1U);
     runtime->failure.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->failure.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    atomic_init(&runtime->closing, 0U);
+    atomic_init(&runtime->closed, 0U);
+    atomic_init(&runtime->worker_stop, 0U);
+    atomic_init(&runtime->failure_status, SHADOWSPILL_RUNTIME_OK);
+    atomic_init(&runtime->pending_retirements, 0U);
+    atomic_init(&runtime->pending_capacity_actions, 0U);
+    atomic_init(&runtime->device_free_bytes_snapshot, 0U);
+    atomic_init(&runtime->device_largest_free_snapshot, 0U);
+    atomic_init(&runtime->allocation_event_count, 0U);
+    atomic_init(&runtime->next_allocation_event_sequence, 0U);
+    atomic_init(&runtime->allocation_telemetry_active, 0U);
+    atomic_init(&runtime->allocation_event_overflow, 0U);
+    atomic_init(&runtime->trace_event_count, 0U);
+    atomic_init(&runtime->next_trace_event_sequence, 0U);
+    atomic_init(&runtime->trace_prepared, 0U);
+    atomic_init(&runtime->trace_active, 0U);
+    atomic_init(&runtime->trace_event_overflow, 0U);
     runtime->allocation_index_bucket_count = 65536U;
     runtime->reusable_index_bucket_count = 8192U;
     const uint64_t object_index_bucket_count = 16384U;
@@ -196,13 +213,42 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->completions_initialized = 1U;
+    if (pthread_mutex_init(&runtime->failure_lock, NULL) != 0) {
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    if (pthread_mutex_init(&runtime->allocation_pool.lock, NULL) != 0) {
+        pthread_mutex_destroy(&runtime->failure_lock);
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    if (pthread_cond_init(
+            &runtime->allocation_pool.capacity_changed, NULL
+        ) != 0) {
+        pthread_mutex_destroy(&runtime->allocation_pool.lock);
+        pthread_mutex_destroy(&runtime->failure_lock);
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    runtime->allocation_pool_initialized = 1U;
     if (pthread_mutex_init(&runtime->mutex, NULL) != 0) {
+        pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
+        pthread_mutex_destroy(&runtime->allocation_pool.lock);
+        runtime->allocation_pool_initialized = 0U;
+        pthread_mutex_destroy(&runtime->failure_lock);
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     if (pthread_cond_init(&runtime->condition, NULL) != 0) {
         pthread_mutex_destroy(&runtime->mutex);
+        pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
+        pthread_mutex_destroy(&runtime->allocation_pool.lock);
+        runtime->allocation_pool_initialized = 0U;
+        pthread_mutex_destroy(&runtime->failure_lock);
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -228,6 +274,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
+    shadowspill_publish_device_geometry_locked(runtime);
     if (runtime->backend.create_stream(
             runtime->backend.context,
             SHADOWSPILL_TRANSFER_TO_DEVICE,
@@ -258,6 +305,10 @@ fail:
     release_resources(runtime);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
+    pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
+    pthread_mutex_destroy(&runtime->allocation_pool.lock);
+    runtime->allocation_pool_initialized = 0U;
+    pthread_mutex_destroy(&runtime->failure_lock);
     free(runtime);
     return status;
 }
@@ -269,14 +320,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    while (!runtime->closed && runtime->failure.status == SHADOWSPILL_RUNTIME_OK &&
+    while (atomic_load_explicit(&runtime->closed, memory_order_acquire) == 0U &&
+           shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
            (runtime->queued_actions != 0U ||
             runtime->pending_retirements != 0U)) {
         pthread_cond_wait(&runtime->condition, &runtime->mutex);
     }
-    ShadowSpillRuntimeStatus status = runtime->failure.status == 0U
-        ? SHADOWSPILL_RUNTIME_OK
-        : (ShadowSpillRuntimeStatus)runtime->failure.status;
+    ShadowSpillRuntimeStatus status = shadowspill_failure_status(runtime);
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
@@ -298,7 +348,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
-    if (runtime->closing || runtime->queued_actions != 0U ||
+    if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U ||
+        runtime->queued_actions != 0U ||
         runtime->pending_retirements != 0U) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -353,12 +404,12 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    if (runtime->closed) {
+    if (atomic_load_explicit(&runtime->closed, memory_order_acquire) != 0U) {
         pthread_mutex_unlock(&runtime->mutex);
         return SHADOWSPILL_RUNTIME_OK;
     }
-    runtime->closing = 1;
-    while (runtime->failure.status == SHADOWSPILL_RUNTIME_OK &&
+    atomic_store_explicit(&runtime->closing, 1U, memory_order_release);
+    while (shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
            (runtime->queued_actions != 0U ||
             runtime->pending_retirements != 0U)) {
         pthread_cond_wait(&runtime->condition, &runtime->mutex);
@@ -386,7 +437,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
             0U
         );
     }
-    runtime->worker_stop = 1;
+    atomic_store_explicit(&runtime->worker_stop, 1U, memory_order_release);
     pthread_cond_broadcast(&runtime->condition);
     pthread_mutex_unlock(&runtime->mutex);
     if (runtime->progress_started) {
@@ -394,11 +445,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
         runtime->progress_started = 0;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = runtime->failure.status ==
-            SHADOWSPILL_RUNTIME_OK
-        ? SHADOWSPILL_RUNTIME_OK
-        : (ShadowSpillRuntimeStatus)runtime->failure.status;
-    runtime->closed = 1;
+    ShadowSpillRuntimeStatus status = shadowspill_failure_status(runtime);
+    atomic_store_explicit(&runtime->closed, 1U, memory_order_release);
     pthread_mutex_unlock(&runtime->mutex);
     release_resources(runtime);
     return status;
@@ -411,6 +459,10 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     (void)shadowspill_runtime_close_legacy(runtime);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
+    pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
+    pthread_mutex_destroy(&runtime->allocation_pool.lock);
+    runtime->allocation_pool_initialized = 0U;
+    pthread_mutex_destroy(&runtime->failure_lock);
     free(runtime);
 }
 
@@ -422,6 +474,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
+    pthread_mutex_lock(&runtime->allocation_pool.lock);
     *statistics = (ShadowSpillRuntimeStatistics){
         .slab_bytes = runtime->device_ranges.capacity,
         .requested_allocated_bytes = runtime->requested_allocated_bytes,
@@ -453,6 +506,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .allocation_event_overflow =
             (uint64_t)runtime->allocation_event_overflow,
     };
+    pthread_mutex_unlock(&runtime->allocation_pool.lock);
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;
 }
