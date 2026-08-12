@@ -1604,14 +1604,22 @@ class TrainingExecutor:
                 f"shadowspill.runtime.after_task.{record.trace_label}"
             ):
                 if record.native_handle:
-                    generations = self._bridge.after_execution_and_update(
-                        record.native_handle,
-                        record.dense_task_id,
-                        self._state.device.index or 0,
-                        processed.adopted,
-                        dematerialized,
-                        replacement_aliases=processed.replacement_aliases,
-                    )
+                    try:
+                        generations = self._bridge.after_execution_and_update(
+                            record.native_handle,
+                            record.dense_task_id,
+                            self._state.device.index or 0,
+                            processed.adopted,
+                            dematerialized,
+                            replacement_aliases=processed.replacement_aliases,
+                        )
+                    except RuntimeError as error:
+                        raise RuntimeError(
+                            "after_task storage publication failed for "
+                            f"execution_{record.execution_ordinal:06d} "
+                            f"({record.semantic_name}): "
+                            f"{error}"
+                        ) from error
                 else:
                     generations = self._bridge.adopt_many(
                         processed.adopted,

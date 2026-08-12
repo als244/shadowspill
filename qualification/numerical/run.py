@@ -384,6 +384,17 @@ def _planned_worker(
             f"{planning_phases.get('pressurefit_simulation', 0.0):.3f}s",
             flush=True,
         )
+        plan_report_path = result_path.with_name(
+            f"{result_path.stem}_plan_report.pt"
+        )
+        # Planning evidence is valuable even when the first runtime step finds
+        # a contract violation. Persist the immutable report before execution
+        # rather than losing an expensive cold-plan artifact on failure.
+        torch.save(training.plan_report, plan_report_path)
+        pressurefit_fixtures = write_pressurefit_fixtures(
+            results=training.plan_report.pressurefit_results,
+            directory=result_path.parent / f"{result_path.stem}_pressurefit",
+        )
         physical_statuses = [_check_physical_budget()]
         execution_baseline = _adapter_statistics()
         losses: list[list[float]] = []
@@ -444,14 +455,6 @@ def _planned_worker(
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
-        plan_report_path = result_path.with_name(
-            f"{result_path.stem}_plan_report.pt"
-        )
-        torch.save(report, plan_report_path)
-        pressurefit_fixtures = write_pressurefit_fixtures(
-            results=report.pressurefit_results,
-            directory=result_path.parent / f"{result_path.stem}_pressurefit",
-        )
         runtime_statistics = _adapter_statistics()
         training.close()
         runtime.close()

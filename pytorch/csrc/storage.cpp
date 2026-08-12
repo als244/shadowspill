@@ -349,7 +349,17 @@ std::vector<int64_t> adopt_storages(
               &bindings[index]);
     TORCH_CHECK(
         status == SHADOWSPILL_RUNTIME_OK,
-        "storage adoption failed: ",
+        "storage adoption failed at batch index ",
+        index,
+        ", object ",
+        object_ids[index],
+        ", mode ",
+        modes[index],
+        ", address ",
+        addresses[index],
+        ", declared bytes ",
+        sizes[index],
+        ": ",
         shadowspill_runtime_status_string(status));
     TORCH_CHECK(
         bindings[index].pointer == reinterpret_cast<void*>(
