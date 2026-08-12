@@ -1675,3 +1675,17 @@ the ignored internal progress log before this tracked summary is updated.
 - This checkpoint still projects the retained records through the proven legacy
   transition helpers. The next step removes those residual per-call object
   hashes and consumes direct references inside the boundary orchestrators.
+
+## 2026-08-12 — Admitted input acquisition consumes direct records
+
+- The hot admitted `before_execution` path now consumes predecoded object
+  pointers and the first-occurrence unique-input list built during admission.
+  It performs no object-ID hash lookup, alias deduplication scan, or
+  allocation-ID hash lookup during task execution.
+- Each object directly names its current allocation lease. The boundary checks
+  both allocation and generation identity before publishing a pointer, so a
+  stale recycled lease cannot satisfy an input binding.
+- The legacy boundary remains available for non-admitted construction paths.
+  This checkpoint intentionally preserves its readiness waiting and global
+  transition serialization; moving those transitions to per-object ownership
+  is a separate gate.

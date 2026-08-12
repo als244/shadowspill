@@ -65,6 +65,7 @@ class _Library:
     shadowspill_pytorch_trace_read = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_register_host_object = _Function()
+    shadowspill_pytorch_register_placeholder_object = _Function()
     shadowspill_pytorch_write_host_object = _Function()
     shadowspill_pytorch_read_host_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
@@ -73,6 +74,9 @@ class _Library:
     shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
+    shadowspill_pytorch_admit_execution = _Function()
+    shadowspill_pytorch_before_execution = _Function()
+    shadowspill_pytorch_after_execution = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
     shadowspill_pytorch_abort_task_range = _Function()
 

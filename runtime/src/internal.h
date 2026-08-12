@@ -121,6 +121,7 @@ typedef struct ShadowSpillObjectRecord {
     uint64_t device_version;
     uint64_t host_version;
     uint64_t allocation_id;
+    ShadowSpillAllocationRecord *device_lease;
     uint64_t host_offset;
     uint8_t retain_host_backing;
     uint8_t host_current;
@@ -193,6 +194,8 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillObjectRecord **inputs;
     uint64_t *input_object_ids;
     uint32_t input_count;
+    ShadowSpillObjectRecord **unique_inputs;
+    uint32_t unique_input_count;
     ShadowSpillExecutionUpdate *updates;
     ShadowSpillObjectUpdate *legacy_updates;
     uint32_t update_count;

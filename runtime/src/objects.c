@@ -270,6 +270,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         allocation->handoff_task_id = task_id;
     }
     object->allocation_id = allocation_id;
+    object->device_lease = allocation;
     object->generation = allocation->generation;
     object->device_version = object->authoritative_version;
     object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;

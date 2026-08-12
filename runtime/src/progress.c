@@ -425,6 +425,7 @@ static int dispatch_prefetch_locked(
     action->has_completion_event = 1U;
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
     object->allocation_id = allocation->allocation_id;
+    object->device_lease = allocation;
     object->generation = allocation->generation;
     object->device_version = object->host_version;
     object->readiness_event = action->completion_event;
@@ -530,6 +531,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                         object->retired_generation = object->generation;
                         object->retired_device_pointer = allocation->pointer;
                         object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                        object->device_lease = NULL;
                         object->residency = object->host_current
                             ? SHADOWSPILL_OBJECT_HOST_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
@@ -551,6 +553,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                     shadowspill_release_allocation_locked(runtime, allocation);
                     pthread_mutex_unlock(&runtime->allocation_pool.lock);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                    object->device_lease = NULL;
                     object->residency = object->host_current
                         ? SHADOWSPILL_OBJECT_HOST_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
@@ -626,6 +629,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                     shadowspill_release_allocation_locked(runtime, allocation);
                     pthread_mutex_unlock(&runtime->allocation_pool.lock);
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                    object->device_lease = NULL;
                     object->host_current = 1U;
                     object->host_version = object->authoritative_version;
                     object->residency = SHADOWSPILL_OBJECT_HOST_ONLY;
