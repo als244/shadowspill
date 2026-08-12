@@ -59,9 +59,16 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         uint64_t charged = description->size_bytes == 0U
             ? 1U
             : description->size_bytes;
-        if (shadowspill_range_allocate(
-            &runtime->host_ranges, charged, 1U, &created->host_offset
-            ) != 0) {
+        pthread_mutex_lock(&runtime->host_pool.lock);
+        const int reserve_status = shadowspill_memory_pool_reserve_locked(
+            &runtime->host_pool,
+            charged,
+            1U,
+            SHADOWSPILL_MEMORY_FIRST_FIT,
+            &created->host_offset
+        );
+        pthread_mutex_unlock(&runtime->host_pool.lock);
+        if (reserve_status != 0) {
             pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created);
@@ -77,9 +84,11 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             uint64_t charged = created->size_bytes == 0U
                 ? 1U
                 : created->size_bytes;
-            (void)shadowspill_range_free(
-                &runtime->host_ranges, created->host_offset, charged
+            pthread_mutex_lock(&runtime->host_pool.lock);
+            (void)shadowspill_memory_pool_release_locked(
+                &runtime->host_pool, created->host_offset, charged
             );
+            pthread_mutex_unlock(&runtime->host_pool.lock);
         }
         pthread_cond_destroy(&created->state_changed);
         pthread_mutex_destroy(&created->lock);
@@ -125,9 +134,12 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
     pthread_mutex_unlock(&runtime->actions.lock);
     if (object->has_host_range) {
         uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
-        if (shadowspill_range_free(
-                &runtime->host_ranges, object->host_offset, charged
-            ) != 0) {
+        pthread_mutex_lock(&runtime->host_pool.lock);
+        const int release_status = shadowspill_memory_pool_release_locked(
+            &runtime->host_pool, object->host_offset, charged
+        );
+        pthread_mutex_unlock(&runtime->host_pool.lock);
+        if (release_status != 0) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done;
         }
@@ -169,7 +181,9 @@ ShadowSpillRuntimeStatus shadowspill_write_host_object(
     }
     if (bytes != 0U) {
         memcpy(
-            (unsigned char *)runtime->host_arena + object->host_offset,
+            shadowspill_memory_pool_pointer(
+                &runtime->host_pool, object->host_offset
+            ),
             source,
             (size_t)bytes
         );
@@ -208,7 +222,9 @@ ShadowSpillRuntimeStatus shadowspill_read_host_object(
     if (bytes != 0U) {
         memcpy(
             destination,
-            (unsigned char *)runtime->host_arena + object->host_offset,
+            shadowspill_memory_pool_pointer(
+                &runtime->host_pool, object->host_offset
+            ),
             (size_t)bytes
         );
     }
@@ -227,7 +243,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
     ShadowSpillAllocationRecord *allocation = shadowspill_find_allocation(
         runtime, allocation_id
@@ -285,7 +301,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
 
 done:
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
@@ -319,7 +335,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         }
     }
     pthread_mutex_unlock(&runtime->actions.lock);
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     ShadowSpillAllocationRecord *record = shadowspill_find_allocation(
         runtime, object->allocation_id
     );
@@ -330,9 +346,12 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     }
     if (object->has_host_range) {
         uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
-        if (shadowspill_range_free(
-                &runtime->host_ranges, object->host_offset, charged
-            ) != 0) {
+        pthread_mutex_lock(&runtime->host_pool.lock);
+        const int release_status = shadowspill_memory_pool_release_locked(
+            &runtime->host_pool, object->host_offset, charged
+        );
+        pthread_mutex_unlock(&runtime->host_pool.lock);
+        if (release_status != 0) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done_allocation;
         }
@@ -360,7 +379,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     shadowspill_object_release(object);
 
 done_allocation:
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
 done_runtime:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
@@ -375,10 +394,10 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
     if (object == NULL) {
-        pthread_mutex_unlock(&runtime->allocation_pool.lock);
+        pthread_mutex_unlock(&runtime->device_pool.lock);
         pthread_mutex_unlock(&runtime->mutex);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
@@ -400,7 +419,7 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         .retired_generation = object->retired_generation,
         .retired_device_pointer = object->retired_device_pointer,
     };
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -473,7 +492,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             status = SHADOWSPILL_RUNTIME_INVALID_STATE;
             break;
         }
-        pthread_mutex_lock(&runtime->allocation_pool.lock);
+        pthread_mutex_lock(&runtime->device_pool.lock);
         ShadowSpillAllocationRecord *allocation = shadowspill_find_allocation(
             runtime, object->allocation_id
         );
@@ -482,7 +501,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             allocation == NULL || device_pointer == NULL ||
             object->device_version != object->authoritative_version) {
-            pthread_mutex_unlock(&runtime->allocation_pool.lock);
+            pthread_mutex_unlock(&runtime->device_pool.lock);
             status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             shadowspill_latch_failure_locked(
                 runtime,
@@ -493,7 +512,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             );
             break;
         }
-        pthread_mutex_unlock(&runtime->allocation_pool.lock);
+        pthread_mutex_unlock(&runtime->device_pool.lock);
         int duplicate = 0;
         for (uint32_t previous = 0; previous < index; ++previous) {
             if (input_object_ids[previous] == input_object_ids[index]) {
@@ -552,9 +571,12 @@ static void discard_actions_locked(
     while (head != NULL) {
         ShadowSpillQueuedAction *next = head->next;
         if (head->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            pthread_mutex_lock(&head->object->lock);
             atomic_store_explicit(
                 &head->object->prefetch_pending, 0U, memory_order_release
             );
+            pthread_cond_broadcast(&head->object->state_changed);
+            pthread_mutex_unlock(&head->object->lock);
         }
         shadowspill_release_task_fence_locked(runtime, head->fence);
         shadowspill_object_release(head->object);
@@ -609,7 +631,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         object->device_version = object->authoritative_version;
         object->host_current = 0U;
     }
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->handoff_task_id != task_id) {
@@ -636,12 +658,12 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             break;
         }
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
     uint64_t task_retirement_count = 0U;
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
@@ -651,7 +673,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             ++task_retirement_count;
         }
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     if (action_count == 0U && task_retirement_count == 0U) {
         goto done;
     }
@@ -731,6 +753,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         if (tail == NULL) {
             head = created;
         } else {
+            created->previous = tail;
             tail->next = created;
         }
         tail = created;
@@ -749,7 +772,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         );
         goto done;
     }
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
@@ -761,18 +784,31 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         allocation->retirement_fence = fence;
         shadowspill_retain_task_fence(fence);
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     if (head != NULL) {
+        for (ShadowSpillQueuedAction *queued = head; queued != NULL;
+             queued = queued->next) {
+            ShadowSpillTransferLane *lane =
+                shadowspill_transfer_lane_for_action(runtime, queued);
+            if (lane != NULL) {
+                shadowspill_transfer_lane_enqueue(lane, queued);
+            }
+            if (queued == tail) {
+                break;
+            }
+        }
         pthread_mutex_lock(&runtime->actions.lock);
         if (runtime->actions.tail == NULL) {
             runtime->actions.head = head;
         } else {
+            head->previous = runtime->actions.tail;
             runtime->actions.tail->next = head;
         }
         runtime->actions.tail = tail;
         (void)atomic_fetch_add_explicit(
             &runtime->actions.count, action_count, memory_order_release
         );
+        pthread_mutex_unlock(&runtime->actions.lock);
         for (ShadowSpillQueuedAction *queued = head; queued != NULL;
              queued = queued->next) {
             if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
@@ -783,13 +819,17 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
                     memory_order_release
                 );
             }
+            pthread_mutex_lock(&queued->object->lock);
+            const uint64_t allocation_id = queued->object->allocation_id;
+            const uint64_t size_bytes = queued->object->size_bytes;
+            pthread_mutex_unlock(&queued->object->lock);
             shadowspill_append_trace_event_locked(
                 runtime,
                 SHADOWSPILL_TRACE_ACTION_QUEUED,
                 task_id,
                 queued->object->object_id,
-                queued->object->allocation_id,
-                queued->object->size_bytes,
+                allocation_id,
+                size_bytes,
                 queued->kind,
                 atomic_load_explicit(
                     &runtime->actions.count, memory_order_acquire
@@ -799,7 +839,6 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
                 break;
             }
         }
-        pthread_mutex_unlock(&runtime->actions.lock);
     }
     pthread_cond_broadcast(&runtime->condition);
 

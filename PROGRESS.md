@@ -1721,3 +1721,32 @@ the ignored internal progress log before this tracked summary is updated.
   atomic. Focused forward, recurrent training, overlap, transition, and failure
   gates pass. Worker transfer submission still holds the action/object locks
   and is the next snapshot/commit conversion.
+
+## 2026-08-12 — Generic memory pools and independent transfer lanes
+
+- Introduced one neutral `ShadowSpillMemoryPool` abstraction and instantiated
+  it twice as `device_pool` and `host_pool`. Both own a bounded backing base,
+  coalescing range geometry, alignment, accounting, mutex, and capacity
+  condition, and both use the same reserve/release interface. PyTorch logical
+  allocation records and stream retirement remain device-side clients rather
+  than contaminating the generic pool contract.
+- Split H2D and D2H queue membership into two `ShadowSpillTransferLane`
+  instances with independent pending and in-flight FIFO ownership. Backend
+  wait/copy/event submission now happens after releasing action, lane, object,
+  and memory-pool locks, followed by a generation-checked object commit.
+- A first implementation incorrectly limited each transfer lane to one
+  submitted copy. The transition canary caught this: a second transfer failed
+  to obtain its readiness event early enough for nonblocking dispatcher
+  run-ahead. The corrected lane admits every FIFO-ready copy onto the CUDA
+  stream; CUDA stream order serializes on-wire work while each object receives
+  its own event immediately.
+- Claimed action records initially remained marked `processing` after a
+  successful dispatch, preventing the worker from revisiting their completion.
+  The action state now distinguishes a temporary worker claim from durable
+  in-flight transfer membership, and every nonterminal progress result releases
+  the claim.
+- Named the pure-C progress pthread `shadowspill.wkr`. It never enters Python
+  or acquires the GIL; NSYS can now distinguish it from the PyTorch dispatcher.
+- All 17 warnings-as-errors C/CUDA canaries, the complete Python suite, Ruff,
+  and strict mypy pass. The Qwen performance/NSYS gate remains pending until
+  the remaining allocation-record and batched-storage-boundary work lands.

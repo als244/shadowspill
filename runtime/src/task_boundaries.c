@@ -63,7 +63,7 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
     uint64_t *failure_allocation_id
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->handoff_task_id != record->task_id) {
@@ -78,7 +78,7 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_failure_locked(
             runtime,
@@ -96,7 +96,7 @@ static uint64_t count_task_retirements_locked(
     uint64_t task_id
 ) {
     uint64_t count = 0U;
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
@@ -106,7 +106,7 @@ static uint64_t count_task_retirements_locked(
             ++count;
         }
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     return count;
 }
 
@@ -215,6 +215,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         if (batch->tail == NULL) {
             batch->head = queued;
         } else {
+            queued->previous = batch->tail;
             batch->tail->next = queued;
         }
         batch->tail = queued;
@@ -227,7 +228,7 @@ static void attach_task_retirements_locked(
     uint64_t task_id,
     ShadowSpillTaskFence *fence
 ) {
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
     for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
@@ -239,7 +240,7 @@ static void attach_task_retirements_locked(
         allocation->retirement_fence = fence;
         shadowspill_retain_task_fence(fence);
     }
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
 }
 
 static void publish_action_batch_locked(
@@ -250,16 +251,30 @@ static void publish_action_batch_locked(
     if (batch->head == NULL) {
         return;
     }
+    for (ShadowSpillQueuedAction *queued = batch->head; queued != NULL;
+         queued = queued->next) {
+        ShadowSpillTransferLane *lane = shadowspill_transfer_lane_for_action(
+            runtime, queued
+        );
+        if (lane != NULL) {
+            shadowspill_transfer_lane_enqueue(lane, queued);
+        }
+        if (queued == batch->tail) {
+            break;
+        }
+    }
     pthread_mutex_lock(&runtime->actions.lock);
     if (runtime->actions.tail == NULL) {
         runtime->actions.head = batch->head;
     } else {
+        batch->head->previous = runtime->actions.tail;
         runtime->actions.tail->next = batch->head;
     }
     runtime->actions.tail = batch->tail;
     (void)atomic_fetch_add_explicit(
         &runtime->actions.count, record->action_count, memory_order_release
     );
+    pthread_mutex_unlock(&runtime->actions.lock);
     for (ShadowSpillQueuedAction *queued = batch->head; queued != NULL;
          queued = queued->next) {
         if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
@@ -288,7 +303,6 @@ static void publish_action_batch_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&runtime->actions.lock);
     *batch = (ShadowSpillActionBatch){0};
 }
 

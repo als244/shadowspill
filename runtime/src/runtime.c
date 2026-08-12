@@ -72,12 +72,12 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             );
         }
         if (action->destination_reserved) {
-            ShadowSpillRangeAllocator *ranges =
+            ShadowSpillMemoryPool *pool =
                 action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-                ? &runtime->device_ranges
-                : &runtime->host_ranges;
-            (void)shadowspill_range_free(
-                ranges,
+                ? &runtime->device_pool
+                : &runtime->host_pool;
+            (void)shadowspill_memory_pool_release_locked(
+                pool,
                 action->destination_offset,
                 action->destination_bytes
             );
@@ -116,8 +116,6 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     runtime->trace_events = NULL;
     runtime->trace_event_count = 0U;
     runtime->trace_event_capacity = 0U;
-    shadowspill_range_destroy(&runtime->device_ranges);
-    shadowspill_range_destroy(&runtime->host_ranges);
     if (runtime->h2d_stream_created) {
         (void)runtime->backend.destroy_stream(
             runtime->backend.context, runtime->h2d_stream
@@ -130,17 +128,19 @@ static void release_resources(ShadowSpillRuntime *runtime) {
         );
         runtime->d2h_stream_created = 0;
     }
-    if (runtime->device_slab != NULL) {
+    void *device_base = runtime->device_pool.base;
+    void *host_base = runtime->host_pool.base;
+    shadowspill_memory_pool_destroy(&runtime->device_pool);
+    shadowspill_memory_pool_destroy(&runtime->host_pool);
+    if (device_base != NULL) {
         (void)runtime->backend.free_device(
-            runtime->backend.context, runtime->device_slab
+            runtime->backend.context, device_base
         );
-        runtime->device_slab = NULL;
     }
-    if (runtime->host_arena != NULL) {
+    if (host_base != NULL) {
         (void)runtime->backend.free_host(
-            runtime->backend.context, runtime->host_arena
+            runtime->backend.context, host_base
         );
-        runtime->host_arena = NULL;
     }
 }
 
@@ -161,7 +161,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     }
     runtime->backend = config->backend;
     runtime->progress_poll_nanoseconds = config->progress_poll_nanoseconds;
-    runtime->minimum_alignment = config->minimum_alignment;
     runtime->next_allocation_id = 1U;
     runtime->next_generation = 1U;
     atomic_init(&runtime->next_event_generation, 1U);
@@ -239,30 +238,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
-    if (pthread_mutex_init(&runtime->allocation_pool.lock, NULL) != 0) {
-        pthread_mutex_destroy(&runtime->failure_lock);
-        pthread_mutex_destroy(&runtime->actions.lock);
-        runtime->actions.lock_initialized = 0U;
-        release_resources(runtime);
-        free(runtime);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
-    if (pthread_cond_init(
-            &runtime->allocation_pool.capacity_changed, NULL
-        ) != 0) {
-        pthread_mutex_destroy(&runtime->allocation_pool.lock);
-        pthread_mutex_destroy(&runtime->failure_lock);
-        pthread_mutex_destroy(&runtime->actions.lock);
-        runtime->actions.lock_initialized = 0U;
-        release_resources(runtime);
-        free(runtime);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
-    runtime->allocation_pool_initialized = 1U;
     if (pthread_mutex_init(&runtime->mutex, NULL) != 0) {
-        pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
-        pthread_mutex_destroy(&runtime->allocation_pool.lock);
-        runtime->allocation_pool_initialized = 0U;
         pthread_mutex_destroy(&runtime->failure_lock);
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
@@ -272,9 +248,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     }
     if (pthread_cond_init(&runtime->condition, NULL) != 0) {
         pthread_mutex_destroy(&runtime->mutex);
-        pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
-        pthread_mutex_destroy(&runtime->allocation_pool.lock);
-        runtime->allocation_pool_initialized = 0U;
         pthread_mutex_destroy(&runtime->failure_lock);
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
@@ -283,23 +256,67 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    if (shadowspill_transfer_lane_initialize(&runtime->h2d_lane) != 0) {
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto fail;
+    }
+    if (shadowspill_transfer_lane_initialize(&runtime->d2h_lane) != 0) {
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto fail;
+    }
+    void *device_base = NULL;
+    void *host_base = NULL;
     if (runtime->backend.allocate_device(
             runtime->backend.context,
             config->device_slab_bytes,
-            &runtime->device_slab
-        ) != 0 ||
-        (config->host_arena_bytes != 0U && runtime->backend.allocate_host(
-             runtime->backend.context,
-             config->host_arena_bytes,
-             &runtime->host_arena
-         ) != 0)) {
+            &device_base
+        ) != 0) {
         goto fail;
     }
-    if (shadowspill_range_initialize(
-            &runtime->device_ranges, config->device_slab_bytes
-        ) != 0 || shadowspill_range_initialize(
-            &runtime->host_ranges, config->host_arena_bytes
+    if (config->host_arena_bytes != 0U && runtime->backend.allocate_host(
+            runtime->backend.context,
+            config->host_arena_bytes,
+            &host_base
         ) != 0) {
+        (void)runtime->backend.free_device(
+            runtime->backend.context, device_base
+        );
+        goto fail;
+    }
+    if (shadowspill_memory_pool_initialize(
+            &runtime->device_pool,
+            SHADOWSPILL_MEMORY_DEVICE,
+            device_base,
+            config->device_slab_bytes,
+            config->minimum_alignment
+        ) != 0) {
+        (void)runtime->backend.free_device(
+            runtime->backend.context, device_base
+        );
+        if (host_base != NULL) {
+            (void)runtime->backend.free_host(
+                runtime->backend.context, host_base
+            );
+        }
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto fail;
+    }
+    if (shadowspill_memory_pool_initialize(
+            &runtime->host_pool,
+            SHADOWSPILL_MEMORY_PINNED_HOST,
+            host_base,
+            config->host_arena_bytes,
+            1U
+        ) != 0) {
+        shadowspill_memory_pool_destroy(&runtime->device_pool);
+        (void)runtime->backend.free_device(
+            runtime->backend.context, device_base
+        );
+        if (host_base != NULL) {
+            (void)runtime->backend.free_host(
+                runtime->backend.context, host_base
+            );
+        }
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
@@ -334,10 +351,9 @@ fail:
     release_resources(runtime);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
-    pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
-    pthread_mutex_destroy(&runtime->allocation_pool.lock);
-    runtime->allocation_pool_initialized = 0U;
     pthread_mutex_destroy(&runtime->failure_lock);
+    shadowspill_transfer_lane_destroy(&runtime->d2h_lane);
+    shadowspill_transfer_lane_destroy(&runtime->h2d_lane);
     pthread_mutex_destroy(&runtime->actions.lock);
     runtime->actions.lock_initialized = 0U;
     free(runtime);
@@ -377,7 +393,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
     }
     pthread_mutex_lock(&runtime->mutex);
     status = shadowspill_current_status_locked(runtime);
-    uint64_t current_bytes = runtime->host_ranges.capacity;
+    uint64_t current_bytes = runtime->host_pool.ranges.capacity;
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
@@ -405,27 +421,27 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
         goto done;
     }
     if (current_bytes != 0U) {
-        memcpy(replacement, runtime->host_arena, (size_t)current_bytes);
+        memcpy(replacement, runtime->host_pool.base, (size_t)current_bytes);
     }
     ShadowSpillRangeAllocator ranges = {0};
     if (shadowspill_range_clone_extended(
-            &runtime->host_ranges, host_arena_bytes, &ranges
+            &runtime->host_pool.ranges, host_arena_bytes, &ranges
         ) != 0) {
         (void)runtime->backend.free_host(runtime->backend.context, replacement);
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    if (runtime->host_arena != NULL && runtime->backend.free_host(
-            runtime->backend.context, runtime->host_arena
+    if (runtime->host_pool.base != NULL && runtime->backend.free_host(
+            runtime->backend.context, runtime->host_pool.base
         ) != 0) {
         shadowspill_range_destroy(&ranges);
         (void)runtime->backend.free_host(runtime->backend.context, replacement);
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         goto done;
     }
-    runtime->host_arena = replacement;
-    shadowspill_range_destroy(&runtime->host_ranges);
-    runtime->host_ranges = ranges;
+    runtime->host_pool.base = replacement;
+    shadowspill_range_destroy(&runtime->host_pool.ranges);
+    runtime->host_pool.ranges = ranges;
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
@@ -496,10 +512,9 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     (void)shadowspill_runtime_close_legacy(runtime);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
-    pthread_cond_destroy(&runtime->allocation_pool.capacity_changed);
-    pthread_mutex_destroy(&runtime->allocation_pool.lock);
-    runtime->allocation_pool_initialized = 0U;
     pthread_mutex_destroy(&runtime->failure_lock);
+    shadowspill_transfer_lane_destroy(&runtime->d2h_lane);
+    shadowspill_transfer_lane_destroy(&runtime->h2d_lane);
     pthread_mutex_destroy(&runtime->actions.lock);
     runtime->actions.lock_initialized = 0U;
     free(runtime);
@@ -513,23 +528,29 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    pthread_mutex_lock(&runtime->device_pool.lock);
+    pthread_mutex_lock(&runtime->host_pool.lock);
     *statistics = (ShadowSpillRuntimeStatistics){
-        .slab_bytes = runtime->device_ranges.capacity,
+        .slab_bytes = runtime->device_pool.ranges.capacity,
         .requested_allocated_bytes = runtime->requested_allocated_bytes,
         .peak_requested_allocated_bytes =
             runtime->peak_requested_allocated_bytes,
-        .allocated_bytes = runtime->device_ranges.allocated,
-        .free_bytes = shadowspill_range_free_bytes(&runtime->device_ranges),
+        .allocated_bytes = runtime->device_pool.ranges.allocated,
+        .free_bytes =
+            shadowspill_memory_pool_free_bytes_locked(&runtime->device_pool),
         .largest_free_range_bytes =
-            shadowspill_range_largest_free(&runtime->device_ranges),
+            shadowspill_memory_pool_largest_free_locked(
+                &runtime->device_pool
+            ),
         .external_fragmentation_bytes =
-            shadowspill_range_free_bytes(&runtime->device_ranges) -
-            shadowspill_range_largest_free(&runtime->device_ranges),
-        .peak_allocated_bytes = runtime->device_ranges.peak_allocated,
-        .host_arena_bytes = runtime->host_ranges.capacity,
-        .host_allocated_bytes = runtime->host_ranges.allocated,
-        .host_peak_allocated_bytes = runtime->host_ranges.peak_allocated,
+            shadowspill_memory_pool_free_bytes_locked(&runtime->device_pool) -
+            shadowspill_memory_pool_largest_free_locked(
+                &runtime->device_pool
+            ),
+        .peak_allocated_bytes = runtime->device_pool.ranges.peak_allocated,
+        .host_arena_bytes = runtime->host_pool.ranges.capacity,
+        .host_allocated_bytes = runtime->host_pool.ranges.allocated,
+        .host_peak_allocated_bytes = runtime->host_pool.ranges.peak_allocated,
         .live_allocations = runtime->live_allocations,
         .blocked_allocators = runtime->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
@@ -559,7 +580,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .allocation_event_overflow =
             (uint64_t)runtime->allocation_event_overflow,
     };
-    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+    pthread_mutex_unlock(&runtime->host_pool.lock);
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;
 }

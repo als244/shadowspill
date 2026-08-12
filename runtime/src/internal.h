@@ -68,15 +68,32 @@ typedef struct ShadowSpillCompletionTracker {
     uint64_t pending;
 } ShadowSpillCompletionTracker;
 
+typedef enum ShadowSpillMemoryKind {
+    SHADOWSPILL_MEMORY_DEVICE = 0,
+    SHADOWSPILL_MEMORY_PINNED_HOST = 1,
+} ShadowSpillMemoryKind;
+
+typedef enum ShadowSpillMemoryPlacement {
+    SHADOWSPILL_MEMORY_FIRST_FIT = 0,
+    SHADOWSPILL_MEMORY_BEST_FIT_LOW = 1,
+    SHADOWSPILL_MEMORY_BEST_FIT_HIGH = 2,
+} ShadowSpillMemoryPlacement;
+
 /*
- * Owns slab-allocation membership, geometry, retirement, and capacity waits.
- * The records remain embedded in ShadowSpillRuntime during the staged
- * migration, but no allocator callback may use the legacy state mutex.
+ * Owns one bounded physical arena and its suballocation geometry. Device and
+ * pinned-host memory are two configured instances of this same abstraction.
+ * Allocation records, stream retirement, and object residency deliberately
+ * remain clients of the pool rather than being embedded in it.
  */
-typedef struct ShadowSpillAllocationPool {
+typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
     pthread_cond_t capacity_changed;
-} ShadowSpillAllocationPool;
+    ShadowSpillRangeAllocator ranges;
+    void *base;
+    uint64_t minimum_alignment;
+    ShadowSpillMemoryKind kind;
+    uint8_t initialized;
+} ShadowSpillMemoryPool;
 
 typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
 
@@ -170,7 +187,12 @@ typedef struct ShadowSpillQueuedAction {
     ShadowSpillTaskFence *fence;
     ShadowSpillEventLease *completion_event;
     uint8_t has_completion_event;
+    uint8_t processing;
+    struct ShadowSpillQueuedAction *previous;
     struct ShadowSpillQueuedAction *next;
+    struct ShadowSpillQueuedAction *lane_previous;
+    struct ShadowSpillQueuedAction *lane_next;
+    uint8_t lane_state;
 } ShadowSpillQueuedAction;
 
 typedef struct ShadowSpillActionQueue {
@@ -180,6 +202,15 @@ typedef struct ShadowSpillActionQueue {
     _Atomic uint64_t count;
     uint8_t lock_initialized;
 } ShadowSpillActionQueue;
+
+typedef struct ShadowSpillTransferLane {
+    pthread_mutex_t lock;
+    ShadowSpillQueuedAction *pending_head;
+    ShadowSpillQueuedAction *pending_tail;
+    ShadowSpillQueuedAction *inflight_head;
+    ShadowSpillQueuedAction *inflight_tail;
+    uint8_t lock_initialized;
+} ShadowSpillTransferLane;
 
 typedef struct ShadowSpillExecutionUpdate {
     ShadowSpillObjectRecord *object;
@@ -225,22 +256,17 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t worker_stop;
     _Atomic uint32_t failure_status;
     uint64_t progress_poll_nanoseconds;
-    uint64_t minimum_alignment;
 
     ShadowSpillBackend backend;
-    void *device_slab;
-    void *host_arena;
     ShadowSpillBackendStream h2d_stream;
     ShadowSpillBackendStream d2h_stream;
     int h2d_stream_created;
     int d2h_stream_created;
 
-    ShadowSpillRangeAllocator device_ranges;
-    ShadowSpillAllocationPool allocation_pool;
-    uint8_t allocation_pool_initialized;
+    ShadowSpillMemoryPool device_pool;
     _Atomic uint64_t device_free_bytes_snapshot;
     _Atomic uint64_t device_largest_free_snapshot;
-    ShadowSpillRangeAllocator host_ranges;
+    ShadowSpillMemoryPool host_pool;
     ShadowSpillAllocationRecord *allocations;
     ShadowSpillAllocationRecord *active_allocations;
     ShadowSpillAllocationRecord **allocations_by_id;
@@ -253,6 +279,8 @@ struct ShadowSpillRuntime {
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
     ShadowSpillActionQueue actions;
+    ShadowSpillTransferLane h2d_lane;
+    ShadowSpillTransferLane d2h_lane;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -328,6 +356,37 @@ uint64_t shadowspill_range_free_bytes(
 );
 uint64_t shadowspill_range_largest_free(
     const ShadowSpillRangeAllocator *allocator
+);
+
+int shadowspill_memory_pool_initialize(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryKind kind,
+    void *base,
+    uint64_t capacity,
+    uint64_t minimum_alignment
+);
+void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool);
+int shadowspill_memory_pool_reserve_locked(
+    ShadowSpillMemoryPool *pool,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillMemoryPlacement placement,
+    uint64_t *offset
+);
+int shadowspill_memory_pool_release_locked(
+    ShadowSpillMemoryPool *pool,
+    uint64_t offset,
+    uint64_t bytes
+);
+uint64_t shadowspill_memory_pool_free_bytes_locked(
+    const ShadowSpillMemoryPool *pool
+);
+uint64_t shadowspill_memory_pool_largest_free_locked(
+    const ShadowSpillMemoryPool *pool
+);
+void *shadowspill_memory_pool_pointer(
+    const ShadowSpillMemoryPool *pool,
+    uint64_t offset
 );
 
 ShadowSpillAllocationRecord *shadowspill_find_allocation(
@@ -436,6 +495,28 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
     ShadowSpillBackendStream compute_stream
+);
+int shadowspill_transfer_lane_initialize(ShadowSpillTransferLane *lane);
+void shadowspill_transfer_lane_destroy(ShadowSpillTransferLane *lane);
+ShadowSpillTransferLane *shadowspill_transfer_lane_for_action(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillQueuedAction *action
+);
+void shadowspill_transfer_lane_enqueue(
+    ShadowSpillTransferLane *lane,
+    ShadowSpillQueuedAction *action
+);
+int shadowspill_transfer_lane_claim(
+    ShadowSpillTransferLane *lane,
+    ShadowSpillQueuedAction *action
+);
+void shadowspill_transfer_lane_publish_inflight(
+    ShadowSpillTransferLane *lane,
+    ShadowSpillQueuedAction *action
+);
+int shadowspill_transfer_lane_complete(
+    ShadowSpillTransferLane *lane,
+    ShadowSpillQueuedAction *action
 );
 void *shadowspill_progress_main(void *pointer);
 

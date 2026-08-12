@@ -109,6 +109,7 @@ add_library(
   runtime/src/execution_table.c
   runtime/src/failure_state.c
   runtime/src/lifecycle.c
+  runtime/src/memory_pool.c
   runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/progress.c
@@ -118,6 +119,7 @@ add_library(
   runtime/src/task_boundaries.c
   runtime/src/telemetry.c
   runtime/src/trace.c
+  runtime/src/transfer_lane.c
 )
 target_include_directories(
   shadowspill_runtime

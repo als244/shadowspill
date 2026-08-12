@@ -607,28 +607,36 @@ The normal lookup protocol is `table read lock -> increment object reference
 drops the table's reference; destruction occurs only when the final queued
 action/task reference is released.
 
-### `ShadowSpillAllocationPool`
+### `ShadowSpillMemoryPool`
 
-This structure owns slab ranges, allocation-ID and pointer hashes, allocation
-leases, stream-use retirement, physical accounting, and the condition on which
-a genuinely capacity-blocked allocator waits.
+Device and pinned-host memory are two configured instances of one generic
+bounded-pool abstraction. A memory pool owns its backing base, range geometry,
+alignment policy, physical accounting, and the condition on which a genuinely
+capacity-blocked client waits. It does not own framework allocation records,
+object residency, transfers, or stream retirement.
 
 ```c
-typedef struct ShadowSpillAllocationPool {
+typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
     pthread_cond_t capacity_changed;
     ShadowSpillRangeAllocator ranges;
-    ShadowSpillAllocation **by_id;
-    ShadowSpillAllocation **by_pointer;
-    ShadowSpillRetirementQueue retirements;
-    ShadowSpillAllocationStatistics statistics;
-} ShadowSpillAllocationPool;
+    void *base;
+    uint64_t minimum_alignment;
+    ShadowSpillMemoryKind kind;
+} ShadowSpillMemoryPool;
 ```
 
-`malloc` and logical `free` touch this lock, not transfer queues or unrelated
-object state. No CUDA query, event creation, copy dispatch, or stream wait is
-performed while it is held. Offload/release detaches an allocation lease from
-its object first and returns the range to this pool in a separate commit.
+The runtime instantiates exactly `device_pool` and `host_pool`. Both use the
+same reserve/release/coalescing interface; only their backing allocator,
+minimum alignment, and placement policy differ. `malloc` and logical `free`
+use the device pool through the allocation-record owner. Offload/prefetch use
+both pools without changing the range algorithm. No CUDA query, event creation,
+copy dispatch, or stream wait is performed while either pool lock is held.
+
+Allocation-ID and pointer hashes, PyTorch logical allocation leases, stream-use
+retirement, and requested-byte accounting remain a separate allocation-record
+owner because those concepts apply to framework-visible device allocations,
+not to every pinned-host subrange.
 
 ### `ShadowSpillExecutionTable`
 
@@ -704,7 +712,9 @@ central lock:
 ```c
 typedef struct ShadowSpillRuntime {
     ShadowSpillObjectTable objects;
-    ShadowSpillAllocationPool allocations;
+    ShadowSpillMemoryPool device_pool;
+    ShadowSpillMemoryPool host_pool;
+    ShadowSpillAllocationTable allocations;
     ShadowSpillExecutionTable execution;
     ShadowSpillTransferLane h2d;
     ShadowSpillTransferLane d2h;
@@ -717,7 +727,7 @@ typedef struct ShadowSpillRuntime {
 ```
 
 This makes ownership auditable: object residency belongs to an object;
-physical ranges and capacity belong to the allocation pool; queue order
+physical ranges and capacity belong to the two memory pools; queue order
 belongs to a transfer lane; completion order belongs to the tracker; immutable
 task topology belongs to the execution table. A mutex is attached to the
 owner whose invariant it protects rather than to the runtime as a whole.
@@ -726,7 +736,8 @@ owner whose invariant it protects rather than to the runtime as a whole.
 |---|---|---|---|
 | object table | read/write membership lock | ID-to-object membership and table-owned references | CUDA calls, residency transitions, slab allocation |
 | individual object | object mutex | residency, generations, versions, current leases and transfer | hash scans, unrelated objects, CUDA calls |
-| allocation pool | mutex + capacity condition | slab ranges, allocation indices, retirement admission, byte accounting | object-table scans, event queries, copies |
+| device or host memory pool | one mutex + capacity condition per instance | bounded backing, free ranges, placement, physical byte accounting | object-table scans, event queries, copies, stream retirement |
+| allocation table | mutex | framework allocation hashes, leases, logical free, stream retirement, requested bytes | host subranges, object-table scans, copies |
 | H2D or D2H lane | one mutex per lane | pending/in-flight FIFO links and lane-local counters | allocator waits, object-table scans, CUDA completion waits |
 | completion stream | short queue lock | ordered event frontier and retained completion records | `cuEventQuery` itself |
 | event pool | short mutex | free/in-use event leases | event synchronization or action processing |
@@ -737,7 +748,7 @@ The main hot paths then have narrow behavior:
 
 ```text
 malloc:
-    allocation-pool lock -> lease/reuse range -> unlock
+    allocation-table lock -> device-pool reserve/reuse -> unlock
 
 before_task:
     immutable task record -> each object lock -> snapshot lease/event -> unlock
@@ -745,10 +756,10 @@ before_task:
 
 progress:
     completion-frontier lock -> retain head -> unlock
-    -> cuEventQuery -> object transition -> optional allocation-pool release
+    -> cuEventQuery -> object transition -> optional memory-pool release
 
 free:
-    allocation-pool lock -> mark logical free / enqueue retirement -> unlock
+    allocation-table lock -> mark logical free / enqueue retirement -> unlock
     -> signal progress worker
 ```
 
