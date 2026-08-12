@@ -76,20 +76,24 @@ class _TrainingGraphPairCache:
 
     def __init__(self) -> None:
         self._pairs: dict[
-            tuple[str, tuple[int, ...]], tuple[AotGraphPair, AotGraphPair]
+            tuple[str, tuple[int, ...], bool], tuple[AotGraphPair, AotGraphPair]
         ] = {}
         self.hits = 0
         self.misses = 0
 
     def resolve(
-        self, example: StageExample, roots: tuple[int, ...]
+        self,
+        example: StageExample,
+        roots: tuple[int, ...],
+        *,
+        specialize_unit_tangents: bool,
     ) -> tuple[AotGraphPair, AotGraphPair]:
         stage_abi = GraphArtifact.capture(
             kind="inference",
             graph_module=example.graph_module,
             example_inputs=example.inputs,
         )
-        key = (stage_abi.compatibility_digest, roots)
+        key = (stage_abi.compatibility_digest, roots, specialize_unit_tangents)
         existing = self._pairs.get(key)
         if existing is None:
             existing = (
@@ -99,6 +103,7 @@ class _TrainingGraphPairCache:
                     original_output=example.output,
                     recomputation=False,
                     root_output_positions=roots,
+                    specialize_unit_tangents=specialize_unit_tangents,
                 ),
                 capture_graph_pair(
                     example.graph_module,
@@ -106,6 +111,7 @@ class _TrainingGraphPairCache:
                     original_output=example.output,
                     recomputation=True,
                     root_output_positions=roots,
+                    specialize_unit_tangents=specialize_unit_tangents,
                 ),
             )
             self._pairs[key] = existing
@@ -189,7 +195,11 @@ def capture_training_stages(
         roots = (0,) if index == len(partitioned.stages) - 1 else differentiable
         if any(position not in differentiable for position in roots):
             raise CaptureError("terminal objective loss is not differentiable")
-        save_pair, recompute_pair = cache.resolve(example, roots)
+        save_pair, recompute_pair = cache.resolve(
+            example,
+            roots,
+            specialize_unit_tangents=index == len(partitioned.stages) - 1,
+        )
         stages.append(
             TrainingStage(
                 example=example,
@@ -256,8 +266,11 @@ def _rebind_graph_pair(
         if pair.saved_value_count
         else ()
     )
+    explicit_root_count = len(roots) - pair.specialized_unit_tangent_count
+    if explicit_root_count < 0:
+        raise CaptureError("specialized tangent count exceeds stage roots")
     tangents: list[torch.Tensor] = []
-    for position in roots:
+    for position in roots[:explicit_root_count]:
         try:
             value = forward_values[position]
         except IndexError as exc:
@@ -277,6 +290,7 @@ def _rebind_graph_pair(
         backward=backward,
         recomputation=pair.recomputation,
         saved_value_count=pair.saved_value_count,
+        specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
     )
 
 

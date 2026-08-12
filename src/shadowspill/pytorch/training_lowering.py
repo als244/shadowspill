@@ -262,10 +262,14 @@ def lower_partitioned_training_program(
             tangent_values = save_pair.backward.example_arguments[
                 save_pair.saved_value_count :
             ]
-            if len(tangent_values) != len(stage.differentiable_output_indices):
+            explicit_indices = stage.differentiable_output_indices[
+                : len(stage.differentiable_output_indices)
+                - save_pair.specialized_unit_tangent_count
+            ]
+            if len(tangent_values) != len(explicit_indices):
                 raise CaptureError("stage tangent ABI differs from selected roots")
             for output_index, tangent in zip(
-                stage.differentiable_output_indices,
+                explicit_indices,
                 tangent_values,
                 strict=True,
             ):
@@ -698,7 +702,8 @@ def lower_training_program(
                 forward_output_slots,
                 capture,
             )
-            fixed_tensors.setdefault(fixed.object_id, fixed)
+            if fixed is not None:
+                fixed_tensors.setdefault(fixed.object_id, fixed)
             gradient_slots = _gradient_outputs(
                 pair,
                 values.backward_outputs,
@@ -1103,7 +1108,8 @@ def _execute_pair_examples(pair: AotGraphPair) -> _PairValues:
     loss = forward_values[0]
     if not isinstance(loss, torch.Tensor):
         raise CaptureError("captured objective loss is not a tensor")
-    backward_raw = pair.backward.graph_module(*residuals, torch.ones_like(loss))
+    explicit_tangents = pair.backward.example_arguments[pair.saved_value_count :]
+    backward_raw = pair.backward.graph_module(*residuals, *explicit_tangents)
     backward_values, _ = tree_flatten(backward_raw)
     return _PairValues(tuple(forward_values), tuple(backward_values))
 
@@ -1170,11 +1176,15 @@ def _stage_backward_inputs(
         for index, slot in enumerate(forward_outputs[public_count:])
     )
     tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
-    if len(tangent_values) != len(stage.differentiable_output_indices):
+    explicit_indices = stage.differentiable_output_indices[
+        : len(stage.differentiable_output_indices)
+        - pair.specialized_unit_tangent_count
+    ]
+    if len(tangent_values) != len(explicit_indices):
         raise CaptureError("stage backward tangent arity changed")
     tangents: list[TensorSlot] = []
     for ordinal, (output_index, value) in enumerate(
-        zip(stage.differentiable_output_indices, tangent_values, strict=True)
+        zip(explicit_indices, tangent_values, strict=True)
     ):
         if not isinstance(value, torch.Tensor):
             raise CaptureError("stage backward tangent became non-tensor")
@@ -1310,12 +1320,16 @@ def _backward_inputs(
     inventory: _TensorInventory,
     forward_slots: tuple[TensorSlot, ...],
     capture: TrainingCapture,
-) -> tuple[tuple[TensorSlot, ...], FixedTensorBinding]:
+) -> tuple[tuple[TensorSlot, ...], FixedTensorBinding | None]:
     public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
     residual_slots = tuple(
         TensorSlot(index, slot.object_id)
         for index, slot in enumerate(forward_slots[public_count:])
     )
+    if pair.specialized_unit_tangent_count:
+        if pair.specialized_unit_tangent_count != 1:
+            raise CaptureError("objective graph has multiple specialized tangents")
+        return residual_slots, None
     tangent = pair.backward.example_arguments[-1]
     if not isinstance(tangent, torch.Tensor):
         raise CaptureError("AOT backward tangent is not a tensor")

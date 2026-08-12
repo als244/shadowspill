@@ -26,8 +26,10 @@ def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> ObjectiveResult:
     output = model(value)
+    prediction_loss = torch.nn.functional.mse_loss(output, target)
+    auxiliary_loss = 0.125 * output.square().mean()
     return ObjectiveResult(
-        torch.nn.functional.mse_loss(output, target),
+        prediction_loss + auxiliary_loss,
         {"mean": output.mean(), "label": "training"},
     )
 

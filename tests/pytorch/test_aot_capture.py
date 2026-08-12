@@ -50,6 +50,10 @@ def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
     assert capture.recompute_pair.forward.argument_count > 0
     assert capture.recompute_pair.backward.argument_count > 0
     assert capture.save_pair.forward.compatibility_digest
+    for pair in (capture.save_pair, capture.recompute_pair):
+        assert pair.specialized_unit_tangent_count == 1
+        assert pair.backward.argument_count == pair.saved_value_count
+        assert "aten.new_ones.default" in pair.backward.operator_targets
 
 
 def test_objective_export_does_not_construct_a_whole_model_vjp(
@@ -182,6 +186,8 @@ def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
 
     assert capture.save_pair.backward.operator_targets
     assert capture.recompute_pair.backward.operator_targets
+    assert capture.save_pair.specialized_unit_tangent_count == 1
+    assert capture.recompute_pair.specialized_unit_tangent_count == 1
 
 
 def test_objective_schema_reconstructs_metrics_and_rejects_count_change() -> None:

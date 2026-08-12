@@ -69,6 +69,12 @@ def test_each_training_stage_has_save_and_recompute_vjp() -> None:
     assert len(stages) == 4
     assert all(stage.save_pair.backward.operator_targets for stage in stages)
     assert all(stage.recompute_pair.forward.operator_targets for stage in stages)
+    assert all(
+        stage.save_pair.specialized_unit_tangent_count == 0
+        for stage in stages[:-1]
+    )
+    assert stages[-1].save_pair.specialized_unit_tangent_count == 1
+    assert stages[-1].recompute_pair.specialized_unit_tangent_count == 1
     assert (
         stages[1].save_pair.forward.compatibility_digest
         == stages[2].save_pair.forward.compatibility_digest

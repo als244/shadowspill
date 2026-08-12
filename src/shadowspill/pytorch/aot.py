@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -166,6 +167,7 @@ def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPai
         original_output=eager_output,
         recomputation=recomputation,
         root_output_positions=(capture.user_output_indices[0],),
+        specialize_unit_tangents=True,
     )
 
 
@@ -176,6 +178,7 @@ def capture_graph_pair(
     original_output: object,
     recomputation: bool,
     root_output_positions: tuple[int, ...] | None = None,
+    specialize_unit_tangents: bool = False,
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
 
@@ -259,9 +262,71 @@ def capture_graph_pair(
         raise CaptureError("AOTAutograd did not emit a complete graph pair")
     original_output_count = len(tree_flatten(original_output)[0])
     saved = max(0, captured["forward"].output_count - original_output_count)
+    specialized_count = 0
+    backward = captured["backward"]
+    if specialize_unit_tangents:
+        backward, specialized_count = _specialize_terminal_unit_tangents(
+            backward, tuple(roots)
+        )
     return AotGraphPair(
         forward=captured["forward"],
-        backward=captured["backward"],
+        backward=backward,
         recomputation=recomputation,
         saved_value_count=saved,
+        specialized_unit_tangent_count=specialized_count,
+    )
+
+
+def _specialize_terminal_unit_tangents(
+    backward: GraphArtifact, roots: tuple[torch.Tensor, ...]
+) -> tuple[GraphArtifact, int]:
+    """Replace terminal scalar cotangent inputs with device unit constants."""
+
+    count = len(roots)
+    if count == 0 or count > len(backward.example_arguments):
+        raise CaptureError("terminal tangent specialization arity is invalid")
+    tangents = backward.example_arguments[-count:]
+    if any(
+        not isinstance(tangent, torch.Tensor) or tangent.ndim != 0
+        for tangent in tangents
+    ):
+        raise CaptureError("terminal objective cotangent must be a scalar tensor")
+    if any(root.ndim != 0 for root in roots):
+        raise CaptureError("terminal objective root must be a scalar tensor")
+
+    graph_module = copy.deepcopy(backward.graph_module)
+    placeholders = tuple(
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    )
+    if len(placeholders) != len(backward.example_arguments):
+        raise CaptureError("backward placeholder count changed before specialization")
+    anchors = placeholders[:-count]
+    if not anchors:
+        # A device-relative scalar cannot be constructed without either a
+        # tensor anchor or a backend-specific device literal. Preserve the
+        # explicit tangent ABI for this degenerate graph.
+        return backward, 0
+    anchor = anchors[0]
+    for placeholder, tangent in zip(
+        placeholders[-count:], tangents, strict=True
+    ):
+        assert isinstance(tangent, torch.Tensor)
+        with graph_module.graph.inserting_after(placeholder):
+            unit = graph_module.graph.call_function(
+                torch.ops.aten.new_ones.default,
+                args=(anchor, []),
+                kwargs={"dtype": tangent.dtype},
+            )
+        unit.meta = dict(placeholder.meta)
+        placeholder.replace_all_uses_with(unit)
+        graph_module.graph.erase_node(placeholder)
+    graph_module.graph.lint()
+    graph_module.recompile()
+    return (
+        GraphArtifact.capture(
+            kind="backward",
+            graph_module=graph_module,
+            example_inputs=backward.example_arguments[:-count],
+        ),
+        count,
     )

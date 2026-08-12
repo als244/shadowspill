@@ -65,8 +65,14 @@ class ObjectivePairExecutor:
         saved = tuple(forward_leaves[self._public_tensor_count :])
         if any(not isinstance(value, torch.Tensor) for value in saved):
             raise CaptureError("AOT saved values must remain tensors")
-        tangent = torch.ones_like(loss)
-        raw_backward = self.backward(*saved, tangent)
+        backward_arguments: tuple[torch.Tensor, ...]
+        if self.pair.specialized_unit_tangent_count:
+            if self.pair.specialized_unit_tangent_count != 1:
+                raise CaptureError("objective graph has multiple specialized tangents")
+            backward_arguments = saved
+        else:
+            backward_arguments = (*saved, torch.ones_like(loss))
+        raw_backward = self.backward(*backward_arguments)
         gradients, _ = tree_flatten(raw_backward)
         if len(gradients) != self.pair.backward.output_count:
             raise CaptureError("AOT backward output count changed during execution")

@@ -141,6 +141,7 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     assert len(lowered.program.recomputation_groups) == 2
     assert len(lowered.program.tasks) == 8 + len(lowered.optimizer_task_ids)
     assert len(lowered.gradients) == 2
+    assert lowered.fixed_tensors == ()
     assert lowered.program.tasks[-1].phase == "optimizer"
     selections = tuple(
         RecomputationSelection(group.group_id, "save")

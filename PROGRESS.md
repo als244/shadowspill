@@ -1307,3 +1307,31 @@ the ignored internal progress log before this tracked summary is updated.
 - Added `docs/runtime_overheads.md` with the standalone clocks, causal
   timeline, exact task/object evidence, before/after measurements, and
   remaining attribution controls.
+
+## 2026-08-11 — Terminal objective cotangent specialization
+
+- Direct FX inspection proved that task 17's 4-byte FP32 input was the
+  AOTAutograd terminal cotangent `d(loss)/d(loss) = 1`, not model state,
+  activation data, or anonymous workspace. It had been materialized as a
+  host-backed fixed input and placed last in the 6.0418-GB startup H2D queue.
+- Added a structural terminal-only specialization in the PyTorch frontend.
+  When the differentiated root is scalar and capture supplied the known unit
+  cotangent, the backward graph constructs a scalar one from an existing
+  tensor input with `aten.new_ones`; the cotangent is removed from the public
+  backward ABI and Program. No operation, model, or objective name is used.
+  Internal stage cotangents remain ordinary planned activation-gradient
+  objects.
+- Added coverage for native losses, a composite MSE plus weighted auxiliary
+  objective, custom autograd, terminal-versus-internal graph pairs, and the
+  lowered fixed-object inventory. CPU capture uses the same device-relative
+  rule and no CUDA literal.
+- The fresh 30-GiB Qwen plan reduced startup H2D from 395 objects and
+  6,041,784,940 bytes to 394 objects and 6,041,784,936 bytes. The preceding
+  task's compute completion to task 17 compute start fell from 44.922 ms to
+  0.288 ms; task 17 no longer records a readiness dependency.
+- This did not close the overall execution discrepancy. The fresh traced
+  first-to-last compute interval was 439.745 ms, compared with a noisy
+  312.561-ms sum of task CUDA intervals and the 292.141-ms compiled PyTorch
+  authority. The next isolated cause under test is the linear object-table
+  lookup used repeatedly during input acquisition and storage validation;
+  the same trace attributes 73.885 ms to rebinding/validation.

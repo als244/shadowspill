@@ -166,15 +166,49 @@ The complete raw descending interval table is saved by qualification at
 The next-largest raw intervals have no runtime readiness event and are at most
 0.458 ms; they are debug callback overhead/jitter, not object stalls.
 
+## Terminal cotangent correction
+
+The scalar is a terminal differentiation seed, so it does not need to cross
+the public backward ABI. Capture now specializes only a proven terminal scalar
+unit cotangent into the backward graph using a device-relative `aten.new_ones`
+operation. This is objective-agnostic: it applies to any differentiable scalar
+objective, including native cross entropy, fused head losses, diffusion MSE,
+composite primary/auxiliary losses, and custom autograd. Cotangents connecting
+internal stages are not specialized because they contain real activation
+gradients.
+
+The same Qwen control after specialization recorded:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| startup H2D objects | 395 | 394 |
+| startup H2D bytes | 6,041,784,940 | 6,041,784,936 |
+| preceding-task completion to task-17 compute | 44.922 ms | 0.288 ms |
+| task-17 actual readiness dependencies | 1 | 0 |
+
+Exact post-correction boundaries were:
+
+| Boundary | Monotonic timestamp (ns) |
+|---|---:|
+| preceding task `after_task_compute` | 4,399,056,440,412,880 |
+| task 17 `before_readiness_waits` | 4,399,056,440,415,689 |
+| task 17 `before_task_compute` | 4,399,056,440,700,728 |
+
+The 0.285-ms readiness-marker interval contains no runtime readiness event and
+is callback scheduling overhead, not an H2D stall.
+
 ## Residual execution time
 
-The transfer-window correction explains the host-readiness serialization but
-does not yet explain the full standard-to-ShadowSpill difference. The
-corrected trace still contains about 177.3 ms between CUDA task intervals.
-Approximately 103.1 ms is the two explicit startup waits above. The remaining
-time must be separated among task-boundary work, storage lookup/rebinding,
-Python/compiled dispatch, debug callback perturbation, and any allocator work
-inside compiled calls.
+The transfer-window and cotangent corrections explain two independent
+readiness stalls but do not yet explain the full standard-to-ShadowSpill
+difference. The terminal-cotangent trace spans 439.745 ms from the first
+`before_task_compute` to the final `after_task_compute`. Its noisy per-task
+CUDA-event sum is 312.561 ms, leaving roughly 127.2 ms between numerical task
+intervals. The trace attributes 73.885 ms of host time to storage
+rebinding/validation, whose runtime object lookup is currently a linear scan.
+Host categories overlap GPU execution and cannot simply be added to the gap;
+the lookup implementation must be corrected and the identical diagnostic
+repeated before attributing that time.
 
 The next controls preserve identical numerical graphs and separately measure:
 

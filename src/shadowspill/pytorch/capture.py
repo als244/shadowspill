@@ -217,6 +217,7 @@ class AotGraphPair:
     backward: GraphArtifact
     recomputation: bool
     saved_value_count: int
+    specialized_unit_tangent_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
