@@ -1655,3 +1655,23 @@ the ignored internal progress log before this tracked summary is updated.
 - The forward-only public behavior, output pytree, alias semantics, and
   no-autograd execution are unchanged. Forward/training CUDA canaries and the
   full PyTorch unit suite pass.
+
+## 2026-08-12 — Immutable execution topology admitted natively
+
+- Added a framework-neutral execution table keyed by dense task ID. Admission
+  copies input, mutation, and ordered-action topology; resolves each object ID
+  once through the object hash; and retains direct stable object references.
+- Added predecoded `before_execution`/`after_execution` C and PyTorch-adapter
+  entrypoints. Recurrent training plans and forward plans now adopt their task
+  topology once and stop rebuilding ctypes identifier/update/action arrays on
+  every task invocation.
+- Admission revealed that produced objects were previously registered only on
+  first allocation. Plan adoption now creates zero-residency placeholder object
+  records for every referenced alias bundle; ordinary graph output allocation
+  is still promoted into the existing record at production time.
+- Identical duplicate admission is idempotent and a conflicting definition for
+  one task identity is rejected. A native canary covers both cases and the hot
+  admitted boundary. All full validation gates pass.
+- This checkpoint still projects the retained records through the proven legacy
+  transition helpers. The next step removes those residual per-call object
+  hashes and consumes direct references inside the boundary orchestrators.

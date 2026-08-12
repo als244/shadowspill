@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 15U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 16U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -131,6 +131,26 @@ shadowspill_pytorch_seal_physical_budget(
     uint64_t event_pool_reserve
 );
 
+/* Cold-path immutable execution admission and hot predecoded boundaries. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_admit_execution(
+    const ShadowSpillExecutionDescription *description
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_before_execution(
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_after_execution(
+    uint64_t task_id,
+    uintptr_t compute_stream_address
+);
+
 /* Reconciles current process bytes against the sealed or provisional cap. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_check_physical_budget(void);
@@ -208,6 +228,14 @@ shadowspill_pytorch_register_host_object(
     uint64_t size_bytes,
     uint8_t retain_host_backing,
     uint64_t source_address
+);
+
+/* Register a logical object without allocating host or device residency. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_register_placeholder_object(
+    uint64_t object_id,
+    uint64_t size_bytes,
+    uint8_t retain_host_backing
 );
 
 /* Replace one existing HOST_ONLY object's current pinned payload. */

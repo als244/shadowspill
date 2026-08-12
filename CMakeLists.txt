@@ -106,6 +106,7 @@ add_library(
   runtime/src/allocations.c
   runtime/src/completion_tracker.c
   runtime/src/event_pool.c
+  runtime/src/execution_table.c
   runtime/src/failure_state.c
   runtime/src/lifecycle.c
   runtime/src/object_table.c

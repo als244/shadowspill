@@ -58,6 +58,7 @@ static void destroy_objects(ShadowSpillRuntime *runtime) {
             object->has_readiness_event = 0U;
         }
     }
+    shadowspill_execution_table_destroy(&runtime->execution);
     shadowspill_object_table_destroy(&runtime->objects);
 }
 
@@ -187,6 +188,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->allocation_index_bucket_count = 65536U;
     runtime->reusable_index_bucket_count = 8192U;
     const uint64_t object_index_bucket_count = 16384U;
+    const uint64_t execution_index_bucket_count = 4096U;
     runtime->allocations_by_id = calloc(
         (size_t)runtime->allocation_index_bucket_count,
         sizeof(*runtime->allocations_by_id)
@@ -204,12 +206,15 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         runtime->reusable_by_size == NULL ||
         shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
+        ) != 0 || shadowspill_execution_table_initialize(
+            &runtime->execution, execution_index_bucket_count
         ) != 0 || shadowspill_completion_tracker_initialize(
             &runtime->completions
         ) != 0) {
         free(runtime->allocations_by_id);
         free(runtime->allocations_by_pointer);
         free(runtime->reusable_by_size);
+        shadowspill_execution_table_destroy(&runtime->execution);
         shadowspill_object_table_destroy(&runtime->objects);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;

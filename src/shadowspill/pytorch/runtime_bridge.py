@@ -9,11 +9,18 @@ from typing import Any
 
 import torch
 
-from shadowspill.ir import MemoryAction, MemoryActionKind, MutationSpec, Program
+from shadowspill.ir import (
+    MemoryAction,
+    MemoryActionKind,
+    MutationSpec,
+    Program,
+    TaskSpec,
+)
 
 from ._abi import (
     AdapterFailure,
     AdapterStatistics,
+    ExecutionDescription,
     ObjectBinding,
     ObjectSnapshot,
     ObjectUpdate,
@@ -71,6 +78,68 @@ class RuntimeBridge:
         }
         self._registered: set[str] = set()
         self._debug_task_timing_capacity = 0
+        self._admitted_tasks: dict[str, int] = {}
+
+    def admit_execution(
+        self,
+        task: TaskSpec,
+        input_alias_ids: tuple[str, ...],
+        actions: tuple[MemoryAction, ...],
+    ) -> None:
+        """Resolve one immutable task topology in the neutral runtime."""
+
+        referenced_aliases = tuple(
+            dict.fromkeys(
+                (
+                    *input_alias_ids,
+                    *(
+                        self.alias_for_object(item.object_id)
+                        for item in task.mutations
+                    ),
+                    *(item.alias_group_id for item in actions),
+                )
+            )
+        )
+        for alias_id in referenced_aliases:
+            self.register_placeholder(alias_id)
+        identifiers = (ctypes.c_uint64 * len(input_alias_ids))(
+            *(_dense_id(value, "alias_") for value in input_alias_ids)
+        )
+        mutation_values = tuple(task.mutations)
+        updates = (ObjectUpdate * len(mutation_values))(
+            *(
+                ObjectUpdate(
+                    _dense_id(self.alias_for_object(item.object_id), "alias_"),
+                    item.version_delta,
+                )
+                for item in mutation_values
+            )
+        )
+        runtime_actions = (RuntimeAction * len(actions))(
+            *(
+                RuntimeAction(
+                    _dense_id(item.alias_group_id, "alias_"),
+                    _ACTION_KIND[item.kind],
+                )
+                for item in actions
+            )
+        )
+        description = ExecutionDescription(
+            task_id=_dense_id(task.task_id, "task_"),
+            input_object_ids=identifiers if input_alias_ids else None,
+            input_count=len(input_alias_ids),
+            updates=updates if mutation_values else None,
+            update_count=len(mutation_values),
+            actions=runtime_actions if actions else None,
+            action_count=len(actions),
+        )
+        self._require(
+            self.library.shadowspill_pytorch_admit_execution(
+                ctypes.byref(description)
+            ),
+            f"admit execution {task.task_id}",
+        )
+        self._admitted_tasks[task.task_id] = len(input_alias_ids)
 
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""
@@ -196,6 +265,19 @@ class RuntimeBridge:
         )
         self._registered.add(alias_id)
 
+    def register_placeholder(self, alias_id: str) -> None:
+        """Register a logical alias bundle before its first production."""
+
+        if alias_id in self._registered:
+            return
+        self._require(
+            self.library.shadowspill_pytorch_register_placeholder_object(
+                _dense_id(alias_id, "alias_"), self._size(alias_id), 0
+            ),
+            "register placeholder object",
+        )
+        self._registered.add(alias_id)
+
     def write_host_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
         if alias_id not in self._registered:
             raise RuntimeExecutionError(f"object {alias_id!r} is not registered")
@@ -286,10 +368,26 @@ class RuntimeBridge:
         stream: torch.cuda.Stream,
         input_alias_ids: tuple[str, ...],
     ) -> tuple[ObjectBinding, ...]:
+        bindings = (ObjectBinding * len(input_alias_ids))()
+        admitted_count = self._admitted_tasks.get(task_id)
+        if admitted_count is not None:
+            if admitted_count != len(input_alias_ids):
+                raise RuntimeExecutionError(
+                    f"admitted task {task_id} input count changed"
+                )
+            self._require(
+                self.library.shadowspill_pytorch_before_execution(
+                    _dense_id(task_id, "task_"),
+                    stream.cuda_stream,
+                    bindings if input_alias_ids else None,
+                    len(input_alias_ids),
+                ),
+                f"before admitted task {task_id}",
+            )
+            return tuple(bindings)
         identifiers = (ctypes.c_uint64 * len(input_alias_ids))(
             *(_dense_id(value, "alias_") for value in input_alias_ids)
         )
-        bindings = (ObjectBinding * len(input_alias_ids))()
         self._require(
             self.library.shadowspill_pytorch_before_task(
                 _dense_id(task_id, "task_"),
@@ -356,6 +454,14 @@ class RuntimeBridge:
         mutations: Iterable[MutationSpec],
         actions: Iterable[MemoryAction],
     ) -> None:
+        if task_id in self._admitted_tasks:
+            self._require(
+                self.library.shadowspill_pytorch_after_execution(
+                    _dense_id(task_id, "task_"), stream.cuda_stream
+                ),
+                f"after admitted task {task_id}",
+            )
+            return
         mutation_values = tuple(mutations)
         action_values = tuple(actions)
         updates = (ObjectUpdate * len(mutation_values))(

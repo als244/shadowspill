@@ -178,14 +178,24 @@ class ForwardExecutor:
         }
         bridge.configure_task_labels(trace_labels)
         for entrypoint in lowered.entrypoints:
+            task = task_by_id[entrypoint.task_id]
+            task_actions = grouped_actions.get(entrypoint.task_id, ())
+            bridge.admit_execution(
+                task,
+                tuple(
+                    bridge.alias_for_object(slot.object_id)
+                    for slot in entrypoint.input_slots
+                ),
+                task_actions,
+            )
             function = functions[entrypoint.artifact.compatibility_digest]
             wrapper = _ExecutingStage(
                 entrypoint,
-                task_by_id[entrypoint.task_id],
+                task,
                 function,
                 bridge,
                 state,
-                grouped_actions.get(entrypoint.task_id, ()),
+                task_actions,
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         output_objects = {

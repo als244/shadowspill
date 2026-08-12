@@ -178,6 +178,39 @@ typedef struct ShadowSpillActionQueue {
     uint8_t lock_initialized;
 } ShadowSpillActionQueue;
 
+typedef struct ShadowSpillExecutionUpdate {
+    ShadowSpillObjectRecord *object;
+    uint64_t version_delta;
+} ShadowSpillExecutionUpdate;
+
+typedef struct ShadowSpillExecutionAction {
+    ShadowSpillObjectRecord *object;
+    uint8_t kind;
+} ShadowSpillExecutionAction;
+
+typedef struct ShadowSpillExecutionRecord {
+    uint64_t task_id;
+    ShadowSpillObjectRecord **inputs;
+    uint64_t *input_object_ids;
+    uint32_t input_count;
+    ShadowSpillExecutionUpdate *updates;
+    ShadowSpillObjectUpdate *legacy_updates;
+    uint32_t update_count;
+    ShadowSpillExecutionAction *actions;
+    ShadowSpillRuntimeAction *legacy_actions;
+    uint32_t action_count;
+    struct ShadowSpillExecutionRecord *hash_next;
+    struct ShadowSpillExecutionRecord *ownership_next;
+} ShadowSpillExecutionRecord;
+
+typedef struct ShadowSpillExecutionTable {
+    pthread_rwlock_t lock;
+    ShadowSpillExecutionRecord **by_id;
+    ShadowSpillExecutionRecord *owned_head;
+    uint64_t bucket_count;
+    uint8_t lock_initialized;
+} ShadowSpillExecutionTable;
+
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
     pthread_mutex_t mutex;
@@ -214,6 +247,7 @@ struct ShadowSpillRuntime {
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
     ShadowSpillObjectTable objects;
+    ShadowSpillExecutionTable execution;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
     ShadowSpillActionQueue actions;
@@ -387,6 +421,15 @@ void shadowspill_append_trace_event_locked(
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 void shadowspill_publish_device_geometry_locked(ShadowSpillRuntime *runtime);
+int shadowspill_execution_table_initialize(
+    ShadowSpillExecutionTable *table,
+    uint64_t bucket_count
+);
+void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table);
+ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
+    ShadowSpillExecutionTable *table,
+    uint64_t task_id
+);
 void *shadowspill_progress_main(void *pointer);
 
 #endif

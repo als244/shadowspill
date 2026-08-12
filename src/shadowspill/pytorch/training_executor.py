@@ -423,6 +423,8 @@ class TrainingExecutor:
         self.optimizer = optimizer
         self._initial = None if initial is None else self._prepare(*initial)
         self._recurrent = self._prepare(*recurrent)
+        if self._initial is None:
+            self._admit_run(self._recurrent)
         self._task_trace_labels = self._configure_task_trace_labels()
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
@@ -455,6 +457,15 @@ class TrainingExecutor:
         self._trace_task_events: dict[
             str, tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]
         ] = {}
+
+    def _admit_run(self, run: _PlanRun) -> None:
+        for entrypoint in run.entrypoints:
+            task = run.tasks[entrypoint.task_id]
+            self._bridge.admit_execution(
+                task,
+                run.input_aliases_by_task[task.task_id],
+                run.actions.get(task.task_id, ()),
+            )
 
     def prepare_execution_tracing(self) -> None:
         """Lazily allocate reusable trace buffers and timing events."""

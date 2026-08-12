@@ -558,6 +558,50 @@ done:
     return result;
 }
 
+static int immutable_execution_admission(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription description = {
+        .object_id = 91U,
+        .size_bytes = 32U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    const uint64_t input = description.object_id;
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 17U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    const ShadowSpillExecutionDescription conflict = {
+        .task_id = execution.task_id,
+    };
+    ShadowSpillObjectBinding binding = {0};
+    int failed = shadowspill_register_object(
+            fixture.runtime, &description
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            fixture.runtime, description.size_bytes, 1U, fixture.compute,
+            &allocation
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+            fixture.runtime, description.object_id, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &conflict
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || binding.object_id != description.object_id ||
+        binding.allocation_id != allocation.allocation_id ||
+        shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     return invalid_action(0U, SHADOWSPILL_RUNTIME_PREFETCH) == 0 &&
             invalid_action(1U, SHADOWSPILL_RUNTIME_RELEASE) == 0 &&
@@ -569,6 +613,7 @@ int main(void) {
             prefetch_window_is_enqueued_without_host_blocking() == 0 &&
             offload_window_is_enqueued_without_host_serialization() == 0 &&
             trigger_reservation_failure_is_a_plan_violation() == 0
+            && immutable_execution_admission() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

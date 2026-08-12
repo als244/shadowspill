@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 8U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 9U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
@@ -124,6 +124,16 @@ typedef struct ShadowSpillRuntimeAction {
     uint64_t object_id;
     uint8_t kind;
 } ShadowSpillRuntimeAction;
+
+typedef struct ShadowSpillExecutionDescription {
+    uint64_t task_id;
+    const uint64_t *input_object_ids;
+    uint32_t input_count;
+    const ShadowSpillObjectUpdate *updates;
+    uint32_t update_count;
+    const ShadowSpillRuntimeAction *actions;
+    uint32_t action_count;
+} ShadowSpillExecutionDescription;
 
 typedef struct ShadowSpillAllocationEvent {
     uint64_t sequence;
@@ -396,6 +406,34 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_after_task(
     uint32_t update_count,
     const ShadowSpillRuntimeAction *actions,
     uint32_t action_count
+);
+
+/*
+ * Resolves one immutable execution task during plan adoption. Input, mutation,
+ * and action arrays are copied and every referenced object is retained. An
+ * identical duplicate is idempotent; a conflicting task identity is rejected.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_admit_execution(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionDescription *description
+);
+
+/* Execute an admitted boundary without resupplying or decoding its topology. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_before_execution(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    ShadowSpillBackendStream compute_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_after_execution(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    ShadowSpillBackendStream compute_stream
 );
 
 /*
