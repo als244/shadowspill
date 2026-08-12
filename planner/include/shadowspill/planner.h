@@ -35,7 +35,7 @@ typedef struct ShadowSpillResidencyProblem {
 
     const uint64_t *alias_size_bytes;
     const uint32_t *alias_device;
-    const uint8_t *alias_retain_host;
+    const uint8_t *alias_retain_spill_copy;
     const int8_t *initial_location;
     const int8_t *final_location;
     const uint8_t *anchors;

@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 21
-RUNTIME_ABI_VERSION: Final = 11
+ADAPTER_ABI_VERSION: Final = 22
+RUNTIME_ABI_VERSION: Final = 12
 TRACE_ABI_VERSION: Final = 1
 
 
@@ -17,7 +17,7 @@ class AdapterConfig(ctypes.Structure):
         ("device_budget_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
         ("host_arena_bytes", ctypes.c_uint64),
-        ("progress_poll_nanoseconds", ctypes.c_uint64),
+        ("worker_poll_nanoseconds", ctypes.c_uint64),
     ]
 
 
@@ -278,14 +278,14 @@ class ObjectSnapshot(ctypes.Structure):
         ("generation", ctypes.c_uint64),
         ("allocation_id", ctypes.c_uint64),
         ("authoritative_version", ctypes.c_uint64),
-        ("device_version", ctypes.c_uint64),
-        ("host_version", ctypes.c_uint64),
+        ("execution_version", ctypes.c_uint64),
+        ("spill_version", ctypes.c_uint64),
         ("residency", ctypes.c_uint8),
-        ("host_current", ctypes.c_uint8),
-        ("has_host_range", ctypes.c_uint8),
-        ("device_pointer", ctypes.c_void_p),
+        ("spill_current", ctypes.c_uint8),
+        ("has_spill_lease", ctypes.c_uint8),
+        ("execution_pointer", ctypes.c_void_p),
         ("retired_generation", ctypes.c_uint64),
-        ("retired_device_pointer", ctypes.c_void_p),
+        ("retired_execution_pointer", ctypes.c_void_p),
     ]
 
 

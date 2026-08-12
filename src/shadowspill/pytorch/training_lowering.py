@@ -280,7 +280,7 @@ def lower_partitioned_training_program(
                         tangent,
                         role=ObjectRole.INPUT,
                         persistence=Persistence.STEP,
-                        retain_host_backing=True,
+                        retain_spill_copy=True,
                     )
                     fixed_tensors.setdefault(
                         tangent_id, FixedTensorBinding(tangent_id, tangent)
@@ -985,7 +985,7 @@ def _register_model(
             parameter,
             role=ObjectRole.PARAMETER,
             persistence=Persistence.CHECKPOINT,
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         registrations.append(RegistrationBinding(name, object_id, True))
         parameter_objects[
@@ -998,7 +998,7 @@ def _register_model(
             persistence=(
                 Persistence.CHECKPOINT if name in checkpoint_names else Persistence.RUN
             ),
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         registrations.append(RegistrationBinding(name, object_id, False))
     return tuple(registrations), parameter_objects
@@ -1026,7 +1026,7 @@ def _register_microbatch_inputs(
                 value,
                 role=ObjectRole.INPUT,
                 persistence=Persistence.STEP,
-                retain_host_backing=True,
+                retain_spill_copy=True,
             )
             slots.append(TensorSlot(index, object_id))
             initial.add(object_id)
@@ -1086,7 +1086,7 @@ def _register_optimizer_objects(
             binding.tensor,
             role=ObjectRole.OPTIMIZER_STATE,
             persistence=Persistence.CHECKPOINT,
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         results.append(
             OptimizerObjectBinding(
@@ -1203,7 +1203,7 @@ def _stage_backward_inputs(
                     value,
                     role=ObjectRole.INPUT,
                     persistence=Persistence.STEP,
-                    retain_host_backing=True,
+                    retain_spill_copy=True,
                 )
                 fixed_tensors[matching] = FixedTensorBinding(matching, value)
             tangent_id = matching
@@ -1337,7 +1337,7 @@ def _backward_inputs(
         tangent,
         role=ObjectRole.INPUT,
         persistence=Persistence.STEP,
-        retain_host_backing=True,
+        retain_spill_copy=True,
     )
     return (
         (*residual_slots, TensorSlot(len(residual_slots), tangent_id)),

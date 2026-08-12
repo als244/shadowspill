@@ -29,7 +29,7 @@ static int fixture_create(Fixture *fixture) {
         .device_slab_bytes = 128U,
         .host_arena_bytes = 256U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 1000U,
+        .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(fixture->mock),
     };
     if (shadowspill_runtime_create(
@@ -75,7 +75,7 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
         .device_slab_bytes = 128U,
         .host_arena_bytes = 128U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 100000U,
+        .worker_poll_nanoseconds = 100000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
@@ -90,8 +90,8 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
-        {.object_id = 1U, .size_bytes = 32U, .initially_host_resident = 1U},
-        {.object_id = 2U, .size_bytes = 32U, .initially_host_resident = 1U},
+        {.object_id = 1U, .size_bytes = 32U, .initially_spill_resident = 1U},
+        {.object_id = 2U, .size_bytes = 32U, .initially_spill_resident = 1U},
     };
     const ShadowSpillRuntimeAction actions[] = {
         {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
@@ -158,7 +158,7 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
         .device_slab_bytes = 128U,
         .host_arena_bytes = 128U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 100000U,
+        .worker_poll_nanoseconds = 100000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
@@ -223,8 +223,8 @@ static int trigger_reservation_failure_is_a_plan_violation(void) {
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
-        {.object_id = 1U, .size_bytes = 80U, .initially_host_resident = 1U},
-        {.object_id = 2U, .size_bytes = 80U, .initially_host_resident = 1U},
+        {.object_id = 1U, .size_bytes = 80U, .initially_spill_resident = 1U},
+        {.object_id = 2U, .size_bytes = 80U, .initially_spill_resident = 1U},
     };
     const ShadowSpillRuntimeAction actions[] = {
         {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
@@ -252,7 +252,7 @@ static int trigger_reservation_failure_is_a_plan_violation(void) {
 }
 
 static int invalid_action(
-    uint8_t initially_host_resident,
+    uint8_t initially_spill_resident,
     uint8_t action_kind
 ) {
     Fixture fixture = {0};
@@ -262,7 +262,7 @@ static int invalid_action(
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_host_resident = initially_host_resident,
+        .initially_spill_resident = initially_spill_resident,
     };
     const ShadowSpillRuntimeAction action = {
         .object_id = object.object_id,
@@ -286,7 +286,7 @@ static int invalid_action(
     return result;
 }
 
-static int invalid_before_task(uint8_t initially_host_resident) {
+static int invalid_before_task(uint8_t initially_spill_resident) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
@@ -294,7 +294,7 @@ static int invalid_before_task(uint8_t initially_host_resident) {
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_host_resident = initially_host_resident,
+        .initially_spill_resident = initially_spill_resident,
     };
     const uint64_t input = object.object_id;
     ShadowSpillObjectBinding binding = {0};
@@ -318,7 +318,7 @@ static int duplicate_action(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_host_resident = 1U,
+        .initially_spill_resident = 1U,
     };
     ShadowSpillAllocation allocation = {0};
     const ShadowSpillRuntimeAction actions[] = {
@@ -397,9 +397,9 @@ static int output_allocation_handoff(void) {
             fixture.runtime, target.object_id, &target_snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
         source_snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
-        source_snapshot.device_pointer != NULL ||
+        source_snapshot.execution_pointer != NULL ||
         target_snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
-        target_snapshot.device_pointer != allocation.pointer ||
+        target_snapshot.execution_pointer != allocation.pointer ||
         target_snapshot.allocation_id != allocation.allocation_id) {
         result = -1;
     }
@@ -417,13 +417,13 @@ static int valid_transition_paths(void) {
     const ShadowSpillObjectDescription retained = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .retain_host_backing = 1U,
-        .initially_host_resident = 1U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
     };
     const ShadowSpillObjectDescription temporary_host = {
         .object_id = 2U,
         .size_bytes = 32U,
-        .initially_host_resident = 1U,
+        .initially_spill_resident = 1U,
     };
     const ShadowSpillObjectDescription device_created = {
         .object_id = 3U,
@@ -463,7 +463,7 @@ static int valid_transition_paths(void) {
             fixture.runtime, retained.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
-        !snapshot.host_current) {
+        !snapshot.spill_current) {
         result = -1;
         goto done;
     }
@@ -513,7 +513,7 @@ static int valid_transition_paths(void) {
             fixture.runtime, temporary_host.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
-        snapshot.has_host_range) {
+        snapshot.has_spill_lease) {
         result = -1;
         goto done;
     }

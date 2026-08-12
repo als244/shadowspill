@@ -56,7 +56,7 @@ missing generations, and non-ready residency.
 `shadowspill_unregister_object` removes a host-only or released logical object
 after all queued actions have drained and returns its pinned-host range to the
 arena. `shadowspill_write_host_object` and `shadowspill_read_host_object` copy
-between caller-owned CPU storage and retained host backing; both validate the
+between caller-owned CPU storage and retained spill storage; both validate the
 exact object extent and authoritative version.
 
 A completed release or offload retains one retired address/generation token in

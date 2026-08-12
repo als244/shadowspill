@@ -90,7 +90,7 @@ def mutation_program() -> Program:
                 "weight_storage",
                 "cuda_0",
                 61,
-                retain_host_backing=True,
+                retain_spill_copy=True,
             ),
             AliasGroupSpec("temporary_storage", "cuda_0", 61),
         ),
@@ -207,13 +207,13 @@ def training_chain_program(layers: int) -> Program:
         for prefix in ("W", "dW"):
             name = f"{prefix}_{layer}"
             alias_groups.append(
-                AliasGroupSpec(name, "cuda_0", 64, retain_host_backing=True)
+                AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True)
             )
             objects.append(ObjectSpec(name, name, 0, 64))
             initial.append(ResidencySpec(name, MemoryLocation.HOST))
     for name in ("W_head", "dW_head"):
         alias_groups.append(
-            AliasGroupSpec(name, "cuda_0", 64, retain_host_backing=True)
+            AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True)
         )
         objects.append(ObjectSpec(name, name, 0, 64))
         initial.append(ResidencySpec(name, MemoryLocation.HOST))

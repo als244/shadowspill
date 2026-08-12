@@ -51,6 +51,7 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
     free(record->unique_first_positions);
     free(record->updates);
     free(record->actions);
+    free(record->queued_actions);
     free(record);
 }
 
@@ -169,18 +170,22 @@ static ShadowSpillExecutionRecord *create_record(
     }
     if (record->action_count != 0U) {
         record->actions = calloc(record->action_count, sizeof(*record->actions));
+        record->queued_actions = calloc(
+            record->action_count, sizeof(*record->queued_actions)
+        );
     }
     if ((record->input_count != 0U &&
          (record->inputs == NULL || record->unique_inputs == NULL ||
           record->input_unique_indices == NULL ||
           record->unique_first_positions == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
-        (record->action_count != 0U && record->actions == NULL)) {
+        (record->action_count != 0U &&
+         (record->actions == NULL || record->queued_actions == NULL))) {
         destroy_record(record);
         return NULL;
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
-        ShadowSpillObjectRecord *object = shadowspill_object_table_acquire(
+        ShadowSpillObject *object = shadowspill_object_table_acquire(
             &runtime->objects, description->input_object_ids[index]
         );
         if (object == NULL) {
@@ -204,7 +209,7 @@ static ShadowSpillExecutionRecord *create_record(
         record->input_unique_indices[index] = unique_index;
     }
     for (uint32_t index = 0U; index < record->update_count; ++index) {
-        ShadowSpillObjectRecord *object = shadowspill_object_table_acquire(
+        ShadowSpillObject *object = shadowspill_object_table_acquire(
             &runtime->objects, description->updates[index].object_id
         );
         if (object == NULL) {
@@ -217,7 +222,18 @@ static ShadowSpillExecutionRecord *create_record(
         };
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        ShadowSpillObjectRecord *object = shadowspill_object_table_acquire(
+        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH) {
+            destroy_record(record);
+            return NULL;
+        }
+        for (uint32_t previous = 0U; previous < index; ++previous) {
+            if (description->actions[previous].object_id ==
+                description->actions[index].object_id) {
+                destroy_record(record);
+                return NULL;
+            }
+        }
+        ShadowSpillObject *object = shadowspill_object_table_acquire(
             &runtime->objects, description->actions[index].object_id
         );
         if (object == NULL) {
@@ -227,6 +243,12 @@ static ShadowSpillExecutionRecord *create_record(
         record->actions[index] = (ShadowSpillExecutionAction){
             .object = object,
             .kind = description->actions[index].kind,
+        };
+        record->queued_actions[index] = (ShadowSpillQueuedAction){
+            .task_id = record->task_id,
+            .kind = description->actions[index].kind,
+            .object = object,
+            .admitted = 1U,
         };
     }
     return record;
@@ -344,7 +366,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
          status == SHADOWSPILL_RUNTIME_OK &&
              index < record->unique_input_count;
          ++index) {
-        ShadowSpillObjectRecord *object = record->unique_inputs[index];
+        ShadowSpillObject *object = record->unique_inputs[index];
         pthread_mutex_lock(&object->lock);
         while (status == SHADOWSPILL_RUNTIME_OK &&
                object->residency == SHADOWSPILL_OBJECT_HOST_ONLY &&
@@ -364,7 +386,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
             pthread_cond_wait(&object->state_changed, &object->lock);
             status = shadowspill_current_status_locked(runtime);
         }
-        ShadowSpillAllocationRecord *lease = object->device_lease;
+        ShadowSpillMemoryLease *lease = shadowspill_execution_location(runtime, object)->lease;
         if (status != SHADOWSPILL_RUNTIME_OK) {
             pthread_mutex_unlock(&object->lock);
             break;
@@ -374,7 +396,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
             lease == NULL || lease->pointer == NULL ||
             lease->allocation_id != object->allocation_id ||
             lease->generation != object->generation ||
-            object->device_version != object->authoritative_version) {
+            shadowspill_execution_location(runtime, object)->version != object->authoritative_version) {
             status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             const uint64_t allocation_id = object->allocation_id;
             const uint64_t size_bytes = object->size_bytes;

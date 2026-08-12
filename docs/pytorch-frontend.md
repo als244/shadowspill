@@ -252,7 +252,7 @@ Lowering assigns dense identities in encounter order and never serializes
 framework objects. One physical storage becomes one alias group; tied tensors
 and views become logical objects within that group with explicit byte offsets
 and sizes. Registered parameters and buffers are checkpoint-persistent and
-retain host backing. Caller inputs, intermediate activations, and returned
+retain spill copies. Caller inputs, intermediate activations, and returned
 outputs have step-scoped identities and declared initial/final residency.
 
 Each automatic stage becomes one canonical task with its structural profile,

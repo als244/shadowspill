@@ -189,7 +189,7 @@ static int submit_action(
         state->device_ready = 0U;
         work->device_object_bytes[device] -= program->alias_size_bytes[alias];
         if (state->host_allocated != 0U &&
-            program->alias_retain_host_backing[alias] == 0U) {
+            program->alias_retain_spill_copy[alias] == 0U) {
             state->host_allocated = 0U;
             state->host_ready = 0U;
             work->host_bytes -= program->alias_size_bytes[alias];
@@ -351,7 +351,7 @@ int shadowspill_complete_transfer(
         state->device_ready = 1U;
         state->device_version = state->host_version;
         state->h2d_pending = 0U;
-        if (program->alias_retain_host_backing[transfer->alias] == 0U) {
+        if (program->alias_retain_spill_copy[transfer->alias] == 0U) {
             state->host_allocated = 0U;
             state->host_ready = 0U;
             work->host_bytes -= program->alias_size_bytes[transfer->alias];

@@ -31,7 +31,7 @@ def main() -> int:
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
         host_arena_bytes=16 << 20,
-        progress_poll_nanoseconds=10_000,
+        worker_poll_nanoseconds=10_000,
     )
     resize_host_arena(installed, host_arena_bytes=32 << 20, host_budget_bytes=64 << 20)
     if installed.admission.host_arena_bytes != 32 << 20:

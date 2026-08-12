@@ -2111,3 +2111,41 @@ the ignored internal progress log before this tracked summary is updated.
   allocation-population scans on the dispatcher. The next isolated change moves
   causally deferrable action work to a non-blocking progress-worker submission
   path while preserving exact action ordering and transfer triggers.
+
+## 2026-08-12 — Generic memory leases and spill-role terminology
+
+- Replaced the separate device-allocation and host-storage record concepts with
+  one `ShadowSpillMemoryLease` owned by one generic `ShadowSpillMemoryPool`.
+  A runtime currently instantiates an execution pool and a spill pool, while an
+  object owns a runtime-sized array of per-pool locations. This representation
+  does not assume that the spill pool is host memory.
+- Unified prefetch destination reservation and allocation identity. A transfer
+  action now creates one lease at causal reservation time and advances that
+  same record through reserved, transferring, active, retiring, and free
+  states. The former destination-offset plus later allocation-record split has
+  been removed.
+- Found a generic pool-relocation bug while growing the provisional pinned
+  arena: existing spill leases retained pointers relative to the old arena
+  base. Added an intrusive active-lease registry to every pool and made pool
+  rebasing update every lease address atomically with the range geometry.
+- Found an H2D metadata-completion race in the new location-array path. A later
+  annotated release could clear an execution location before the worker
+  processed the earlier copy completion; completion then dereferenced the
+  cleared lease and could overwrite the later residency state. Completion now
+  commits only when the object location still names the same lease and
+  generation.
+- Renamed the semantic secondary-memory role from `backing` to `spill`
+  throughout current IR, planner, simulator, runtime, adapter, tests, and
+  diagnostics. The canonical field is `retain_spill_copy`; physical host and
+  CUDA terminology is confined to concrete backend edges. Runtime ABI is 12
+  and the private PyTorch adapter ABI is 22.
+- All 17 compiled/native/CUDA/PyTorch canaries pass with warnings as errors.
+  The full Python suite passes after the intentional schema artifact update.
+  Its Program and ExecutionPlan digests changed solely because the canonical
+  serialized key changed; the schedule digest remains
+  `332f8ada15b358d303efc2f3589c6646acb7e841093e421cde3d885740410bae`.
+- Design update: transfer semantics belong to a directed pool-pair route. The
+  runtime will calibrate every supported route during initialization and
+  expose a dense latency/bandwidth matrix to the planner. CUDA device and
+  pinned-host pools are merely the first concrete pair; CUDA peer, ROCm,
+  remote-memory, and storage routes can provide the same interface later.

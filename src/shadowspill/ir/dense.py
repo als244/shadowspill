@@ -48,7 +48,7 @@ class DenseProgram:
     alias_device: tuple[int, ...]
     alias_size_bytes: tuple[int, ...]
     alias_initial_version: tuple[int, ...]
-    alias_retain_host_backing: tuple[bool, ...]
+    alias_retain_spill_copy: tuple[bool, ...]
     object_alias_group: tuple[int, ...]
     object_offset_bytes: tuple[int, ...]
     object_size_bytes: tuple[int, ...]
@@ -200,8 +200,8 @@ def project_dense(program: Program) -> DenseProgram:
         alias_initial_version=tuple(
             item.initial_version for item in program.alias_groups
         ),
-        alias_retain_host_backing=tuple(
-            item.retain_host_backing for item in program.alias_groups
+        alias_retain_spill_copy=tuple(
+            item.retain_spill_copy for item in program.alias_groups
         ),
         object_alias_group=tuple(
             alias_index[item.alias_group_id] for item in program.objects

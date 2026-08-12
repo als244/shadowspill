@@ -357,7 +357,7 @@ def _host_arena_estimate(
     requested = _round_up(base + max(_HOST_LEEWAY_MINIMUM, base // 10), _HOST_ALIGNMENT)
     if requested > host_budget:
         raise PlanningError(
-            "host budget cannot hold model/input backing plus admission leeway: "
+            "spill-pool budget cannot hold model/input storage plus admission leeway: "
             f"required={requested}, budget={host_budget}"
         )
     return requested

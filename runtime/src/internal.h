@@ -68,39 +68,49 @@ typedef struct ShadowSpillCompletionTracker {
     uint64_t pending;
 } ShadowSpillCompletionTracker;
 
-typedef enum ShadowSpillMemoryKind {
-    SHADOWSPILL_MEMORY_DEVICE = 0,
-    SHADOWSPILL_MEMORY_PINNED_HOST = 1,
-} ShadowSpillMemoryKind;
-
 typedef enum ShadowSpillMemoryPlacement {
     SHADOWSPILL_MEMORY_FIRST_FIT = 0,
     SHADOWSPILL_MEMORY_BEST_FIT_LOW = 1,
     SHADOWSPILL_MEMORY_BEST_FIT_HIGH = 2,
 } ShadowSpillMemoryPlacement;
 
+enum {
+    SHADOWSPILL_EXECUTION_POOL_ID = 0U,
+    SHADOWSPILL_SPILL_POOL_ID = 1U,
+    SHADOWSPILL_INITIAL_POOL_COUNT = 2U,
+};
+
 /*
- * Owns one bounded physical arena and its suballocation geometry. Device and
- * pinned-host memory are two configured instances of this same abstraction.
- * Allocation records, stream retirement, and object residency deliberately
- * remain clients of the pool rather than being embedded in it. Foreground
- * allocator callbacks have priority over background reclamation whenever
- * both need to mutate range geometry.
+ * Owns one bounded arena and its suballocation geometry. A pool does not know
+ * whether its storage is local, remote, accelerator, host, or persistent.
+ * Concrete backends attach that meaning when they instantiate the pool.
  */
 typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
     pthread_cond_t capacity_changed;
     _Atomic uint64_t foreground_waiters;
+    _Atomic uint64_t transfer_waiters;
     ShadowSpillRangeAllocator ranges;
+    struct ShadowSpillMemoryLease *leases;
     void *base;
+    uint32_t pool_id;
     uint64_t minimum_alignment;
-    ShadowSpillMemoryKind kind;
     uint8_t initialized;
 } ShadowSpillMemoryPool;
 
 typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
 
-typedef struct ShadowSpillAllocationRecord {
+typedef enum ShadowSpillMemoryLeaseState {
+    SHADOWSPILL_LEASE_FREE = 0,
+    SHADOWSPILL_LEASE_RESERVED = 1,
+    SHADOWSPILL_LEASE_TRANSFERRING = 2,
+    SHADOWSPILL_LEASE_ACTIVE = 3,
+    SHADOWSPILL_LEASE_RETIRING = 4,
+} ShadowSpillMemoryLeaseState;
+
+typedef struct ShadowSpillMemoryLease {
+    ShadowSpillMemoryPool *pool;
+    ShadowSpillMemoryLeaseState state;
     uint64_t allocation_id;
     uint64_t generation;
     uint64_t requested_bytes;
@@ -109,6 +119,7 @@ typedef struct ShadowSpillAllocationRecord {
     uint64_t origin_task_id;
     uint64_t release_task_id;
     void *pointer;
+    void *retired_pointer;
     _Atomic uint32_t references;
     int logical_freed;
     uint8_t retirement_preparing;
@@ -123,17 +134,19 @@ typedef struct ShadowSpillAllocationRecord {
     ShadowSpillEventRecord *retirement_events;
     ShadowSpillTaskFence *retirement_fence;
     uint64_t retirement_enqueued_generation;
-    struct ShadowSpillAllocationRecord *next;
-    struct ShadowSpillAllocationRecord *id_index_next;
-    struct ShadowSpillAllocationRecord *pointer_index_next;
-    struct ShadowSpillAllocationRecord *reusable_index_next;
-    struct ShadowSpillAllocationRecord *active_next;
-    struct ShadowSpillAllocationRecord **active_previous_link;
+    struct ShadowSpillMemoryLease *next;
+    struct ShadowSpillMemoryLease *id_index_next;
+    struct ShadowSpillMemoryLease *pointer_index_next;
+    struct ShadowSpillMemoryLease *reusable_index_next;
+    struct ShadowSpillMemoryLease *active_next;
+    struct ShadowSpillMemoryLease **active_previous_link;
+    struct ShadowSpillMemoryLease *pool_next;
+    struct ShadowSpillMemoryLease **pool_previous_link;
     uint8_t in_reusable_index;
-} ShadowSpillAllocationRecord;
+} ShadowSpillMemoryLease;
 
 typedef struct ShadowSpillRetirementRecord {
-    ShadowSpillAllocationRecord *allocation;
+    ShadowSpillMemoryLease *allocation;
     uint64_t allocation_generation;
     ShadowSpillEventLease **events;
     uint32_t event_count;
@@ -142,7 +155,7 @@ typedef struct ShadowSpillRetirementRecord {
 } ShadowSpillRetirementRecord;
 
 /*
- * Producers publish only fully described retirements.  The progress worker
+ * Producers publish only fully described retirements.  The worker thread
  * detaches the complete list before inspecting event state, so neither event
  * polling nor pending-list traversal holds this lock.  Device-pool ownership
  * is entered separately and only for the final validated range release.
@@ -155,43 +168,46 @@ typedef struct ShadowSpillRetirementQueue {
     uint8_t lock_initialized;
 } ShadowSpillRetirementQueue;
 
-typedef struct ShadowSpillRetirementProgress {
+typedef struct ShadowSpillRetirementWork {
     uint8_t pool_busy;
-} ShadowSpillRetirementProgress;
+} ShadowSpillRetirementWork;
 
-typedef struct ShadowSpillObjectRecord {
+typedef struct ShadowSpillObjectLocation {
+    ShadowSpillMemoryLease *lease;
+    uint64_t version;
+    uint8_t current;
+    uint8_t owns_lease;
+} ShadowSpillObjectLocation;
+
+typedef struct ShadowSpillObject {
     uint64_t object_id;
     uint64_t size_bytes;
     _Atomic uint32_t references;
     _Atomic uint8_t detached;
     pthread_mutex_t lock;
     pthread_cond_t state_changed;
+    ShadowSpillObjectLocation *locations;
+    uint32_t location_count;
     uint64_t generation;
     uint64_t authoritative_version;
-    uint64_t device_version;
-    uint64_t host_version;
     uint64_t allocation_id;
-    ShadowSpillAllocationRecord *device_lease;
-    uint64_t host_offset;
-    uint8_t retain_host_backing;
-    uint8_t host_current;
-    uint8_t has_host_range;
+    uint8_t retain_spill_copy;
     uint8_t residency;
     _Atomic uint8_t prefetch_pending;
     ShadowSpillEventLease *readiness_event;
     uint8_t has_readiness_event;
     uint64_t retired_generation;
-    void *retired_device_pointer;
-    struct ShadowSpillObjectRecord *ownership_next;
-    struct ShadowSpillObjectRecord **ownership_previous_link;
-    struct ShadowSpillObjectRecord *id_index_next;
-} ShadowSpillObjectRecord;
+    void *retired_execution_pointer;
+    struct ShadowSpillObject *ownership_next;
+    struct ShadowSpillObject **ownership_previous_link;
+    struct ShadowSpillObject *id_index_next;
+} ShadowSpillObject;
 
 typedef struct ShadowSpillObjectTable {
     pthread_rwlock_t lock;
     uint8_t lock_initialized;
-    ShadowSpillObjectRecord *owned_head;
-    ShadowSpillObjectRecord **by_id;
+    ShadowSpillObject *owned_head;
+    ShadowSpillObject **by_id;
     uint64_t bucket_count;
 } ShadowSpillObjectTable;
 
@@ -206,20 +222,22 @@ struct ShadowSpillTaskFence {
 typedef enum ShadowSpillQueuedActionState {
     SHADOWSPILL_ACTION_QUEUED = 0,
     SHADOWSPILL_ACTION_IN_FLIGHT = 1,
+    SHADOWSPILL_ACTION_FINISHED = 2,
 } ShadowSpillQueuedActionState;
 
 typedef struct ShadowSpillQueuedAction {
     uint64_t task_id;
     uint8_t kind;
     uint8_t state;
-    uint8_t destination_reserved;
-    uint64_t destination_offset;
-    uint64_t destination_bytes;
-    ShadowSpillObjectRecord *object;
+    uint8_t destination_priority_declared;
+    ShadowSpillMemoryLease *destination_lease;
+    ShadowSpillObject *object;
     ShadowSpillTaskFence *fence;
     ShadowSpillEventLease *completion_event;
     uint8_t has_completion_event;
     uint8_t processing;
+    uint8_t admitted;
+    uint8_t active;
     struct ShadowSpillQueuedAction *previous;
     struct ShadowSpillQueuedAction *next;
     struct ShadowSpillQueuedAction *lane_previous;
@@ -247,7 +265,7 @@ typedef struct ShadowSpillTransferLane {
 /*
  * Owns only the quiescence notification consumed by runtime_wait_idle. The
  * final action and retirement transitions advance this epoch after their
- * counters reach zero. It deliberately does not drive the progress worker or
+ * counters reach zero. It deliberately does not drive the worker thread or
  * alter transfer/retirement dispatch cadence.
  */
 typedef struct ShadowSpillIdleWakeup {
@@ -258,27 +276,28 @@ typedef struct ShadowSpillIdleWakeup {
 } ShadowSpillIdleWakeup;
 
 typedef struct ShadowSpillExecutionUpdate {
-    ShadowSpillObjectRecord *object;
+    ShadowSpillObject *object;
     uint64_t version_delta;
 } ShadowSpillExecutionUpdate;
 
 typedef struct ShadowSpillExecutionAction {
-    ShadowSpillObjectRecord *object;
+    ShadowSpillObject *object;
     uint8_t kind;
 } ShadowSpillExecutionAction;
 
 typedef struct ShadowSpillExecutionRecord {
     ShadowSpillRuntime *runtime_owner;
     uint64_t task_id;
-    ShadowSpillObjectRecord **inputs;
+    ShadowSpillObject **inputs;
     uint32_t input_count;
-    ShadowSpillObjectRecord **unique_inputs;
+    ShadowSpillObject **unique_inputs;
     uint32_t unique_input_count;
     uint32_t *input_unique_indices;
     uint32_t *unique_first_positions;
     ShadowSpillExecutionUpdate *updates;
     uint32_t update_count;
     ShadowSpillExecutionAction *actions;
+    ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
@@ -298,29 +317,31 @@ struct ShadowSpillRuntime {
     pthread_cond_t condition;
     pthread_mutex_t failure_lock;
     ShadowSpillIdleWakeup idle_wakeup;
-    pthread_t progress_thread;
-    int progress_started;
+    pthread_t worker_thread;
+    int worker_started;
     _Atomic uint8_t closing;
     _Atomic uint8_t closed;
     _Atomic uint8_t worker_stop;
     _Atomic uint32_t failure_status;
-    uint64_t progress_poll_nanoseconds;
+    uint64_t worker_poll_nanoseconds;
 
     ShadowSpillBackend backend;
-    ShadowSpillBackendStream h2d_stream;
-    ShadowSpillBackendStream d2h_stream;
-    int h2d_stream_created;
-    int d2h_stream_created;
+    ShadowSpillBackendStream fetch_stream;
+    ShadowSpillBackendStream evict_stream;
+    int fetch_stream_created;
+    int evict_stream_created;
 
-    ShadowSpillMemoryPool device_pool;
-    _Atomic uint64_t device_free_bytes_snapshot;
-    _Atomic uint64_t device_largest_free_snapshot;
-    ShadowSpillMemoryPool host_pool;
-    ShadowSpillAllocationRecord *allocations;
-    ShadowSpillAllocationRecord *active_allocations;
-    ShadowSpillAllocationRecord **allocations_by_id;
-    ShadowSpillAllocationRecord **allocations_by_pointer;
-    ShadowSpillAllocationRecord **reusable_by_size;
+    ShadowSpillMemoryPool *pools;
+    uint32_t pool_count;
+    uint32_t execution_pool_id;
+    uint32_t spill_pool_id;
+    _Atomic uint64_t execution_free_bytes_snapshot;
+    _Atomic uint64_t execution_largest_free_snapshot;
+    ShadowSpillMemoryLease *execution_leases;
+    ShadowSpillMemoryLease *active_execution_leases;
+    ShadowSpillMemoryLease **execution_leases_by_id;
+    ShadowSpillMemoryLease **execution_leases_by_pointer;
+    ShadowSpillMemoryLease **reusable_execution_leases_by_size;
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
     ShadowSpillObjectTable objects;
@@ -329,8 +350,8 @@ struct ShadowSpillRuntime {
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;
     ShadowSpillActionQueue actions;
-    ShadowSpillTransferLane h2d_lane;
-    ShadowSpillTransferLane d2h_lane;
+    ShadowSpillTransferLane fetch_lane;
+    ShadowSpillTransferLane evict_lane;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -416,7 +437,7 @@ uint64_t shadowspill_range_largest_free(
 
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryKind kind,
+    uint32_t pool_id,
     void *base,
     uint64_t capacity,
     uint64_t minimum_alignment
@@ -424,8 +445,12 @@ int shadowspill_memory_pool_initialize(
 void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);
-int shadowspill_memory_pool_try_lock_background(ShadowSpillMemoryPool *pool);
-void shadowspill_memory_pool_unlock_background(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_declare_transfer(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_relinquish_transfer(ShadowSpillMemoryPool *pool);
+int shadowspill_memory_pool_try_lock_transfer(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_unlock_transfer(ShadowSpillMemoryPool *pool);
+int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_unlock_reclamation(ShadowSpillMemoryPool *pool);
 int shadowspill_memory_pool_reserve_locked(
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
@@ -438,6 +463,26 @@ int shadowspill_memory_pool_release_locked(
     uint64_t offset,
     uint64_t bytes
 );
+int shadowspill_memory_pool_reserve_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillMemoryPlacement placement
+);
+int shadowspill_memory_pool_release_lease_locked(
+    ShadowSpillMemoryLease *lease
+);
+int shadowspill_memory_pool_adopt_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t offset
+);
+void shadowspill_memory_pool_rebase_locked(
+    ShadowSpillMemoryPool *pool,
+    void *new_base
+);
 uint64_t shadowspill_memory_pool_free_bytes_locked(
     const ShadowSpillMemoryPool *pool
 );
@@ -449,15 +494,40 @@ void *shadowspill_memory_pool_pointer(
     uint64_t offset
 );
 
-ShadowSpillAllocationRecord *shadowspill_find_allocation(
+ShadowSpillMemoryPool *shadowspill_runtime_pool(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id
+);
+const ShadowSpillMemoryPool *shadowspill_runtime_pool_const(
+    const ShadowSpillRuntime *runtime,
+    uint32_t pool_id
+);
+ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime);
+const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
+    const ShadowSpillRuntime *runtime
+);
+ShadowSpillMemoryPool *shadowspill_spill_pool(ShadowSpillRuntime *runtime);
+ShadowSpillObjectLocation *shadowspill_object_location(
+    ShadowSpillObject *object,
+    uint32_t pool_id
+);
+ShadowSpillObjectLocation *shadowspill_execution_location(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillObject *object
+);
+ShadowSpillObjectLocation *shadowspill_spill_location(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillObject *object
+);
+ShadowSpillMemoryLease *shadowspill_find_execution_lease(
     ShadowSpillRuntime *runtime,
     uint64_t allocation_id
 );
-ShadowSpillAllocationRecord *shadowspill_find_allocation_by_pointer(
+ShadowSpillMemoryLease *shadowspill_find_execution_lease_by_pointer(
     ShadowSpillRuntime *runtime,
     const void *pointer
 );
-ShadowSpillObjectRecord *shadowspill_find_object(
+ShadowSpillObject *shadowspill_find_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id
 );
@@ -466,43 +536,43 @@ int shadowspill_object_table_initialize(
     uint64_t bucket_count
 );
 void shadowspill_object_table_destroy(ShadowSpillObjectTable *table);
-ShadowSpillObjectRecord *shadowspill_object_table_find(
+ShadowSpillObject *shadowspill_object_table_find(
     const ShadowSpillObjectTable *table,
     uint64_t object_id
 );
-ShadowSpillObjectRecord *shadowspill_object_table_acquire(
+ShadowSpillObject *shadowspill_object_table_acquire(
     ShadowSpillObjectTable *table,
     uint64_t object_id
 );
 int shadowspill_object_table_insert(
     ShadowSpillObjectTable *table,
-    ShadowSpillObjectRecord *object
+    ShadowSpillObject *object
 );
 int shadowspill_object_table_remove(
     ShadowSpillObjectTable *table,
-    ShadowSpillObjectRecord *object
+    ShadowSpillObject *object
 );
-void shadowspill_object_retain(ShadowSpillObjectRecord *object);
-void shadowspill_object_release(ShadowSpillObjectRecord *object);
-ShadowSpillRuntimeStatus shadowspill_allocate_locked(
+void shadowspill_object_retain(ShadowSpillObject *object);
+void shadowspill_object_release(ShadowSpillObject *object);
+ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
     uint64_t origin_task_id,
-    ShadowSpillAllocationRecord **record
+    ShadowSpillMemoryLease **record
 );
-ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
+ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,
     uint64_t offset,
     int plan_owned,
     uint64_t origin_task_id,
-    ShadowSpillAllocationRecord **record
+    ShadowSpillMemoryLease **record
 );
-void shadowspill_release_allocation_locked(
+void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillAllocationRecord *allocation
+    ShadowSpillMemoryLease *allocation
 );
 void shadowspill_release_task_fence_locked(
     ShadowSpillRuntime *runtime,
@@ -527,9 +597,9 @@ void shadowspill_retirement_queue_destroy(
 );
 ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillAllocationRecord *allocation
+    ShadowSpillMemoryLease *allocation
 );
-ShadowSpillRetirementProgress shadowspill_progress_retirements(
+ShadowSpillRetirementWork shadowspill_handle_retirements(
     ShadowSpillRuntime *runtime
 );
 int shadowspill_has_actionable_retirement(ShadowSpillRuntime *runtime);
@@ -541,7 +611,7 @@ int shadowspill_enter_task_scope(
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime);
 void shadowspill_append_allocation_event_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillAllocationRecord *allocation,
+    const ShadowSpillMemoryLease *allocation,
     ShadowSpillAllocationEventKind kind,
     ShadowSpillAllocationCategory category
 );
@@ -556,7 +626,7 @@ void shadowspill_append_trace_event_locked(
     uint64_t detail_1
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
-void shadowspill_publish_device_geometry_locked(ShadowSpillRuntime *runtime);
+void shadowspill_publish_execution_geometry_locked(ShadowSpillRuntime *runtime);
 int shadowspill_execution_table_initialize(
     ShadowSpillExecutionTable *table,
     uint64_t bucket_count
@@ -593,6 +663,6 @@ int shadowspill_transfer_lane_complete(
     ShadowSpillTransferLane *lane,
     ShadowSpillQueuedAction *action
 );
-void *shadowspill_progress_main(void *pointer);
+void *shadowspill_worker_main(void *pointer);
 
 #endif

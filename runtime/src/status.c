@@ -23,7 +23,7 @@ const char *shadowspill_runtime_status_string(ShadowSpillRuntimeStatus status) {
         case SHADOWSPILL_RUNTIME_BACKEND_FAILURE:
             return "backend failure";
         case SHADOWSPILL_RUNTIME_WORKER_FAILURE:
-            return "progress worker failure";
+            return "worker thread failure";
         case SHADOWSPILL_RUNTIME_CLOSED:
             return "runtime is closed";
     }

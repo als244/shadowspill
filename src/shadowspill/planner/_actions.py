@@ -288,7 +288,7 @@ def emit_schedule(
             -1
             if (
                 facts.initial_locations[alias] is MemoryLocation.HOST
-                or facts.alias_retain_host[alias]
+                or facts.alias_retain_spill_copy[alias]
             )
             else -2
         )
@@ -318,7 +318,7 @@ def emit_schedule(
             has_later_span = span_index + 1 < len(spans)
             final = facts.final_locations[alias]
             if has_later_span:
-                if facts.alias_retain_host[alias] and not _has_write_since(
+                if facts.alias_retain_spill_copy[alias] and not _has_write_since(
                     facts, alias, host_refreshed, span.end
                 ):
                     kind = MemoryActionKind.RELEASE
@@ -330,7 +330,7 @@ def emit_schedule(
             elif final is MemoryLocation.DEVICE:
                 continue
             elif final is MemoryLocation.HOST:
-                if facts.alias_retain_host[alias] and not _has_write_since(
+                if facts.alias_retain_spill_copy[alias] and not _has_write_since(
                     facts, alias, host_refreshed, span.end
                 ):
                     kind = MemoryActionKind.RELEASE

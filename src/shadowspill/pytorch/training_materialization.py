@@ -142,7 +142,7 @@ class TrainingMaterializedState:
                 device="cpu",
             )
             source.fill_(1)
-            bridge.register_host_tensor(alias_id, source, retain_host_backing=True)
+            bridge.register_host_tensor(alias_id, source, retain_spill_copy=True)
             owner = torch.empty(
                 source.untyped_storage().nbytes(),
                 dtype=torch.uint8,
@@ -194,7 +194,7 @@ class TrainingMaterializedState:
             source_owner = torch.empty(0, dtype=torch.uint8, device="cpu")
             source_owner.set_(source.untyped_storage())
             self.bridge.register_host_tensor(
-                alias_id, source_owner, retain_host_backing=True
+                alias_id, source_owner, retain_spill_copy=True
             )
             owner = torch.empty(
                 source_owner.numel(), dtype=torch.uint8, device=self.device
@@ -330,7 +330,7 @@ class TrainingMaterializedState:
         self._user_alias_by_position = tuple(slot_maps)
 
         retain = {
-            group.alias_group_id: group.retain_host_backing
+            group.alias_group_id: group.retain_spill_copy
             for group in self.layout.program.alias_groups
         }
         for ordinal, alias_id in enumerate(
@@ -341,7 +341,7 @@ class TrainingMaterializedState:
                 continue
             source = values[0][0]
             self.bridge.register_host_tensor(
-                alias_id, source, retain_host_backing=retain[alias_id]
+                alias_id, source, retain_spill_copy=retain[alias_id]
             )
             cpu_owner = torch.empty(0, dtype=torch.uint8, device="cpu")
             cpu_owner.set_(source.untyped_storage())

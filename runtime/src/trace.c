@@ -98,16 +98,16 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
     ShadowSpillTraceEvent *events = grow_events
         ? calloc((size_t)config->event_capacity, sizeof(*events))
         : NULL;
-    ShadowSpillAllocationEvent *allocations = grow_allocations
+    ShadowSpillAllocationEvent *execution_leases = grow_allocations
         ? calloc(
             (size_t)config->allocation_event_capacity,
-            sizeof(*allocations)
+            sizeof(*execution_leases)
         )
         : NULL;
     if ((grow_events && events == NULL) ||
-        (grow_allocations && allocations == NULL)) {
+        (grow_allocations && execution_leases == NULL)) {
         free(events);
-        free(allocations);
+        free(execution_leases);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
 
@@ -125,14 +125,14 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
             runtime->trace_event_capacity = config->event_capacity;
             events = NULL;
         }
-        if (allocations != NULL &&
+        if (execution_leases != NULL &&
             runtime->allocation_event_capacity <
                 config->allocation_event_capacity) {
             free(runtime->allocation_events);
-            runtime->allocation_events = allocations;
+            runtime->allocation_events = execution_leases;
             runtime->allocation_event_capacity =
                 config->allocation_event_capacity;
-            allocations = NULL;
+            execution_leases = NULL;
         }
         runtime->trace_allocation_event_capacity =
             config->allocation_event_capacity;
@@ -140,7 +140,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
     }
     pthread_mutex_unlock(&runtime->mutex);
     free(events);
-    free(allocations);
+    free(execution_leases);
     return status;
 }
 

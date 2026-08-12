@@ -53,7 +53,7 @@ class CResidencyProblem(ctypes.Structure):
         ("device_count", ctypes.c_uint32),
         ("alias_size_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
-        ("alias_retain_host", ctypes.POINTER(ctypes.c_uint8)),
+        ("alias_retain_spill_copy", ctypes.POINTER(ctypes.c_uint8)),
         ("initial_location", ctypes.POINTER(ctypes.c_int8)),
         ("final_location", ctypes.POINTER(ctypes.c_int8)),
         ("anchors", ctypes.POINTER(ctypes.c_uint8)),

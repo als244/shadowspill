@@ -39,7 +39,7 @@ class CProgram(ctypes.Structure):
         ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
         ("alias_size_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("alias_initial_version", ctypes.POINTER(ctypes.c_uint64)),
-        ("alias_retain_host_backing", ctypes.POINTER(ctypes.c_uint8)),
+        ("alias_retain_spill_copy", ctypes.POINTER(ctypes.c_uint8)),
         ("task_device", ctypes.POINTER(ctypes.c_uint32)),
         ("task_resource_kind", ctypes.POINTER(ctypes.c_uint8)),
         ("task_resource_lane", ctypes.POINTER(ctypes.c_uint32)),

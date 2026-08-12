@@ -217,7 +217,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         .device_slab_bytes = slab_bytes,
         .host_arena_bytes = config->host_arena_bytes,
         .minimum_alignment = capabilities.recommended_minimum_alignment,
-        .progress_poll_nanoseconds = config->progress_poll_nanoseconds,
+        .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
         .backend = shadowspill_cuda_backend_vtable(cuda),
     };
     ShadowSpillRuntime *runtime = NULL;
@@ -609,10 +609,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_for_pointer(
 ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
     uint64_t object_id,
     uint64_t size_bytes,
-    uint8_t retain_host_backing,
+    uint8_t retain_spill_copy,
     uint64_t source_address
 ) {
-    if (retain_host_backing > 1U ||
+    if (retain_spill_copy > 1U ||
         (size_bytes != 0U && source_address == 0U)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
@@ -625,8 +625,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
     const ShadowSpillObjectDescription description = {
         .object_id = object_id,
         .size_bytes = size_bytes,
-        .retain_host_backing = retain_host_backing,
-        .initially_host_resident = 1U,
+        .retain_spill_copy = retain_spill_copy,
+        .initially_spill_resident = 1U,
     };
     ShadowSpillRuntimeStatus status = shadowspill_register_object(
         runtime, &description
@@ -645,9 +645,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
 ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
     uint64_t object_id,
     uint64_t size_bytes,
-    uint8_t retain_host_backing
+    uint8_t retain_spill_copy
 ) {
-    if (retain_host_backing > 1U) {
+    if (retain_spill_copy > 1U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
@@ -659,8 +659,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
     const ShadowSpillObjectDescription description = {
         .object_id = object_id,
         .size_bytes = size_bytes,
-        .retain_host_backing = retain_host_backing,
-        .initially_host_resident = 0U,
+        .retain_spill_copy = retain_spill_copy,
+        .initially_spill_resident = 0U,
     };
     return shadowspill_register_object(runtime, &description);
 }
@@ -858,10 +858,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_validate_object_binding(
     }
     const int current_matches = snapshot.generation == generation &&
         (address == 0U ||
-         snapshot.device_pointer == (void *)(uintptr_t)address);
+         snapshot.execution_pointer == (void *)(uintptr_t)address);
     const int retired_matches = address != 0U &&
         snapshot.retired_generation == generation &&
-        snapshot.retired_device_pointer == (void *)(uintptr_t)address;
+        snapshot.retired_execution_pointer == (void *)(uintptr_t)address;
     if (!current_matches && !retired_matches) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }

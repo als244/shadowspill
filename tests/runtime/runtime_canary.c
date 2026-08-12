@@ -17,7 +17,7 @@ static int best_fit_preserves_largest_range(void) {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
         .device_slab_bytes = 256U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 1000U,
+        .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(mock),
     };
     ShadowSpillRuntime *runtime = NULL;
@@ -78,7 +78,7 @@ int main(void) {
         .device_slab_bytes = 256U,
         .host_arena_bytes = 256U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 10000U,
+        .worker_poll_nanoseconds = 10000U,
         .backend = shadowspill_mock_backend_vtable(mock),
     };
     if (shadowspill_runtime_create(&runtime_config, &runtime) !=
@@ -142,8 +142,8 @@ int main(void) {
         .object_id = 7U,
         .size_bytes = 128U,
         .initial_version = 4U,
-        .retain_host_backing = 1U,
-        .initially_host_resident = 1U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
     };
     ShadowSpillAllocation first_generation = {0};
     unsigned char original_payload[128];
@@ -243,8 +243,8 @@ int main(void) {
         shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
             SHADOWSPILL_RUNTIME_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
-        snapshot.authoritative_version != 6U || snapshot.device_version != 6U ||
-        snapshot.host_current) {
+        snapshot.authoritative_version != 6U || snapshot.execution_version != 6U ||
+        snapshot.spill_current) {
         return EXIT_FAILURE;
     }
     const ShadowSpillRuntimeAction release = {
@@ -270,21 +270,21 @@ int main(void) {
         statistics.bytes_to_device != 128U ||
         statistics.wait_events_inserted != 1U ||
         statistics.allocated_bytes != 0U ||
-        snapshot.authoritative_version != 6U || snapshot.host_current ||
+        snapshot.authoritative_version != 6U || snapshot.spill_current ||
         snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
-        snapshot.device_pointer != NULL) {
+        snapshot.execution_pointer != NULL) {
         return EXIT_FAILURE;
     }
     const ShadowSpillObjectDescription pair[] = {
         {
             .object_id = 8U,
             .size_bytes = 64U,
-            .initially_host_resident = 1U,
+            .initially_spill_resident = 1U,
         },
         {
             .object_id = 9U,
             .size_bytes = 64U,
-            .initially_host_resident = 1U,
+            .initially_spill_resident = 1U,
         },
     };
     const ShadowSpillRuntimeAction pair_prefetch[] = {

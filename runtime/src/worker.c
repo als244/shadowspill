@@ -53,8 +53,20 @@ static void complete_action(
             );
         }
     }
-    shadowspill_object_release(action->object);
-    free(action);
+    if (action->admitted) {
+        const uint8_t kind = action->kind;
+        ShadowSpillObject *object = action->object;
+        const uint64_t task_id = action->task_id;
+        *action = (ShadowSpillQueuedAction){
+            .task_id = task_id,
+            .kind = kind,
+            .object = object,
+            .admitted = 1U,
+        };
+    } else {
+        shadowspill_object_release(action->object);
+        free(action);
+    }
     const uint64_t previous_actions = atomic_fetch_sub_explicit(
         &runtime->actions.count, 1U, memory_order_release
     );
@@ -91,9 +103,12 @@ static int reserve_destination_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    if (action->destination_reserved ||
+    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
+        runtime, action->object
+    );
+    if (action->destination_lease != NULL ||
         (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-         action->object->has_host_range)) {
+         spill->lease != NULL)) {
         return 1;
     }
     int trigger_complete = 0;
@@ -112,35 +127,56 @@ static int reserve_destination_locked(
     if (!trigger_complete) {
         return 0;
     }
-    const uint64_t charged = action->object->size_bytes == 0U
-        ? 1U
-        : action->object->size_bytes;
-    uint64_t offset = 0U;
+    ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+        ? shadowspill_execution_pool(runtime)
+        : shadowspill_spill_pool(runtime);
+    if (!action->destination_priority_declared) {
+        shadowspill_memory_pool_declare_transfer(pool);
+        action->destination_priority_declared = 1U;
+    }
+    if (!shadowspill_memory_pool_try_lock_transfer(pool)) {
+        return 0;
+    }
     int range_status;
     if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-        pthread_mutex_lock(&runtime->device_pool.lock);
-        range_status = shadowspill_memory_pool_reserve_locked(
-            &runtime->device_pool,
-            charged,
-            runtime->device_pool.minimum_alignment,
-            SHADOWSPILL_MEMORY_BEST_FIT_LOW,
-            &offset
-        );
+        ShadowSpillRuntimeStatus lease_status =
+            shadowspill_create_execution_lease_locked(
+                runtime,
+                action->object->size_bytes,
+                shadowspill_execution_pool(runtime)->minimum_alignment,
+                1,
+                action->task_id,
+                &action->destination_lease
+            );
+        range_status = lease_status == SHADOWSPILL_RUNTIME_OK
+            ? 0
+            : (lease_status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY ? 1 : -1);
         if (range_status == 0) {
-            shadowspill_publish_device_geometry_locked(runtime);
+            action->destination_lease->state = SHADOWSPILL_LEASE_RESERVED;
+            action->destination_lease->bound_object_id =
+                action->object->object_id;
         }
-        pthread_mutex_unlock(&runtime->device_pool.lock);
     } else {
-        pthread_mutex_lock(&runtime->host_pool.lock);
-        range_status = shadowspill_memory_pool_reserve_locked(
-            &runtime->host_pool,
-            charged,
-            1U,
-            SHADOWSPILL_MEMORY_FIRST_FIT,
-            &offset
+        action->destination_lease = calloc(
+            1U, sizeof(*action->destination_lease)
         );
-        pthread_mutex_unlock(&runtime->host_pool.lock);
+        range_status = action->destination_lease == NULL
+            ? -1
+            : shadowspill_memory_pool_reserve_lease_locked(
+                shadowspill_spill_pool(runtime),
+                action->destination_lease,
+                action->object->size_bytes,
+                1U,
+                SHADOWSPILL_MEMORY_FIRST_FIT
+            );
+        if (range_status != 0) {
+            free(action->destination_lease);
+            action->destination_lease = NULL;
+        }
     }
+    shadowspill_memory_pool_relinquish_transfer(pool);
+    action->destination_priority_declared = 0U;
+    shadowspill_memory_pool_unlock_transfer(pool);
     if (range_status != 0) {
         ShadowSpillRuntimeStatus status = range_status < 0
             ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
@@ -154,9 +190,6 @@ static int reserve_destination_locked(
         );
         return -1;
     }
-    action->destination_reserved = 1U;
-    action->destination_offset = offset;
-    action->destination_bytes = charged;
     shadowspill_append_trace_event_locked(
         runtime,
         SHADOWSPILL_TRACE_DESTINATION_RESERVED,
@@ -165,7 +198,7 @@ static int reserve_destination_locked(
         action->object->allocation_id,
         action->object->size_bytes,
         action->kind,
-        offset
+        action->destination_lease->offset
     );
     pthread_cond_broadcast(&runtime->condition);
     return 1;
@@ -175,11 +208,17 @@ static int dispatch_offload_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    ShadowSpillObjectRecord *object = action->object;
+    ShadowSpillObject *object = action->object;
     if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
         return 0;
     }
-    ShadowSpillAllocationRecord *allocation = object->device_lease;
+    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
+        runtime, object
+    );
+    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
+        runtime, object
+    );
+    ShadowSpillMemoryLease *allocation = execution->lease;
     if (allocation == NULL || allocation->pointer == NULL ||
         allocation->allocation_id != object->allocation_id ||
         allocation->generation != object->generation) {
@@ -196,10 +235,10 @@ static int dispatch_offload_locked(
     const uint64_t object_generation = object->generation;
     const uint64_t allocation_id = allocation->allocation_id;
     const uint64_t bytes = object->size_bytes;
-    void *device_pointer = allocation->pointer;
-    int host_range_created = 0;
-    if (!object->has_host_range) {
-        if (!action->destination_reserved) {
+    void *execution_pointer = allocation->pointer;
+    int spill_lease_created = 0;
+    if (spill->lease == NULL) {
+        if (action->destination_lease == NULL) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_INVALID_STATE,
@@ -209,12 +248,14 @@ static int dispatch_offload_locked(
             );
             return -1;
         }
-        object->host_offset = action->destination_offset;
-        object->has_host_range = 1U;
-        action->destination_reserved = 0U;
-        host_range_created = 1;
+        spill->lease = action->destination_lease;
+        spill->owns_lease = 1U;
+        spill->lease->state = SHADOWSPILL_LEASE_TRANSFERRING;
+        action->destination_lease = NULL;
+        spill_lease_created = 1;
     }
-    const uint64_t host_offset = object->host_offset;
+    ShadowSpillMemoryLease *spill_lease = spill->lease;
+    spill_lease->state = SHADOWSPILL_LEASE_TRANSFERRING;
     pthread_mutex_unlock(&object->lock);
 
     ShadowSpillEventLease *completion_event = NULL;
@@ -224,27 +265,25 @@ static int dispatch_offload_locked(
     int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK;
     if (!backend_failed && runtime->backend.wait_event(
             runtime->backend.context,
-            runtime->d2h_stream,
+            runtime->evict_stream,
             action->fence->event->event
         ) != 0) {
         backend_failed = 1;
     }
     if (!backend_failed && (runtime->backend.copy_async(
             runtime->backend.context,
-            shadowspill_memory_pool_pointer(
-                &runtime->host_pool, host_offset
-            ),
-            device_pointer,
+            spill_lease->pointer,
+            execution_pointer,
             bytes,
             SHADOWSPILL_TRANSFER_TO_HOST,
-            runtime->d2h_stream
+            runtime->evict_stream
         ) != 0 || runtime->backend.record_event(
                 runtime->backend.context,
                 completion_event->event,
-                runtime->d2h_stream
+                runtime->evict_stream
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                runtime->d2h_stream,
+                runtime->evict_stream,
                 completion_event,
                 object_id,
                 allocation_id
@@ -253,19 +292,18 @@ static int dispatch_offload_locked(
     }
     pthread_mutex_lock(&object->lock);
     if (backend_failed || object->generation != object_generation ||
-        object->device_lease != allocation ||
+        execution->lease != allocation ||
         object->allocation_id != allocation_id) {
         if (completion_event != NULL) {
             (void)shadowspill_event_lease_release(runtime, completion_event);
         }
-        if (host_range_created) {
-            const uint64_t charged = bytes == 0U ? 1U : bytes;
-            pthread_mutex_lock(&runtime->host_pool.lock);
-            (void)shadowspill_memory_pool_release_locked(
-                &runtime->host_pool, host_offset, charged
-            );
-            pthread_mutex_unlock(&runtime->host_pool.lock);
-            object->has_host_range = 0U;
+        if (spill_lease_created) {
+            pthread_mutex_lock(&shadowspill_spill_pool(runtime)->lock);
+            (void)shadowspill_memory_pool_release_lease_locked(spill_lease);
+            pthread_mutex_unlock(&shadowspill_spill_pool(runtime)->lock);
+            free(spill_lease);
+            spill->lease = NULL;
+            spill->owns_lease = 0U;
         }
         shadowspill_latch_failure_locked(
             runtime,
@@ -304,7 +342,8 @@ static int dispatch_prefetch_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    if (!action->destination_reserved) {
+    if (action->destination_lease == NULL ||
+        shadowspill_spill_location(runtime, action->object)->lease == NULL) {
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_RUNTIME_INVALID_STATE,
@@ -314,40 +353,22 @@ static int dispatch_prefetch_locked(
         );
         return -1;
     }
-    ShadowSpillObjectRecord *object = action->object;
+    ShadowSpillObject *object = action->object;
+    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
+        runtime, object
+    );
+    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
+        runtime, object
+    );
     const uint64_t object_id = object->object_id;
     const uint64_t previous_generation = object->generation;
     const uint64_t authoritative_version = object->authoritative_version;
-    const uint64_t host_version = object->host_version;
-    const uint64_t host_offset = object->host_offset;
+    const uint64_t spill_version = spill->version;
     const uint64_t bytes = object->size_bytes;
-    const uint64_t destination_offset = action->destination_offset;
-    action->destination_reserved = 0U;
+    ShadowSpillMemoryLease *allocation = action->destination_lease;
+    action->destination_lease = NULL;
+    allocation->state = SHADOWSPILL_LEASE_TRANSFERRING;
     pthread_mutex_unlock(&object->lock);
-
-    ShadowSpillAllocationRecord *allocation = NULL;
-    pthread_mutex_lock(&runtime->device_pool.lock);
-    ShadowSpillRuntimeStatus allocation_status =
-        shadowspill_adopt_reserved_device_range_locked(
-        runtime,
-        bytes,
-        destination_offset,
-        1,
-            action->task_id,
-            &allocation
-        );
-    pthread_mutex_unlock(&runtime->device_pool.lock);
-    if (allocation_status != SHADOWSPILL_RUNTIME_OK) {
-        pthread_mutex_lock(&object->lock);
-        shadowspill_latch_failure_locked(
-            runtime,
-            allocation_status,
-            object_id,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            bytes
-        );
-        return -1;
-    }
     ShadowSpillEventLease *completion_event = NULL;
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
@@ -355,7 +376,7 @@ static int dispatch_prefetch_locked(
     int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK;
     if (!backend_failed && runtime->backend.wait_event(
             runtime->backend.context,
-            runtime->h2d_stream,
+            runtime->fetch_stream,
             action->fence->event->event
         ) != 0) {
         backend_failed = 1;
@@ -363,19 +384,17 @@ static int dispatch_prefetch_locked(
     if (!backend_failed && (runtime->backend.copy_async(
             runtime->backend.context,
             allocation->pointer,
-            shadowspill_memory_pool_pointer(
-                &runtime->host_pool, host_offset
-            ),
+            spill->lease->pointer,
             bytes,
             SHADOWSPILL_TRANSFER_TO_DEVICE,
-            runtime->h2d_stream
+            runtime->fetch_stream
         ) != 0 || runtime->backend.record_event(
                 runtime->backend.context,
                 completion_event->event,
-                runtime->h2d_stream
+                runtime->fetch_stream
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                runtime->h2d_stream,
+                runtime->fetch_stream,
                 completion_event,
                 object_id,
                 allocation->allocation_id
@@ -386,14 +405,14 @@ static int dispatch_prefetch_locked(
     if (backend_failed || object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
         object->generation != previous_generation ||
         object->authoritative_version != authoritative_version ||
-        object->host_version != host_version || !object->host_current) {
+        spill->version != spill_version || !spill->current) {
         if (completion_event != NULL) {
             (void)shadowspill_event_lease_release(runtime, completion_event);
         }
-        pthread_mutex_lock(&runtime->device_pool.lock);
+        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
         allocation->release_task_id = action->task_id;
-        shadowspill_release_allocation_locked(runtime, allocation);
-        pthread_mutex_unlock(&runtime->device_pool.lock);
+        shadowspill_release_execution_lease_locked(runtime, allocation);
+        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
         shadowspill_latch_failure_locked(
             runtime,
             backend_failed ? SHADOWSPILL_RUNTIME_BACKEND_FAILURE
@@ -407,13 +426,11 @@ static int dispatch_prefetch_locked(
     action->completion_event = completion_event;
     action->has_completion_event = 1U;
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
-    pthread_mutex_lock(&runtime->device_pool.lock);
-    allocation->bound_object_id = object_id;
-    pthread_mutex_unlock(&runtime->device_pool.lock);
     object->allocation_id = allocation->allocation_id;
-    object->device_lease = allocation;
+    execution->lease = allocation;
     object->generation = allocation->generation;
-    object->device_version = object->host_version;
+    execution->version = spill->version;
+    execution->current = 0U;
     object->readiness_event = completion_event;
     shadowspill_event_lease_retain(object->readiness_event);
     object->has_readiness_event = 1U;
@@ -437,13 +454,15 @@ static int dispatch_prefetch_locked(
     return 1;
 }
 
-static int progress_action(
+static int handle_action(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
     int changed = 0;
-    ShadowSpillObjectRecord *object = action->object;
-    pthread_mutex_lock(&object->lock);
+    ShadowSpillObject *object = action->object;
+    if (pthread_mutex_trylock(&object->lock) != 0) {
+        return 0;
+    }
     if (action->state == SHADOWSPILL_ACTION_QUEUED) {
             if (action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
                 int complete = 0;
@@ -461,13 +480,20 @@ static int progress_action(
                     return -1;
                 }
                 if (complete) {
-                    pthread_mutex_lock(&runtime->device_pool.lock);
-                    ShadowSpillAllocationRecord *allocation =
-                        shadowspill_find_allocation(
+                    if (!shadowspill_memory_pool_try_lock_reclamation(
+                            shadowspill_execution_pool(runtime)
+                        )) {
+                        pthread_mutex_unlock(&object->lock);
+                        return 0;
+                    }
+                    ShadowSpillMemoryLease *allocation =
+                        shadowspill_find_execution_lease(
                             runtime, object->allocation_id
                         );
                     if (allocation == NULL) {
-                        pthread_mutex_unlock(&runtime->device_pool.lock);
+                        shadowspill_memory_pool_unlock_reclamation(
+                            shadowspill_execution_pool(runtime)
+                        );
                         shadowspill_latch_failure_locked(
                             runtime,
                             SHADOWSPILL_RUNTIME_INVALID_STATE,
@@ -480,7 +506,7 @@ static int progress_action(
                     }
                     if (allocation->handoff_from_object_id ==
                             object->object_id) {
-                        ShadowSpillObjectRecord *target =
+                        ShadowSpillObject *target =
                             shadowspill_find_object(
                                 runtime,
                                 allocation->handoff_to_object_id
@@ -488,8 +514,8 @@ static int progress_action(
                         if (allocation->handoff_task_id != action->task_id ||
                             target == NULL ||
                             target->allocation_id != allocation->allocation_id) {
-                            pthread_mutex_unlock(
-                                &runtime->device_pool.lock
+                            shadowspill_memory_pool_unlock_reclamation(
+                                shadowspill_execution_pool(runtime)
                             );
                             shadowspill_latch_failure_locked(
                                 runtime,
@@ -502,10 +528,11 @@ static int progress_action(
                             return -1;
                         }
                         object->retired_generation = object->generation;
-                        object->retired_device_pointer = allocation->pointer;
+                        object->retired_execution_pointer = allocation->pointer;
                         object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                        object->device_lease = NULL;
-                        object->residency = object->host_current
+                        shadowspill_execution_location(runtime, object)->lease = NULL;
+                        shadowspill_execution_location(runtime, object)->current = 0U;
+                        object->residency = shadowspill_spill_location(runtime, object)->current
                             ? SHADOWSPILL_OBJECT_HOST_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
                         allocation->handoff_from_object_id =
@@ -514,20 +541,25 @@ static int progress_action(
                             SHADOWSPILL_RUNTIME_NO_ID;
                         allocation->handoff_task_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
-                        pthread_mutex_unlock(&runtime->device_pool.lock);
+                        shadowspill_memory_pool_unlock_reclamation(
+                            shadowspill_execution_pool(runtime)
+                        );
                         pthread_cond_broadcast(&object->state_changed);
                         pthread_mutex_unlock(&object->lock);
                         complete_action(runtime, action);
                         return 2;
                     }
                     object->retired_generation = object->generation;
-                    object->retired_device_pointer = allocation->pointer;
+                    object->retired_execution_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
-                    shadowspill_release_allocation_locked(runtime, allocation);
-                    pthread_mutex_unlock(&runtime->device_pool.lock);
+                    shadowspill_release_execution_lease_locked(runtime, allocation);
+                    shadowspill_memory_pool_unlock_reclamation(
+                        shadowspill_execution_pool(runtime)
+                    );
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                    object->device_lease = NULL;
-                    object->residency = object->host_current
+                    shadowspill_execution_location(runtime, object)->lease = NULL;
+                    shadowspill_execution_location(runtime, object)->current = 0U;
+                    object->residency = shadowspill_spill_location(runtime, object)->current
                         ? SHADOWSPILL_OBJECT_HOST_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
                     pthread_cond_broadcast(&object->state_changed);
@@ -590,6 +622,99 @@ static int progress_action(
             }
             if (complete) {
                 ShadowSpillEventLease *readiness_to_release = NULL;
+                ShadowSpillMemoryPool *release_pool = NULL;
+                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+                    release_pool = shadowspill_execution_pool(runtime);
+                } else if (!object->retain_spill_copy) {
+                    release_pool = shadowspill_spill_pool(runtime);
+                }
+                if (release_pool != NULL &&
+                    !shadowspill_memory_pool_try_lock_reclamation(
+                        release_pool
+                    )) {
+                    pthread_mutex_unlock(&object->lock);
+                    return 0;
+                }
+                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+                    ShadowSpillMemoryLease *allocation =
+                        shadowspill_find_execution_lease(
+                            runtime, object->allocation_id
+                        );
+                    if (allocation == NULL) {
+                        shadowspill_memory_pool_unlock_reclamation(
+                            shadowspill_execution_pool(runtime)
+                        );
+                        shadowspill_latch_failure_locked(
+                            runtime,
+                            SHADOWSPILL_RUNTIME_INVALID_STATE,
+                            object->object_id,
+                            object->allocation_id,
+                            0U
+                        );
+                        pthread_mutex_unlock(&object->lock);
+                        return -1;
+                    }
+                    object->retired_generation = object->generation;
+                    object->retired_execution_pointer = allocation->pointer;
+                    allocation->release_task_id = action->task_id;
+                    shadowspill_release_execution_lease_locked(runtime, allocation);
+                    shadowspill_memory_pool_unlock_reclamation(
+                        shadowspill_execution_pool(runtime)
+                    );
+                    object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                    shadowspill_execution_location(runtime, object)->lease = NULL;
+                    shadowspill_execution_location(runtime, object)->current = 0U;
+                    shadowspill_spill_location(runtime, object)->current = 1U;
+                    shadowspill_spill_location(runtime, object)->version = object->authoritative_version;
+                    shadowspill_spill_location(runtime, object)->lease->state =
+                        SHADOWSPILL_LEASE_ACTIVE;
+                    object->residency = SHADOWSPILL_OBJECT_HOST_ONLY;
+                } else {
+                    ShadowSpillObjectLocation *execution =
+                        shadowspill_execution_location(runtime, object);
+                    if (execution->lease != NULL &&
+                        execution->lease->generation == object->generation) {
+                        object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
+                        execution->current = 1U;
+                        execution->lease->state = SHADOWSPILL_LEASE_ACTIVE;
+                    }
+                    /*
+                     * The compute stream may already have waited on this
+                     * transfer and launched a task.  In that case
+                     * after_task has advanced execution_version while the
+                     * progress thread still observes PREFETCHING.  The H2D
+                     * completion only changes readiness; it must not roll
+                     * the device version back to the copied host version.
+                     */
+                    object->has_readiness_event = 0U;
+                    readiness_to_release = object->readiness_event;
+                    object->readiness_event = NULL;
+                    if (!object->retain_spill_copy) {
+                        ShadowSpillObjectLocation *spill =
+                            shadowspill_spill_location(runtime, object);
+                        ShadowSpillMemoryLease *lease = spill->lease;
+                        const int range_status =
+                            shadowspill_memory_pool_release_lease_locked(lease);
+                        shadowspill_memory_pool_unlock_reclamation(
+                            shadowspill_spill_pool(runtime)
+                        );
+                        if (range_status != 0) {
+                            shadowspill_latch_failure_locked(
+                                runtime,
+                                SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
+                                object->object_id,
+                                object->allocation_id,
+                                object->size_bytes
+                            );
+                            pthread_mutex_unlock(&object->lock);
+                            return -1;
+                        }
+                        free(lease);
+                        spill->lease = NULL;
+                        spill->owns_lease = 0U;
+                        spill->current = 0U;
+                    }
+                }
                 shadowspill_append_trace_event_locked(
                     runtime,
                     SHADOWSPILL_TRACE_TRANSFER_COMPLETED,
@@ -604,74 +729,6 @@ static int progress_action(
                         &runtime->actions.count, memory_order_acquire
                     )
                 );
-                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
-                    pthread_mutex_lock(&runtime->device_pool.lock);
-                    ShadowSpillAllocationRecord *allocation =
-                        shadowspill_find_allocation(
-                            runtime, object->allocation_id
-                        );
-                    if (allocation == NULL) {
-                        pthread_mutex_unlock(&runtime->device_pool.lock);
-                        shadowspill_latch_failure_locked(
-                            runtime,
-                            SHADOWSPILL_RUNTIME_INVALID_STATE,
-                            object->object_id,
-                            object->allocation_id,
-                            0U
-                        );
-                        pthread_mutex_unlock(&object->lock);
-                        return -1;
-                    }
-                    object->retired_generation = object->generation;
-                    object->retired_device_pointer = allocation->pointer;
-                    allocation->release_task_id = action->task_id;
-                    shadowspill_release_allocation_locked(runtime, allocation);
-                    pthread_mutex_unlock(&runtime->device_pool.lock);
-                    object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                    object->device_lease = NULL;
-                    object->host_current = 1U;
-                    object->host_version = object->authoritative_version;
-                    object->residency = SHADOWSPILL_OBJECT_HOST_ONLY;
-                } else {
-                    object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
-                    /*
-                     * The compute stream may already have waited on this
-                     * transfer and launched a task.  In that case
-                     * after_task has advanced device_version while the
-                     * progress thread still observes PREFETCHING.  The H2D
-                     * completion only changes readiness; it must not roll
-                     * the device version back to the copied host version.
-                     */
-                    object->has_readiness_event = 0U;
-                    readiness_to_release = object->readiness_event;
-                    object->readiness_event = NULL;
-                    if (!object->retain_host_backing) {
-                        uint64_t charged = object->size_bytes == 0U
-                            ? 1U
-                            : object->size_bytes;
-                        pthread_mutex_lock(&runtime->host_pool.lock);
-                        const int range_status =
-                            shadowspill_memory_pool_release_locked(
-                                &runtime->host_pool,
-                                object->host_offset,
-                                charged
-                            );
-                        pthread_mutex_unlock(&runtime->host_pool.lock);
-                        if (range_status != 0) {
-                            shadowspill_latch_failure_locked(
-                                runtime,
-                                SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
-                                object->object_id,
-                                object->allocation_id,
-                                charged
-                            );
-                            pthread_mutex_unlock(&object->lock);
-                            return -1;
-                        }
-                        object->has_host_range = 0U;
-                        object->host_current = 0U;
-                    }
-                }
                 object->prefetch_pending = 0U;
                 pthread_cond_broadcast(&object->state_changed);
                 pthread_mutex_unlock(&object->lock);
@@ -708,7 +765,7 @@ static int progress_action(
     return changed;
 }
 
-static int progress_actions(ShadowSpillRuntime *runtime) {
+static int handle_actions(ShadowSpillRuntime *runtime) {
     const uint64_t limit = atomic_load_explicit(
         &runtime->actions.count, memory_order_acquire
     );
@@ -729,7 +786,7 @@ static int progress_actions(ShadowSpillRuntime *runtime) {
         action->processing = 1U;
         cursor = action->next;
         pthread_mutex_unlock(&runtime->actions.lock);
-        const int action_status = progress_action(runtime, action);
+        const int action_status = handle_action(runtime, action);
         if (action_status < 0) {
             release_action_claim(runtime, action);
             return changed;
@@ -750,7 +807,7 @@ static void timed_wait_locked(
 ) {
     uint64_t wait_ns = completion_wait_nanoseconds;
     if (wait_ns == 0U) {
-        wait_ns = runtime->progress_poll_nanoseconds;
+        wait_ns = runtime->worker_poll_nanoseconds;
     }
     if (wait_ns == 0U) {
         wait_ns = 1000000U;
@@ -768,7 +825,7 @@ static void timed_wait_locked(
     );
 }
 
-void *shadowspill_progress_main(void *pointer) {
+void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
 #if defined(__linux__)
     (void)pthread_setname_np(pthread_self(), "shadowspill.wkr");
@@ -794,10 +851,10 @@ void *shadowspill_progress_main(void *pointer) {
                 0U
             );
         }
-        const ShadowSpillRetirementProgress retirement_progress =
-            shadowspill_progress_retirements(runtime);
-        if (!retirement_progress.pool_busy) {
-            (void)progress_actions(runtime);
+        const ShadowSpillRetirementWork retirement_work =
+            shadowspill_handle_retirements(runtime);
+        if (!retirement_work.pool_busy) {
+            (void)handle_actions(runtime);
         }
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
             pthread_cond_broadcast(&runtime->condition);

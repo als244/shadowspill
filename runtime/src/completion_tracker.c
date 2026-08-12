@@ -110,7 +110,7 @@ static uint64_t backoff_nanoseconds(
     const ShadowSpillRuntime *runtime,
     uint64_t misses
 ) {
-    uint64_t delay = runtime->progress_poll_nanoseconds;
+    uint64_t delay = runtime->worker_poll_nanoseconds;
     if (delay < 10000U) {
         delay = 10000U;
     }

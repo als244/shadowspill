@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 21U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 22U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -25,7 +25,7 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     uint64_t device_budget_bytes;
     uint64_t provider_headroom_bytes;
     uint64_t host_arena_bytes;
-    uint64_t progress_poll_nanoseconds;
+    uint64_t worker_poll_nanoseconds;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
@@ -248,7 +248,7 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_register_host_object(
     uint64_t object_id,
     uint64_t size_bytes,
-    uint8_t retain_host_backing,
+    uint8_t retain_spill_copy,
     uint64_t source_address
 );
 
@@ -257,7 +257,7 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_register_placeholder_object(
     uint64_t object_id,
     uint64_t size_bytes,
-    uint8_t retain_host_backing
+    uint8_t retain_spill_copy
 );
 
 /* Replace one existing HOST_ONLY object's current pinned payload. */

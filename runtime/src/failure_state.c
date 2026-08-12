@@ -22,10 +22,10 @@ void shadowspill_latch_failure_locked(
         .allocation_id = allocation_id,
         .requested_bytes = requested_bytes,
         .free_bytes = atomic_load_explicit(
-            &runtime->device_free_bytes_snapshot, memory_order_acquire
+            &runtime->execution_free_bytes_snapshot, memory_order_acquire
         ),
         .largest_free_range_bytes = atomic_load_explicit(
-            &runtime->device_largest_free_snapshot, memory_order_acquire
+            &runtime->execution_largest_free_snapshot, memory_order_acquire
         ),
     };
     atomic_store_explicit(
@@ -44,8 +44,10 @@ void shadowspill_latch_failure_locked(
     );
     pthread_cond_broadcast(&runtime->condition);
     shadowspill_idle_notify(runtime);
-    if (runtime->device_pool.initialized) {
-        pthread_cond_broadcast(&runtime->device_pool.capacity_changed);
+    if (shadowspill_execution_pool(runtime)->initialized) {
+        pthread_cond_broadcast(
+            &shadowspill_execution_pool(runtime)->capacity_changed
+        );
     }
 }
 

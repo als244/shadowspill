@@ -41,7 +41,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
 
 void shadowspill_append_allocation_event_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillAllocationRecord *allocation,
+    const ShadowSpillMemoryLease *allocation,
     ShadowSpillAllocationEventKind kind,
     ShadowSpillAllocationCategory category
 ) {

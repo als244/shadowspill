@@ -41,7 +41,7 @@ int main(void) {
         .device_slab_bytes = 128U,
         .host_arena_bytes = 1U,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 10000U,
+        .worker_poll_nanoseconds = 10000U,
         .backend = shadowspill_mock_backend_vtable(mock),
     };
     if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK) {

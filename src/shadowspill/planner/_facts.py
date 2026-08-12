@@ -26,7 +26,7 @@ class PlanningFacts:
     alias_index: dict[str, int]
     alias_sizes: tuple[int, ...]
     alias_devices: tuple[str, ...]
-    alias_retain_host: tuple[bool, ...]
+    alias_retain_spill_copy: tuple[bool, ...]
     initial_locations: tuple[MemoryLocation | None, ...]
     final_locations: tuple[MemoryLocation | None, ...]
     anchors: tuple[frozenset[int], ...]
@@ -184,7 +184,7 @@ def build_facts(
         alias_index=alias_index,
         alias_sizes=tuple(item.size_bytes for item in aliases),
         alias_devices=tuple(item.device_id for item in aliases),
-        alias_retain_host=tuple(item.retain_host_backing for item in aliases),
+        alias_retain_spill_copy=tuple(item.retain_spill_copy for item in aliases),
         initial_locations=tuple(initial.get(alias_id) for alias_id in alias_ids),
         final_locations=tuple(final.get(alias_id) for alias_id in alias_ids),
         anchors=tuple(frozenset(values) for values in anchor_sets),

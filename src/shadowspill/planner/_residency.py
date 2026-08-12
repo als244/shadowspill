@@ -411,7 +411,7 @@ def _transfer_runtime_ns(
 
 
 def _writeback_required(facts: PlanningFacts, cut: Cut) -> bool:
-    if not facts.alias_retain_host[cut.alias]:
+    if not facts.alias_retain_spill_copy[cut.alias]:
         return True
     departure = cut.start - 1
     return any(boundary <= departure for boundary in facts.write_boundaries[cut.alias])

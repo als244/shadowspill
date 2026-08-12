@@ -35,8 +35,8 @@ ShadowSpillTransferLane *shadowspill_transfer_lane_for_action(
         return NULL;
     }
     return action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-        ? &runtime->h2d_lane
-        : &runtime->d2h_lane;
+        ? &runtime->fetch_lane
+        : &runtime->evict_lane;
 }
 
 void shadowspill_transfer_lane_enqueue(

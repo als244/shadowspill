@@ -20,7 +20,7 @@ def main() -> int:
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=64 * MIB,
         host_arena_bytes=1 * MIB,
-        progress_poll_nanoseconds=10_000,
+        worker_poll_nanoseconds=10_000,
     )
     library = installed.library
     if int(library.shadowspill_pytorch_seal_physical_budget(64 * MIB, 16)) != 0:

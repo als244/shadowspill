@@ -277,7 +277,7 @@ def test_installer_rejects_missing_library(tmp_path: Path) -> None:
         ({"provider_headroom_bytes": -1}, "headroom"),
         ({"provider_headroom_bytes": 1024}, "headroom"),
         ({"host_arena_bytes": -1}, "host arena"),
-        ({"progress_poll_nanoseconds": -1}, "poll"),
+        ({"worker_poll_nanoseconds": -1}, "poll"),
     ],
 )
 def test_installer_rejects_invalid_physical_configuration(
@@ -288,7 +288,7 @@ def test_installer_rejects_invalid_physical_configuration(
         "device_budget_bytes": 1024,
         "provider_headroom_bytes": 0,
         "host_arena_bytes": 0,
-        "progress_poll_nanoseconds": 0,
+        "worker_poll_nanoseconds": 0,
     }
     arguments.update(overrides)
     with pytest.raises(AllocatorInstallError, match=message):

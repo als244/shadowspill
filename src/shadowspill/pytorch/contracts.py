@@ -65,7 +65,7 @@ class TensorSpec:
 
     @property
     def storage_nbytes(self) -> int:
-        """Smallest backing extent that can represent the fixed strided tensor."""
+        """Smallest storage extent that can represent the fixed strided tensor."""
 
         if not self.shape or any(dimension == 0 for dimension in self.shape):
             elements = 0 if self.shape else 1

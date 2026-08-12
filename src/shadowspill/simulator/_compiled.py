@@ -223,7 +223,7 @@ def compile_simulation_template(
     alias_size = u64(tuple(item.size_bytes for item in program.alias_groups))
     alias_version = u64(tuple(item.initial_version for item in program.alias_groups))
     alias_host = u8(
-        tuple(int(item.retain_host_backing) for item in program.alias_groups)
+        tuple(int(item.retain_spill_copy) for item in program.alias_groups)
     )
     task_device = u32(tuple(device_index[item.resource.device_id] for item in tasks))
     task_kind = u8(tuple(_RESOURCE_CODE[item.resource.kind] for item in tasks))
@@ -260,7 +260,7 @@ def compile_simulation_template(
         alias_device=alias_device,
         alias_size_bytes=alias_size,
         alias_initial_version=alias_version,
-        alias_retain_host_backing=alias_host,
+        alias_retain_spill_copy=alias_host,
         task_device=task_device,
         task_resource_kind=task_kind,
         task_resource_lane=task_lane,

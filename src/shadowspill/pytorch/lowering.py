@@ -179,13 +179,13 @@ class _TensorInventory:
         *,
         role: ObjectRole,
         persistence: Persistence,
-        retain_host_backing: bool = False,
+        retain_spill_copy: bool = False,
     ) -> str:
         return self._add(
             tensor,
             role=role,
             persistence=persistence,
-            retain_host_backing=retain_host_backing,
+            retain_spill_copy=retain_spill_copy,
         )
 
     def add_compiled_output(
@@ -228,7 +228,7 @@ class _TensorInventory:
         *,
         role: ObjectRole,
         persistence: Persistence,
-        retain_host_backing: bool,
+        retain_spill_copy: bool,
     ) -> str:
         self._tensor_keepalive.append(tensor)
         key = self.key(tensor)
@@ -238,7 +238,7 @@ class _TensorInventory:
                 object_id,
                 role=role,
                 persistence=persistence,
-                retain_host_backing=retain_host_backing,
+                retain_spill_copy=retain_spill_copy,
             )
             return object_id
         alias_id = self._alias_by_storage.get(key.storage_identity)
@@ -248,7 +248,7 @@ class _TensorInventory:
             self._alias_by_storage[key.storage_identity] = alias_id
         elif self._alias_sizes[alias_id] != storage_bytes:
             raise CaptureError("one capture storage reported inconsistent byte extents")
-        if retain_host_backing:
+        if retain_spill_copy:
             self._retain_host.add(alias_id)
         return self._new_object(
             key,
@@ -293,7 +293,7 @@ class _TensorInventory:
                 existing,
                 role=role,
                 persistence=persistence,
-                retain_host_backing=False,
+                retain_spill_copy=False,
             )
             return existing
         return self._new_object(
@@ -341,14 +341,14 @@ class _TensorInventory:
         *,
         role: ObjectRole,
         persistence: Persistence,
-        retain_host_backing: bool,
+        retain_spill_copy: bool,
     ) -> None:
         record = self._record(object_id)
         if persistence is Persistence.CHECKPOINT:
             record.persistence = persistence
         if _ROLE_PRIORITY[role] > _ROLE_PRIORITY[record.role]:
             record.role = role
-        if retain_host_backing:
+        if retain_spill_copy:
             self._retain_host.add(record.alias_group_id)
 
     def alias_id(self, object_id: str) -> str:
@@ -428,7 +428,7 @@ class _TensorInventory:
                 alias_group_id,
                 self._device_id,
                 size_bytes,
-                retain_host_backing=alias_group_id in self._retain_host,
+                retain_spill_copy=alias_group_id in self._retain_host,
             )
             for alias_group_id, size_bytes in self._alias_sizes.items()
         )
@@ -469,7 +469,7 @@ def lower_forward_program(
             parameter,
             role=ObjectRole.PARAMETER,
             persistence=Persistence.CHECKPOINT,
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         registrations.append(RegistrationBinding(name, object_id, True))
     parameter_names = {
@@ -484,7 +484,7 @@ def lower_forward_program(
             persistence=(
                 Persistence.CHECKPOINT if name in checkpoint_names else Persistence.RUN
             ),
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         registrations.append(RegistrationBinding(name, object_id, False))
 
@@ -496,7 +496,7 @@ def lower_forward_program(
             value,
             role=ObjectRole.INPUT,
             persistence=Persistence.STEP,
-            retain_host_backing=True,
+            retain_spill_copy=True,
         )
         root_input_slots.append(TensorSlot(position, object_id))
 

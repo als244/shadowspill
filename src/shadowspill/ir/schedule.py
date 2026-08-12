@@ -201,7 +201,7 @@ class MemorySchedule:
         host_resident = {
             group.alias_group_id
             for group in program.alias_groups
-            if group.retain_host_backing
+            if group.retain_spill_copy
         }
         host_current = set(host_resident)
         for index, residency in enumerate(self.initial_residency):
@@ -265,7 +265,7 @@ class MemorySchedule:
                         "release requires device residency",
                     )
                     device_resident.remove(alias_id)
-                    if not alias_by_id[alias_id].retain_host_backing:
+                    if not alias_by_id[alias_id].retain_spill_copy:
                         host_resident.discard(alias_id)
                         host_current.discard(alias_id)
                 elif action.kind is MemoryActionKind.OFFLOAD:
@@ -289,7 +289,7 @@ class MemorySchedule:
                         "prefetch requires absent device residency",
                     )
                     device_resident.add(alias_id)
-                    if not alias_by_id[alias_id].retain_host_backing:
+                    if not alias_by_id[alias_id].retain_spill_copy:
                         host_resident.remove(alias_id)
                         host_current.remove(alias_id)
 

@@ -75,7 +75,7 @@ def test_dense_projection_has_stable_declared_order() -> None:
     assert dense.output_offsets == (0, 1, 1, 2, 3)
     assert dense.outputs == (2, 2, 3)
     assert dense.alias_initial_version == (0, 0, 0, 0)
-    assert dense.alias_retain_host_backing == (False, True, False, False)
+    assert dense.alias_retain_spill_copy == (False, True, False, False)
     assert dense.object_role == (0, 1, 3, 6)
     assert dense.group_option_offsets == (0, 2)
     assert dense.option_active_task_offsets == (0, 1, 2)

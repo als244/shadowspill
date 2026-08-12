@@ -131,7 +131,7 @@ int main(void) {
         .device_count = 1U,
         .alias_size_bytes = alias_sizes,
         .alias_device = alias_devices,
-        .alias_retain_host = retain_host,
+        .alias_retain_spill_copy = retain_host,
         .initial_location = initial_locations,
         .final_location = final_locations,
         .anchors = anchors,

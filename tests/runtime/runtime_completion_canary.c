@@ -26,7 +26,7 @@ int main(void) {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
         .device_slab_bytes = COMPLETION_COUNT * ALLOCATION_BYTES,
         .minimum_alignment = 1U,
-        .progress_poll_nanoseconds = 10000U,
+        .worker_poll_nanoseconds = 10000U,
         .backend = shadowspill_mock_backend_vtable(mock),
     };
     ShadowSpillBackendStream compute = {{0U, 0U}};

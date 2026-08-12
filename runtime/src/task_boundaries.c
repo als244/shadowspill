@@ -16,7 +16,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
 ) {
     for (uint32_t index = 0U; index < record->update_count; ++index) {
         const ShadowSpillExecutionUpdate *update = &record->updates[index];
-        ShadowSpillObjectRecord *object = update->object;
+        ShadowSpillObject *object = update->object;
         pthread_mutex_lock(&object->lock);
         if (update->version_delta == 0U ||
             (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
@@ -36,8 +36,8 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
             return SHADOWSPILL_RUNTIME_INVALID_STATE;
         }
         object->authoritative_version += update->version_delta;
-        object->device_version = object->authoritative_version;
-        object->host_current = 0U;
+        shadowspill_execution_location(runtime, object)->version = object->authoritative_version;
+        shadowspill_spill_location(runtime, object)->current = 0U;
         pthread_mutex_unlock(&object->lock);
     }
     return SHADOWSPILL_RUNTIME_OK;
@@ -63,8 +63,8 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
     uint64_t *failure_allocation_id
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    pthread_mutex_lock(&runtime->device_pool.lock);
-    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->handoff_task_id != record->task_id) {
             continue;
@@ -78,7 +78,7 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_failure_locked(
             runtime,
@@ -96,8 +96,8 @@ static uint64_t count_task_retirements_locked(
     uint64_t task_id
 ) {
     uint64_t count = 0U;
-    pthread_mutex_lock(&runtime->device_pool.lock);
-    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
@@ -106,7 +106,7 @@ static uint64_t count_task_retirements_locked(
             ++count;
         }
     }
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
     return count;
 }
 
@@ -148,6 +148,14 @@ static void discard_action_batch_locked(
     ShadowSpillQueuedAction *action = batch->head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
+        if (action->destination_priority_declared) {
+            ShadowSpillMemoryPool *pool =
+                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+                ? shadowspill_execution_pool(runtime)
+                : shadowspill_spill_pool(runtime);
+            shadowspill_memory_pool_relinquish_transfer(pool);
+            action->destination_priority_declared = 0U;
+        }
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             pthread_mutex_lock(&action->object->lock);
             action->object->prefetch_pending = 0U;
@@ -155,14 +163,27 @@ static void discard_action_batch_locked(
             pthread_mutex_unlock(&action->object->lock);
         }
         shadowspill_release_task_fence_locked(runtime, action->fence);
-        shadowspill_object_release(action->object);
-        free(action);
+        if (action->admitted) {
+            const uint8_t kind = action->kind;
+            ShadowSpillObject *object = action->object;
+            const uint64_t task_id = action->task_id;
+            *action = (ShadowSpillQueuedAction){
+                .task_id = task_id,
+                .kind = kind,
+                .object = object,
+                .admitted = 1U,
+            };
+        } else {
+            shadowspill_object_release(action->object);
+            free(action);
+        }
         action = next;
     }
     *batch = (ShadowSpillActionBatch){0};
 }
 
 static ShadowSpillRuntimeStatus instantiate_actions_locked(
+    ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
     ShadowSpillTaskFence *fence,
     ShadowSpillActionBatch *batch,
@@ -171,24 +192,14 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
 ) {
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         const ShadowSpillExecutionAction *action = &record->actions[index];
-        ShadowSpillObjectRecord *object = action->object;
+        ShadowSpillObject *object = action->object;
         pthread_mutex_lock(&object->lock);
         *failure_object_id = object->object_id;
         *failure_allocation_id = object->allocation_id;
-        if (action->kind > SHADOWSPILL_RUNTIME_PREFETCH) {
-            pthread_mutex_unlock(&object->lock);
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-        }
-        for (uint32_t previous = 0U; previous < index; ++previous) {
-            if (record->actions[previous].object == object) {
-                pthread_mutex_unlock(&object->lock);
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-            }
-        }
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             if (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
-                !object->host_current ||
-                object->host_version != object->authoritative_version) {
+                !shadowspill_spill_location(runtime, object)->current ||
+                shadowspill_spill_location(runtime, object)->version != object->authoritative_version) {
                 pthread_mutex_unlock(&object->lock);
                 return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             }
@@ -197,15 +208,13 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         }
-        ShadowSpillQueuedAction *queued = calloc(1U, sizeof(*queued));
-        if (queued == NULL) {
+        ShadowSpillQueuedAction *queued = &record->queued_actions[index];
+        if (queued->active) {
             pthread_mutex_unlock(&object->lock);
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_RUNTIME_INVALID_STATE;
         }
-        queued->task_id = record->task_id;
-        queued->kind = action->kind;
-        queued->object = object;
-        shadowspill_object_retain(object);
+        queued->active = 1U;
+        queued->state = SHADOWSPILL_ACTION_QUEUED;
         queued->fence = fence;
         shadowspill_retain_task_fence(fence);
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
@@ -229,8 +238,8 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
     ShadowSpillTaskFence *fence
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    pthread_mutex_lock(&runtime->device_pool.lock);
-    for (ShadowSpillAllocationRecord *allocation = runtime->active_allocations;
+    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
@@ -245,7 +254,7 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&runtime->device_pool.lock);
+    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
     return status;
 }
 
@@ -341,6 +350,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         status = record_task_fence_locked(runtime, compute_stream, &fence);
         if (status == SHADOWSPILL_RUNTIME_OK) {
             status = instantiate_actions_locked(
+                runtime,
                 record,
                 fence,
                 &batch,

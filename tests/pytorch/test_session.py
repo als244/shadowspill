@@ -39,7 +39,7 @@ def test_forward_request_and_admission_helpers_reject_invalid_values() -> None:
         _validate_forward_request(model, [], 1 << 30, 0)
     with pytest.raises(PlanningError, match="CPU resident"):
         _validate_forward_request(nn.Linear(2, 2, device="meta"), [], 1 << 30, 1 << 30)
-    with pytest.raises(PlanningError, match="host budget"):
+    with pytest.raises(PlanningError, match="spill-pool budget"):
         _host_arena_estimate(model, [torch.ones(2)], 1)
 
 

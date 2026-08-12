@@ -143,7 +143,7 @@ static CutScore score_cut(
     uint32_t alias = cut->alias;
     int32_t departure = cut->start - 1;
     int32_t entry = cut->end + 1;
-    int writeback = problem->alias_retain_host[alias] == 0U;
+    int writeback = problem->alias_retain_spill_copy[alias] == 0U;
     if (!writeback && departure >= -1) {
         uint32_t index = (uint32_t)(departure + 1);
         writeback = problem->write_prefix[cell(
@@ -352,7 +352,7 @@ static int valid_problem(
     }
     uint64_t cells = (uint64_t)problem->alias_count * problem->boundary_count;
     return problem->alias_size_bytes != NULL && problem->alias_device != NULL &&
-        problem->alias_retain_host != NULL && problem->initial_location != NULL &&
+        problem->alias_retain_spill_copy != NULL && problem->initial_location != NULL &&
         problem->final_location != NULL && problem->anchors != NULL &&
         problem->productions != NULL && problem->latest_access_task != NULL &&
         problem->output_reservations != NULL && problem->write_prefix != NULL &&

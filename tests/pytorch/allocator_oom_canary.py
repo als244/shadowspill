@@ -22,7 +22,7 @@ def main() -> int:
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=512 << 20,
         host_arena_bytes=1 << 20,
-        progress_poll_nanoseconds=10_000,
+        worker_poll_nanoseconds=10_000,
     )
     impossible = torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
     if impossible.data_ptr() != 0:

@@ -38,7 +38,7 @@ int main(void) {
         .device_slab_bytes = 8U << 20U,
         .host_arena_bytes = 8U << 20U,
         .minimum_alignment = capabilities.recommended_minimum_alignment,
-        .progress_poll_nanoseconds = 10000U,
+        .worker_poll_nanoseconds = 10000U,
         .backend = backend,
     };
     ShadowSpillRuntime *runtime = NULL;
@@ -69,8 +69,8 @@ int main(void) {
         .object_id = 1U,
         .size_bytes = PAYLOAD_BYTES,
         .initial_version = 1U,
-        .retain_host_backing = 1U,
-        .initially_host_resident = 1U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = object.object_id,

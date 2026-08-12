@@ -31,7 +31,7 @@ def _array(ctype: Any, values: list[int]) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class CompiledResidencyTemplate:
-    """Caller-owned buffers backing one immutable C residency problem."""
+    """Caller-owned buffers storing one immutable C residency problem."""
 
     problem: CResidencyProblem
     buffers: tuple[object, ...]
@@ -112,7 +112,7 @@ def compile_residency_template(
         )
     )
     retain_host = keep(
-        _array(ctypes.c_uint8, [int(value) for value in facts.alias_retain_host])
+        _array(ctypes.c_uint8, [int(value) for value in facts.alias_retain_spill_copy])
     )
     location_code = {
         None: -1,
@@ -166,7 +166,7 @@ def compile_residency_template(
         device_count=len(device_ids),
         alias_size_bytes=alias_sizes,
         alias_device=alias_devices,
-        alias_retain_host=retain_host,
+        alias_retain_spill_copy=retain_host,
         initial_location=initial,
         final_location=final,
         anchors=anchor_buffer,

@@ -128,7 +128,7 @@ class AliasGroupSpec:
     device_id: str
     size_bytes: int
     initial_version: int = 0
-    retain_host_backing: bool = False
+    retain_spill_copy: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.alias_group_id, "alias_group.alias_group_id")
@@ -136,8 +136,8 @@ class AliasGroupSpec:
         require_non_negative(self.size_bytes, "alias_group.size_bytes")
         require_non_negative(self.initial_version, "alias_group.initial_version")
         require(
-            isinstance(self.retain_host_backing, bool),
-            "alias_group.retain_host_backing",
+            isinstance(self.retain_spill_copy, bool),
+            "alias_group.retain_spill_copy",
             "must be a boolean",
         )
 
@@ -146,7 +146,7 @@ class AliasGroupSpec:
             "alias_group_id": self.alias_group_id,
             "device_id": self.device_id,
             "initial_version": self.initial_version,
-            "retain_host_backing": self.retain_host_backing,
+            "retain_spill_copy": self.retain_spill_copy,
             "size_bytes": self.size_bytes,
         }
 
@@ -166,9 +166,9 @@ class AliasGroupSpec:
             initial_version=expect_integer(
                 field(data, "initial_version", path), f"{path}.initial_version"
             ),
-            retain_host_backing=expect_boolean(
-                field(data, "retain_host_backing", path),
-                f"{path}.retain_host_backing",
+            retain_spill_copy=expect_boolean(
+                field(data, "retain_spill_copy", path),
+                f"{path}.retain_spill_copy",
             ),
         )
 

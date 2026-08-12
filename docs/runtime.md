@@ -1,7 +1,7 @@
 # Framework-neutral runtime
 
 `libshadowspill_runtime.so` consumes explicit task-boundary actions and owns
-device-slab allocation, host backing, object residency, transfers, readiness,
+execution-pool allocation, spill storage, object residency, transfers, readiness,
 retirement, failures, and teardown. It contains no PyTorch, CUDA, HIP, tensor,
 optimizer, model, or operation type.
 
@@ -26,10 +26,10 @@ resolve, even if their numerical range is later reused by a newer generation.
 
 An object record represents one complete alias group. It tracks the current
 allocation, residency generation, authoritative/device/host versions, host
-backing, and readiness event. Tensor views are deliberately absent: a frontend
+spill location, and readiness event. Tensor views are deliberately absent: a frontend
 maps every view of an alias group to this one record.
 
-Frontends populate initial pinned backing with
+Frontends populate initial pinned spill storage with
 `shadowspill_write_host_object` before device materialization. After an
 explicit terminal writeback and idle boundary, `shadowspill_read_host_object`
 copies current bytes into ordinary caller-owned CPU storage. Both operations

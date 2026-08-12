@@ -46,7 +46,7 @@ int shadowspill_validate_program(
         !require_pointer(program->alias_device, program->alias_count) ||
         !require_pointer(program->alias_size_bytes, program->alias_count) ||
         !require_pointer(program->alias_initial_version, program->alias_count) ||
-        !require_pointer(program->alias_retain_host_backing, program->alias_count) ||
+        !require_pointer(program->alias_retain_spill_copy, program->alias_count) ||
         !require_pointer(program->task_device, program->task_count) ||
         !require_pointer(program->task_resource_kind, program->task_count) ||
         !require_pointer(program->task_resource_lane, program->task_count) ||

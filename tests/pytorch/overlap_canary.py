@@ -87,7 +87,7 @@ def main() -> int:
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
         host_arena_bytes=256 << 20,
-        progress_poll_nanoseconds=10_000,
+        worker_poll_nanoseconds=10_000,
     )
     library = installed.library
     first = torch.full((ELEMENTS,), 1.0, device="cuda")

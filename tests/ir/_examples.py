@@ -41,7 +41,7 @@ def representative_program() -> Program:
                 "weight_storage",
                 "cuda_0",
                 256,
-                retain_host_backing=True,
+                retain_spill_copy=True,
             ),
             AliasGroupSpec("activation_storage", "cuda_0", 128),
             AliasGroupSpec("output_storage", "cuda_0", 64),

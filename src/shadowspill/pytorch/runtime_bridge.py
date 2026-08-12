@@ -285,7 +285,7 @@ class RuntimeBridge:
             raise PlanningError(f"unknown program object {object_id!r}") from exc
 
     def register_host_tensor(
-        self, alias_id: str, tensor: torch.Tensor, *, retain_host_backing: bool
+        self, alias_id: str, tensor: torch.Tensor, *, retain_spill_copy: bool
     ) -> None:
         if tensor.device.type != "cpu":
             raise PlanningError("initial object payload must be CPU resident")
@@ -300,7 +300,7 @@ class RuntimeBridge:
             self.library.shadowspill_pytorch_register_host_object(
                 _dense_id(alias_id, "alias_"),
                 expected,
-                int(retain_host_backing),
+                int(retain_spill_copy),
                 storage.data_ptr(),
             ),
             "register host object",
@@ -717,13 +717,13 @@ class RuntimeBridge:
                 result.append(f"{alias_id}:snapshot_status={status}")
                 continue
             allocation_id = int(snapshot.allocation_id)
-            pointer = int(snapshot.device_pointer or 0)
+            pointer = int(snapshot.execution_pointer or 0)
             if int(snapshot.residency) in {1, 2} and pointer != 0:
                 continue
             result.append(
                 f"{alias_id}:residency={int(snapshot.residency)},"
                 f"allocation={allocation_id},generation={int(snapshot.generation)},"
-                f"pointer={pointer},host_current={int(snapshot.host_current)}"
+                f"pointer={pointer},spill_current={int(snapshot.spill_current)}"
             )
         return tuple(result)
 

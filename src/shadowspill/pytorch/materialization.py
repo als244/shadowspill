@@ -186,7 +186,7 @@ class MaterializedForwardState:
             self.bridge.write_host_tensor(alias_id, owner)
 
     def refresh_inputs(self, inputs: Sequence[Any]) -> tuple[object, ...]:
-        """Write guarded CPU payloads into persistent input-slot backing."""
+        """Write guarded CPU payloads into persistent input-slot spill storage."""
 
         self.bridge.wait_idle()
         actual = flat_runtime_arguments(self.capture, self.model, inputs)
@@ -283,7 +283,7 @@ class MaterializedForwardState:
                 entries.setdefault(alias_id, []).append((value, position))
 
         retain = {
-            group.alias_group_id: group.retain_host_backing
+            group.alias_group_id: group.retain_spill_copy
             for group in self.lowered.program.alias_groups
         }
         for ordinal, alias_id in enumerate(
@@ -294,7 +294,7 @@ class MaterializedForwardState:
                 continue
             source = values[0][0]
             self.bridge.register_host_tensor(
-                alias_id, source, retain_host_backing=retain[alias_id]
+                alias_id, source, retain_spill_copy=retain[alias_id]
             )
             if alias_id in self._model_aliases:
                 self._registered_model_aliases.add(alias_id)
@@ -344,7 +344,7 @@ class MaterializedForwardState:
 
 
 def retained_input_aliases(lowered: LoweredForwardProgram) -> frozenset[str]:
-    """Return non-model root aliases whose backing is reused across calls."""
+    """Return non-model root aliases whose spill storage is reused across calls."""
 
     registration_objects = {item.object_id for item in lowered.registrations}
     return frozenset(

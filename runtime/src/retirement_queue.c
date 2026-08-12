@@ -76,7 +76,7 @@ void shadowspill_retirement_queue_destroy(
 
 ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillAllocationRecord *allocation
+    ShadowSpillMemoryLease *allocation
 ) {
     if (runtime == NULL || allocation == NULL ||
         !allocation->logical_freed || allocation->pointer == NULL ||
@@ -188,10 +188,10 @@ static void append_retry(
     *tail = record;
 }
 
-ShadowSpillRetirementProgress shadowspill_progress_retirements(
+ShadowSpillRetirementWork shadowspill_handle_retirements(
     ShadowSpillRuntime *runtime
 ) {
-    ShadowSpillRetirementProgress progress = {0};
+    ShadowSpillRetirementWork progress = {0};
     if (runtime == NULL) {
         return progress;
     }
@@ -220,8 +220,8 @@ ShadowSpillRetirementProgress shadowspill_progress_retirements(
          * client is waiting.  Requeue the remaining completed records and let
          * the foreground call run before another background attempt.
          */
-        if (!shadowspill_memory_pool_try_lock_background(
-                &runtime->device_pool
+        if (!shadowspill_memory_pool_try_lock_reclamation(
+                shadowspill_execution_pool(runtime)
             )) {
             progress.pool_busy = 1U;
             append_retry(&retry_head, &retry_tail, record);
@@ -235,7 +235,7 @@ ShadowSpillRetirementProgress shadowspill_progress_retirements(
         ShadowSpillEventRecord *owned_events = NULL;
         ShadowSpillTaskFence *owned_fence = NULL;
         int released = 0;
-        ShadowSpillAllocationRecord *allocation = record->allocation;
+        ShadowSpillMemoryLease *allocation = record->allocation;
         if (allocation->generation == record->allocation_generation &&
             allocation->logical_freed && allocation->pointer != NULL &&
             allocation->retirement_enqueued_generation ==
@@ -254,10 +254,10 @@ ShadowSpillRetirementProgress shadowspill_progress_retirements(
                 allocation->offset,
                 allocation->charged_bytes
             );
-            shadowspill_release_allocation_locked(runtime, allocation);
+            shadowspill_release_execution_lease_locked(runtime, allocation);
             released = 1;
         }
-        shadowspill_memory_pool_unlock_background(&runtime->device_pool);
+        shadowspill_memory_pool_unlock_reclamation(shadowspill_execution_pool(runtime));
 
         release_owned_retirement_requirements(
             runtime,

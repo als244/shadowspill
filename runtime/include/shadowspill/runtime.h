@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 11U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 12U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
@@ -88,7 +88,7 @@ typedef struct ShadowSpillRuntimeConfig {
     uint64_t device_slab_bytes;
     uint64_t host_arena_bytes;
     uint64_t minimum_alignment;
-    uint64_t progress_poll_nanoseconds;
+    uint64_t worker_poll_nanoseconds;
     ShadowSpillBackend backend;
 } ShadowSpillRuntimeConfig;
 
@@ -104,8 +104,8 @@ typedef struct ShadowSpillObjectDescription {
     uint64_t object_id;
     uint64_t size_bytes;
     uint64_t initial_version;
-    uint8_t retain_host_backing;
-    uint8_t initially_host_resident;
+    uint8_t retain_spill_copy;
+    uint8_t initially_spill_resident;
 } ShadowSpillObjectDescription;
 
 typedef struct ShadowSpillObjectBinding {
@@ -232,14 +232,14 @@ typedef struct ShadowSpillObjectSnapshot {
     uint64_t generation;
     uint64_t allocation_id;
     uint64_t authoritative_version;
-    uint64_t device_version;
-    uint64_t host_version;
+    uint64_t execution_version;
+    uint64_t spill_version;
     uint8_t residency;
-    uint8_t host_current;
-    uint8_t has_host_range;
-    void *device_pointer;
+    uint8_t spill_current;
+    uint8_t has_spill_lease;
+    void *execution_pointer;
     uint64_t retired_generation;
-    void *retired_device_pointer;
+    void *retired_execution_pointer;
 } ShadowSpillObjectSnapshot;
 
 /*
@@ -316,7 +316,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_record_stream(
 
 /*
  * Registers one logical alias group. The description is borrowed for this
- * call. Requested initial host backing is leased from the bounded host arena.
+ * call. Requested initial spill storage is leased from the configured spill pool.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
@@ -325,7 +325,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_register_object(
 
 /*
  * Removes a HOST_ONLY or RELEASED object with no live allocation or queued
- * action, reclaiming retained host backing. Intended for deterministic plan
+ * action, reclaiming retained spill storage. Intended for deterministic plan
  * teardown after final writeback.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
@@ -334,7 +334,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
 );
 
 /*
- * Copies one exact object payload into its existing host backing before device
+ * Copies one exact object payload into its existing spill lease before execution
  * materialization. The object must be HOST_ONLY with no device allocation.
  * Source is borrowed for the call and may be NULL only for a zero-size object.
  */

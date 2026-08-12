@@ -14,7 +14,7 @@ static uint64_t object_bucket(
     return object_id % table->bucket_count;
 }
 
-static ShadowSpillObjectRecord *find_unlocked(
+static ShadowSpillObject *find_unlocked(
     const ShadowSpillObjectTable *table,
     uint64_t object_id
 ) {
@@ -22,7 +22,7 @@ static ShadowSpillObjectRecord *find_unlocked(
         return NULL;
     }
     const uint64_t bucket = object_bucket(table, object_id);
-    for (ShadowSpillObjectRecord *object = table->by_id[bucket]; object != NULL;
+    for (ShadowSpillObject *object = table->by_id[bucket]; object != NULL;
          object = object->id_index_next) {
         if (object->object_id == object_id) {
             return object;
@@ -61,9 +61,9 @@ void shadowspill_object_table_destroy(ShadowSpillObjectTable *table) {
         *table = (ShadowSpillObjectTable){0};
         return;
     }
-    ShadowSpillObjectRecord *object = table->owned_head;
+    ShadowSpillObject *object = table->owned_head;
     while (object != NULL) {
-        ShadowSpillObjectRecord *next = object->ownership_next;
+        ShadowSpillObject *next = object->ownership_next;
         object->ownership_next = NULL;
         object->ownership_previous_link = NULL;
         object->id_index_next = NULL;
@@ -76,14 +76,14 @@ void shadowspill_object_table_destroy(ShadowSpillObjectTable *table) {
     *table = (ShadowSpillObjectTable){0};
 }
 
-ShadowSpillObjectRecord *shadowspill_object_table_find(
+ShadowSpillObject *shadowspill_object_table_find(
     const ShadowSpillObjectTable *table,
     uint64_t object_id
 ) {
     return find_unlocked(table, object_id);
 }
 
-ShadowSpillObjectRecord *shadowspill_object_table_acquire(
+ShadowSpillObject *shadowspill_object_table_acquire(
     ShadowSpillObjectTable *table,
     uint64_t object_id
 ) {
@@ -91,7 +91,7 @@ ShadowSpillObjectRecord *shadowspill_object_table_acquire(
         return NULL;
     }
     pthread_rwlock_rdlock(&table->lock);
-    ShadowSpillObjectRecord *object = find_unlocked(table, object_id);
+    ShadowSpillObject *object = find_unlocked(table, object_id);
     if (object != NULL && atomic_load_explicit(
             &object->detached, memory_order_acquire
         ) == 0U) {
@@ -105,7 +105,7 @@ ShadowSpillObjectRecord *shadowspill_object_table_acquire(
 
 int shadowspill_object_table_insert(
     ShadowSpillObjectTable *table,
-    ShadowSpillObjectRecord *object
+    ShadowSpillObject *object
 ) {
     if (table == NULL || object == NULL || table->by_id == NULL) {
         return -1;
@@ -131,7 +131,7 @@ int shadowspill_object_table_insert(
 
 int shadowspill_object_table_remove(
     ShadowSpillObjectTable *table,
-    ShadowSpillObjectRecord *object
+    ShadowSpillObject *object
 ) {
     if (table == NULL || object == NULL || table->by_id == NULL ||
         object->ownership_previous_link == NULL) {
@@ -143,7 +143,7 @@ int shadowspill_object_table_remove(
         return -1;
     }
     const uint64_t bucket = object_bucket(table, object->object_id);
-    ShadowSpillObjectRecord **index_link = &table->by_id[bucket];
+    ShadowSpillObject **index_link = &table->by_id[bucket];
     while (*index_link != NULL && *index_link != object) {
         index_link = &(*index_link)->id_index_next;
     }
@@ -166,7 +166,7 @@ int shadowspill_object_table_remove(
     return 0;
 }
 
-void shadowspill_object_retain(ShadowSpillObjectRecord *object) {
+void shadowspill_object_retain(ShadowSpillObject *object) {
     if (object != NULL) {
         (void)atomic_fetch_add_explicit(
             &object->references, 1U, memory_order_relaxed
@@ -174,12 +174,18 @@ void shadowspill_object_retain(ShadowSpillObjectRecord *object) {
     }
 }
 
-void shadowspill_object_release(ShadowSpillObjectRecord *object) {
+void shadowspill_object_release(ShadowSpillObject *object) {
     if (object == NULL || atomic_fetch_sub_explicit(
             &object->references, 1U, memory_order_acq_rel
         ) != 1U) {
         return;
     }
+    for (uint32_t index = 0U; index < object->location_count; ++index) {
+        if (object->locations[index].owns_lease) {
+            free(object->locations[index].lease);
+        }
+    }
+    free(object->locations);
     pthread_cond_destroy(&object->state_changed);
     pthread_mutex_destroy(&object->lock);
     free(object);

@@ -3,9 +3,90 @@
 #include <stddef.h>
 #include <stdint.h>
 
+ShadowSpillMemoryPool *shadowspill_runtime_pool(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id
+) {
+    if (runtime == NULL || runtime->pools == NULL ||
+        pool_id >= runtime->pool_count) {
+        return NULL;
+    }
+    return &runtime->pools[pool_id];
+}
+
+const ShadowSpillMemoryPool *shadowspill_runtime_pool_const(
+    const ShadowSpillRuntime *runtime,
+    uint32_t pool_id
+) {
+    if (runtime == NULL || runtime->pools == NULL ||
+        pool_id >= runtime->pool_count) {
+        return NULL;
+    }
+    return &runtime->pools[pool_id];
+}
+
+ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime) {
+    return runtime == NULL
+        ? NULL
+        : shadowspill_runtime_pool(runtime, runtime->execution_pool_id);
+}
+
+const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
+    const ShadowSpillRuntime *runtime
+) {
+    return runtime == NULL
+        ? NULL
+        : shadowspill_runtime_pool_const(runtime, runtime->execution_pool_id);
+}
+
+ShadowSpillMemoryPool *shadowspill_spill_pool(ShadowSpillRuntime *runtime) {
+    return runtime == NULL
+        ? NULL
+        : shadowspill_runtime_pool(runtime, runtime->spill_pool_id);
+}
+
+ShadowSpillObjectLocation *shadowspill_object_location(
+    ShadowSpillObject *object,
+    uint32_t pool_id
+) {
+    if (object == NULL || object->locations == NULL ||
+        pool_id >= object->location_count) {
+        return NULL;
+    }
+    return &object->locations[pool_id];
+}
+
+ShadowSpillObjectLocation *shadowspill_execution_location(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillObject *object
+) {
+    return runtime == NULL
+        ? NULL
+        : shadowspill_object_location(object, runtime->execution_pool_id);
+}
+
+ShadowSpillObjectLocation *shadowspill_spill_location(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillObject *object
+) {
+    return runtime == NULL
+        ? NULL
+        : shadowspill_object_location(object, runtime->spill_pool_id);
+}
+
+static void cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ volatile("yield");
+#else
+    atomic_signal_fence(memory_order_seq_cst);
+#endif
+}
+
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryKind kind,
+    uint32_t pool_id,
     void *base,
     uint64_t capacity,
     uint64_t minimum_alignment
@@ -27,9 +108,10 @@ int shadowspill_memory_pool_initialize(
         return -1;
     }
     pool->base = base;
+    pool->pool_id = pool_id;
     pool->minimum_alignment = minimum_alignment;
-    pool->kind = kind;
     atomic_init(&pool->foreground_waiters, 0U);
+    atomic_init(&pool->transfer_waiters, 0U);
     pool->initialized = 1U;
     return 0;
 }
@@ -45,13 +127,14 @@ void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool) {
 }
 
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool) {
-    if (pthread_mutex_trylock(&pool->lock) == 0) {
-        return;
-    }
     (void)atomic_fetch_add_explicit(
         &pool->foreground_waiters, 1U, memory_order_relaxed
     );
-    pthread_mutex_lock(&pool->lock);
+    while (atomic_load_explicit(
+               &pool->transfer_waiters, memory_order_acquire
+           ) != 0U || pthread_mutex_trylock(&pool->lock) != 0) {
+        cpu_relax();
+    }
     (void)atomic_fetch_sub_explicit(
         &pool->foreground_waiters, 1U, memory_order_relaxed
     );
@@ -61,7 +144,32 @@ void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool) {
     pthread_mutex_unlock(&pool->lock);
 }
 
-int shadowspill_memory_pool_try_lock_background(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_declare_transfer(ShadowSpillMemoryPool *pool) {
+    (void)atomic_fetch_add_explicit(
+        &pool->transfer_waiters, 1U, memory_order_release
+    );
+}
+
+void shadowspill_memory_pool_relinquish_transfer(ShadowSpillMemoryPool *pool) {
+    (void)atomic_fetch_sub_explicit(
+        &pool->transfer_waiters, 1U, memory_order_release
+    );
+}
+
+int shadowspill_memory_pool_try_lock_transfer(ShadowSpillMemoryPool *pool) {
+    return pthread_mutex_trylock(&pool->lock) == 0;
+}
+
+void shadowspill_memory_pool_unlock_transfer(ShadowSpillMemoryPool *pool) {
+    pthread_mutex_unlock(&pool->lock);
+}
+
+int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool) {
+    if (atomic_load_explicit(
+            &pool->transfer_waiters, memory_order_acquire
+        ) != 0U) {
+        return 0;
+    }
     if (atomic_load_explicit(
             &pool->foreground_waiters, memory_order_relaxed
         ) != 0U || pthread_mutex_trylock(&pool->lock) != 0) {
@@ -76,7 +184,7 @@ int shadowspill_memory_pool_try_lock_background(ShadowSpillMemoryPool *pool) {
     return 1;
 }
 
-void shadowspill_memory_pool_unlock_background(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_unlock_reclamation(ShadowSpillMemoryPool *pool) {
     pthread_mutex_unlock(&pool->lock);
 }
 
@@ -123,6 +231,102 @@ int shadowspill_memory_pool_release_locked(
         pthread_cond_broadcast(&pool->capacity_changed);
     }
     return status;
+}
+
+int shadowspill_memory_pool_reserve_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillMemoryPlacement placement
+) {
+    if (pool == NULL || lease == NULL || lease->state != SHADOWSPILL_LEASE_FREE) {
+        return -1;
+    }
+    const uint64_t charged = bytes == 0U ? 1U : bytes;
+    uint64_t offset = 0U;
+    const int status = shadowspill_memory_pool_reserve_locked(
+        pool, charged, alignment, placement, &offset
+    );
+    if (status != 0) {
+        return status;
+    }
+    const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
+        pool, lease, bytes, offset
+    );
+    if (adopt_status != 0) {
+        (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
+    }
+    return adopt_status;
+}
+
+int shadowspill_memory_pool_adopt_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t offset
+) {
+    if (pool == NULL || lease == NULL || lease->pool != NULL ||
+        lease->pool_previous_link != NULL) {
+        return -1;
+    }
+    lease->pool = pool;
+    lease->state = SHADOWSPILL_LEASE_RESERVED;
+    lease->requested_bytes = bytes;
+    lease->charged_bytes = bytes == 0U ? 1U : bytes;
+    lease->offset = offset;
+    lease->pointer = shadowspill_memory_pool_pointer(pool, offset);
+    lease->retired_pointer = NULL;
+    lease->pool_next = pool->leases;
+    lease->pool_previous_link = &pool->leases;
+    if (lease->pool_next != NULL) {
+        lease->pool_next->pool_previous_link = &lease->pool_next;
+    }
+    pool->leases = lease;
+    return 0;
+}
+
+int shadowspill_memory_pool_release_lease_locked(
+    ShadowSpillMemoryLease *lease
+) {
+    if (lease == NULL || lease->pool == NULL ||
+        lease->state == SHADOWSPILL_LEASE_FREE) {
+        return -1;
+    }
+    ShadowSpillMemoryPool *pool = lease->pool;
+    const int status = shadowspill_memory_pool_release_locked(
+        pool, lease->offset, lease->charged_bytes
+    );
+    if (status == 0) {
+        lease->retired_pointer = lease->pointer;
+        *lease->pool_previous_link = lease->pool_next;
+        if (lease->pool_next != NULL) {
+            lease->pool_next->pool_previous_link = lease->pool_previous_link;
+        }
+        lease->pool_next = NULL;
+        lease->pool_previous_link = NULL;
+        lease->pool = NULL;
+        lease->state = SHADOWSPILL_LEASE_FREE;
+        lease->requested_bytes = 0U;
+        lease->charged_bytes = 0U;
+        lease->offset = 0U;
+        lease->pointer = NULL;
+    }
+    return status;
+}
+
+void shadowspill_memory_pool_rebase_locked(
+    ShadowSpillMemoryPool *pool,
+    void *new_base
+) {
+    if (pool == NULL) {
+        return;
+    }
+    pool->base = new_base;
+    for (ShadowSpillMemoryLease *lease = pool->leases; lease != NULL;
+         lease = lease->pool_next) {
+        lease->pointer = shadowspill_memory_pool_pointer(pool, lease->offset);
+    }
 }
 
 uint64_t shadowspill_memory_pool_free_bytes_locked(

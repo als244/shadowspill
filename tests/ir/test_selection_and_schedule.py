@@ -74,7 +74,7 @@ def _retained_host_output_program() -> Program:
     return Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
-            AliasGroupSpec("state_storage", "cuda_0", 64, retain_host_backing=True),
+            AliasGroupSpec("state_storage", "cuda_0", 64, retain_spill_copy=True),
         ),
         objects=(ObjectSpec("state", "state_storage", 0, 64),),
         profiles=(TaskProfile("update_profile", 10, 0, "update_abi"),),

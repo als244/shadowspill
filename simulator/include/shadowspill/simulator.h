@@ -85,7 +85,7 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *alias_device;
     const uint64_t *alias_size_bytes;
     const uint64_t *alias_initial_version;
-    const uint8_t *alias_retain_host_backing;
+    const uint8_t *alias_retain_spill_copy;
 
     const uint32_t *task_device;
     const uint8_t *task_resource_kind;

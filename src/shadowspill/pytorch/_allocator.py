@@ -46,7 +46,7 @@ def installed_allocator() -> InstalledAllocator | None:
 def resize_host_arena(
     installed: InstalledAllocator, *, host_arena_bytes: int, host_budget_bytes: int
 ) -> None:
-    """Grow pinned backing during planning without exceeding the public cap."""
+    """Grow the pinned spill pool during planning without exceeding its cap."""
 
     current = int(installed.admission.host_arena_bytes)
     if host_arena_bytes < current:
@@ -95,7 +95,7 @@ def install_allocator(
     device_budget_bytes: int,
     provider_headroom_bytes: int,
     host_arena_bytes: int,
-    progress_poll_nanoseconds: int = 100_000,
+    worker_poll_nanoseconds: int = 100_000,
 ) -> InstalledAllocator:
     """Install the process-global CUDA allocator before PyTorch CUDA init.
 
@@ -115,7 +115,7 @@ def install_allocator(
         )
     if host_arena_bytes < 0:
         raise AllocatorInstallError("host arena bytes must be non-negative")
-    if progress_poll_nanoseconds < 0:
+    if worker_poll_nanoseconds < 0:
         raise AllocatorInstallError("progress poll interval must be non-negative")
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
@@ -164,7 +164,7 @@ def install_allocator(
         device_budget_bytes=device_budget_bytes,
         provider_headroom_bytes=provider_headroom_bytes,
         host_arena_bytes=host_arena_bytes,
-        progress_poll_nanoseconds=progress_poll_nanoseconds,
+        worker_poll_nanoseconds=worker_poll_nanoseconds,
     )
     status = int(library.shadowspill_pytorch_allocator_bootstrap(ctypes.byref(config)))
     if status != 0:

@@ -105,7 +105,7 @@ int shadowspill_initialize_memory(
         ShadowSpillAliasState *state = &work->aliases[alias];
         state->device_version = program->alias_initial_version[alias];
         state->host_version = program->alias_initial_version[alias];
-        if (program->alias_retain_host_backing[alias] != 0U) {
+        if (program->alias_retain_spill_copy[alias] != 0U) {
             state->host_allocated = 1U;
             state->host_ready = 1U;
             if (shadowspill_add_overflow_u64(

@@ -112,7 +112,7 @@ add_library(
   runtime/src/memory_pool.c
   runtime/src/object_table.c
   runtime/src/objects.c
-  runtime/src/progress.c
+  runtime/src/worker.c
   runtime/src/retirement_queue.c
   runtime/src/idle_wakeup.c
   runtime/src/ranges.c

@@ -36,7 +36,7 @@ class _AliasState:
     size_bytes: int
     device_id: str
     initial_version: int
-    retain_host_backing: bool
+    retain_spill_copy: bool
     device_allocated: bool = False
     device_ready: bool = False
     device_version: int = 0
@@ -114,7 +114,7 @@ class _Simulator:
                 size_bytes=item.size_bytes,
                 device_id=item.device_id,
                 initial_version=item.initial_version,
-                retain_host_backing=item.retain_host_backing,
+                retain_spill_copy=item.retain_spill_copy,
                 device_version=item.initial_version,
                 host_version=item.initial_version,
             )
@@ -182,7 +182,7 @@ class _Simulator:
 
     def _initialize_memory(self) -> None:
         for state in self.alias_state.values():
-            if state.retain_host_backing:
+            if state.retain_spill_copy:
                 state.host_allocated = True
                 state.host_ready = True
                 self.host_bytes += state.size_bytes
@@ -400,7 +400,7 @@ class _Simulator:
         state.device_allocated = False
         state.device_ready = False
         self.device_object_bytes[state.device_id] -= state.size_bytes
-        if state.host_allocated and not state.retain_host_backing:
+        if state.host_allocated and not state.retain_spill_copy:
             state.host_allocated = False
             state.host_ready = False
             self.host_bytes -= state.size_bytes
@@ -588,7 +588,7 @@ class _Simulator:
             state.device_ready = True
             state.device_version = state.host_version
             state.h2d_pending = False
-            if not state.retain_host_backing:
+            if not state.retain_spill_copy:
                 state.host_allocated = False
                 state.host_ready = False
                 self.host_bytes -= state.size_bytes

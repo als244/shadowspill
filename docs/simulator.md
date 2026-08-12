@@ -44,7 +44,7 @@ point.
 - Simulation drains submitted transfers and then verifies required final
   residency.
 
-Host backing retained by an alias is physical from simulation start. A
+Spill storage retained by an alias is physical from simulation start. A
 non-retained host extent is released after H2D completes.
 
 ## Results and failures
