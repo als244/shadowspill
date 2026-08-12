@@ -407,6 +407,9 @@ static int dispatch_prefetch_locked(
     action->completion_event = completion_event;
     action->has_completion_event = 1U;
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
+    pthread_mutex_lock(&runtime->device_pool.lock);
+    allocation->bound_object_id = object_id;
+    pthread_mutex_unlock(&runtime->device_pool.lock);
     object->allocation_id = allocation->allocation_id;
     object->device_lease = allocation;
     object->generation = allocation->generation;

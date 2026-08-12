@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 18U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 19U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;

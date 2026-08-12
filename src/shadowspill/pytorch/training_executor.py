@@ -95,9 +95,18 @@ class TaskExecutionTiming:
     native_after_task_enter_seconds: float | None
     native_after_task_exit_seconds: float | None
     host_before_task_seconds: float
+    host_stream_resolution_seconds: float
+    host_readiness_marker_seconds: float
     host_native_before_task_seconds: float
+    host_input_lookup_seconds: float
+    host_storage_rebind_seconds: float
+    host_generation_publish_seconds: float
+    host_argument_assembly_seconds: float
     host_rebind_seconds: float
     host_dispatch_seconds: float
+    host_output_flatten_seconds: float
+    host_output_publish_seconds: float
+    host_dematerialize_seconds: float
     host_postprocess_seconds: float
     host_native_after_task_seconds: float
     host_cleanup_seconds: float
@@ -151,11 +160,18 @@ class TaskExecutionTiming:
             "native_after_task_enter_seconds": self.native_after_task_enter_seconds,
             "native_after_task_exit_seconds": self.native_after_task_exit_seconds,
             "host_before_task_seconds": self.host_before_task_seconds,
-            "host_native_before_task_seconds": (
-                self.host_native_before_task_seconds
-            ),
+            "host_stream_resolution_seconds": self.host_stream_resolution_seconds,
+            "host_readiness_marker_seconds": self.host_readiness_marker_seconds,
+            "host_native_before_task_seconds": (self.host_native_before_task_seconds),
+            "host_input_lookup_seconds": self.host_input_lookup_seconds,
+            "host_storage_rebind_seconds": self.host_storage_rebind_seconds,
+            "host_generation_publish_seconds": (self.host_generation_publish_seconds),
+            "host_argument_assembly_seconds": self.host_argument_assembly_seconds,
             "host_rebind_seconds": self.host_rebind_seconds,
             "host_dispatch_seconds": self.host_dispatch_seconds,
+            "host_output_flatten_seconds": self.host_output_flatten_seconds,
+            "host_output_publish_seconds": self.host_output_publish_seconds,
+            "host_dematerialize_seconds": self.host_dematerialize_seconds,
             "host_postprocess_seconds": self.host_postprocess_seconds,
             "host_native_after_task_seconds": self.host_native_after_task_seconds,
             "host_cleanup_seconds": self.host_cleanup_seconds,
@@ -373,9 +389,18 @@ class _ArmedTaskTiming:
     host_finished_ns: int = 0
     host_before_finished_ns: int = 0
     host_after_started_ns: int = 0
+    host_stream_resolution_ns: int = 0
+    host_readiness_marker_ns: int = 0
     host_native_before_task_ns: int = 0
+    host_input_lookup_ns: int = 0
+    host_storage_rebind_ns: int = 0
+    host_generation_publish_ns: int = 0
+    host_argument_assembly_ns: int = 0
     host_rebind_ns: int = 0
     host_dispatch_ns: int = 0
+    host_output_flatten_ns: int = 0
+    host_output_publish_ns: int = 0
+    host_dematerialize_ns: int = 0
     host_postprocess_ns: int = 0
     host_native_after_task_ns: int = 0
     host_cleanup_ns: int = 0
@@ -719,15 +744,15 @@ class TrainingExecutor:
                     else None
                 )
 
-            before_readiness_waits_seconds = float(
-                timing.origin_event.elapsed_time(task.readiness_event)
-            ) / 1_000.0
-            before_task_compute_seconds = float(
-                timing.origin_event.elapsed_time(task.start_event)
-            ) / 1_000.0
-            after_task_compute_seconds = float(
-                timing.origin_event.elapsed_time(task.end_event)
-            ) / 1_000.0
+            before_readiness_waits_seconds = (
+                float(timing.origin_event.elapsed_time(task.readiness_event)) / 1_000.0
+            )
+            before_task_compute_seconds = (
+                float(timing.origin_event.elapsed_time(task.start_event)) / 1_000.0
+            )
+            after_task_compute_seconds = (
+                float(timing.origin_event.elapsed_time(task.end_event)) / 1_000.0
+            )
             before_readiness_waits_ns = int(before_readiness_waits_seconds * 1e9)
             before_task_compute_ns = int(before_task_compute_seconds * 1e9)
             after_task_compute_ns = int(after_task_compute_seconds * 1e9)
@@ -763,9 +788,7 @@ class TrainingExecutor:
                     before_task_compute_seconds=before_task_compute_seconds,
                     after_task_compute_seconds=after_task_compute_seconds,
                     readiness_wait_seconds=(
-                        float(
-                            task.readiness_event.elapsed_time(task.start_event)
-                        )
+                        float(task.readiness_event.elapsed_time(task.start_event))
                         / 1_000.0
                     ),
                     task_compute_seconds=(
@@ -790,11 +813,26 @@ class TrainingExecutor:
                         task.host_before_finished_ns - task.host_started_ns
                     )
                     / 1e9,
+                    host_stream_resolution_seconds=(
+                        task.host_stream_resolution_ns / 1e9
+                    ),
+                    host_readiness_marker_seconds=(task.host_readiness_marker_ns / 1e9),
                     host_native_before_task_seconds=(
                         task.host_native_before_task_ns / 1e9
                     ),
+                    host_input_lookup_seconds=task.host_input_lookup_ns / 1e9,
+                    host_storage_rebind_seconds=task.host_storage_rebind_ns / 1e9,
+                    host_generation_publish_seconds=(
+                        task.host_generation_publish_ns / 1e9
+                    ),
+                    host_argument_assembly_seconds=(
+                        task.host_argument_assembly_ns / 1e9
+                    ),
                     host_rebind_seconds=task.host_rebind_ns / 1e9,
                     host_dispatch_seconds=task.host_dispatch_ns / 1e9,
+                    host_output_flatten_seconds=task.host_output_flatten_ns / 1e9,
+                    host_output_publish_seconds=task.host_output_publish_ns / 1e9,
+                    host_dematerialize_seconds=task.host_dematerialize_ns / 1e9,
                     host_postprocess_seconds=task.host_postprocess_ns / 1e9,
                     host_native_after_task_seconds=(
                         task.host_native_after_task_ns / 1e9
@@ -1184,18 +1222,24 @@ class TrainingExecutor:
         task = record.task
         trace_label = record.trace_label
         with self._nvtx(f"shadowspill.before_task.{trace_label}"):
+            started_ns = time.perf_counter_ns() if task_timing is not None else 0
             stream = torch.cuda.current_stream()
+            if task_timing is not None:
+                task_timing.host_stream_resolution_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
             input_aliases = record.input_aliases
             runtime_scope_open = False
             try:
-                started_ns = (
-                    time.perf_counter_ns() if task_timing is not None else 0
-                )
+                started_ns = time.perf_counter_ns() if task_timing is not None else 0
                 self._record_task_readiness(task_timing, stream)
+                if task_timing is not None:
+                    task_timing.host_readiness_marker_ns = (
+                        time.perf_counter_ns() - started_ns
+                    )
+                started_ns = time.perf_counter_ns() if task_timing is not None else 0
                 try:
-                    with self._nvtx(
-                        f"shadowspill.runtime.before_task.{trace_label}"
-                    ):
+                    with self._nvtx(f"shadowspill.runtime.before_task.{trace_label}"):
                         bindings = (
                             self._bridge.before_execution(
                                 record.native_handle,
@@ -1211,35 +1255,51 @@ class TrainingExecutor:
                 except RuntimeError as error:
                     states = self._bridge.input_failure_states(input_aliases)
                     detail = (
-                        "; ".join(states)
-                        if states
-                        else "all snapshots device-ready"
+                        "; ".join(states) if states else "all snapshots device-ready"
                     )
-                    raise RuntimeError(
-                        f"{error}; input_states=[{detail}]"
-                    ) from error
+                    raise RuntimeError(f"{error}; input_states=[{detail}]") from error
                 if task_timing is not None:
                     task_timing.host_native_before_task_ns = (
                         time.perf_counter_ns() - started_ns
                     )
                 runtime_scope_open = True
-                started_ns = (
-                    time.perf_counter_ns() if task_timing is not None else 0
-                )
+                started_ns = time.perf_counter_ns() if task_timing is not None else 0
                 with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
+                    component_started_ns = (
+                        time.perf_counter_ns() if task_timing is not None else 0
+                    )
                     rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
-                    for alias_id, binding in zip(
-                        input_aliases, bindings, strict=True
-                    ):
+                    for alias_id, binding in zip(input_aliases, bindings, strict=True):
                         tensor = self._state.object_store.get(alias_id)
                         if tensor is None:
                             raise RuntimeError(
                                 f"task input {alias_id!r} has no tensor binding"
                             )
                         rebound.append((tensor, alias_id, binding))
+                    if task_timing is not None:
+                        task_timing.host_input_lookup_ns = (
+                            time.perf_counter_ns() - component_started_ns
+                        )
+                    component_started_ns = (
+                        time.perf_counter_ns() if task_timing is not None else 0
+                    )
                     self._bridge.rebind_many(rebound)
+                    if task_timing is not None:
+                        task_timing.host_storage_rebind_ns = (
+                            time.perf_counter_ns() - component_started_ns
+                        )
+                    component_started_ns = (
+                        time.perf_counter_ns() if task_timing is not None else 0
+                    )
                     for _, alias_id, binding in rebound:
                         self._state.generations[alias_id] = binding.generation
+                    if task_timing is not None:
+                        task_timing.host_generation_publish_ns = (
+                            time.perf_counter_ns() - component_started_ns
+                        )
+                    component_started_ns = (
+                        time.perf_counter_ns() if task_timing is not None else 0
+                    )
                     artifact = entrypoint.artifact
                     eager_optimizer = entrypoint.phase == "optimizer" and (
                         isinstance(artifact, OpaqueOptimizerArtifact)
@@ -1267,9 +1327,7 @@ class TrainingExecutor:
                     else:
                         eager_optimizer = False
                         if not isinstance(artifact, GraphArtifact):
-                            raise RuntimeError(
-                                "graph task has no captured artifact"
-                            )
+                            raise RuntimeError("graph task has no captured artifact")
                         if record.argument_template is None:
                             raise AssertionError("graph argument template is absent")
                         graph_arguments = list(record.argument_template)
@@ -1279,10 +1337,12 @@ class TrainingExecutor:
                             )
                         arguments = graph_arguments
                         function = record.function
+                    if task_timing is not None:
+                        task_timing.host_argument_assembly_ns = (
+                            time.perf_counter_ns() - component_started_ns
+                        )
                 if task_timing is not None:
-                    task_timing.host_rebind_ns = (
-                        time.perf_counter_ns() - started_ns
-                    )
+                    task_timing.host_rebind_ns = time.perf_counter_ns() - started_ns
                 return _PreparedTask(
                     run=run,
                     record=record,
@@ -1305,9 +1365,7 @@ class TrainingExecutor:
 
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         with (
-            self._nvtx(
-                f"shadowspill.compiled_call.{prepared.record.trace_label}"
-            ),
+            self._nvtx(f"shadowspill.compiled_call.{prepared.record.trace_label}"),
             torch.no_grad(),
         ):
             if prepared.eager_optimizer:
@@ -1332,26 +1390,25 @@ class TrainingExecutor:
 
         record = prepared.record
         with self._nvtx(f"shadowspill.after_task.{record.trace_label}"):
-            started_ns = (
-                time.perf_counter_ns() if prepared.timing is not None else 0
-            )
-            with self._nvtx(
-                f"shadowspill.output_processing.{record.trace_label}"
-            ):
+            started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+            with self._nvtx(f"shadowspill.output_processing.{record.trace_label}"):
                 outputs = self._process_task_outputs(prepared, raw_outputs)
                 del raw_outputs
+                component_started_ns = (
+                    time.perf_counter_ns() if prepared.timing is not None else 0
+                )
                 self._dematerialize_actions(record)
+                if prepared.timing is not None:
+                    prepared.timing.host_dematerialize_ns = (
+                        time.perf_counter_ns() - component_started_ns
+                    )
             if prepared.timing is not None:
                 prepared.timing.host_postprocess_ns = (
                     time.perf_counter_ns() - started_ns
                 )
 
-            started_ns = (
-                time.perf_counter_ns() if prepared.timing is not None else 0
-            )
-            with self._nvtx(
-                f"shadowspill.runtime.after_task.{record.trace_label}"
-            ):
+            started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+            with self._nvtx(f"shadowspill.runtime.after_task.{record.trace_label}"):
                 if record.native_handle:
                     self._bridge.after_execution(
                         record.native_handle,
@@ -1371,15 +1428,11 @@ class TrainingExecutor:
                     time.perf_counter_ns() - started_ns
                 )
 
-            started_ns = (
-                time.perf_counter_ns() if prepared.timing is not None else 0
-            )
+            started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
             with self._nvtx(f"shadowspill.cleanup.{record.trace_label}"):
                 self._cleanup_after_task(prepared)
             if prepared.timing is not None:
-                prepared.timing.host_cleanup_ns = (
-                    time.perf_counter_ns() - started_ns
-                )
+                prepared.timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
             return outputs
 
     def _process_task_outputs(
@@ -1389,12 +1442,20 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         outputs: tuple[torch.Tensor, ...] = ()
         entrypoint = prepared.record.entrypoint
+        timing = prepared.timing
         if entrypoint.phase == "optimizer":
+            started_ns = time.perf_counter_ns() if timing is not None else 0
             if prepared.eager_optimizer and not self._optimizer_state_available:
                 self._bind_created_optimizer_state(prepared.run.lowered)
                 self._optimizer_state_available = True
+            if timing is not None:
+                timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
         else:
+            started_ns = time.perf_counter_ns() if timing is not None else 0
             leaves, _ = tree_flatten(raw_outputs)
+            if timing is not None:
+                timing.host_output_flatten_ns = time.perf_counter_ns() - started_ns
+            started_ns = time.perf_counter_ns() if timing is not None else 0
             if entrypoint.phase == "forward":
                 tensor_outputs = tuple(
                     value for value in leaves if isinstance(value, torch.Tensor)
@@ -1409,6 +1470,8 @@ class TrainingExecutor:
                 outputs = tensor_outputs[: entrypoint.public_output_count]
             else:
                 self._accumulate_gradients(entrypoint, leaves)
+            if timing is not None:
+                timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
         return outputs
 
@@ -1445,19 +1508,18 @@ class TrainingExecutor:
         input_aliases: tuple[str, ...],
     ) -> None:
         produced: set[str] = set()
-        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+        adopted: list[tuple[torch.Tensor, str]] = []
         for slot in entrypoint.output_slots:
             tensor = outputs[slot.leaf_index]
             alias_id = self._bridge.alias_for_object(slot.object_id)
             if alias_id not in input_aliases and alias_id not in produced:
-                binding = self._bridge.promote_output(alias_id, tensor)
-                rebound.append((tensor, alias_id, binding))
+                adopted.append((tensor, alias_id))
                 produced.add(alias_id)
             self._state.object_store.setdefault(alias_id, tensor)
             self._state.object_tensors[slot.object_id] = tensor
-        self._bridge.rebind_many(rebound)
-        for _, alias_id, binding in rebound:
-            self._state.generations[alias_id] = binding.generation
+        generations = self._bridge.adopt_many(adopted)
+        for (_, alias_id), generation in zip(adopted, generations, strict=True):
+            self._state.generations[alias_id] = generation
 
     def _accumulate_gradients(
         self, entrypoint: TrainingTaskEntrypoint, leaves: list[object]
@@ -1486,19 +1548,16 @@ class TrainingExecutor:
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
-        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
-        first_bindings: list[
-            tuple[str, str, torch.Tensor, ObjectBinding]
-        ] = []
-        for object_id, alias_id, contribution in first:
-            binding = self._bridge.promote_output(alias_id, contribution)
-            rebound.append((contribution, alias_id, binding))
-            first_bindings.append((object_id, alias_id, contribution, binding))
-        self._bridge.rebind_many(rebound)
-        for object_id, alias_id, contribution, binding in first_bindings:
+        adopted: list[tuple[torch.Tensor, str]] = []
+        for _object_id, alias_id, contribution in first:
+            adopted.append((contribution, alias_id))
+        generations = self._bridge.adopt_many(adopted)
+        for (object_id, alias_id, contribution), generation in zip(
+            first, generations, strict=True
+        ):
             self._state.object_store[alias_id] = contribution
             self._state.object_tensors[object_id] = contribution
-            self._state.generations[alias_id] = binding.generation
+            self._state.generations[alias_id] = generation
             parameter = self._gradients.get(alias_id)
             if parameter is not None:
                 parameter.grad = contribution
@@ -1508,8 +1567,8 @@ class TrainingExecutor:
     def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
         current = self._current_optimizer_bindings()
         produced: set[str] = set()
-        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
-        bound: list[tuple[str, torch.Tensor, str, ObjectBinding]] = []
+        adopted: list[tuple[torch.Tensor, str]] = []
+        bound: list[tuple[str, torch.Tensor, str]] = []
         for item in lowered.optimizer_objects:
             if not item.created_on_first_step:
                 continue
@@ -1541,17 +1600,18 @@ class TrainingExecutor:
                 tensor.data = destination
             alias_id = self._bridge.alias_for_object(item.object_id)
             if alias_id not in produced:
-                binding = self._bridge.promote_output(alias_id, tensor)
-                rebound.append((tensor, alias_id, binding))
-                bound.append((item.object_id, tensor, alias_id, binding))
+                adopted.append((tensor, alias_id))
+                bound.append((item.object_id, tensor, alias_id))
                 produced.add(alias_id)
             else:
                 self._state.object_tensors[item.object_id] = tensor
-        self._bridge.rebind_many(rebound)
-        for object_id, tensor, alias_id, binding in bound:
+        generations = self._bridge.adopt_many(adopted)
+        for (object_id, tensor, alias_id), generation in zip(
+            bound, generations, strict=True
+        ):
             self._state.object_store[alias_id] = tensor
             self._state.object_tensors[object_id] = tensor
-            self._state.generations[alias_id] = binding.generation
+            self._state.generations[alias_id] = generation
 
     def _current_optimizer_bindings(self) -> dict[str, Any]:
         return {
@@ -1730,9 +1790,7 @@ class TrainingExecutor:
                     actions=actions.get(entrypoint.task_id, ()),
                     execution_ordinal=execution_ordinal,
                     semantic_name=semantic_name,
-                    trace_label=(
-                        f"execution_{execution_ordinal:06d}.{semantic_name}"
-                    ),
+                    trace_label=(f"execution_{execution_ordinal:06d}.{semantic_name}"),
                     function=function,
                     argument_template=argument_template,
                 )
@@ -1780,9 +1838,7 @@ class TrainingExecutor:
             if run is None:
                 continue
             for record in run.execution:
-                previous = result.setdefault(
-                    record.task.task_id, record.trace_label
-                )
+                previous = result.setdefault(record.task.task_id, record.trace_label)
                 if previous != record.trace_label:
                     raise RuntimeError(
                         f"task {record.task.task_id} has conflicting trace labels "
@@ -1834,9 +1890,7 @@ def _selected_entrypoint_identities(
         else:
             phase_ordinal = phase_ordinals.get(entrypoint.phase, 0)
             phase_ordinals[entrypoint.phase] = phase_ordinal + 1
-            semantic_name = (
-                f"{entrypoint.phase}.component_{phase_ordinal:04d}"
-            )
+            semantic_name = f"{entrypoint.phase}.component_{phase_ordinal:04d}"
         result[entrypoint.task_id] = (execution_ordinal, semantic_name)
     return result
 

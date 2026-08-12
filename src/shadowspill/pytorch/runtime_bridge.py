@@ -92,10 +92,7 @@ class RuntimeBridge:
             dict.fromkeys(
                 (
                     *input_alias_ids,
-                    *(
-                        self.alias_for_object(item.object_id)
-                        for item in task.mutations
-                    ),
+                    *(self.alias_for_object(item.object_id) for item in task.mutations),
                     *(item.alias_group_id for item in actions),
                 )
             )
@@ -134,9 +131,7 @@ class RuntimeBridge:
             action_count=len(actions),
         )
         self._require(
-            self.library.shadowspill_pytorch_admit_execution(
-                ctypes.byref(description)
-            ),
+            self.library.shadowspill_pytorch_admit_execution(ctypes.byref(description)),
             f"admit execution {task.task_id}",
         )
         self._admitted_tasks[task.task_id] = len(input_alias_ids)
@@ -409,6 +404,27 @@ class RuntimeBridge:
         self._registered.add(alias_id)
         return binding
 
+    def adopt_many(
+        self,
+        items: Sequence[tuple[torch.Tensor, str]],
+    ) -> tuple[int, ...]:
+        """Adopt task outputs and replace their owning storage in one call."""
+
+        if not items:
+            return ()
+        generations = torch.ops.shadowspill._adopt_storages(
+            [tensor for tensor, _ in items],
+            [_dense_id(alias_id, "alias_") for _, alias_id in items],
+            [self._size(alias_id) for _, alias_id in items],
+            [int(alias_id in self._registered) for _, alias_id in items],
+        )
+        if len(generations) != len(items):
+            raise RuntimeExecutionError(
+                "storage adoption returned the wrong generation count"
+            )
+        self._registered.update(alias_id for _, alias_id in items)
+        return tuple(int(generation) for generation in generations)
+
     def before_task(
         self,
         task_id: str,
@@ -637,10 +653,7 @@ class RuntimeBridge:
         torch.ops.shadowspill._rebind_storages(
             [tensor for tensor, _, _ in materialized],
             [0] * len(materialized),
-            [
-                _dense_id(alias_id, "alias_")
-                for _, alias_id, _ in materialized
-            ],
+            [_dense_id(alias_id, "alias_") for _, alias_id, _ in materialized],
             [generation for _, _, generation in materialized],
         )
 

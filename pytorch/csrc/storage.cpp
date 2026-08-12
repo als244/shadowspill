@@ -122,7 +122,8 @@ void rebind_storages(
           "current storage does not match the planned object generation: ",
           shadowspill_runtime_status_string(status));
     }
-    if (target_address != 0) {
+    if (target_address != 0 &&
+        static_cast<uint64_t>(target_address) != current_address) {
       const ShadowSpillRuntimeStatus status =
           shadowspill_pytorch_validate_object_binding(
               static_cast<uint64_t>(object_id),
@@ -140,6 +141,10 @@ void rebind_storages(
 
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
+    if (current_addresses[index] ==
+        static_cast<uint64_t>(target_addresses[index])) {
+      continue;
+    }
     c10::Storage storage = tensor.storage();
     c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
         reinterpret_cast<void*>(
@@ -147,6 +152,78 @@ void rebind_storages(
         tensor.device()));
     prior.clear();
   }
+}
+
+std::vector<int64_t> adopt_storages(
+    at::TensorList tensors,
+    at::IntArrayRef object_ids,
+    at::IntArrayRef sizes,
+    at::IntArrayRef registered
+) {
+  nvtxRangePushA("shadowspill.pytorch.storage_adopt_batch");
+  struct RangeGuard {
+    ~RangeGuard() { nvtxRangePop(); }
+  } range_guard;
+  const size_t count = tensors.size();
+  TORCH_CHECK(
+      object_ids.size() == count && sizes.size() == count &&
+          registered.size() == count,
+      "storage adoption batch fields must have equal lengths");
+
+  std::vector<uint64_t> addresses;
+  addresses.reserve(count);
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    TORCH_CHECK(tensor.is_cuda(), "storage adoption requires CUDA tensors");
+    TORCH_CHECK(object_ids[index] >= 0, "object ID must be nonnegative");
+    TORCH_CHECK(sizes[index] >= 0, "object size must be nonnegative");
+    TORCH_CHECK(
+        registered[index] == 0 || registered[index] == 1,
+        "registered flag must be zero or one");
+    const uint64_t address = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
+    TORCH_CHECK(address != 0U, "adopted storage is dematerialized");
+    addresses.push_back(address);
+  }
+
+  std::vector<ShadowSpillObjectBinding> bindings(count);
+  std::vector<int64_t> generations;
+  generations.reserve(count);
+  for (const auto index : c10::irange(count)) {
+    ShadowSpillRuntimeStatus status = registered[index] != 0
+        ? shadowspill_pytorch_bind_registered_allocation(
+              static_cast<uint64_t>(object_ids[index]),
+              addresses[index],
+              static_cast<uint64_t>(sizes[index]),
+              &bindings[index])
+        : shadowspill_pytorch_promote_allocation(
+              static_cast<uint64_t>(object_ids[index]),
+              addresses[index],
+              static_cast<uint64_t>(sizes[index]),
+              &bindings[index]);
+    TORCH_CHECK(
+        status == SHADOWSPILL_RUNTIME_OK,
+        "storage adoption failed: ",
+        shadowspill_runtime_status_string(status));
+    TORCH_CHECK(
+        bindings[index].pointer == reinterpret_cast<void*>(
+            static_cast<uintptr_t>(addresses[index])),
+        "storage adoption changed the allocation address");
+    generations.push_back(static_cast<int64_t>(bindings[index].generation));
+  }
+
+  // Runtime adoption succeeds for the complete batch before any owning
+  // DataPtr is replaced. Clearing the prior DataPtr then reports PyTorch's
+  // logical free while the runtime keeps the plan-owned allocation alive.
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    c10::Storage storage = tensor.storage();
+    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+        reinterpret_cast<void*>(static_cast<uintptr_t>(addresses[index])),
+        tensor.device()));
+    prior.clear();
+  }
+  return generations;
 }
 
 at::Tensor transfer_storage_to_caller(
@@ -211,6 +288,9 @@ TORCH_LIBRARY(shadowspill, library) {
       "_rebind_storages(Tensor(a!)[] tensors, int[] addresses, "
       "int[] object_ids, int[] generations) -> ()");
   library.def(
+      "_adopt_storages(Tensor(a!)[] tensors, int[] object_ids, int[] sizes, "
+      "int[] registered) -> int[]");
+  library.def(
       "_transfer_storage_to_caller(Tensor(a!) tensor, int object_id, "
       "int generation, int allocation_id) -> Tensor(a!)");
 }
@@ -218,6 +298,7 @@ TORCH_LIBRARY(shadowspill, library) {
 TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
   library.impl("_rebind_storage", TORCH_FN(rebind_storage));
   library.impl("_rebind_storages", TORCH_FN(rebind_storages));
+  library.impl("_adopt_storages", TORCH_FN(adopt_storages));
   library.impl(
       "_transfer_storage_to_caller", TORCH_FN(transfer_storage_to_caller));
 }

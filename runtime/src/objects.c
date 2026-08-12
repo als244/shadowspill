@@ -257,15 +257,14 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         goto done;
     }
     ShadowSpillObjectRecord *previous_owner = NULL;
-    for (ShadowSpillObjectRecord *candidate = runtime->objects.owned_head;
-         candidate != NULL; candidate = candidate->ownership_next) {
-        if (candidate != object &&
-            candidate->allocation_id == allocation_id) {
-            if (previous_owner != NULL) {
-                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-                goto done;
-            }
-            previous_owner = candidate;
+    if (allocation->bound_object_id != SHADOWSPILL_RUNTIME_NO_ID) {
+        previous_owner = shadowspill_find_object(
+            runtime, allocation->bound_object_id
+        );
+        if (previous_owner == NULL || previous_owner == object ||
+            previous_owner->allocation_id != allocation_id) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
         }
     }
     const uint64_t task_id = shadowspill_current_task_id(runtime);
@@ -296,6 +295,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     }
     object->allocation_id = allocation_id;
     object->device_lease = allocation;
+    allocation->bound_object_id = object->object_id;
     object->generation = allocation->generation;
     object->device_version = object->authoritative_version;
     object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
@@ -363,6 +363,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     --runtime->registered_objects;
     record->framework_free_seen = 0;
     record->plan_owned = 0;
+    record->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     shadowspill_append_allocation_event_locked(
         runtime,
         record,

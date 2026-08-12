@@ -395,6 +395,7 @@ ShadowSpillRuntimeStatus shadowspill_adopt_reserved_device_range_locked(
     created->offset = offset;
     created->origin_task_id = origin_task_id;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -532,6 +533,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         split->offset = allocation_offset;
         split->origin_task_id = origin_task_id;
         split->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -602,6 +604,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     selected->requested_bytes = bytes;
     selected->origin_task_id = origin_task_id;
     selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->handoff_from_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->handoff_to_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -665,6 +668,7 @@ void shadowspill_release_allocation_locked(
     allocation->pointer = NULL;
     allocation->logical_freed = 1;
     allocation->plan_owned = 0;
+    allocation->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->requested_allocated_bytes -= allocation->requested_bytes;
     if (runtime->live_allocations != 0U) {
         --runtime->live_allocations;
