@@ -38,8 +38,8 @@ int main(void) {
     ShadowSpillRuntime *runtime = NULL;
     const ShadowSpillRuntimeConfig config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 128U,
-        .host_arena_bytes = 1U,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 1U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 10000U,
         .backend = shadowspill_mock_backend_vtable(mock),

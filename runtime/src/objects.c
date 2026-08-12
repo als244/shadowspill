@@ -64,7 +64,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->retain_spill_copy = description->retain_spill_copy;
     created->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->residency = description->initially_spill_resident
-        ? SHADOWSPILL_OBJECT_HOST_ONLY
+        ? SHADOWSPILL_OBJECT_SPILL_ONLY
         : SHADOWSPILL_OBJECT_RELEASED;
     if (description->initially_spill_resident) {
         ShadowSpillMemoryLease *spill_lease = calloc(
@@ -141,7 +141,7 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
         goto done;
     }
     if (object == NULL || object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID ||
-        (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY &&
+        (object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY &&
          object->residency != SHADOWSPILL_OBJECT_RELEASED)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -182,7 +182,7 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_write_host_object(
+ShadowSpillRuntimeStatus shadowspill_write_spill_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     const void *source,
@@ -200,7 +200,7 @@ ShadowSpillRuntimeStatus shadowspill_write_host_object(
     }
     if (object == NULL || bytes != object->size_bytes ||
         shadowspill_spill_location(runtime, object)->lease == NULL ||
-        object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+        object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -220,7 +220,7 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_read_host_object(
+ShadowSpillRuntimeStatus shadowspill_read_spill_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     void *destination,
@@ -239,7 +239,7 @@ ShadowSpillRuntimeStatus shadowspill_read_host_object(
     if (object == NULL || bytes != object->size_bytes ||
         shadowspill_spill_location(runtime, object)->lease == NULL || !shadowspill_spill_location(runtime, object)->current ||
         shadowspill_spill_location(runtime, object)->version != object->authoritative_version ||
-        object->residency != SHADOWSPILL_OBJECT_HOST_ONLY) {
+        object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
@@ -293,7 +293,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     if (previous_owner != NULL &&
         (allocation->handoff_from_object_id != SHADOWSPILL_RUNTIME_NO_ID ||
          task_id == SHADOWSPILL_RUNTIME_NO_ID ||
-         (previous_owner->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+         (previous_owner->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
           previous_owner->residency != SHADOWSPILL_OBJECT_PREFETCHING))) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -320,7 +320,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     allocation->bound_object_id = object->object_id;
     object->generation = allocation->generation;
     shadowspill_execution_location(runtime, object)->version = object->authoritative_version;
-    object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
+    object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
 
 done:
     pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
@@ -343,7 +343,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         goto done_runtime;
     }
     if (object == NULL ||
-        object->residency != SHADOWSPILL_OBJECT_DEVICE_READY) {
+        object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done_runtime;
     }
@@ -479,7 +479,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
         while (status == SHADOWSPILL_RUNTIME_OK) {
             object = shadowspill_find_object(runtime, input_object_ids[index]);
             if (object == NULL ||
-                object->residency != SHADOWSPILL_OBJECT_HOST_ONLY) {
+                object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY) {
                 break;
             }
             int pending_prefetch = 0;
@@ -520,7 +520,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             runtime, object->allocation_id
         );
         void *device_pointer = allocation == NULL ? NULL : allocation->pointer;
-        if ((object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+        if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             allocation == NULL || device_pointer == NULL ||
             shadowspill_execution_location(runtime, object)->version != object->authoritative_version) {
@@ -636,7 +636,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             runtime, updates[index].object_id
         );
         if (object == NULL || updates[index].version_delta == 0U ||
-            (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+            (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             updates[index].version_delta >
                 UINT64_MAX - object->authoritative_version) {
@@ -746,13 +746,13 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             break;
         }
         if (actions[index].kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            if (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+            if (object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
                 !shadowspill_spill_location(runtime, object)->current ||
                 shadowspill_spill_location(runtime, object)->version != object->authoritative_version) {
                 status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
                 break;
             }
-        } else if (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+        } else if (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
                    object->residency != SHADOWSPILL_OBJECT_PREFETCHING) {
             status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             break;

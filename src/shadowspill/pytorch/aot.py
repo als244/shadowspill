@@ -307,9 +307,7 @@ def _specialize_terminal_unit_tangents(
         # explicit tangent ABI for this degenerate graph.
         return backward, 0
     anchor = anchors[0]
-    for placeholder, tangent in zip(
-        placeholders[-count:], tangents, strict=True
-    ):
+    for placeholder, tangent in zip(placeholders[-count:], tangents, strict=True):
         assert isinstance(tangent, torch.Tensor)
         with graph_module.graph.inserting_after(placeholder):
             unit = graph_module.graph.call_function(

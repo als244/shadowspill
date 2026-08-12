@@ -38,12 +38,12 @@ static uint64_t transfer_runtime_ns(
 ) {
     uint32_t device = program->alias_device[alias];
     const ShadowSpillSimulationDevice *config = &program->devices[device];
-    uint64_t bandwidth = direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
-        ? config->h2d_bandwidth_bytes_per_second
-        : config->d2h_bandwidth_bytes_per_second;
-    uint64_t latency = direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
-        ? config->h2d_latency_ns
-        : config->d2h_latency_ns;
+    uint64_t bandwidth = direction == SHADOWSPILL_TRANSFER_FETCH
+        ? config->fetch_bandwidth_bytes_per_second
+        : config->evict_bandwidth_bytes_per_second;
+    uint64_t latency = direction == SHADOWSPILL_TRANSFER_FETCH
+        ? config->fetch_latency_ns
+        : config->evict_latency_ns;
     uint64_t size = program->alias_size_bytes[alias];
     uint64_t quotient = size / bandwidth;
     uint64_t remainder = size % bandwidth;
@@ -87,9 +87,9 @@ static int try_start_direction(
     uint32_t device,
     uint8_t direction
 ) {
-    int32_t *active = direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
-        ? &work->active_h2d[device]
-        : &work->active_d2h[device];
+    int32_t *active = direction == SHADOWSPILL_TRANSFER_FETCH
+        ? &work->active_fetch[device]
+        : &work->active_evict[device];
     if (*active >= 0) {
         return 0;
     }
@@ -102,8 +102,8 @@ static int try_start_direction(
         }
         uint32_t alias = transfer->alias;
         ShadowSpillAliasState *state = &work->aliases[alias];
-        if (direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE) {
-            if (state->d2h_pending != 0U || state->host_ready == 0U) {
+        if (direction == SHADOWSPILL_TRANSFER_FETCH) {
+            if (state->evict_pending != 0U || state->host_ready == 0U) {
                 transfer->stall_mask |= SHADOWSPILL_STALL_SOURCE_READINESS;
                 return 0;
             }
@@ -142,10 +142,10 @@ int shadowspill_try_start_transfers(
     int changed = 0;
     for (uint32_t device = 0; device < program->device_count; ++device) {
         changed |= try_start_direction(
-            program, work, device, SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
+            program, work, device, SHADOWSPILL_TRANSFER_FETCH
         );
         changed |= try_start_direction(
-            program, work, device, SHADOWSPILL_TRANSFER_DEVICE_TO_HOST
+            program, work, device, SHADOWSPILL_TRANSFER_EVICT
         );
     }
     return changed;
@@ -174,7 +174,7 @@ static int submit_action(
             );
             return 0;
         }
-        if (state->h2d_pending != 0U || state->d2h_pending != 0U) {
+        if (state->fetch_pending != 0U || state->evict_pending != 0U) {
             shadowspill_set_error(
                 result,
                 SHADOWSPILL_SIMULATION_RELEASE_TRANSFER_CONFLICT,
@@ -214,8 +214,8 @@ static int submit_action(
             );
             return 0;
         }
-        transfer->direction = SHADOWSPILL_TRANSFER_DEVICE_TO_HOST;
-        transfer->sequence = work->d2h_sequence[device]++;
+        transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
+        transfer->sequence = work->evict_sequence[device]++;
         if (state->host_allocated == 0U) {
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
@@ -241,10 +241,10 @@ static int submit_action(
             state->host_ready = 0U;
             work->host_bytes = total;
         }
-        state->d2h_pending = 1U;
+        state->evict_pending = 1U;
     } else {
-        if ((state->device_allocated != 0U && state->d2h_pending == 0U) ||
-            (state->host_ready == 0U && state->d2h_pending == 0U)) {
+        if ((state->device_allocated != 0U && state->evict_pending == 0U) ||
+            (state->host_ready == 0U && state->evict_pending == 0U)) {
             shadowspill_set_error(
                 result,
                 SHADOWSPILL_SIMULATION_INVALID_PREFETCH,
@@ -255,8 +255,8 @@ static int submit_action(
             );
             return 0;
         }
-        transfer->direction = SHADOWSPILL_TRANSFER_HOST_TO_DEVICE;
-        transfer->sequence = work->h2d_sequence[device]++;
+        transfer->direction = SHADOWSPILL_TRANSFER_FETCH;
+        transfer->sequence = work->fetch_sequence[device]++;
         if (state->device_allocated == 0U) {
             uint64_t used = work->device_object_bytes[device] +
                 work->device_workspace_bytes[device];
@@ -282,7 +282,7 @@ static int submit_action(
             state->device_ready = 0U;
             work->device_object_bytes[device] = total;
         }
-        state->h2d_pending = 1U;
+        state->fetch_pending = 1U;
     }
     transfer->state = SHADOWSPILL_TRANSFER_QUEUED;
     shadowspill_update_peaks(program, work);
@@ -341,16 +341,16 @@ int shadowspill_complete_transfer(
     uint32_t device,
     uint8_t direction
 ) {
-    int32_t *active = direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
-        ? &work->active_h2d[device]
-        : &work->active_d2h[device];
+    int32_t *active = direction == SHADOWSPILL_TRANSFER_FETCH
+        ? &work->active_fetch[device]
+        : &work->active_evict[device];
     uint32_t index = (uint32_t)*active;
     ShadowSpillTransferState *transfer = &work->transfers[index];
     ShadowSpillAliasState *state = &work->aliases[transfer->alias];
-    if (direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE) {
+    if (direction == SHADOWSPILL_TRANSFER_FETCH) {
         state->device_ready = 1U;
         state->device_version = state->host_version;
-        state->h2d_pending = 0U;
+        state->fetch_pending = 0U;
         if (program->alias_retain_spill_copy[transfer->alias] == 0U) {
             state->host_allocated = 0U;
             state->host_ready = 0U;
@@ -359,9 +359,9 @@ int shadowspill_complete_transfer(
     } else {
         state->host_ready = 1U;
         state->host_version = state->device_version;
-        state->d2h_pending = 0U;
+        state->evict_pending = 0U;
         state->device_ready = 0U;
-        if (state->h2d_pending == 0U) {
+        if (state->fetch_pending == 0U) {
             state->device_allocated = 0U;
             work->device_object_bytes[device] -=
                 program->alias_size_bytes[transfer->alias];

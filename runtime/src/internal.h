@@ -92,6 +92,7 @@ typedef struct ShadowSpillMemoryPool {
     _Atomic uint64_t transfer_waiters;
     ShadowSpillRangeAllocator ranges;
     struct ShadowSpillMemoryLease *leases;
+    ShadowSpillMemoryPoolBackend backend;
     void *base;
     uint32_t pool_id;
     uint64_t minimum_alignment;
@@ -326,10 +327,19 @@ struct ShadowSpillRuntime {
     uint64_t worker_poll_nanoseconds;
 
     ShadowSpillBackend backend;
+    ShadowSpillProfiler profiler;
+    ShadowSpillTransferRoute fetch_route;
+    ShadowSpillTransferRoute evict_route;
     ShadowSpillBackendStream fetch_stream;
     ShadowSpillBackendStream evict_stream;
     int fetch_stream_created;
     int evict_stream_created;
+
+    pthread_rwlock_t transfer_profiles_lock;
+    ShadowSpillTransferProfile *transfer_profiles;
+    uint32_t transfer_profile_count;
+    uint64_t transfer_profile_generation;
+    uint8_t transfer_profiles_initialized;
 
     ShadowSpillMemoryPool *pools;
     uint32_t pool_count;
@@ -363,10 +373,10 @@ struct ShadowSpillRuntime {
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
     _Atomic uint64_t registered_objects;
-    _Atomic uint64_t transfers_to_device;
-    _Atomic uint64_t transfers_to_host;
-    _Atomic uint64_t bytes_to_device;
-    _Atomic uint64_t bytes_to_host;
+    _Atomic uint64_t fetch_transfers;
+    _Atomic uint64_t evict_transfers;
+    _Atomic uint64_t bytes_fetched;
+    _Atomic uint64_t bytes_evicted;
     _Atomic uint64_t wait_events_inserted;
     uint64_t event_query_epoch;
     ShadowSpillAllocationEvent *allocation_events;
@@ -438,7 +448,7 @@ uint64_t shadowspill_range_largest_free(
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
     uint32_t pool_id,
-    void *base,
+    const ShadowSpillMemoryPoolBackend *backend,
     uint64_t capacity,
     uint64_t minimum_alignment
 );
@@ -626,6 +636,23 @@ void shadowspill_append_trace_event_locked(
     uint64_t detail_1
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
+int shadowspill_memory_pool_backend_is_valid(
+    const ShadowSpillMemoryPoolBackend *backend
+);
+int shadowspill_transfer_route_is_valid(
+    const ShadowSpillTransferRoute *route
+);
+ShadowSpillTransferRoute *shadowspill_transfer_route(
+    ShadowSpillRuntime *runtime,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+);
+ShadowSpillBackendStream *shadowspill_transfer_route_lane(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTransferRoute *route
+);
+int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);
+void shadowspill_transfer_profiles_destroy(ShadowSpillRuntime *runtime);
 void shadowspill_publish_execution_geometry_locked(ShadowSpillRuntime *runtime);
 int shadowspill_execution_table_initialize(
     ShadowSpillExecutionTable *table,
@@ -664,5 +691,21 @@ int shadowspill_transfer_lane_complete(
     ShadowSpillQueuedAction *action
 );
 void *shadowspill_worker_main(void *pointer);
+
+int shadowspill_profiler_is_valid(const ShadowSpillProfiler *profiler);
+void shadowspill_profiler_name_current_thread(
+    const ShadowSpillProfiler *profiler, const char *name
+);
+void shadowspill_profiler_name_stream(
+    const ShadowSpillProfiler *profiler,
+    ShadowSpillBackendStream stream,
+    const char *name
+);
+ShadowSpillProfilerRange shadowspill_profiler_range_begin(
+    const ShadowSpillProfiler *profiler, const char *name
+);
+void shadowspill_profiler_range_end(
+    const ShadowSpillProfiler *profiler, ShadowSpillProfilerRange range
+);
 
 #endif

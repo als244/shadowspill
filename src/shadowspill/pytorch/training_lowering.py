@@ -1177,8 +1177,7 @@ def _stage_backward_inputs(
     )
     tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
     explicit_indices = stage.differentiable_output_indices[
-        : len(stage.differentiable_output_indices)
-        - pair.specialized_unit_tangent_count
+        : len(stage.differentiable_output_indices) - pair.specialized_unit_tangent_count
     ]
     if len(tangent_values) != len(explicit_indices):
         raise CaptureError("stage backward tangent arity changed")

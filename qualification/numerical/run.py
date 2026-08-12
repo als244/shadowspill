@@ -17,7 +17,8 @@ from typing import Any
 
 import torch
 
-from shadowspill.pytorch import plan
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import Runtime, plan_step
 from shadowspill.pytorch._abi import AdapterStatistics
 from shadowspill.pytorch._allocator import installed_allocator
 
@@ -345,14 +346,21 @@ def _planned_worker(
         case_options=case_options,
     )
     with case.implementations():
+        runtime = Runtime(
+            pools={
+                "execution": device(physical_capacity=device_budget),
+                "spill": pinned_host(capacity=_HOST_BUDGET),
+            }
+        )
         planning_started = time.perf_counter()
-        training = plan(
+        training = plan_step(
             case.model,
             objective=case.objective,
             opt=case.optimizer,
             example_inputs=case.microbatches,
-            device_budget=device_budget,
-            host_budget=_HOST_BUDGET,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
         )
         planning_seconds = time.perf_counter() - planning_started
         planning_phases = {
@@ -403,9 +411,7 @@ def _planned_worker(
         uninterrupted_state = training.state_dict()
         uninterrupted_digest = state_digest(uninterrupted_state)
         if checkpoint is None:
-            raise AssertionError(
-                f"step-{checkpoint_step} checkpoint was not captured"
-            )
+            raise AssertionError(f"step-{checkpoint_step} checkpoint was not captured")
         training.load_state_dict(checkpoint)
         replay_losses: list[list[float]] = []
         replay_steps = steps - checkpoint_step
@@ -432,6 +438,7 @@ def _planned_worker(
         )
         runtime_statistics = _adapter_statistics()
         training.close()
+        runtime.close()
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)
     if (
@@ -538,8 +545,8 @@ def _planned_worker(
         "checkpoint_steps": _optimizer_steps(checkpoint),
         "uninterrupted_steps": _optimizer_steps(uninterrupted_state),
         "replay_steps": _optimizer_steps(final_state),
-        "transfer_bytes_to_host": report.transfer_bytes_to_host,
-        "transfer_bytes_to_device": report.transfer_bytes_to_device,
+        "transfer_bytes_evicted": report.transfer_bytes_evicted,
+        "transfer_bytes_fetched": report.transfer_bytes_fetched,
         "selected_recomputation": any(
             option != "save" for _group, option in selections
         ),
@@ -565,13 +572,13 @@ def _planned_worker(
         "observed_external_high_water_bytes": int(
             runtime_statistics.observed_external_high_water_bytes
         ),
-        "slab_bytes": int(runtime_statistics.runtime.slab_bytes),
+        "execution_pool_bytes": int(runtime_statistics.runtime.execution_pool_bytes),
         "slab_peak_allocated_bytes": int(
             runtime_statistics.runtime.peak_allocated_bytes
         ),
-        "host_arena_bytes": int(runtime_statistics.runtime.host_arena_bytes),
-        "host_peak_allocated_bytes": int(
-            runtime_statistics.runtime.host_peak_allocated_bytes
+        "spill_pool_bytes": int(runtime_statistics.runtime.spill_pool_bytes),
+        "spill_peak_allocated_bytes": int(
+            runtime_statistics.runtime.spill_peak_allocated_bytes
         ),
         "callback_failures": int(runtime_statistics.callback_failures),
         "pointer_lookup_failures": int(runtime_statistics.pointer_lookup_failures),
@@ -632,8 +639,8 @@ def _planned_worker(
     pressure_passed = bool(
         not require_pressure
         or (
-            report.transfer_bytes_to_host > 0
-            and report.transfer_bytes_to_device > 0
+            report.transfer_bytes_evicted > 0
+            and report.transfer_bytes_fetched > 0
             and qualification_result["selected_recomputation"]
         )
     )
@@ -649,9 +656,9 @@ def _planned_worker(
         and qualification_result["physical_budget_sealed"]
         and qualification_result["peak_process_physical_bytes"] <= device_budget
         and qualification_result["slab_peak_allocated_bytes"]
-        <= qualification_result["slab_bytes"]
-        and qualification_result["host_peak_allocated_bytes"]
-        <= qualification_result["host_arena_bytes"]
+        <= qualification_result["execution_pool_bytes"]
+        and qualification_result["spill_peak_allocated_bytes"]
+        <= qualification_result["spill_pool_bytes"]
         <= _HOST_BUDGET
         and qualification_result["callback_failures"] == 0
         and qualification_result["pointer_lookup_failures"] == 0
@@ -763,7 +770,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-fully-resident",
         action="store_true",
-        help="do not require real H2D/D2H activity and recomputation",
+        help="do not require real FETCH/EVICT activity and recomputation",
     )
     parser.add_argument(
         "--model-config",

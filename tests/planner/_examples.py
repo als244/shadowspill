@@ -77,8 +77,8 @@ def config(capacity: int = 122) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         host_capacity_bytes=1_000,
-        h2d_bandwidth_bytes_per_second=61_000_000,
-        d2h_bandwidth_bytes_per_second=61_000_000,
+        fetch_bandwidth_bytes_per_second=61_000_000,
+        evict_bandwidth_bytes_per_second=61_000_000,
     )
 
 
@@ -212,9 +212,7 @@ def training_chain_program(layers: int) -> Program:
             objects.append(ObjectSpec(name, name, 0, 64))
             initial.append(ResidencySpec(name, MemoryLocation.HOST))
     for name in ("W_head", "dW_head"):
-        alias_groups.append(
-            AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True)
-        )
+        alias_groups.append(AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True))
         objects.append(ObjectSpec(name, name, 0, 64))
         initial.append(ResidencySpec(name, MemoryLocation.HOST))
 
@@ -317,6 +315,6 @@ def training_chain_config(capacity: int) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         host_capacity_bytes=10_000,
-        h2d_bandwidth_bytes_per_second=8_000_000,
-        d2h_bandwidth_bytes_per_second=8_000_000,
+        fetch_bandwidth_bytes_per_second=8_000_000,
+        evict_bandwidth_bytes_per_second=8_000_000,
     )

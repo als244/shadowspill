@@ -16,8 +16,8 @@ typedef struct Fixture {
 static int fixture_create(Fixture *fixture) {
     const ShadowSpillMockBackendConfig backend_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .h2d_delay_nanoseconds = 1000U,
-        .d2h_delay_nanoseconds = 1000U,
+        .fetch_delay_nanoseconds = 1000U,
+        .evict_delay_nanoseconds = 1000U,
     };
     if (shadowspill_mock_backend_create(
             &backend_config, &fixture->mock
@@ -26,8 +26,8 @@ static int fixture_create(Fixture *fixture) {
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 128U,
-        .host_arena_bytes = 256U,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 256U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(fixture->mock),
@@ -67,13 +67,13 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .h2d_delay_nanoseconds = 100000000U,
+        .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 128U,
-        .host_arena_bytes = 128U,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 100000U,
     };
@@ -110,13 +110,13 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 0U ||
         statistics.allocated_bytes != 0U ||
-        statistics.transfers_to_device != 0U;
+        statistics.fetch_transfers != 0U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 2U ||
         statistics.allocated_bytes != 64U ||
-        statistics.transfers_to_device != 2U;
+        statistics.fetch_transfers != 2U;
     const uint64_t input = 2U;
     ShadowSpillObjectBinding binding = {0};
     struct timespec started = {0};
@@ -137,7 +137,7 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 2U ||
-        statistics.transfers_to_device != 2U;
+        statistics.fetch_transfers != 2U;
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
@@ -150,13 +150,13 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .d2h_delay_nanoseconds = 100000000U,
+        .evict_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 128U,
-        .host_arena_bytes = 128U,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 100000U,
     };
@@ -198,19 +198,19 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.host_allocated_bytes != 0U ||
-        statistics.transfers_to_host != 0U;
+        statistics.spill_allocated_bytes != 0U ||
+        statistics.evict_transfers != 0U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.host_allocated_bytes != 64U ||
-        statistics.transfers_to_host != 2U;
+        statistics.spill_allocated_bytes != 64U ||
+        statistics.evict_transfers != 2U;
     failed = failed || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.host_allocated_bytes != 64U ||
-        statistics.transfers_to_host != 2U;
+        statistics.spill_allocated_bytes != 64U ||
+        statistics.evict_transfers != 2U;
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
@@ -398,7 +398,7 @@ static int output_allocation_handoff(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         source_snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
         source_snapshot.execution_pointer != NULL ||
-        target_snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        target_snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         target_snapshot.execution_pointer != allocation.pointer ||
         target_snapshot.allocation_id != allocation.allocation_id) {
         result = -1;
@@ -462,7 +462,7 @@ static int valid_transition_paths(void) {
     if (shadowspill_object_snapshot(
             fixture.runtime, retained.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+        snapshot.residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         !snapshot.spill_current) {
         result = -1;
         goto done;
@@ -494,7 +494,7 @@ static int valid_transition_paths(void) {
         shadowspill_object_snapshot(
             fixture.runtime, retained.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+        snapshot.residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         shadowspill_unregister_object(
             fixture.runtime, retained.object_id
         ) != SHADOWSPILL_RUNTIME_OK) {
@@ -512,7 +512,7 @@ static int valid_transition_paths(void) {
         shadowspill_object_snapshot(
             fixture.runtime, temporary_host.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.has_spill_lease) {
         result = -1;
         goto done;
@@ -526,7 +526,7 @@ static int valid_transition_paths(void) {
         shadowspill_object_snapshot(
             fixture.runtime, device_created.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY) {
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY) {
         result = -1;
         goto done;
     }

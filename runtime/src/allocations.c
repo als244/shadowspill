@@ -508,7 +508,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         }
     }
     /*
-     * Every recorded use was on ``stream`` (checked above). CUDA stream order
+     * Every recorded use was on ``stream`` (checked above). Execution-stream order
      * already retires the old use before later work that consumes the reused
      * range, so adding a wait for an event recorded on the same stream is both
      * redundant and an unnecessary driver call in the allocator hot path.

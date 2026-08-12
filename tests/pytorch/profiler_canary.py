@@ -36,7 +36,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        host_arena_bytes=64 << 20,
+        spill_pool_bytes=64 << 20,
     )
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_cuda_model(_Repeated(), mode)

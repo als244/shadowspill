@@ -1,35 +1,40 @@
 # ShadowSpill
 
-ShadowSpill transparently plans recomputation, host offload, and prefetching
-around ordinary PyTorch execution while enforcing an explicit physical memory
-budget.
+ShadowSpill plans transparent spilling, fetching, and recomputation around
+ordinary PyTorch execution while enforcing an explicit physical-memory cap.
 
-> **Status:** the public forward-only callable is functional through the CUDA
-> slab runtime. Training assembly and model-scale qualification remain in
-> progress.
+> **Status:** forward and accumulated-training callables run end to end through
+> the slab runtime. Model-scale correctness, planning-latency, and retained
+> throughput qualification remain in progress.
 
-## Development installation
+## Install
 
 ```bash
-conda activate shadowspill
 python -m pip install -e ".[dev]"
 ```
 
-The release installer will select a qualified accelerator-specific PyTorch
-wheel and build the version-pinned adapter with `python tools/install.py`.
-Until that installer reaches its release gate, development uses the qualified
-PyTorch already installed in the `shadowspill` environment.
+Development and qualification use the PyTorch build installed in the
+`shadowspill` Conda environment. The release installer remains a later release
+gate.
 
-## Training API target
+## Training
 
 ```python
 from functools import partial
 
 import torch
 
-from shadowspill.pytorch import plan
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import Runtime, plan_step
 
-train_step = plan(
+runtime = Runtime(
+    pools={
+        "device": device(physical_capacity=24 << 30),
+        "spill": pinned_host(capacity=64 << 30),
+    }
+)
+
+train_step = plan_step(
     model,
     objective=lambda model, tokens, targets: model.loss(tokens, targets),
     opt=partial(torch.optim.AdamW, lr=3e-4, weight_decay=0.1),
@@ -37,8 +42,9 @@ train_step = plan(
         [token_spec_0, target_spec_0],
         [token_spec_1, target_spec_1],
     ],
-    device_budget=24 << 30,
-    host_budget=64 << 30,
+    runtime=runtime,
+    execution="device",
+    spill="spill",
 )
 
 result = train_step(
@@ -47,24 +53,36 @@ result = train_step(
         [tokens_1, targets_1],
     ]
 )
+
+train_step.close()
+runtime.close()
 ```
 
-## Forward API
+The outer input sequence is the fixed gradient-accumulation count. ShadowSpill
+runs one forward/objective/backward contribution per inner sequence and one
+optimizer update per call. It does not divide accumulated gradients.
+
+## Forward
 
 ```python
-from shadowspill.pytorch import forward_pass
+from shadowspill.pytorch import plan_forward
 
-run_forward = forward_pass(
+run_forward = plan_forward(
     model,
     example_inputs=[token_spec, conditioning_spec, metadata],
-    device_budget=24 << 30,
-    host_budget=64 << 30,
+    runtime=runtime,
+    execution="device",
+    spill="spill",
 )
 
 outputs = run_forward([tokens, conditioning, metadata])
 ```
 
-## Component map
+`execution_device=None` uses PyTorch's current accelerator device. Passing an
+explicit ordinal or `torch.device` selects it and must match the chosen
+execution pool.
+
+## Components
 
 ```text
 IR ──────────────► Simulator
@@ -77,15 +95,19 @@ IR ──────────────► Simulator
           └──── PyTorch ───┘
 ```
 
-- The simulator can run an explicit schedule without invoking the planner.
-- The planner uses the simulator to evaluate schedules.
-- The C runtime owns allocation, residency, transfers, and readiness without
-  knowing about PyTorch.
-- The PyTorch frontend captures and launches numerical work; it does not turn
-  the runtime into a second model executor.
-- Model implementations and optional `mlops` examples are qualification
-  assets, not dependencies of the core package.
+- The simulator evaluates explicit schedules without invoking the planner.
+- PressureFit uses the simulator to select a schedule.
+- The neutral C runtime owns memory pools, leases, residency, routes,
+  transfers, readiness, and failure propagation.
+- PyTorch captures and launches numerical tasks; ShadowSpill is not a second
+  model executor.
+- Provider-specific pools, routes, events, and profiling live behind backend
+  interfaces. The initial provider uses an accelerator execution pool and a
+  pinned-memory spill pool.
+- Pure-PyTorch and optional `mlops` models are qualification clients, never
+  dependencies of the core.
 
 See [the architecture](docs/architecture.md),
-[memory-budget semantics](docs/memory-budget-semantics.md), and
-[the development plan](docs/development-plan.md).
+[the PyTorch API](docs/pytorch-frontend.md),
+[memory-budget semantics](docs/memory-budget-semantics.md), and the
+[development plan](docs/development-plan.md).

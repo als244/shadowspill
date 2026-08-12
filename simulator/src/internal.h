@@ -18,8 +18,8 @@ typedef struct ShadowSpillAliasState {
     uint8_t device_ready;
     uint8_t host_allocated;
     uint8_t host_ready;
-    uint8_t h2d_pending;
-    uint8_t d2h_pending;
+    uint8_t fetch_pending;
+    uint8_t evict_pending;
     uint64_t device_version;
     uint64_t host_version;
 } ShadowSpillAliasState;
@@ -50,10 +50,10 @@ typedef struct ShadowSpillSimulationWork {
     ShadowSpillAliasState *aliases;
     ShadowSpillTaskState *tasks;
     ShadowSpillTransferState *transfers;
-    int32_t *active_h2d;
-    int32_t *active_d2h;
-    uint32_t *h2d_sequence;
-    uint32_t *d2h_sequence;
+    int32_t *active_fetch;
+    int32_t *active_evict;
+    uint32_t *fetch_sequence;
+    uint32_t *evict_sequence;
     uint64_t *device_object_bytes;
     uint64_t *device_workspace_bytes;
     uint64_t *device_object_peaks;

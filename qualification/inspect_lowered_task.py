@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 
 from qualification.numerical.cases import build_case
-from shadowspill.pytorch import plan
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import Runtime, plan_step
 
 
 def main() -> int:
@@ -25,13 +26,20 @@ def main() -> int:
         case_options={},
     )
     with case.implementations():
-        training = plan(
+        runtime = Runtime(
+            pools={
+                "execution": device(physical_capacity=arguments.device_budget),
+                "spill": pinned_host(capacity=64 << 30),
+            }
+        )
+        training = plan_step(
             case.model,
             objective=case.objective,
             opt=case.optimizer,
             example_inputs=case.microbatches,
-            device_budget=arguments.device_budget,
-            host_budget=64 << 30,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
         )
         run = training._executor._recurrent
         fixed = {item.object_id: item for item in run.lowered.fixed_tensors}
@@ -64,6 +72,7 @@ def main() -> int:
             raise RuntimeError("selected entrypoint has no graph artifact")
         print(entrypoint.artifact.graph_module.graph)
         training.close()
+        runtime.close()
     return 0
 
 

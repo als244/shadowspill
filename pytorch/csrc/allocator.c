@@ -11,14 +11,13 @@
 #include <string.h>
 #include <time.h>
 
-#include <nvtx3/nvToolsExt.h>
-
 typedef struct ShadowSpillDebugTaskRecord ShadowSpillDebugTaskRecord;
 
 typedef struct ShadowSpillPytorchAdapterState {
     pthread_mutex_t mutex;
     ShadowSpillCudaBackend *cuda;
     ShadowSpillRuntime *runtime;
+    ShadowSpillProfiler profiler;
     int32_t device_ordinal;
     uint64_t allocation_callbacks;
     uint64_t zero_size_allocation_callbacks;
@@ -53,11 +52,25 @@ struct ShadowSpillDebugTaskRecord {
 };
 
 static _Thread_local int task_range_active;
-static _Thread_local nvtxRangeId_t task_range_id;
+static _Thread_local ShadowSpillProfilerRange task_range_id;
+
+ShadowSpillProfilerRange shadowspill_pytorch_profile_range_begin(
+    const char *name
+) {
+    return adapter.profiler.range_begin == NULL
+        ? 0U
+        : adapter.profiler.range_begin(adapter.profiler.context, name);
+}
+
+void shadowspill_pytorch_profile_range_end(ShadowSpillProfilerRange range) {
+    if (adapter.profiler.range_end != NULL) {
+        adapter.profiler.range_end(adapter.profiler.context, range);
+    }
+}
 
 static void end_task_range(void) {
     if (task_range_active) {
-        nvtxRangeEnd(task_range_id);
+        shadowspill_pytorch_profile_range_end(task_range_id);
         task_range_active = 0;
         task_range_id = 0;
     }
@@ -207,18 +220,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     }
     uint64_t available = config->device_budget_bytes -
         context_memory.process_bytes - config->provider_headroom_bytes;
-    uint64_t slab_bytes = available - available % physical_granularity;
-    if (slab_bytes == 0U) {
+    uint64_t execution_pool_bytes = available - available % physical_granularity;
+    if (execution_pool_bytes == 0U) {
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = slab_bytes,
-        .host_arena_bytes = config->host_arena_bytes,
+        .execution_pool_bytes = execution_pool_bytes,
+        .spill_pool_bytes = config->spill_pool_bytes,
         .minimum_alignment = capabilities.recommended_minimum_alignment,
         .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
         .backend = shadowspill_cuda_backend_vtable(cuda),
+        .profiler = shadowspill_cuda_backend_profiler(cuda),
     };
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillRuntimeStatus status = shadowspill_runtime_create(
@@ -243,6 +257,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     adapter.cuda = cuda;
+    adapter.profiler = runtime_config.profiler;
     adapter.runtime = runtime;
     adapter.device_ordinal = config->device_ordinal;
     adapter.admission = (ShadowSpillPytorchPhysicalAdmission){
@@ -251,19 +266,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         .device_budget_bytes = config->device_budget_bytes,
         .context_bytes = context_memory.process_bytes,
         .provider_headroom_bytes = config->provider_headroom_bytes,
-        .slab_bytes = slab_bytes,
+        .execution_pool_bytes = execution_pool_bytes,
         .bootstrap_process_bytes = bootstrap_memory.process_bytes,
         .device_used_bytes = bootstrap_memory.device_used_bytes,
         .device_total_bytes = bootstrap_memory.device_total_bytes,
-        .host_arena_bytes = config->host_arena_bytes,
+        .spill_pool_bytes = config->spill_pool_bytes,
     };
     adapter.physical_checks = 1U;
     adapter.peak_process_physical_bytes = bootstrap_memory.process_bytes;
     adapter.observed_external_high_water_bytes =
         bootstrap_memory.process_bytes >
-                context_memory.process_bytes + slab_bytes
+                context_memory.process_bytes + execution_pool_bytes
         ? bootstrap_memory.process_bytes - context_memory.process_bytes -
-            slab_bytes
+            execution_pool_bytes
         : 0U;
     adapter.physical_budget_sealed = 0U;
     memset(&adapter.failure, 0, sizeof(adapter.failure));
@@ -319,7 +334,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
     if (shadowspill_cuda_physical_memory(cuda, &memory) != 0) {
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
-    uint64_t base = admission.context_bytes + admission.slab_bytes;
+    uint64_t base = admission.context_bytes + admission.execution_pool_bytes;
     uint64_t external = memory.process_bytes > base
         ? memory.process_bytes - base
         : 0U;
@@ -480,8 +495,42 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_wait_idle(void) {
     return shadowspill_runtime_wait_idle(runtime);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_resize_host_arena(
-    uint64_t host_arena_bytes
+ShadowSpillRuntimeStatus
+shadowspill_pytorch_calibrate_transfer_capabilities(
+    const ShadowSpillTransferCalibrationConfig *config,
+    const ShadowSpillTransferRouteKey *routes,
+    uint32_t route_count
+) {
+    int32_t device_ordinal = -1;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    return shadowspill_runtime_calibrate_transfer_capabilities(
+        runtime, config, routes, route_count
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_profiles(
+    ShadowSpillTransferProfile *profiles,
+    uint32_t capacity,
+    uint32_t *count,
+    uint64_t *generation
+) {
+    int32_t device_ordinal = -1;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    return shadowspill_runtime_transfer_profiles(
+        runtime, profiles, capacity, count, generation
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_resize_spill_pool(
+    uint64_t spill_pool_bytes
 ) {
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime == NULL) {
@@ -489,15 +538,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_resize_host_arena(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     if (adapter.physical_budget_sealed ||
-        host_arena_bytes < adapter.admission.host_arena_bytes) {
+        spill_pool_bytes < adapter.admission.spill_pool_bytes) {
         pthread_mutex_unlock(&adapter.mutex);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_resize_host_arena(
-        adapter.runtime, host_arena_bytes
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_resize_spill_pool(
+        adapter.runtime, spill_pool_bytes
     );
     if (status == SHADOWSPILL_RUNTIME_OK) {
-        adapter.admission.host_arena_bytes = host_arena_bytes;
+        adapter.admission.spill_pool_bytes = spill_pool_bytes;
     }
     pthread_mutex_unlock(&adapter.mutex);
     return status;
@@ -634,7 +683,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    return shadowspill_write_host_object(
+    return shadowspill_write_spill_object(
         runtime,
         object_id,
         (const void *)(uintptr_t)source_address,
@@ -665,7 +714,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
     return shadowspill_register_object(runtime, &description);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_write_host_object(
+ShadowSpillRuntimeStatus shadowspill_pytorch_write_spill_object(
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t source_address
@@ -678,7 +727,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_write_host_object(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_write_host_object(
+        : shadowspill_write_spill_object(
               runtime,
               object_id,
               (const void *)(uintptr_t)source_address,
@@ -686,7 +735,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_write_host_object(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_read_host_object(
+ShadowSpillRuntimeStatus shadowspill_pytorch_read_spill_object(
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t destination_address
@@ -699,7 +748,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_read_host_object(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_read_host_object(
+        : shadowspill_read_spill_object(
               runtime,
               object_id,
               (void *)(uintptr_t)destination_address,
@@ -883,7 +932,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task(
     }
     char range_name[384];
     format_task_range_name(range_name, sizeof(range_name), "task", task_id);
-    task_range_id = nvtxRangeStartA(range_name);
+    task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
     task_range_active = 1;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -958,7 +1007,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution(
     }
     char range_name[384];
     format_task_range_name(range_name, sizeof(range_name), "task", task_id);
-    task_range_id = nvtxRangeStartA(range_name);
+    task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
     task_range_active = 1;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -1013,7 +1062,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution_handle(
     }
     char range_name[384];
     format_task_range_name(range_name, sizeof(range_name), "task", task_id);
-    task_range_id = nvtxRangeStartA(range_name);
+    task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
     task_range_active = 1;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -1070,7 +1119,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
         format_task_range_name(
             range_name, sizeof(range_name), "after_task", task_id
         );
-        task_range_id = nvtxRangeStartA(range_name);
+        task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
         task_range_active = 1;
     }
     int32_t device_ordinal;
@@ -1262,7 +1311,8 @@ void *shadowspill_pytorch_cuda_malloc(
     int32_t device_ordinal,
     void *stream
 ) {
-    (void)nvtxRangePushA("shadowspill.runtime.allocate");
+    const ShadowSpillProfilerRange range =
+        shadowspill_pytorch_profile_range_begin("shadowspill.runtime.allocate");
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.allocation_callbacks;
     if (bytes == 0) {
@@ -1272,7 +1322,7 @@ void *shadowspill_pytorch_cuda_malloc(
     int32_t expected_device;
     ShadowSpillRuntime *runtime = bound_runtime(&expected_device);
     if (bytes == 0 && runtime != NULL && device_ordinal == expected_device) {
-        (void)nvtxRangePop();
+        shadowspill_pytorch_profile_range_end(range);
         return NULL;
     }
     if (runtime == NULL || bytes < 0 || device_ordinal != expected_device) {
@@ -1283,7 +1333,7 @@ void *shadowspill_pytorch_cuda_malloc(
             NULL,
             bytes < 0 ? 0U : (uint64_t)bytes
         );
-        (void)nvtxRangePop();
+        shadowspill_pytorch_profile_range_end(range);
         return NULL;
     }
     ShadowSpillAllocation allocation = {0};
@@ -1296,10 +1346,10 @@ void *shadowspill_pytorch_cuda_malloc(
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         latch_failure(status, device_ordinal, NULL, (uint64_t)bytes);
-        (void)nvtxRangePop();
+        shadowspill_pytorch_profile_range_end(range);
         return NULL;
     }
-    (void)nvtxRangePop();
+    shadowspill_pytorch_profile_range_end(range);
     return allocation.pointer;
 }
 

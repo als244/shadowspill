@@ -21,7 +21,7 @@ from ._examples import (
 )
 
 
-def test_quick_turnaround_waits_for_d2h_then_h2d() -> None:
+def test_quick_turnaround_waits_for_evict_then_fetch() -> None:
     result = simulate(
         representative_program(),
         representative_schedule(),
@@ -35,8 +35,8 @@ def test_quick_turnaround_waits_for_d2h_then_h2d() -> None:
         (item.direction, item.start_ns, item.end_ns)
         for item in result.transfer_intervals
     ) == (
-        (TransferDirection.DEVICE_TO_HOST, 10, 138),
-        (TransferDirection.HOST_TO_DEVICE, 138, 266),
+        (TransferDirection.EVICT, 10, 138),
+        (TransferDirection.FETCH, 138, 266),
     )
     consume = result.task_intervals[-1]
     assert consume.task_id == "consume"
@@ -62,13 +62,13 @@ def test_prefetch_overlaps_unrelated_compute() -> None:
     )
 
     assert result.makespan_ns == 900
-    d2h, h2d = result.transfer_intervals
-    assert (d2h.start_ns, d2h.end_ns) == (100, 228)
-    assert (h2d.start_ns, h2d.end_ns) == (500, 628)
+    evict, fetch = result.transfer_intervals
+    assert (evict.start_ns, evict.end_ns) == (100, 228)
+    assert (fetch.start_ns, fetch.end_ns) == (500, 628)
     spacer = result.task_intervals[2]
     assert (spacer.start_ns, spacer.end_ns) == (500, 800)
-    assert h2d.start_ns == spacer.start_ns
-    assert h2d.end_ns < spacer.end_ns
+    assert fetch.start_ns == spacer.start_ns
+    assert fetch.end_ns < spacer.end_ns
     consume = result.task_intervals[3]
     assert consume.start_ns == 800
     assert consume.stall_ns == 0

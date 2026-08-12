@@ -24,8 +24,15 @@ from .public import (
     PlanUniqueStage,
     StepDiagnostics,
     StepResult,
-    forward_pass,
-    plan,
+    plan_forward,
+    plan_step,
+)
+from .runtime import (
+    MemoryPool,
+    Runtime,
+    RuntimeConfigurationError,
+    TransferCapabilities,
+    TransferProfile,
 )
 
 __all__ = [
@@ -33,6 +40,7 @@ __all__ = [
     "DiagnosticsHandle",
     "ExecutionTiming",
     "InputGuardError",
+    "MemoryPool",
     "ObjectiveError",
     "ObjectiveResult",
     "PlanAllocationEvent",
@@ -47,9 +55,13 @@ __all__ = [
     "PlannedForward",
     "PlannedTrainStep",
     "PlanningError",
+    "Runtime",
+    "RuntimeConfigurationError",
     "StepDiagnostics",
     "StepResult",
     "TensorSpec",
-    "forward_pass",
-    "plan",
+    "TransferCapabilities",
+    "TransferProfile",
+    "plan_forward",
+    "plan_step",
 ]

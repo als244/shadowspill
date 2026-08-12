@@ -8,8 +8,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan
+from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan_step
 from shadowspill.pytorch import optimizer as optimizer_module
+
+from .runtime_test_support import public_test_runtime
 
 
 class _TrainingNetwork(nn.Module):
@@ -87,13 +89,14 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         reference_optimizer.step()
         expected_losses.append(tuple(losses))
 
-    training = plan(
+    training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
-        device_budget=2 << 30,
-        host_budget=1 << 30,
+        runtime=public_test_runtime(),
+        execution="execution",
+        spill="spill",
     )
     assert training.plan_report.mode == "training"
     assert training.plan_report.captured_stage_count == 4
@@ -181,13 +184,14 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         [torch.randn(2, 6), torch.randn(2, 3), "left"],
         [torch.randn(4, 6), torch.randn(4, 3), "right"],
     ]
-    training = plan(
+    training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(torch.optim.AdamW, lr=0.003, foreach=False),
         example_inputs=examples,
-        device_budget=2 << 30,
-        host_budget=1 << 30,
+        runtime=public_test_runtime(),
+        execution="execution",
+        spill="spill",
     )
     assert training.plan_report.initial_execution_plan is not None
     empty_state = training.state_dict()
@@ -245,13 +249,14 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     expected.loss.backward()
     reference_optimizer.step()
 
-    training = plan(
+    training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(_OpaqueSgd, lr=0.02),
         example_inputs=examples,
-        device_budget=2 << 30,
-        host_budget=1 << 30,
+        runtime=public_test_runtime(),
+        execution="execution",
+        spill="spill",
     )
     actual = training(values)
     torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
@@ -298,7 +303,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
 
     torch.manual_seed(91)
     model = Network()
-    training = plan(
+    training = plan_step(
         model,
         objective=objective,
         opt=partial(
@@ -308,8 +313,9 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
             master_parameter_dtype=torch.bfloat16,
         ),
         example_inputs=inputs(92),
-        device_budget=2 << 30,
-        host_budget=1 << 30,
+        runtime=public_test_runtime(),
+        execution="execution",
+        spill="spill",
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(

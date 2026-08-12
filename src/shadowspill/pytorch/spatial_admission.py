@@ -60,7 +60,7 @@ def replay_selected_schedule(
     selected: PressureFitResult,
     measurements: Mapping[str, TaskMeasurement],
     *,
-    slab_bytes: int,
+    execution_pool_bytes: int,
     alignment: int = 256,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
 ) -> SlabReplay:
@@ -192,7 +192,7 @@ def replay_selected_schedule(
         if key in transfer_keys:
             raise ValueError("spatial admission found a duplicate transfer interval")
         transfer_keys.add(key)
-        if transfer.direction is TransferDirection.HOST_TO_DEVICE:
+        if transfer.direction is TransferDirection.FETCH:
             append(
                 interval_by_task[transfer.trigger_task_id].end_ns,
                 _SpatialEventKind.ALLOCATE_PREFETCH,
@@ -319,7 +319,7 @@ def replay_selected_schedule(
                     alignment=alignment,
                 )
             )
-    return replay_slab_timeline(slab_bytes, tuple(allocation_events))
+    return replay_slab_timeline(execution_pool_bytes, tuple(allocation_events))
 
 
 def _validate_profile_workspace(

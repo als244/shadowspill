@@ -86,7 +86,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        host_arena_bytes=256 << 20,
+        spill_pool_bytes=256 << 20,
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library
@@ -207,10 +207,10 @@ def main() -> int:
             "two unavailable inputs did not produce two stream waits: "
             f"observed {inserted_waits}"
         )
-    if overlap.runtime.transfers_to_host - baseline.runtime.transfers_to_host != 1:
-        raise AssertionError("overlap interval did not perform one D2H transfer")
-    if overlap.runtime.transfers_to_device - baseline.runtime.transfers_to_device != 2:
-        raise AssertionError("overlap interval did not perform two H2D transfers")
+    if overlap.runtime.evict_transfers - baseline.runtime.evict_transfers != 1:
+        raise AssertionError("overlap interval did not perform one EVICT transfer")
+    if overlap.runtime.fetch_transfers - baseline.runtime.fetch_transfers != 2:
+        raise AssertionError("overlap interval did not perform two FETCH transfers")
 
     compute.synchronize()
     overlap_compute.synchronize()

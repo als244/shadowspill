@@ -34,7 +34,7 @@ class RuntimeTraceEventKind(IntEnum):
 
 
 _ACTION_NAMES = {0: "release", 1: "offload", 2: "prefetch"}
-_DIRECTION_NAMES = {0: "host_to_device", 1: "device_to_host"}
+_DIRECTION_NAMES = {0: "fetch", 1: "evict"}
 
 
 @dataclass(frozen=True, slots=True)

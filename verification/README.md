@@ -12,7 +12,7 @@ python -m verification.run_model_correctness \
 Every case runs a whole-objective `torch.compile(fullgraph=True)` reference on
 PyTorch's standard allocator and ShadowSpill in separate processes. The matrix
 requires five two-microbatch optimizer steps, compiled-reference numerical parity,
-step-three checkpoint/two-step bitwise replay, real D2H/H2D, selected
+step-three checkpoint/two-step bitwise replay, real evict/fetch transfers, selected
 recomputation, and measured physical-budget enforcement. Individual evidence
 and `summary.json` are written below `qualification/results/numerical_matrix`.
 
@@ -97,5 +97,5 @@ simulator result, and candidate diagnostics reproduce the recorded expected
 digest. After replacing the implementation, pass the saved report back with
 `--baseline qualification/results/pressurefit_benchmark.json`; matching fixture
 suites then report direct `pressurefit()` speedup. No PyTorch capture,
-compilation, profiling, materialization, admission, or outer `plan()` work is
+compilation, profiling, materialization, admission, or outer `plan_step()` work is
 inside the timed interval.

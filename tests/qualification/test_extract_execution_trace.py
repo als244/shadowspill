@@ -48,7 +48,7 @@ def _create_trace(path: Path) -> None:
               (1100, 1200, 'shadowspill.storage_rebind.task_000001', 10, NULL),
               (1200, 1600, 'shadowspill.compiled_call.task_000001', 10, NULL),
               (1600, 1900, 'shadowspill.after_task.task_000001', 10, NULL),
-              (700, 900, 'shadowspill.runtime.transfer.h2d', 20, NULL);
+              (700, 900, 'shadowspill.runtime.transfer.fetch', 20, NULL);
 
             INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES
               (250, 260, 1, 10, 2),
@@ -78,9 +78,9 @@ def test_extracts_tasks_optimizer_idle_and_transfers(tmp_path: Path) -> None:
     assert result["compute_idle_ns"] == 800
     assert result["optimizer_span_ns"] == 200
     assert result["phase_kernel_ns"] == {"forward": 200, "optimizer": 200}
-    assert result["transfer_dispatch_ns"] == {"h2d": 200}
+    assert result["transfer_dispatch_ns"] == {"fetch": 200}
     assert result["transfers"] == {
-        "Host-to-Device": {
+        "fetch": {
             "count": 1,
             "duration_ns": 100,
             "compute_overlap_ns": 0,

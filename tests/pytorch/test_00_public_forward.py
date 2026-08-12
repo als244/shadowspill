@@ -6,7 +6,9 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import InputGuardError, forward_pass
+from shadowspill.pytorch import InputGuardError, plan_forward
+
+from .runtime_test_support import public_test_runtime
 
 
 class _Network(nn.Module):
@@ -33,15 +35,19 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     parameter_ids = tuple(id(value) for value in model.parameters())
     inputs = torch.randn(3, 128)
 
-    planned = forward_pass(
+    planned = plan_forward(
         model,
         example_inputs=[inputs, 17],
-        device_budget=2 << 30,
-        host_budget=1 << 30,
+        runtime=public_test_runtime(),
+        execution="execution",
+        spill="spill",
     )
     assert planned.plan_report.mode == "forward"
     assert planned.plan_report.predicted_makespan_ns > 0
-    assert planned.plan_report.predicted_device_peak_bytes == 2 << 30
+    assert (
+        planned.plan_report.predicted_device_peak_bytes
+        == planned.plan_report.execution_budget_bytes
+    )
     assert planned.plan_report.capture_identity
     actual = planned([inputs, 17])[0]
     torch.testing.assert_close(

@@ -21,7 +21,7 @@ written beneath the gitignored `qualification/results/` tree with a
 
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint followed by bitwise replay,
-real D2H/H2D traffic, selected recomputation, numerical tolerances, and the
+real EVICT/FETCH traffic, selected recomputation, numerical tolerances, and the
 physical device cap. The JSON artifact records all tolerances and planning
 phase timings used for that run. Physical qualification checks the sealed cap
 after planning, after each of the five steps, and after both replay steps. It
@@ -33,7 +33,7 @@ They contain exactly the framework-free arguments passed to `pressurefit()`—th
 Program, residency inputs, simulator configuration, and planner options—and
 exactly its expected selections, schedule, full simulator result, and candidate
 diagnostics. Frontend capture, profiling, physical admission, ExecutionPlan
-construction, and outer `plan()` timing are intentionally excluded.
+construction, and outer `plan_step()` timing are intentionally excluded.
 
 For repeatable matrices and configurable/custom model cases, use
 `python -m verification.run_model_correctness`; its README documents model

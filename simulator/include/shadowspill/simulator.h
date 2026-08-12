@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_SIMULATOR_ABI_VERSION 1U
+#define SHADOWSPILL_SIMULATOR_ABI_VERSION 2U
 #define SHADOWSPILL_SIMULATOR_NO_INDEX UINT32_MAX
 
 typedef enum ShadowSpillSimulationStatus {
@@ -48,8 +48,8 @@ typedef enum ShadowSpillMemoryActionKind {
 } ShadowSpillMemoryActionKind;
 
 typedef enum ShadowSpillTransferDirection {
-    SHADOWSPILL_TRANSFER_HOST_TO_DEVICE = 0,
-    SHADOWSPILL_TRANSFER_DEVICE_TO_HOST = 1,
+    SHADOWSPILL_TRANSFER_FETCH = 0,
+    SHADOWSPILL_TRANSFER_EVICT = 1,
 } ShadowSpillTransferDirection;
 
 enum {
@@ -61,10 +61,10 @@ enum {
 
 typedef struct ShadowSpillSimulationDevice {
     uint64_t capacity_bytes;
-    uint64_t h2d_bandwidth_bytes_per_second;
-    uint64_t d2h_bandwidth_bytes_per_second;
-    uint64_t h2d_latency_ns;
-    uint64_t d2h_latency_ns;
+    uint64_t fetch_bandwidth_bytes_per_second;
+    uint64_t evict_bandwidth_bytes_per_second;
+    uint64_t fetch_latency_ns;
+    uint64_t evict_latency_ns;
 } ShadowSpillSimulationDevice;
 
 typedef struct ShadowSpillSimulationProgram {

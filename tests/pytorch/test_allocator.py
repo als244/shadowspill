@@ -32,7 +32,7 @@ from shadowspill.pytorch._allocator import (
     InstalledAllocator,
     _function_pointer,
     install_allocator,
-    resize_host_arena,
+    resize_spill_pool,
 )
 
 
@@ -43,6 +43,8 @@ class _Function:
 
 class _Library:
     shadowspill_pytorch_adapter_capabilities = _Function()
+    shadowspill_pytorch_profile_range_begin = _Function()
+    shadowspill_pytorch_profile_range_end = _Function()
     shadowspill_pytorch_physical_admission = _Function()
     shadowspill_pytorch_physical_memory = _Function()
     shadowspill_pytorch_seal_physical_budget = _Function()
@@ -51,11 +53,13 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
+    shadowspill_pytorch_calibrate_transfer_capabilities = _Function()
+    shadowspill_pytorch_transfer_profiles = _Function()
     shadowspill_pytorch_debug_task_timing_enable = _Function()
     shadowspill_pytorch_debug_task_timing_read = _Function()
     shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_task_labels_configure = _Function()
-    shadowspill_pytorch_resize_host_arena = _Function()
+    shadowspill_pytorch_resize_spill_pool = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
@@ -66,8 +70,8 @@ class _Library:
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_register_host_object = _Function()
     shadowspill_pytorch_register_placeholder_object = _Function()
-    shadowspill_pytorch_write_host_object = _Function()
-    shadowspill_pytorch_read_host_object = _Function()
+    shadowspill_pytorch_write_spill_object = _Function()
+    shadowspill_pytorch_read_spill_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
     shadowspill_pytorch_bind_registered_allocation = _Function()
     shadowspill_pytorch_transfer_output_to_caller = _Function()
@@ -110,6 +114,10 @@ def test_adapter_signatures_are_configured_together() -> None:
     library = _Library()
     configure_adapter_library(library)
     assert library.shadowspill_pytorch_adapter_capabilities.restype is ctypes.c_uint32
+    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [
+        ctypes.c_char_p
+    ]
+    assert library.shadowspill_pytorch_profile_range_end.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_physical_admission.argtypes == [
         ctypes.POINTER(PhysicalAdmission)
     ]
@@ -144,7 +152,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(ctypes.c_char_p),
         ctypes.c_uint32,
     ]
-    assert library.shadowspill_pytorch_resize_host_arena.argtypes == [ctypes.c_uint64]
+    assert library.shadowspill_pytorch_resize_spill_pool.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
         ctypes.c_uint64
     ]
@@ -176,12 +184,12 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint8,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_write_host_object.argtypes == [
+    assert library.shadowspill_pytorch_write_spill_object.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_read_host_object.argtypes == [
+    assert library.shadowspill_pytorch_read_spill_object.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
@@ -224,32 +232,32 @@ def test_adapter_signatures_are_configured_together() -> None:
 
 def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:
     class _ResizeLibrary:
-        host_bytes = 16
+        spill_bytes = 16
 
-        def shadowspill_pytorch_resize_host_arena(self, value: int) -> int:
-            self.host_bytes = value
+        def shadowspill_pytorch_resize_spill_pool(self, value: int) -> int:
+            self.spill_bytes = value
             return 0
 
         def shadowspill_pytorch_physical_admission(self, output: object) -> int:
             admission = ctypes.cast(output, ctypes.POINTER(PhysicalAdmission))[0]
-            admission.host_arena_bytes = self.host_bytes
+            admission.spill_pool_bytes = self.spill_bytes
             return 0
 
     admission = PhysicalAdmission()
-    admission.host_arena_bytes = 16
+    admission.spill_pool_bytes = 16
     installed = InstalledAllocator(
         library=_ResizeLibrary(),
         allocator=object(),
         path=Path("/adapter"),
         admission=admission,
     )
-    resize_host_arena(installed, host_arena_bytes=32, host_budget_bytes=64)
-    assert installed.admission.host_arena_bytes == 32
-    resize_host_arena(installed, host_arena_bytes=32, host_budget_bytes=64)
+    resize_spill_pool(installed, spill_pool_bytes=32, spill_budget_bytes=64)
+    assert installed.admission.spill_pool_bytes == 32
+    resize_spill_pool(installed, spill_pool_bytes=32, spill_budget_bytes=64)
     with pytest.raises(AllocatorInstallError, match="shrink"):
-        resize_host_arena(installed, host_arena_bytes=31, host_budget_bytes=64)
+        resize_spill_pool(installed, spill_pool_bytes=31, spill_budget_bytes=64)
     with pytest.raises(AllocatorInstallError, match="exceeds"):
-        resize_host_arena(installed, host_arena_bytes=40, host_budget_bytes=64)
+        resize_spill_pool(installed, spill_pool_bytes=40, spill_budget_bytes=64)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:
@@ -265,7 +273,7 @@ def test_installer_rejects_missing_library(tmp_path: Path) -> None:
             device_ordinal=0,
             device_budget_bytes=1,
             provider_headroom_bytes=0,
-            host_arena_bytes=0,
+            spill_pool_bytes=0,
         )
 
 
@@ -276,7 +284,7 @@ def test_installer_rejects_missing_library(tmp_path: Path) -> None:
         ({"device_budget_bytes": 0}, "budget"),
         ({"provider_headroom_bytes": -1}, "headroom"),
         ({"provider_headroom_bytes": 1024}, "headroom"),
-        ({"host_arena_bytes": -1}, "host arena"),
+        ({"spill_pool_bytes": -1}, "host arena"),
         ({"worker_poll_nanoseconds": -1}, "poll"),
     ],
 )
@@ -287,7 +295,7 @@ def test_installer_rejects_invalid_physical_configuration(
         "device_ordinal": 0,
         "device_budget_bytes": 1024,
         "provider_headroom_bytes": 0,
-        "host_arena_bytes": 0,
+        "spill_pool_bytes": 0,
         "worker_poll_nanoseconds": 0,
     }
     arguments.update(overrides)

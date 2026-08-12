@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <shadowspill/backend.h>
+#include <shadowspill/profiler.h>
 
 #if defined(_WIN32)
 #define SHADOWSPILL_RUNTIME_API __declspec(dllexport)
@@ -15,8 +16,9 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 12U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 14U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
+#define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -41,8 +43,8 @@ typedef enum ShadowSpillRuntimeStatus {
 } ShadowSpillRuntimeStatus;
 
 typedef enum ShadowSpillObjectResidency {
-    SHADOWSPILL_OBJECT_HOST_ONLY = 0,
-    SHADOWSPILL_OBJECT_DEVICE_READY = 1,
+    SHADOWSPILL_OBJECT_SPILL_ONLY = 0,
+    SHADOWSPILL_OBJECT_EXECUTION_READY = 1,
     SHADOWSPILL_OBJECT_PREFETCHING = 2,
     SHADOWSPILL_OBJECT_OFFLOADING = 3,
     SHADOWSPILL_OBJECT_RELEASED = 4,
@@ -85,11 +87,12 @@ typedef enum ShadowSpillTraceEventKind {
 
 typedef struct ShadowSpillRuntimeConfig {
     uint32_t abi_version;
-    uint64_t device_slab_bytes;
-    uint64_t host_arena_bytes;
+    uint64_t execution_pool_bytes;
+    uint64_t spill_pool_bytes;
     uint64_t minimum_alignment;
     uint64_t worker_poll_nanoseconds;
     ShadowSpillBackend backend;
+    ShadowSpillProfiler profiler;
 } ShadowSpillRuntimeConfig;
 
 typedef struct ShadowSpillAllocation {
@@ -154,6 +157,47 @@ typedef struct ShadowSpillTraceConfig {
     uint64_t allocation_event_capacity;
 } ShadowSpillTraceConfig;
 
+typedef struct ShadowSpillTransferRouteKey {
+    uint32_t source_pool_id;
+    uint32_t destination_pool_id;
+} ShadowSpillTransferRouteKey;
+
+typedef enum ShadowSpillTransferProfileProvenance {
+    SHADOWSPILL_TRANSFER_PROFILE_INITIALIZATION = 0,
+    SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION = 1,
+} ShadowSpillTransferProfileProvenance;
+
+typedef struct ShadowSpillTransferCalibrationConfig {
+    uint32_t abi_version;
+    uint64_t small_copy_bytes;
+    uint64_t large_copy_bytes;
+    uint32_t warmup_copies;
+    uint32_t measured_copies;
+    uint8_t provenance;
+} ShadowSpillTransferCalibrationConfig;
+
+/*
+ * One cell in the dense row-major pool-to-pool transfer matrix. Identity
+ * cells are available with zero latency and do not require a physical copy.
+ * ``generation`` changes atomically whenever any selected route is
+ * recalibrated.
+ */
+typedef struct ShadowSpillTransferProfile {
+    uint32_t abi_version;
+    uint32_t source_pool_id;
+    uint32_t destination_pool_id;
+    uint64_t generation;
+    uint64_t latency_nanoseconds;
+    uint64_t bandwidth_bytes_per_second;
+    uint64_t calibrated_timestamp_nanoseconds;
+    uint64_t small_copy_bytes;
+    uint64_t large_copy_bytes;
+    uint32_t measured_copies;
+    uint8_t available;
+    uint8_t calibrated;
+    uint8_t provenance;
+} ShadowSpillTransferProfile;
+
 /*
  * One host-clock observation emitted by the neutral runtime. ``detail_0`` and
  * ``detail_1`` have event-specific meanings documented in runtime.md. IDs use
@@ -187,7 +231,7 @@ typedef struct ShadowSpillTraceSummary {
 } ShadowSpillTraceSummary;
 
 typedef struct ShadowSpillRuntimeStatistics {
-    uint64_t slab_bytes;
+    uint64_t execution_pool_bytes;
     uint64_t requested_allocated_bytes;
     uint64_t peak_requested_allocated_bytes;
     uint64_t allocated_bytes;
@@ -195,9 +239,9 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t largest_free_range_bytes;
     uint64_t external_fragmentation_bytes;
     uint64_t peak_allocated_bytes;
-    uint64_t host_arena_bytes;
-    uint64_t host_allocated_bytes;
-    uint64_t host_peak_allocated_bytes;
+    uint64_t spill_pool_bytes;
+    uint64_t spill_allocated_bytes;
+    uint64_t spill_peak_allocated_bytes;
     uint64_t live_allocations;
     uint64_t blocked_allocators;
     uint64_t pending_retirements;
@@ -207,10 +251,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t retirement_records_unfenced;
     uint64_t registered_objects;
     uint64_t queued_actions;
-    uint64_t transfers_to_device;
-    uint64_t transfers_to_host;
-    uint64_t bytes_to_device;
-    uint64_t bytes_to_host;
+    uint64_t fetch_transfers;
+    uint64_t evict_transfers;
+    uint64_t bytes_fetched;
+    uint64_t bytes_evicted;
     uint64_t wait_events_inserted;
     uint64_t allocation_events;
     uint64_t allocation_event_capacity;
@@ -243,8 +287,8 @@ typedef struct ShadowSpillObjectSnapshot {
 } ShadowSpillObjectSnapshot;
 
 /*
- * Creates one runtime, physical device slab, host arena, transfer-stream pair,
- * and progress thread. The configuration and backend table are copied; the
+ * Creates one runtime, execution and spill pools, directed transfer lanes,
+ * and worker thread. The configuration and backend table are copied; the
  * backend context is borrowed and must outlive the runtime. On failure, output
  * is set to NULL and all successfully created resources are reclaimed.
  */
@@ -260,6 +304,35 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_close(
     ShadowSpillRuntime *runtime
+);
+
+/*
+ * Recalibrates every configured directed route when ``routes`` is NULL and
+ * ``route_count`` is zero, or only the supplied route keys otherwise. The
+ * runtime must be locally idle. This function deliberately performs no
+ * inter-process coordination, allowing callers to invoke it concurrently in
+ * independent processes after establishing their own barriers. A successful
+ * call atomically publishes one new matrix generation.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_calibrate_transfer_capabilities(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTransferCalibrationConfig *config,
+    const ShadowSpillTransferRouteKey *routes,
+    uint32_t route_count
+);
+
+/*
+ * Copies the complete row-major N-by-N profile matrix. ``capacity`` must be at
+ * least N*N. The caller receives a lock-consistent generation and count.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_transfer_profiles(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTransferProfile *profiles,
+    uint32_t capacity,
+    uint32_t *count,
+    uint64_t *generation
 );
 
 /* Calls close if needed and releases the runtime record. NULL is accepted. */
@@ -324,7 +397,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_register_object(
 );
 
 /*
- * Removes a HOST_ONLY or RELEASED object with no live allocation or queued
+ * Removes a SPILL_ONLY or RELEASED object with no live allocation or queued
  * action, reclaiming retained spill storage. Intended for deterministic plan
  * teardown after final writeback.
  */
@@ -335,10 +408,10 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
 
 /*
  * Copies one exact object payload into its existing spill lease before execution
- * materialization. The object must be HOST_ONLY with no device allocation.
+ * materialization. The object must be SPILL_ONLY with no execution allocation.
  * Source is borrowed for the call and may be NULL only for a zero-size object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_host_object(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_spill_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     const void *source,
@@ -346,11 +419,11 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_host_object(
 );
 
 /*
- * Copies one exact, current HOST_ONLY payload into caller-owned memory. This
+ * Copies one exact, current SPILL_ONLY payload into caller-owned memory. This
  * function does not wait for transfers; callers first use wait_idle or an
  * equivalent lifecycle boundary. Destination may be NULL only for zero size.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_host_object(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_spill_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     void *destination,
@@ -369,7 +442,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_bind_object(
 );
 
 /*
- * Removes one DEVICE_READY object while leaving its allocation live under
+ * Removes one EXECUTION_READY object while leaving its allocation live under
  * ordinary caller ownership. No queued action may reference the object. The
  * framework's eventual logical free and recorded streams govern range reuse.
  */
@@ -383,7 +456,7 @@ shadowspill_transfer_object_to_caller(
 /*
  * Acquires all input generations and returns one binding per input position.
  * Duplicate object IDs share a binding and one readiness wait. Every distinct
- * in-flight H2D inserts a wait on compute_stream without host synchronization.
+ * in-flight FETCH inserts a wait on compute_stream without host synchronization.
  * Input arrays are borrowed for the call. Returned pointers remain valid for
  * the reported generation until its annotated release/offload completes.
  */
@@ -556,9 +629,9 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
  * admission. It is forbidden after frontend physical admission is sealed.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_runtime_resize_host_arena(
+shadowspill_runtime_resize_spill_pool(
     ShadowSpillRuntime *runtime,
-    uint64_t host_arena_bytes
+    uint64_t spill_pool_bytes
 );
 
 /* Copies a lock-consistent telemetry snapshot into caller-owned storage. */

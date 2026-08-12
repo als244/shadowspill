@@ -369,7 +369,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
         ShadowSpillObject *object = record->unique_inputs[index];
         pthread_mutex_lock(&object->lock);
         while (status == SHADOWSPILL_RUNTIME_OK &&
-               object->residency == SHADOWSPILL_OBJECT_HOST_ONLY &&
+               object->residency == SHADOWSPILL_OBJECT_SPILL_ONLY &&
                object->prefetch_pending) {
             shadowspill_append_trace_event_locked(
                 runtime,
@@ -391,7 +391,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
             pthread_mutex_unlock(&object->lock);
             break;
         }
-        if ((object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+        if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             lease == NULL || lease->pointer == NULL ||
             lease->allocation_id != object->allocation_id ||

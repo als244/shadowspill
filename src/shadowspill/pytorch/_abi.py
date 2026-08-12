@@ -5,9 +5,10 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 22
-RUNTIME_ABI_VERSION: Final = 12
+ADAPTER_ABI_VERSION: Final = 24
+RUNTIME_ABI_VERSION: Final = 14
 TRACE_ABI_VERSION: Final = 1
+TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
 
 class AdapterConfig(ctypes.Structure):
@@ -16,7 +17,7 @@ class AdapterConfig(ctypes.Structure):
         ("device_ordinal", ctypes.c_int32),
         ("device_budget_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
-        ("host_arena_bytes", ctypes.c_uint64),
+        ("spill_pool_bytes", ctypes.c_uint64),
         ("worker_poll_nanoseconds", ctypes.c_uint64),
     ]
 
@@ -28,11 +29,11 @@ class PhysicalAdmission(ctypes.Structure):
         ("device_budget_bytes", ctypes.c_uint64),
         ("context_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
-        ("slab_bytes", ctypes.c_uint64),
+        ("execution_pool_bytes", ctypes.c_uint64),
         ("bootstrap_process_bytes", ctypes.c_uint64),
         ("device_used_bytes", ctypes.c_uint64),
         ("device_total_bytes", ctypes.c_uint64),
-        ("host_arena_bytes", ctypes.c_uint64),
+        ("spill_pool_bytes", ctypes.c_uint64),
     ]
 
 
@@ -76,7 +77,7 @@ class TaskHostTiming(ctypes.Structure):
 
 class RuntimeStatistics(ctypes.Structure):
     _fields_ = [
-        ("slab_bytes", ctypes.c_uint64),
+        ("execution_pool_bytes", ctypes.c_uint64),
         ("requested_allocated_bytes", ctypes.c_uint64),
         ("peak_requested_allocated_bytes", ctypes.c_uint64),
         ("allocated_bytes", ctypes.c_uint64),
@@ -84,9 +85,9 @@ class RuntimeStatistics(ctypes.Structure):
         ("largest_free_range_bytes", ctypes.c_uint64),
         ("external_fragmentation_bytes", ctypes.c_uint64),
         ("peak_allocated_bytes", ctypes.c_uint64),
-        ("host_arena_bytes", ctypes.c_uint64),
-        ("host_allocated_bytes", ctypes.c_uint64),
-        ("host_peak_allocated_bytes", ctypes.c_uint64),
+        ("spill_pool_bytes", ctypes.c_uint64),
+        ("spill_allocated_bytes", ctypes.c_uint64),
+        ("spill_peak_allocated_bytes", ctypes.c_uint64),
         ("live_allocations", ctypes.c_uint64),
         ("blocked_allocators", ctypes.c_uint64),
         ("pending_retirements", ctypes.c_uint64),
@@ -96,10 +97,10 @@ class RuntimeStatistics(ctypes.Structure):
         ("retirement_records_unfenced", ctypes.c_uint64),
         ("registered_objects", ctypes.c_uint64),
         ("queued_actions", ctypes.c_uint64),
-        ("transfers_to_device", ctypes.c_uint64),
-        ("transfers_to_host", ctypes.c_uint64),
-        ("bytes_to_device", ctypes.c_uint64),
-        ("bytes_to_host", ctypes.c_uint64),
+        ("fetch_transfers", ctypes.c_uint64),
+        ("evict_transfers", ctypes.c_uint64),
+        ("bytes_fetched", ctypes.c_uint64),
+        ("bytes_evicted", ctypes.c_uint64),
         ("wait_events_inserted", ctypes.c_uint64),
         ("allocation_events", ctypes.c_uint64),
         ("allocation_event_capacity", ctypes.c_uint64),
@@ -126,6 +127,42 @@ class TraceConfig(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("event_capacity", ctypes.c_uint64),
         ("allocation_event_capacity", ctypes.c_uint64),
+    ]
+
+
+class TransferRouteKey(ctypes.Structure):
+    _fields_ = [
+        ("source_pool_id", ctypes.c_uint32),
+        ("destination_pool_id", ctypes.c_uint32),
+    ]
+
+
+class TransferCalibrationConfig(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("small_copy_bytes", ctypes.c_uint64),
+        ("large_copy_bytes", ctypes.c_uint64),
+        ("warmup_copies", ctypes.c_uint32),
+        ("measured_copies", ctypes.c_uint32),
+        ("provenance", ctypes.c_uint8),
+    ]
+
+
+class TransferProfile(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("source_pool_id", ctypes.c_uint32),
+        ("destination_pool_id", ctypes.c_uint32),
+        ("generation", ctypes.c_uint64),
+        ("latency_nanoseconds", ctypes.c_uint64),
+        ("bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("calibrated_timestamp_nanoseconds", ctypes.c_uint64),
+        ("small_copy_bytes", ctypes.c_uint64),
+        ("large_copy_bytes", ctypes.c_uint64),
+        ("measured_copies", ctypes.c_uint32),
+        ("available", ctypes.c_uint8),
+        ("calibrated", ctypes.c_uint8),
+        ("provenance", ctypes.c_uint8),
     ]
 
 
@@ -180,10 +217,10 @@ class CudaStatistics(ctypes.Structure):
         ("streams_destroyed", ctypes.c_uint64),
         ("events_created", ctypes.c_uint64),
         ("events_destroyed", ctypes.c_uint64),
-        ("copies_to_device", ctypes.c_uint64),
-        ("copies_to_host", ctypes.c_uint64),
-        ("bytes_to_device", ctypes.c_uint64),
-        ("bytes_to_host", ctypes.c_uint64),
+        ("fetch_copies", ctypes.c_uint64),
+        ("evict_copies", ctypes.c_uint64),
+        ("bytes_fetched", ctypes.c_uint64),
+        ("bytes_evicted", ctypes.c_uint64),
         ("event_queries", ctypes.c_uint64),
         ("stream_waits", ctypes.c_uint64),
         ("stream_synchronizations", ctypes.c_uint64),
@@ -296,6 +333,10 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(AdapterCapabilities)
     ]
     library.shadowspill_pytorch_adapter_capabilities.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_profile_range_begin.argtypes = [ctypes.c_char_p]
+    library.shadowspill_pytorch_profile_range_begin.restype = ctypes.c_uint64
+    library.shadowspill_pytorch_profile_range_end.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_profile_range_end.restype = None
     library.shadowspill_pytorch_physical_admission.argtypes = [
         ctypes.POINTER(PhysicalAdmission)
     ]
@@ -309,8 +350,8 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.c_uint64,
     ]
     library.shadowspill_pytorch_seal_physical_budget.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_resize_host_arena.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_resize_host_arena.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_resize_spill_pool.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_resize_spill_pool.restype = ctypes.c_uint32
     library.shadowspill_pytorch_check_physical_budget.argtypes = []
     library.shadowspill_pytorch_check_physical_budget.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_bootstrap.argtypes = [
@@ -327,6 +368,21 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_allocator_failure.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_wait_idle.argtypes = []
     library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_calibrate_transfer_capabilities.argtypes = [
+        ctypes.POINTER(TransferCalibrationConfig),
+        ctypes.POINTER(TransferRouteKey),
+        ctypes.c_uint32,
+    ]
+    library.shadowspill_pytorch_calibrate_transfer_capabilities.restype = (
+        ctypes.c_uint32
+    )
+    library.shadowspill_pytorch_transfer_profiles.argtypes = [
+        ctypes.POINTER(TransferProfile),
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    library.shadowspill_pytorch_transfer_profiles.restype = ctypes.c_uint32
     library.shadowspill_pytorch_debug_task_timing_enable.argtypes = [ctypes.c_uint32]
     library.shadowspill_pytorch_debug_task_timing_enable.restype = ctypes.c_uint32
     library.shadowspill_pytorch_debug_task_timing_read.argtypes = [
@@ -384,18 +440,18 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.c_uint8,
     ]
     library.shadowspill_pytorch_register_placeholder_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_write_host_object.argtypes = [
+    library.shadowspill_pytorch_write_spill_object.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
-    library.shadowspill_pytorch_write_host_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_read_host_object.argtypes = [
+    library.shadowspill_pytorch_write_spill_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_read_spill_object.argtypes = [
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
-    library.shadowspill_pytorch_read_host_object.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_read_spill_object.restype = ctypes.c_uint32
     library.shadowspill_pytorch_unregister_object.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_unregister_object.restype = ctypes.c_uint32
     library.shadowspill_pytorch_bind_registered_allocation.argtypes = [

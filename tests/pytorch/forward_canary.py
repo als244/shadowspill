@@ -11,7 +11,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import InputGuardError, forward_pass
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import InputGuardError, Runtime, plan_forward
 from shadowspill.pytorch._abi import AdapterStatistics
 from shadowspill.pytorch._allocator import installed_allocator
 
@@ -52,11 +53,19 @@ def main() -> int:
         reference.load_state_dict(model.state_dict())
         parameter_ids = tuple(id(value) for value in model.parameters())
         inputs = torch.randn(4, 256)
-        planned = forward_pass(
+        runtime = Runtime(
+            pools={
+                "execution": device(physical_capacity=2 << 30),
+                "spill": pinned_host(capacity=1 << 30),
+            },
+            library_path=adapter,
+        )
+        planned = plan_forward(
             model,
             example_inputs=[inputs, 16],
-            device_budget=2 << 30,
-            host_budget=1 << 30,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
         )
         if len(planned.plan_report.execution_plan.program.tasks) != 3:
             raise AssertionError("automatic partition did not retain three stages")
@@ -70,9 +79,9 @@ def main() -> int:
         selected_task_diagnostics = tuple(
             item for item in plan_diagnostics.task_stage_map if item.selected
         )
-        if tuple(
-            item.execution_ordinal for item in selected_task_diagnostics
-        ) != tuple(range(len(selected_task_diagnostics))):
+        if tuple(item.execution_ordinal for item in selected_task_diagnostics) != tuple(
+            range(len(selected_task_diagnostics))
+        ):
             raise AssertionError("forward diagnostics are not chronologically dense")
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("planning replaced a Parameter object")
@@ -119,8 +128,8 @@ def main() -> int:
             raise AssertionError("static metadata guard accepted a changed value")
 
         before_close = _statistics()
-        if before_close.runtime.transfers_to_device == 0:
-            raise AssertionError("public forward performed no real H2D transfer")
+        if before_close.runtime.fetch_transfers == 0:
+            raise AssertionError("public forward performed no real FETCH transfer")
         if before_close.cuda.device_allocations != 1:
             raise AssertionError("steady execution grew the conventional CUDA slab")
         if before_close.cuda.pinned_host_allocations != 1:
@@ -128,6 +137,7 @@ def main() -> int:
 
         planned.close()
         planned.close()
+        runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("close replaced a Parameter object")
         if any(value.device.type != "cpu" for value in model.parameters()):

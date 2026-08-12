@@ -18,8 +18,8 @@ static int create_runtime(
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 256U,
-        .host_arena_bytes = 0U,
+        .execution_pool_bytes = 256U,
+        .spill_pool_bytes = 0U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(*mock),
@@ -212,15 +212,15 @@ static int queued_transfers_survive_retirement_only_task(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .h2d_delay_nanoseconds = 100000000U,
+        .fetch_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 256U,
-        .host_arena_bytes = 128U,
+        .execution_pool_bytes = 256U,
+        .spill_pool_bytes = 128U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(mock),
@@ -271,7 +271,7 @@ static int queued_transfers_survive_retirement_only_task(void) {
         failed = shadowspill_object_snapshot(
                 runtime, objects[index].object_id, &snapshot
             ) != SHADOWSPILL_RUNTIME_OK ||
-            snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+            snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
             snapshot.execution_pointer == NULL;
     }
     if (failed) {
@@ -292,8 +292,8 @@ static int all_completed_retirements_precede_action_admission(void) {
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 128U,
-        .host_arena_bytes = 128U,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(mock),
@@ -338,7 +338,7 @@ static int all_completed_retirements_precede_action_admission(void) {
     failed = failed || shadowspill_object_snapshot(
             runtime, object.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.execution_pointer == NULL;
     if (failed) {
         fprintf(stderr, "action admission ran before all completed retirements\n");
@@ -385,8 +385,8 @@ static int bounded_runtime_trace_is_opt_in(void) {
     };
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 256U,
-        .host_arena_bytes = 128U,
+        .execution_pool_bytes = 256U,
+        .spill_pool_bytes = 128U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
     };

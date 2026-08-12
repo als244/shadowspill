@@ -19,7 +19,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=64 * MIB,
-        host_arena_bytes=1 * MIB,
+        spill_pool_bytes=1 * MIB,
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library

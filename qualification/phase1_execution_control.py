@@ -11,7 +11,8 @@ from pathlib import Path
 import torch
 
 from qualification.numerical.cases import build_case
-from shadowspill.pytorch import plan
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import Runtime, plan_step
 
 
 def _event_bracket(
@@ -54,14 +55,21 @@ def main() -> int:
         case_options={},
     )
     with case.implementations():
+        runtime = Runtime(
+            pools={
+                "execution": device(physical_capacity=arguments.device_budget),
+                "spill": pinned_host(capacity=64 << 30),
+            }
+        )
         planning_start = time.perf_counter()
-        training = plan(
+        training = plan_step(
             case.model,
             objective=case.objective,
             opt=case.optimizer,
             example_inputs=case.microbatches,
-            device_budget=arguments.device_budget,
-            host_budget=64 << 30,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
         )
         planning_seconds = time.perf_counter() - planning_start
 
@@ -100,6 +108,7 @@ def main() -> int:
 
         report = training.plan_report
         training.close()
+        runtime.close()
 
     result = {
         "schema": "shadowspill.phase1_execution_control/v1",

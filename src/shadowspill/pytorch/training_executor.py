@@ -300,19 +300,19 @@ class TransferTrace:
     """Annotated actions and completed-transfer counter deltas."""
 
     actions: tuple[MemoryAction, ...]
-    transfers_to_device: int
-    transfers_to_host: int
-    bytes_to_device: int
-    bytes_to_host: int
+    fetch_transfers: int
+    evict_transfers: int
+    bytes_fetched: int
+    bytes_evicted: int
     events: tuple[RuntimeTraceEvent, ...]
 
     def as_dict(self) -> dict[str, object]:
         return {
             "actions": [item.to_dict() for item in self.actions],
-            "transfers_to_device": self.transfers_to_device,
-            "transfers_to_host": self.transfers_to_host,
-            "bytes_to_device": self.bytes_to_device,
-            "bytes_to_host": self.bytes_to_host,
+            "fetch_transfers": self.fetch_transfers,
+            "evict_transfers": self.evict_transfers,
+            "bytes_fetched": self.bytes_fetched,
+            "bytes_evicted": self.bytes_evicted,
             "events": [item.as_dict() for item in self.events],
         }
 
@@ -632,7 +632,7 @@ class TrainingExecutor:
             raise AssertionError("initial optimizer plan is unavailable")
         self._state.refresh_inputs(inputs)
         started_ns = time.perf_counter_ns() if timing is not None else 0
-        with self._nvtx("shadowspill.training.initial_actions"):
+        with self._profile_range("shadowspill.training.initial_actions"):
             self._bridge.submit_initial_actions(
                 tuple(
                     MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
@@ -997,21 +997,21 @@ class TrainingExecutor:
         )
         transfers = TransferTrace(
             actions=timing.actions,
-            transfers_to_device=int(
-                statistics_after.runtime.transfers_to_device
-                - statistics_before.runtime.transfers_to_device
+            fetch_transfers=int(
+                statistics_after.runtime.fetch_transfers
+                - statistics_before.runtime.fetch_transfers
             ),
-            transfers_to_host=int(
-                statistics_after.runtime.transfers_to_host
-                - statistics_before.runtime.transfers_to_host
+            evict_transfers=int(
+                statistics_after.runtime.evict_transfers
+                - statistics_before.runtime.evict_transfers
             ),
-            bytes_to_device=int(
-                statistics_after.runtime.bytes_to_device
-                - statistics_before.runtime.bytes_to_device
+            bytes_fetched=int(
+                statistics_after.runtime.bytes_fetched
+                - statistics_before.runtime.bytes_fetched
             ),
-            bytes_to_host=int(
-                statistics_after.runtime.bytes_to_host
-                - statistics_before.runtime.bytes_to_host
+            bytes_evicted=int(
+                statistics_after.runtime.bytes_evicted
+                - statistics_before.runtime.bytes_evicted
             ),
             events=tuple(
                 item
@@ -1174,16 +1174,15 @@ class TrainingExecutor:
             task.host_after_started_ns = time.perf_counter_ns()
 
     @contextmanager
-    def _nvtx(self, name: str) -> Iterator[None]:
+    def _profile_range(self, name: str) -> Iterator[None]:
         if self._armed_execution_timing is None:
             yield
             return
-        nvtx: Any = torch.cuda.nvtx
-        nvtx.range_push(name)
+        range_id = self._bridge.profile_range_begin(name)
         try:
             yield
         finally:
-            nvtx.range_pop()
+            self._bridge.profile_range_end(range_id)
 
     @property
     def optimizer_state_initialized(self) -> bool:
@@ -1345,7 +1344,7 @@ class TrainingExecutor:
         task_timing = self._begin_task_timing(entrypoint)
         task = record.task
         trace_label = record.trace_label
-        with self._nvtx(f"shadowspill.before_task.{trace_label}"):
+        with self._profile_range(f"shadowspill.before_task.{trace_label}"):
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
             needs_python_stream = (
                 task_timing is not None
@@ -1367,7 +1366,7 @@ class TrainingExecutor:
                         time.perf_counter_ns() - started_ns
                     )
                 started_ns = time.perf_counter_ns() if task_timing is not None else 0
-                with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
+                with self._profile_range(f"shadowspill.storage_rebind.{trace_label}"):
                     component_started_ns = (
                         time.perf_counter_ns() if task_timing is not None else 0
                     )
@@ -1525,7 +1524,9 @@ class TrainingExecutor:
 
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         with (
-            self._nvtx(f"shadowspill.compiled_call.{prepared.record.trace_label}"),
+            self._profile_range(
+                f"shadowspill.compiled_call.{prepared.record.trace_label}"
+            ),
             torch.no_grad(),
         ):
             if prepared.eager_optimizer:
@@ -1549,9 +1550,11 @@ class TrainingExecutor:
         """Publish outputs, actions, and cleanup for one frontend task."""
 
         record = prepared.record
-        with self._nvtx(f"shadowspill.after_task.{record.trace_label}"):
+        with self._profile_range(f"shadowspill.after_task.{record.trace_label}"):
             started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-            with self._nvtx(f"shadowspill.output_processing.{record.trace_label}"):
+            with self._profile_range(
+                f"shadowspill.output_processing.{record.trace_label}"
+            ):
                 processed = self._process_task_outputs(prepared, raw_outputs)
                 del raw_outputs
                 dematerialized = self._dematerialization_tensors(record)
@@ -1561,7 +1564,9 @@ class TrainingExecutor:
                 )
 
             started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-            with self._nvtx(f"shadowspill.runtime.after_task.{record.trace_label}"):
+            with self._profile_range(
+                f"shadowspill.runtime.after_task.{record.trace_label}"
+            ):
                 if record.native_handle:
                     generations = self._bridge.after_execution_and_update(
                         record.native_handle,
@@ -1609,7 +1614,7 @@ class TrainingExecutor:
                 )
 
             started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-            with self._nvtx(f"shadowspill.cleanup.{record.trace_label}"):
+            with self._profile_range(f"shadowspill.cleanup.{record.trace_label}"):
                 self._cleanup_after_task(prepared)
             if prepared.timing is not None:
                 prepared.timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
@@ -1826,7 +1831,7 @@ class TrainingExecutor:
                     dtype=torch.uint8,
                     device="cpu",
                 )
-                self._bridge.read_host_tensor(alias_id, owner)
+                self._bridge.read_spill_tensor(alias_id, owner)
                 owners[alias_id] = owner
             layout = _TensorLayout(
                 tuple(tensor.shape),

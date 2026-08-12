@@ -7,17 +7,17 @@ import os
 from functools import cache
 from pathlib import Path
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 NO_INDEX = (1 << 32) - 1
 
 
 class CDevice(ctypes.Structure):
     _fields_ = [
         ("capacity_bytes", ctypes.c_uint64),
-        ("h2d_bandwidth_bytes_per_second", ctypes.c_uint64),
-        ("d2h_bandwidth_bytes_per_second", ctypes.c_uint64),
-        ("h2d_latency_ns", ctypes.c_uint64),
-        ("d2h_latency_ns", ctypes.c_uint64),
+        ("fetch_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("evict_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("fetch_latency_ns", ctypes.c_uint64),
+        ("evict_latency_ns", ctypes.c_uint64),
     ]
 
 

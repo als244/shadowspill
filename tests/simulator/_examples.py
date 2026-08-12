@@ -30,8 +30,8 @@ def calibrated_config(
         "cuda_0",
         device_capacity_bytes=device_capacity_bytes,
         host_capacity_bytes=host_capacity_bytes,
-        h2d_bandwidth_bytes_per_second=1_000_000_000,
-        d2h_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_bandwidth_bytes_per_second=1_000_000_000,
+        evict_bandwidth_bytes_per_second=1_000_000_000,
     )
 
 

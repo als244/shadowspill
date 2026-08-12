@@ -112,6 +112,7 @@ add_library(
   runtime/src/memory_pool.c
   runtime/src/object_table.c
   runtime/src/objects.c
+  runtime/src/profiler.c
   runtime/src/worker.c
   runtime/src/retirement_queue.c
   runtime/src/idle_wakeup.c
@@ -122,6 +123,7 @@ add_library(
   runtime/src/telemetry.c
   runtime/src/trace.c
   runtime/src/transfer_lane.c
+  runtime/src/transfer_profiles.c
 )
 target_include_directories(
   shadowspill_runtime
@@ -174,6 +176,7 @@ install(
 install(
   FILES
     runtime/include/shadowspill/backend.h
+    runtime/include/shadowspill/profiler.h
     runtime/include/shadowspill/runtime.h
     runtime/backends/mock/include/shadowspill/backend_mock.h
   DESTINATION shadowspill/include/shadowspill
@@ -192,6 +195,7 @@ if(SHADOWSPILL_BUILD_CUDA)
       shadowspill_backend_cuda
       SHARED
       runtime/backends/cuda/src/backend_cuda.c
+      runtime/backends/cuda/src/profiler_nvtx.c
     )
     target_include_directories(
       shadowspill_backend_cuda
@@ -204,6 +208,7 @@ if(SHADOWSPILL_BUILD_CUDA)
       shadowspill_backend_cuda
       PRIVATE
         CUDA::cuda_driver
+        CUDA::nvtx3
         ${SHADOWSPILL_NVML_LIBRARY}
         Threads::Threads
         shadowspill_build_options
@@ -245,9 +250,6 @@ if(SHADOWSPILL_BUILD_CUDA)
         Threads::Threads
         shadowspill_build_options
     )
-    if(TARGET CUDA::nvtx3)
-      target_link_libraries(shadowspill_pytorch PRIVATE CUDA::nvtx3)
-    endif()
     if(UNIX AND NOT APPLE)
       target_link_options(
         shadowspill_pytorch
@@ -327,7 +329,7 @@ if(BUILD_TESTING)
   )
   add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
 
-  foreach(runtime_test IN ITEMS blocking completion failure telemetry transitions)
+  foreach(runtime_test IN ITEMS blocking calibration completion failure telemetry transitions)
     add_executable(
       shadowspill_runtime_${runtime_test}_canary
       tests/runtime/runtime_${runtime_test}_canary.c

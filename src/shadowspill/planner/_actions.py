@@ -85,9 +85,9 @@ def _transfer_runtime_ns(
     device = next(item for item in config.devices if item.device_id == device_id)
     size = facts.alias_sizes[alias]
     return (
-        device.h2d_latency_ns
-        + (size * 1_000_000_000 + device.h2d_bandwidth_bytes_per_second - 1)
-        // device.h2d_bandwidth_bytes_per_second
+        device.fetch_latency_ns
+        + (size * 1_000_000_000 + device.fetch_bandwidth_bytes_per_second - 1)
+        // device.fetch_bandwidth_bytes_per_second
     )
 
 
@@ -140,7 +140,7 @@ def _packed_triggers(
         # A trigger is quantized to a task boundary, but the packed transfer
         # interval may begin later than that boundary.  Preserve that residual
         # lane occupancy when placing the next job; otherwise two transfers
-        # are incorrectly modeled as overlapping on the single H2D lane.
+        # are incorrectly modeled as overlapping on the single FETCH lane.
         packed_start[device_id] = max(
             _ideal_trigger_time(facts, trigger), desired_start
         )

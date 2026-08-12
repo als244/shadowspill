@@ -26,17 +26,17 @@ typedef struct ShadowSpillMockBackend ShadowSpillMockBackend;
 
 typedef struct ShadowSpillMockBackendConfig {
     uint32_t abi_version;
-    uint64_t h2d_delay_nanoseconds;
-    uint64_t d2h_delay_nanoseconds;
+    uint64_t fetch_delay_nanoseconds;
+    uint64_t evict_delay_nanoseconds;
     uint64_t event_delay_nanoseconds;
 } ShadowSpillMockBackendConfig;
 
 typedef struct ShadowSpillMockBackendStatistics {
     uint64_t operation_count;
-    uint64_t device_allocations;
-    uint64_t host_allocations;
-    uint64_t copies_to_device;
-    uint64_t copies_to_host;
+    uint64_t execution_allocations;
+    uint64_t spill_allocations;
+    uint64_t fetch_copies;
+    uint64_t evict_copies;
     uint64_t stream_waits;
     uint64_t stream_synchronizations;
     uint64_t events_created;

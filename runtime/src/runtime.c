@@ -9,13 +9,121 @@
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
     return backend != NULL &&
         backend->abi_version == SHADOWSPILL_BACKEND_ABI_VERSION &&
-        backend->allocate_device != NULL && backend->free_device != NULL &&
-        backend->allocate_host != NULL && backend->free_host != NULL &&
+        backend->allocate_execution != NULL && backend->free_execution != NULL &&
+        backend->allocate_spill != NULL && backend->free_spill != NULL &&
         backend->create_stream != NULL && backend->destroy_stream != NULL &&
         backend->create_event != NULL && backend->destroy_event != NULL &&
         backend->record_event != NULL && backend->query_event != NULL &&
         backend->wait_event != NULL && backend->copy_async != NULL &&
         backend->synchronize_stream != NULL;
+}
+
+int shadowspill_memory_pool_backend_is_valid(
+    const ShadowSpillMemoryPoolBackend *backend
+) {
+    return backend != NULL &&
+        backend->abi_version == SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION &&
+        backend->allocate_arena != NULL && backend->free_arena != NULL;
+}
+
+int shadowspill_transfer_route_is_valid(
+    const ShadowSpillTransferRoute *route
+) {
+    return route != NULL &&
+        route->abi_version == SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION &&
+        route->source_pool_id != route->destination_pool_id &&
+        route->create_lane != NULL && route->destroy_lane != NULL &&
+        route->copy_async != NULL && route->synchronize_lane != NULL;
+}
+
+static int legacy_allocate_execution(
+    void *context, uint64_t bytes, void **base
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->allocate_execution(backend->context, bytes, base);
+}
+
+static int legacy_free_execution(void *context, void *base) {
+    ShadowSpillBackend *backend = context;
+    return backend->free_execution(backend->context, base);
+}
+
+static int legacy_allocate_spill(void *context, uint64_t bytes, void **base) {
+    ShadowSpillBackend *backend = context;
+    return backend->allocate_spill(backend->context, bytes, base);
+}
+
+static int legacy_free_spill(void *context, void *base) {
+    ShadowSpillBackend *backend = context;
+    return backend->free_spill(backend->context, base);
+}
+
+static int legacy_create_fetch_lane(
+    void *context, ShadowSpillBackendStream *lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->create_stream(
+        backend->context, SHADOWSPILL_TRANSFER_FETCH, lane
+    );
+}
+
+static int legacy_create_evict_lane(
+    void *context, ShadowSpillBackendStream *lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->create_stream(
+        backend->context, SHADOWSPILL_TRANSFER_EVICT, lane
+    );
+}
+
+static int legacy_destroy_lane(
+    void *context, ShadowSpillBackendStream lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->destroy_stream(backend->context, lane);
+}
+
+static int legacy_fetch_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->copy_async(
+        backend->context,
+        destination,
+        source,
+        bytes,
+        SHADOWSPILL_TRANSFER_FETCH,
+        lane
+    );
+}
+
+static int legacy_evict_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->copy_async(
+        backend->context,
+        destination,
+        source,
+        bytes,
+        SHADOWSPILL_TRANSFER_EVICT,
+        lane
+    );
+}
+
+static int legacy_synchronize_lane(
+    void *context, ShadowSpillBackendStream lane
+) {
+    ShadowSpillBackend *backend = context;
+    return backend->synchronize_stream(backend->context, lane);
 }
 
 static void destroy_allocations(ShadowSpillRuntime *runtime) {
@@ -137,36 +245,25 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     runtime->trace_event_count = 0U;
     runtime->trace_event_capacity = 0U;
     if (runtime->fetch_stream_created) {
-        (void)runtime->backend.destroy_stream(
-            runtime->backend.context, runtime->fetch_stream
+        (void)runtime->fetch_route.destroy_lane(
+            runtime->fetch_route.context, runtime->fetch_stream
         );
         runtime->fetch_stream_created = 0;
     }
     if (runtime->evict_stream_created) {
-        (void)runtime->backend.destroy_stream(
-            runtime->backend.context, runtime->evict_stream
+        (void)runtime->evict_route.destroy_lane(
+            runtime->evict_route.context, runtime->evict_stream
         );
         runtime->evict_stream_created = 0;
     }
     ShadowSpillMemoryPool *execution_pool = shadowspill_execution_pool(runtime);
     ShadowSpillMemoryPool *spill_pool = shadowspill_spill_pool(runtime);
-    void *device_base = execution_pool == NULL ? NULL : execution_pool->base;
-    void *host_base = spill_pool == NULL ? NULL : spill_pool->base;
     shadowspill_memory_pool_destroy(execution_pool);
     shadowspill_memory_pool_destroy(spill_pool);
-    if (device_base != NULL) {
-        (void)runtime->backend.free_device(
-            runtime->backend.context, device_base
-        );
-    }
-    if (host_base != NULL) {
-        (void)runtime->backend.free_host(
-            runtime->backend.context, host_base
-        );
-    }
     free(runtime->pools);
     runtime->pools = NULL;
     runtime->pool_count = 0U;
+    shadowspill_transfer_profiles_destroy(runtime);
 }
 
 ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
@@ -175,8 +272,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
 ) {
     if (config == NULL || output == NULL ||
         config->abi_version != SHADOWSPILL_RUNTIME_ABI_VERSION ||
-        config->device_slab_bytes == 0U || config->minimum_alignment == 0U ||
-        !shadowspill_backend_is_valid(&config->backend)) {
+        config->execution_pool_bytes == 0U || config->minimum_alignment == 0U ||
+        !shadowspill_backend_is_valid(&config->backend) ||
+        !shadowspill_profiler_is_valid(&config->profiler)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     *output = NULL;
@@ -195,6 +293,39 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->execution_pool_id = SHADOWSPILL_EXECUTION_POOL_ID;
     runtime->spill_pool_id = SHADOWSPILL_SPILL_POOL_ID;
     runtime->backend = config->backend;
+    runtime->profiler = config->profiler;
+    const ShadowSpillMemoryPoolBackend execution_backend = {
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
+        .context = &runtime->backend,
+        .allocate_arena = legacy_allocate_execution,
+        .free_arena = legacy_free_execution,
+    };
+    const ShadowSpillMemoryPoolBackend spill_backend = {
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
+        .context = &runtime->backend,
+        .allocate_arena = legacy_allocate_spill,
+        .free_arena = legacy_free_spill,
+    };
+    runtime->fetch_route = (ShadowSpillTransferRoute){
+        .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
+        .source_pool_id = runtime->spill_pool_id,
+        .destination_pool_id = runtime->execution_pool_id,
+        .context = &runtime->backend,
+        .create_lane = legacy_create_fetch_lane,
+        .destroy_lane = legacy_destroy_lane,
+        .copy_async = legacy_fetch_async,
+        .synchronize_lane = legacy_synchronize_lane,
+    };
+    runtime->evict_route = (ShadowSpillTransferRoute){
+        .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
+        .source_pool_id = runtime->execution_pool_id,
+        .destination_pool_id = runtime->spill_pool_id,
+        .context = &runtime->backend,
+        .create_lane = legacy_create_evict_lane,
+        .destroy_lane = legacy_destroy_lane,
+        .copy_async = legacy_evict_async,
+        .synchronize_lane = legacy_synchronize_lane,
+    };
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
     runtime->next_allocation_id = 1U;
     runtime->next_generation = 1U;
@@ -208,10 +339,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     atomic_init(&runtime->pending_retirements, 0U);
     atomic_init(&runtime->pending_capacity_actions, 0U);
     atomic_init(&runtime->registered_objects, 0U);
-    atomic_init(&runtime->transfers_to_device, 0U);
-    atomic_init(&runtime->transfers_to_host, 0U);
-    atomic_init(&runtime->bytes_to_device, 0U);
-    atomic_init(&runtime->bytes_to_host, 0U);
+    atomic_init(&runtime->fetch_transfers, 0U);
+    atomic_init(&runtime->evict_transfers, 0U);
+    atomic_init(&runtime->bytes_fetched, 0U);
+    atomic_init(&runtime->bytes_evicted, 0U);
     atomic_init(&runtime->wait_events_inserted, 0U);
     atomic_init(&runtime->actions.count, 0U);
     atomic_init(&runtime->execution_free_bytes_snapshot, 0U);
@@ -260,6 +391,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->completions_initialized = 1U;
+    if (shadowspill_transfer_profiles_initialize(runtime) != 0) {
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
     if (shadowspill_retirement_queue_initialize(
             &runtime->retirements
         ) != 0) {
@@ -318,79 +454,48 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
-    void *device_base = NULL;
-    void *host_base = NULL;
-    if (runtime->backend.allocate_device(
-            runtime->backend.context,
-            config->device_slab_bytes,
-            &device_base
-        ) != 0) {
-        goto fail;
-    }
-    if (config->host_arena_bytes != 0U && runtime->backend.allocate_host(
-            runtime->backend.context,
-            config->host_arena_bytes,
-            &host_base
-        ) != 0) {
-        (void)runtime->backend.free_device(
-            runtime->backend.context, device_base
-        );
-        goto fail;
-    }
     if (shadowspill_memory_pool_initialize(
             shadowspill_execution_pool(runtime),
             runtime->execution_pool_id,
-            device_base,
-            config->device_slab_bytes,
+            &execution_backend,
+            config->execution_pool_bytes,
             config->minimum_alignment
         ) != 0) {
-        (void)runtime->backend.free_device(
-            runtime->backend.context, device_base
-        );
-        if (host_base != NULL) {
-            (void)runtime->backend.free_host(
-                runtime->backend.context, host_base
-            );
-        }
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
     if (shadowspill_memory_pool_initialize(
             shadowspill_spill_pool(runtime),
             runtime->spill_pool_id,
-            host_base,
-            config->host_arena_bytes,
+            &spill_backend,
+            config->spill_pool_bytes,
             1U
         ) != 0) {
         shadowspill_memory_pool_destroy(shadowspill_execution_pool(runtime));
-        (void)runtime->backend.free_device(
-            runtime->backend.context, device_base
-        );
-        if (host_base != NULL) {
-            (void)runtime->backend.free_host(
-                runtime->backend.context, host_base
-            );
-        }
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
     shadowspill_publish_execution_geometry_locked(runtime);
-    if (runtime->backend.create_stream(
-            runtime->backend.context,
-            SHADOWSPILL_TRANSFER_TO_DEVICE,
+    if (runtime->fetch_route.create_lane(
+            runtime->fetch_route.context,
             &runtime->fetch_stream
         ) != 0) {
         goto fail;
     }
     runtime->fetch_stream_created = 1;
-    if (runtime->backend.create_stream(
-            runtime->backend.context,
-            SHADOWSPILL_TRANSFER_TO_HOST,
+    shadowspill_profiler_name_stream(
+        &runtime->profiler, runtime->fetch_stream, "shadowspill_fetch"
+    );
+    if (runtime->evict_route.create_lane(
+            runtime->evict_route.context,
             &runtime->evict_stream
         ) != 0) {
         goto fail;
     }
     runtime->evict_stream_created = 1;
+    shadowspill_profiler_name_stream(
+        &runtime->profiler, runtime->evict_stream, "shadowspill_evict"
+    );
     if (pthread_create(
             &runtime->worker_thread, NULL, shadowspill_worker_main, runtime
         ) != 0) {
@@ -436,11 +541,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool_legacy(
     ShadowSpillRuntime *runtime,
-    uint64_t host_arena_bytes
+    uint64_t spill_pool_bytes
 ) {
-    if (runtime == NULL || host_arena_bytes > SIZE_MAX) {
+    if (runtime == NULL || spill_pool_bytes > SIZE_MAX) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle_legacy(runtime);
@@ -461,47 +566,52 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
-    if (host_arena_bytes < current_bytes) {
+    if (spill_pool_bytes < current_bytes) {
         status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
         goto done;
     }
-    if (host_arena_bytes == current_bytes) {
+    if (spill_pool_bytes == current_bytes) {
         goto done;
     }
 
+    ShadowSpillMemoryPool *spill_pool = shadowspill_spill_pool(runtime);
     void *replacement = NULL;
-    if (runtime->backend.allocate_host(
-            runtime->backend.context, host_arena_bytes, &replacement
+    if (spill_pool->backend.allocate_arena(
+            spill_pool->backend.context, spill_pool_bytes, &replacement
         ) != 0) {
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         goto done;
     }
     if (current_bytes != 0U) {
-        memcpy(replacement, shadowspill_spill_pool(runtime)->base, (size_t)current_bytes);
+        memcpy(replacement, spill_pool->base, (size_t)current_bytes);
     }
     ShadowSpillRangeAllocator ranges = {0};
     if (shadowspill_range_clone_extended(
-            &shadowspill_spill_pool(runtime)->ranges,
-            host_arena_bytes,
+            &spill_pool->ranges,
+            spill_pool_bytes,
             &ranges
         ) != 0) {
-        (void)runtime->backend.free_host(runtime->backend.context, replacement);
+        (void)spill_pool->backend.free_arena(
+            spill_pool->backend.context, replacement
+        );
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    if (shadowspill_spill_pool(runtime)->base != NULL && runtime->backend.free_host(
-            runtime->backend.context, shadowspill_spill_pool(runtime)->base
+    if (spill_pool->base != NULL && spill_pool->backend.free_arena(
+            spill_pool->backend.context, spill_pool->base
         ) != 0) {
         shadowspill_range_destroy(&ranges);
-        (void)runtime->backend.free_host(runtime->backend.context, replacement);
+        (void)spill_pool->backend.free_arena(
+            spill_pool->backend.context, replacement
+        );
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         goto done;
     }
     shadowspill_memory_pool_rebase_locked(
-        shadowspill_spill_pool(runtime), replacement
+        spill_pool, replacement
     );
-    shadowspill_range_destroy(&shadowspill_spill_pool(runtime)->ranges);
-    shadowspill_spill_pool(runtime)->ranges = ranges;
+    shadowspill_range_destroy(&spill_pool->ranges);
+    spill_pool->ranges = ranges;
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
@@ -533,13 +643,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     pthread_mutex_unlock(&wakeup->lock);
 
     int synchronization_failed = 0;
-    if (runtime->fetch_stream_created && runtime->backend.synchronize_stream(
-            runtime->backend.context, runtime->fetch_stream
+    if (runtime->fetch_stream_created && runtime->fetch_route.synchronize_lane(
+            runtime->fetch_route.context, runtime->fetch_stream
         ) != 0) {
         synchronization_failed = 1;
     }
-    if (runtime->evict_stream_created && runtime->backend.synchronize_stream(
-            runtime->backend.context, runtime->evict_stream
+    if (runtime->evict_stream_created && runtime->evict_route.synchronize_lane(
+            runtime->evict_route.context, runtime->evict_stream
         ) != 0) {
         synchronization_failed = 1;
     }
@@ -617,7 +727,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         }
     }
     *statistics = (ShadowSpillRuntimeStatistics){
-        .slab_bytes = shadowspill_execution_pool(runtime)->ranges.capacity,
+        .execution_pool_bytes = shadowspill_execution_pool(runtime)->ranges.capacity,
         .requested_allocated_bytes = runtime->requested_allocated_bytes,
         .peak_requested_allocated_bytes =
             runtime->peak_requested_allocated_bytes,
@@ -634,9 +744,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
                 shadowspill_execution_pool(runtime)
             ),
         .peak_allocated_bytes = shadowspill_execution_pool(runtime)->ranges.peak_allocated,
-        .host_arena_bytes = shadowspill_spill_pool(runtime)->ranges.capacity,
-        .host_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.allocated,
-        .host_peak_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.peak_allocated,
+        .spill_pool_bytes = shadowspill_spill_pool(runtime)->ranges.capacity,
+        .spill_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.allocated,
+        .spill_peak_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.peak_allocated,
         .live_allocations = runtime->live_allocations,
         .blocked_allocators = runtime->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
@@ -650,17 +760,17 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .queued_actions = atomic_load_explicit(
             &runtime->actions.count, memory_order_acquire
         ),
-        .transfers_to_device = atomic_load_explicit(
-            &runtime->transfers_to_device, memory_order_acquire
+        .fetch_transfers = atomic_load_explicit(
+            &runtime->fetch_transfers, memory_order_acquire
         ),
-        .transfers_to_host = atomic_load_explicit(
-            &runtime->transfers_to_host, memory_order_acquire
+        .evict_transfers = atomic_load_explicit(
+            &runtime->evict_transfers, memory_order_acquire
         ),
-        .bytes_to_device = atomic_load_explicit(
-            &runtime->bytes_to_device, memory_order_acquire
+        .bytes_fetched = atomic_load_explicit(
+            &runtime->bytes_fetched, memory_order_acquire
         ),
-        .bytes_to_host = atomic_load_explicit(
-            &runtime->bytes_to_host, memory_order_acquire
+        .bytes_evicted = atomic_load_explicit(
+            &runtime->bytes_evicted, memory_order_acquire
         ),
         .wait_events_inserted = atomic_load_explicit(
             &runtime->wait_events_inserted, memory_order_acquire

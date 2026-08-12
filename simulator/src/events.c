@@ -14,14 +14,14 @@ uint64_t shadowspill_next_event_time(
         }
     }
     for (uint32_t device = 0; device < program->device_count; ++device) {
-        if (work->active_h2d[device] >= 0) {
-            uint32_t index = (uint32_t)work->active_h2d[device];
+        if (work->active_fetch[device] >= 0) {
+            uint32_t index = (uint32_t)work->active_fetch[device];
             if (work->transfers[index].end_ns < next) {
                 next = work->transfers[index].end_ns;
             }
         }
-        if (work->active_d2h[device] >= 0) {
-            uint32_t index = (uint32_t)work->active_d2h[device];
+        if (work->active_evict[device] >= 0) {
+            uint32_t index = (uint32_t)work->active_evict[device];
             if (work->transfers[index].end_ns < next) {
                 next = work->transfers[index].end_ns;
             }
@@ -36,30 +36,30 @@ int shadowspill_complete_events(
     ShadowSpillSimulationResult *result
 ) {
     for (uint32_t device = 0; device < program->device_count; ++device) {
-        if (work->active_h2d[device] >= 0) {
-            uint32_t index = (uint32_t)work->active_h2d[device];
+        if (work->active_fetch[device] >= 0) {
+            uint32_t index = (uint32_t)work->active_fetch[device];
             if (work->transfers[index].end_ns == work->now_ns &&
                 !shadowspill_complete_transfer(
                     program,
                     work,
                     result,
                     device,
-                    SHADOWSPILL_TRANSFER_HOST_TO_DEVICE
+                    SHADOWSPILL_TRANSFER_FETCH
                 )) {
                 return 0;
             }
         }
     }
     for (uint32_t device = 0; device < program->device_count; ++device) {
-        if (work->active_d2h[device] >= 0) {
-            uint32_t index = (uint32_t)work->active_d2h[device];
+        if (work->active_evict[device] >= 0) {
+            uint32_t index = (uint32_t)work->active_evict[device];
             if (work->transfers[index].end_ns == work->now_ns &&
                 !shadowspill_complete_transfer(
                     program,
                     work,
                     result,
                     device,
-                    SHADOWSPILL_TRANSFER_DEVICE_TO_HOST
+                    SHADOWSPILL_TRANSFER_EVICT
                 )) {
                 return 0;
             }

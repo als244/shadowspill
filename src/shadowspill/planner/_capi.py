@@ -9,7 +9,7 @@ from pathlib import Path
 
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 2
+ABI_VERSION = 3
 NO_INDEX = (1 << 32) - 1
 
 
@@ -62,8 +62,8 @@ class CResidencyProblem(ctypes.Structure):
         ("output_reservations", ctypes.POINTER(ctypes.c_uint8)),
         ("write_prefix", ctypes.POINTER(ctypes.c_uint8)),
         ("first_input_task", ctypes.POINTER(ctypes.c_uint32)),
-        ("h2d_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("d2h_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("fetch_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("evict_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
         ("task_ideal_end_ns", ctypes.POINTER(ctypes.c_uint64)),
         ("device_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),

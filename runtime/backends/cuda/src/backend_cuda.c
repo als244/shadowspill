@@ -2,7 +2,6 @@
 
 #include <cuda.h>
 #include <nvml.h>
-#include <nvtx3/nvToolsExt.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -89,7 +88,21 @@ static CUevent event_value(ShadowSpillBackendEvent event) {
     return (CUevent)event.words[0];
 }
 
-static int allocate_device(void *context, uint64_t bytes, void **pointer) {
+static ShadowSpillProfilerRange profile_begin(
+    ShadowSpillCudaBackend *backend, const char *name
+) {
+    ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
+    return profiler.range_begin(profiler.context, name);
+}
+
+static void profile_end(
+    ShadowSpillCudaBackend *backend, ShadowSpillProfilerRange range
+) {
+    ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
+    profiler.range_end(profiler.context, range);
+}
+
+static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
     ShadowSpillCudaBackend *backend = context;
     if (pointer == NULL || activate_context(backend) != 0) {
         return -1;
@@ -106,7 +119,7 @@ static int allocate_device(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_device(void *context, void *pointer) {
+static int free_execution(void *context, void *pointer) {
     ShadowSpillCudaBackend *backend = context;
     if (activate_context(backend) != 0) {
         return -1;
@@ -121,7 +134,7 @@ static int free_device(void *context, void *pointer) {
     return 0;
 }
 
-static int allocate_host(void *context, uint64_t bytes, void **pointer) {
+static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
     ShadowSpillCudaBackend *backend = context;
     if (pointer == NULL || activate_context(backend) != 0) {
         return -1;
@@ -138,7 +151,7 @@ static int allocate_host(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_host(void *context, void *pointer) {
+static int free_spill(void *context, void *pointer) {
     ShadowSpillCudaBackend *backend = context;
     if (activate_context(backend) != 0) {
         return -1;
@@ -301,19 +314,21 @@ static int wait_event(
     ShadowSpillBackendStream stream,
     ShadowSpillBackendEvent event
 ) {
-    (void)nvtxRangePushA("shadowspill.runtime.wait_event");
     ShadowSpillCudaBackend *backend = context;
+    const ShadowSpillProfilerRange range = profile_begin(
+        backend, "shadowspill.runtime.wait_event"
+    );
     if (activate_context(backend) != 0 || record_result(
             backend,
             cuStreamWaitEvent(stream_value(stream), event_value(event), 0U)
         ) != 0) {
-        (void)nvtxRangePop();
+        profile_end(backend, range);
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.stream_waits;
     pthread_mutex_unlock(&backend->mutex);
-    (void)nvtxRangePop();
+    profile_end(backend, range);
     return 0;
 }
 
@@ -325,18 +340,18 @@ static int copy_async(
     ShadowSpillTransferKind kind,
     ShadowSpillBackendStream stream
 ) {
-    const char *range_name = kind == SHADOWSPILL_TRANSFER_TO_DEVICE
-        ? "shadowspill.runtime.transfer.h2d"
-        : "shadowspill.runtime.transfer.d2h";
-    (void)nvtxRangePushA(range_name);
     ShadowSpillCudaBackend *backend = context;
+    const char *range_name = kind == SHADOWSPILL_TRANSFER_FETCH
+        ? "shadowspill.runtime.transfer.fetch"
+        : "shadowspill.runtime.transfer.evict";
+    const ShadowSpillProfilerRange range = profile_begin(backend, range_name);
     if ((bytes != 0U && (destination == NULL || source == NULL)) ||
         bytes > SIZE_MAX || activate_context(backend) != 0) {
-        (void)nvtxRangePop();
+        profile_end(backend, range);
         return -1;
     }
     CUresult result;
-    if (kind == SHADOWSPILL_TRANSFER_TO_DEVICE) {
+    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
         result = cuMemcpyHtoDAsync(
             (CUdeviceptr)(uintptr_t)destination,
             source,
@@ -352,19 +367,19 @@ static int copy_async(
         );
     }
     if (record_result(backend, result) != 0) {
-        (void)nvtxRangePop();
+        profile_end(backend, range);
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    if (kind == SHADOWSPILL_TRANSFER_TO_DEVICE) {
-        ++backend->statistics.copies_to_device;
-        backend->statistics.bytes_to_device += bytes;
+    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
+        ++backend->statistics.fetch_copies;
+        backend->statistics.bytes_fetched += bytes;
     } else {
-        ++backend->statistics.copies_to_host;
-        backend->statistics.bytes_to_host += bytes;
+        ++backend->statistics.evict_copies;
+        backend->statistics.bytes_evicted += bytes;
     }
     pthread_mutex_unlock(&backend->mutex);
-    (void)nvtxRangePop();
+    profile_end(backend, range);
     return 0;
 }
 
@@ -549,10 +564,10 @@ ShadowSpillBackend shadowspill_cuda_backend_vtable(
     return (ShadowSpillBackend){
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
         .context = backend,
-        .allocate_device = allocate_device,
-        .free_device = free_device,
-        .allocate_host = allocate_host,
-        .free_host = free_host,
+        .allocate_execution = allocate_execution,
+        .free_execution = free_execution,
+        .allocate_spill = allocate_spill,
+        .free_spill = free_spill,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .create_event = create_event,

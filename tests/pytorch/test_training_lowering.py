@@ -167,8 +167,8 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         "cuda_0",
         device_capacity_bytes=1 << 20,
         host_capacity_bytes=1 << 20,
-        h2d_bandwidth_bytes_per_second=10 << 30,
-        d2h_bandwidth_bytes_per_second=10 << 30,
+        fetch_bandwidth_bytes_per_second=10 << 30,
+        evict_bandwidth_bytes_per_second=10 << 30,
     )
     planned = pressurefit(
         lowered.program,

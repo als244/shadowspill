@@ -192,10 +192,10 @@ def compile_simulation_template(
         *(
             CDevice(
                 configured[device_id].capacity_bytes,
-                configured[device_id].h2d_bandwidth_bytes_per_second,
-                configured[device_id].d2h_bandwidth_bytes_per_second,
-                configured[device_id].h2d_latency_ns,
-                configured[device_id].d2h_latency_ns,
+                configured[device_id].fetch_bandwidth_bytes_per_second,
+                configured[device_id].evict_bandwidth_bytes_per_second,
+                configured[device_id].fetch_latency_ns,
+                configured[device_id].evict_latency_ns,
             )
             for device_id in device_ids
         )
@@ -222,9 +222,7 @@ def compile_simulation_template(
     )
     alias_size = u64(tuple(item.size_bytes for item in program.alias_groups))
     alias_version = u64(tuple(item.initial_version for item in program.alias_groups))
-    alias_host = u8(
-        tuple(int(item.retain_spill_copy) for item in program.alias_groups)
-    )
+    alias_host = u8(tuple(int(item.retain_spill_copy) for item in program.alias_groups))
     task_device = u32(tuple(device_index[item.resource.device_id] for item in tasks))
     task_kind = u8(tuple(_RESOURCE_CODE[item.resource.kind] for item in tasks))
     task_lane = u32(tuple(item.resource.lane for item in tasks))
@@ -503,8 +501,8 @@ def _simulate_projection(
         )
     )
     directions = {
-        0: TransferDirection.HOST_TO_DEVICE,
-        1: TransferDirection.DEVICE_TO_HOST,
+        0: TransferDirection.FETCH,
+        1: TransferDirection.EVICT,
     }
     transfer_intervals = tuple(
         TransferInterval(

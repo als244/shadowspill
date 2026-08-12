@@ -21,7 +21,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=512 << 20,
-        host_arena_bytes=1 << 20,
+        spill_pool_bytes=1 << 20,
         worker_poll_nanoseconds=10_000,
     )
     impossible = torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
@@ -37,7 +37,7 @@ def main() -> int:
         raise AssertionError("adapter lost the requested allocation size")
     if failure.runtime.status != NO_PROGRESS:
         raise AssertionError("adapter did not preserve the runtime's first cause")
-    if failure.runtime.free_bytes != installed.admission.slab_bytes:
+    if failure.runtime.free_bytes != installed.admission.execution_pool_bytes:
         raise AssertionError("diagnostic free-space accounting is incorrect")
     return 0
 

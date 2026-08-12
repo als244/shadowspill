@@ -271,8 +271,8 @@ def extract_trace(path: Path) -> dict[str, object]:
         for item in ranges:
             name = str(item["name"])
             if name not in {
-                "shadowspill.runtime.transfer.h2d",
-                "shadowspill.runtime.transfer.d2h",
+                "shadowspill.runtime.transfer.fetch",
+                "shadowspill.runtime.transfer.evict",
             }:
                 continue
             direction = name.rsplit(".", 1)[-1]
@@ -280,7 +280,8 @@ def extract_trace(path: Path) -> dict[str, object]:
                 item["start_ns"]
             )
             transfer_rows.extend(
-                _correlated_gpu_rows(
+                (start, end, stream, direction)
+                for start, end, stream, _provider_label in _correlated_gpu_rows(
                     connection,
                     table="CUPTI_ACTIVITY_KIND_MEMCPY",
                     start_ns=int(item["start_ns"]),
@@ -290,14 +291,14 @@ def extract_trace(path: Path) -> dict[str, object]:
             )
         transfer_rows = sorted(set(transfer_rows))
         transfer_summary: dict[str, dict[str, int]] = {}
-        for label in sorted({row[3] for row in transfer_rows}):
-            selected = [row for row in transfer_rows if row[3] == label]
+        for direction in sorted({row[3] for row in transfer_rows}):
+            selected = [row for row in transfer_rows if row[3] == direction]
             overlap_ns = sum(
                 max(0, min(end, kernel_end) - max(start, kernel_start))
                 for start, end, _stream, _name in selected
                 for kernel_start, kernel_end in compute_intervals
             )
-            transfer_summary[label] = {
+            transfer_summary[direction] = {
                 "count": len(selected),
                 "duration_ns": sum(end - start for start, end, _stream, _ in selected),
                 "compute_overlap_ns": overlap_ns,

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <shadowspill/backend.h>
+#include <shadowspill/profiler.h>
 
 #if defined(_WIN32)
 #define SHADOWSPILL_BACKEND_CUDA_API __declspec(dllexport)
@@ -54,10 +55,10 @@ typedef struct ShadowSpillCudaBackendStatistics {
     uint64_t streams_destroyed;
     uint64_t events_created;
     uint64_t events_destroyed;
-    uint64_t copies_to_device;
-    uint64_t copies_to_host;
-    uint64_t bytes_to_device;
-    uint64_t bytes_to_host;
+    uint64_t fetch_copies;
+    uint64_t evict_copies;
+    uint64_t bytes_fetched;
+    uint64_t bytes_evicted;
     uint64_t event_queries;
     uint64_t stream_waits;
     uint64_t stream_synchronizations;
@@ -88,6 +89,10 @@ SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_destroy(
 /* Returns a copied neutral vtable borrowing backend as its context. */
 SHADOWSPILL_BACKEND_CUDA_API ShadowSpillBackend
 shadowspill_cuda_backend_vtable(ShadowSpillCudaBackend *backend);
+
+/* Returns the NVIDIA profiler implementation as a neutral profiler vtable. */
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillProfiler
+shadowspill_cuda_backend_profiler(ShadowSpillCudaBackend *backend);
 
 /* Copies immutable device/backend capabilities into caller-owned storage. */
 SHADOWSPILL_BACKEND_CUDA_API int shadowspill_cuda_backend_capabilities(

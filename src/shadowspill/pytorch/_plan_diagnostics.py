@@ -93,8 +93,7 @@ def training_stage_inventory(
             unique_stage_id = unique_id_by_key[structural_key]
             chosen = chosen_by_occurrence.get(occurrence)
             semantic_name = (
-                f"{stage_occurrence_id}.{entrypoint.phase}."
-                f"{entrypoint.variant}"
+                f"{stage_occurrence_id}.{entrypoint.phase}.{entrypoint.variant}"
             )
         else:
             stage_occurrence_id = None
@@ -102,9 +101,7 @@ def training_stage_inventory(
             chosen = None
             auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
             auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
-            semantic_name = (
-                f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
-            )
+            semantic_name = f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
         ordinal = execution_ordinal.get(entrypoint.task_id)
         task_map.append(
             PlanTaskStage(

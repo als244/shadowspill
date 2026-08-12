@@ -21,8 +21,8 @@ REQUIRED_RANGES = (
     "shadowspill.pytorch.storage_rebind",
     "shadowspill.pytorch.task.",
     "shadowspill.runtime.allocate",
-    "shadowspill.runtime.transfer.d2h",
-    "shadowspill.runtime.transfer.h2d",
+    "shadowspill.runtime.transfer.evict",
+    "shadowspill.runtime.transfer.fetch",
     "shadowspill.runtime.wait_event",
 )
 
@@ -105,9 +105,9 @@ def check_trace(path: Path) -> None:
         ).fetchall()
         overlap_counts = {str(name): int(count) for name, count in overlap}
         if overlap_counts.get("Host-to-Device", 0) < 1:
-            raise AssertionError("no H2D transfer overlapped the compute kernel")
+            raise AssertionError("no FETCH transfer overlapped the compute kernel")
         if overlap_counts.get("Device-to-Host", 0) < 1:
-            raise AssertionError("no D2H transfer overlapped the compute kernel")
+            raise AssertionError("no EVICT transfer overlapped the compute kernel")
 
 
 def main() -> int:

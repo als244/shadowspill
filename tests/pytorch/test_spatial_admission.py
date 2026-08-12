@@ -47,7 +47,7 @@ def test_selected_schedule_replays_object_generations_and_outputs() -> None:
                 "unit-test",
             )
         },
-        slab_bytes=122,
+        execution_pool_bytes=122,
         alignment=1,
     )
     assert replay.peak_allocated_bytes == 122
@@ -63,7 +63,7 @@ def test_selected_schedule_requires_every_profile_measurement() -> None:
         config=config(),
     )
     with pytest.raises(ValueError, match="lacks task measurement"):
-        replay_selected_schedule(selected, {}, slab_bytes=122, alignment=1)
+        replay_selected_schedule(selected, {}, execution_pool_bytes=122, alignment=1)
 
 
 def test_accumulation_charge_retains_per_gradient_extent_geometry() -> None:

@@ -270,12 +270,11 @@ static int dispatch_offload_locked(
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (runtime->backend.copy_async(
-            runtime->backend.context,
+    if (!backend_failed && (runtime->evict_route.copy_async(
+            runtime->evict_route.context,
             spill_lease->pointer,
             execution_pointer,
             bytes,
-            SHADOWSPILL_TRANSFER_TO_HOST,
             runtime->evict_stream
         ) != 0 || runtime->backend.record_event(
                 runtime->backend.context,
@@ -320,10 +319,10 @@ static int dispatch_offload_locked(
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
     object->residency = SHADOWSPILL_OBJECT_OFFLOADING;
     (void)atomic_fetch_add_explicit(
-        &runtime->transfers_to_host, 1U, memory_order_acq_rel
+        &runtime->evict_transfers, 1U, memory_order_acq_rel
     );
     (void)atomic_fetch_add_explicit(
-        &runtime->bytes_to_host, bytes, memory_order_acq_rel
+        &runtime->bytes_evicted, bytes, memory_order_acq_rel
     );
     shadowspill_append_trace_event_locked(
         runtime,
@@ -332,7 +331,7 @@ static int dispatch_offload_locked(
         object->object_id,
         allocation_id,
         bytes,
-        SHADOWSPILL_TRANSFER_TO_HOST,
+        SHADOWSPILL_TRANSFER_EVICT,
         atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
     return 1;
@@ -381,12 +380,11 @@ static int dispatch_prefetch_locked(
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (runtime->backend.copy_async(
-            runtime->backend.context,
+    if (!backend_failed && (runtime->fetch_route.copy_async(
+            runtime->fetch_route.context,
             allocation->pointer,
             spill->lease->pointer,
             bytes,
-            SHADOWSPILL_TRANSFER_TO_DEVICE,
             runtime->fetch_stream
         ) != 0 || runtime->backend.record_event(
                 runtime->backend.context,
@@ -402,7 +400,7 @@ static int dispatch_prefetch_locked(
         backend_failed = 1;
     }
     pthread_mutex_lock(&object->lock);
-    if (backend_failed || object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+    if (backend_failed || object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         object->generation != previous_generation ||
         object->authoritative_version != authoritative_version ||
         spill->version != spill_version || !spill->current) {
@@ -436,10 +434,10 @@ static int dispatch_prefetch_locked(
     object->has_readiness_event = 1U;
     object->residency = SHADOWSPILL_OBJECT_PREFETCHING;
     (void)atomic_fetch_add_explicit(
-        &runtime->transfers_to_device, 1U, memory_order_acq_rel
+        &runtime->fetch_transfers, 1U, memory_order_acq_rel
     );
     (void)atomic_fetch_add_explicit(
-        &runtime->bytes_to_device, bytes, memory_order_acq_rel
+        &runtime->bytes_fetched, bytes, memory_order_acq_rel
     );
     shadowspill_append_trace_event_locked(
         runtime,
@@ -448,7 +446,7 @@ static int dispatch_prefetch_locked(
         object_id,
         allocation->allocation_id,
         bytes,
-        SHADOWSPILL_TRANSFER_TO_DEVICE,
+        SHADOWSPILL_TRANSFER_FETCH,
         atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
     return 1;
@@ -533,7 +531,7 @@ static int handle_action(
                         shadowspill_execution_location(runtime, object)->lease = NULL;
                         shadowspill_execution_location(runtime, object)->current = 0U;
                         object->residency = shadowspill_spill_location(runtime, object)->current
-                            ? SHADOWSPILL_OBJECT_HOST_ONLY
+                            ? SHADOWSPILL_OBJECT_SPILL_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
                         allocation->handoff_from_object_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
@@ -560,7 +558,7 @@ static int handle_action(
                     shadowspill_execution_location(runtime, object)->lease = NULL;
                     shadowspill_execution_location(runtime, object)->current = 0U;
                     object->residency = shadowspill_spill_location(runtime, object)->current
-                        ? SHADOWSPILL_OBJECT_HOST_ONLY
+                        ? SHADOWSPILL_OBJECT_SPILL_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
                     pthread_cond_broadcast(&object->state_changed);
                     pthread_mutex_unlock(&object->lock);
@@ -668,13 +666,13 @@ static int handle_action(
                     shadowspill_spill_location(runtime, object)->version = object->authoritative_version;
                     shadowspill_spill_location(runtime, object)->lease->state =
                         SHADOWSPILL_LEASE_ACTIVE;
-                    object->residency = SHADOWSPILL_OBJECT_HOST_ONLY;
+                    object->residency = SHADOWSPILL_OBJECT_SPILL_ONLY;
                 } else {
                     ShadowSpillObjectLocation *execution =
                         shadowspill_execution_location(runtime, object);
                     if (execution->lease != NULL &&
                         execution->lease->generation == object->generation) {
-                        object->residency = SHADOWSPILL_OBJECT_DEVICE_READY;
+                        object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
                         execution->current = 1U;
                         execution->lease->state = SHADOWSPILL_LEASE_ACTIVE;
                     }
@@ -682,9 +680,9 @@ static int handle_action(
                      * The compute stream may already have waited on this
                      * transfer and launched a task.  In that case
                      * after_task has advanced execution_version while the
-                     * progress thread still observes PREFETCHING.  The H2D
+                     * worker still observes PREFETCHING. The fetch
                      * completion only changes readiness; it must not roll
-                     * the device version back to the copied host version.
+                     * the execution version back to the copied spill version.
                      */
                     object->has_readiness_event = 0U;
                     readiness_to_release = object->readiness_event;
@@ -723,8 +721,8 @@ static int handle_action(
                     object->allocation_id,
                     object->size_bytes,
                     action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
-                        ? SHADOWSPILL_TRANSFER_TO_HOST
-                        : SHADOWSPILL_TRANSFER_TO_DEVICE,
+                        ? SHADOWSPILL_TRANSFER_EVICT
+                        : SHADOWSPILL_TRANSFER_FETCH,
                     atomic_load_explicit(
                         &runtime->actions.count, memory_order_acquire
                     )
@@ -827,15 +825,16 @@ static void timed_wait_locked(
 
 void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
-#if defined(__linux__)
-    (void)pthread_setname_np(pthread_self(), "shadowspill.wkr");
-#endif
+    shadowspill_profiler_name_current_thread(
+        &runtime->profiler, "shadowspill_worker"
+    );
     while (atomic_load_explicit(
         &runtime->worker_stop, memory_order_acquire
     ) == 0U) {
         uint64_t next_completion_poll = 0U;
         uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+        /* Advance the FIFO completion frontier without holding pool locks. */
         const int completion_status = shadowspill_completion_poll(
             runtime,
             &next_completion_poll,
@@ -851,14 +850,18 @@ void *shadowspill_worker_main(void *pointer) {
                 0U
             );
         }
+        /* Reclaim completed leases while yielding pool priority to malloc. */
         const ShadowSpillRetirementWork retirement_work =
             shadowspill_handle_retirements(runtime);
+        /* Dispatch or complete ready release, fetch, and evict actions. */
         if (!retirement_work.pool_busy) {
             (void)handle_actions(runtime);
         }
+        /* Wake blocked callers immediately after a worker failure. */
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
             pthread_cond_broadcast(&runtime->condition);
         }
+        /* Park only when idle; otherwise poll the next causal frontier. */
         if (atomic_load_explicit(
             &runtime->worker_stop, memory_order_acquire
         ) == 0U) {
@@ -869,7 +872,7 @@ void *shadowspill_worker_main(void *pointer) {
                 pthread_cond_wait(&runtime->condition, &runtime->mutex);
             } else {
                 /*
-                 * Always release the runtime lock between progress passes.
+                 * Always release the runtime lock between worker passes.
                  * A FIFO transfer window can complete one item per pass for
                  * many consecutive passes.  Immediately rescanning after
                  * each completion otherwise starves framework malloc/free

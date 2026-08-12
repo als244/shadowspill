@@ -2149,3 +2149,69 @@ the ignored internal progress log before this tracked summary is updated.
   expose a dense latency/bandwidth matrix to the planner. CUDA device and
   pinned-host pools are merely the first concrete pair; CUDA peer, ROCm,
   remote-memory, and storage routes can provide the same interface later.
+
+## 2026-08-12 — Explicit Runtime, route calibration, and generic profiler boundary
+
+- Separated process-lifetime runtime initialization from planning. The PyTorch
+  API now requires an explicit `Runtime`, an execution-pool name, and a
+  spill-pool name. Pool budgets default to initialized capacities and reject
+  overrides above those capacities before capture or model mutation.
+- Added the optional `execution_device` keyword to `plan()` and
+  `forward_pass()`. The default resolves PyTorch's current accelerator device;
+  an explicit ordinal/device selects it. Either path rejects a mismatch with
+  the selected execution pool before planning. `PlanReport` records the
+  resolved ordinal.
+- Added a dense, generation-tagged transfer-capability matrix. Runtime startup
+  calibrates fetch and evict routes; users can recalibrate all or selected
+  routes while locally idle, including concurrently across independently
+  synchronized processes. A plan retains the exact immutable matrix snapshot,
+  digest, provenance, timestamp, and selected fetch/evict profiles it consumed.
+- Split physical arena ownership and directed transfer behavior into
+  `ShadowSpillMemoryPoolBackend` and `ShadowSpillTransferRoute`. Pools remain
+  generic; transfer direction and implementation belong to a source/destination
+  route. The current two-pool adapter is a compatibility instantiation, not a
+  planner assumption.
+- Added a generic profiler vtable with a no-op neutral path. All NVTX use now
+  lives in the NVIDIA backend profiler implementation; the neutral runtime and
+  PyTorch storage adapter invoke opaque profiler callbacks. The worker is named
+  `shadowspill_worker`, and the transfer streams are named
+  `shadowspill_fetch` and `shadowspill_evict` for NSYS.
+- Updated public canaries and qualification entrypoints so none relies on the
+  removed behavior where `plan()` implicitly installed/configured the
+  allocator. A training-canary expectation changed from two pinned allocations
+  to one because the spill pool is now created once by `Runtime` and is not
+  resized by planning.
+- Validation: the CUDA/PyTorch build passes all 18 compiled canaries; the
+  explicitly CUDA-disabled build compiles the neutral runtime, mock backend,
+  simulator, and planner and passes all 10 neutral canaries. Ruff, strict mypy,
+  and the complete Python suite pass. Runtime ABI is 13 and the private PyTorch
+  adapter ABI is 23.
+
+## 2026-08-12 — Public constructor and transfer-vocabulary closure
+
+- Renamed the public constructors to `plan_step()` and `plan_forward()` and
+  removed the old aliases. This makes the operation being planned explicit and
+  leaves room for future non-step planning entrypoints without overloading a
+  generic `plan` name.
+- Closed the transfer terminology boundary: plans, runtime actions, lanes,
+  counters, traces, simulator records, and qualification summaries use `fetch`
+  and `evict`; configured pool roles use `execution` and `spill`. Physical copy
+  direction names are retained only where a provider trace or driver API
+  requires its literal vocabulary.
+- Added an executable naming audit. It rejects the old secondary-pool and
+  physical-direction terms in production code and rejects CUDA/ROCm/HIP names
+  in the neutral IR, simulator, planner, and runtime. Historical evidence and
+  concrete provider adapters remain deliberately outside that policy check.
+- Removed direct Python NVTX calls from the training executor. Python task
+  ranges now cross the private adapter through the generic profiler interface;
+  the only NVTX implementation is the NVIDIA backend provider. The worker and
+  transfer lanes remain named `shadowspill_worker`, `shadowspill_fetch`, and
+  `shadowspill_evict` through the same provider abstraction.
+- Runtime traces now expose `fetch`/`evict`, and the NSYS SQLite extractor maps
+  provider copy labels back to those semantic directions before producing a
+  ShadowSpill report.
+- Runtime ABI is now 14 and the private PyTorch adapter ABI is 24. Both the
+  CUDA-enabled warnings-as-errors build (18/18 compiled canaries) and the
+  CUDA-disabled neutral build (10/10 compiled canaries) pass. Ruff and strict
+  mypy pass, and the complete Python suite passes with five expected skips for
+  fresh-process-only public accelerator tests.

@@ -152,8 +152,8 @@ static CutScore score_cut(
             index
         )] != 0U;
     }
-    uint64_t h2d_ns = problem->h2d_runtime_ns[alias];
-    uint64_t d2h_ns = writeback ? problem->d2h_runtime_ns[alias] : 0U;
+    uint64_t fetch_ns = problem->fetch_runtime_ns[alias];
+    uint64_t evict_ns = writeback ? problem->evict_runtime_ns[alias] : 0U;
     uint64_t departure_ns =
         departure >= 0 ? problem->task_ideal_end_ns[departure] : 0U;
     int32_t last_task = (int32_t)problem->boundary_count - 2;
@@ -164,7 +164,7 @@ static CutScore score_cut(
     uint64_t deadline_ns = deadline_task > 0
         ? problem->task_ideal_end_ns[deadline_task - 1]
         : 0U;
-    uint64_t finish_ns = departure_ns + d2h_ns + h2d_ns;
+    uint64_t finish_ns = departure_ns + evict_ns + fetch_ns;
     uint64_t exposed_ns = finish_ns > deadline_ns ? finish_ns - deadline_ns : 0U;
     int64_t length = cut->end >= cut->start
         ? (int64_t)cut->end - cut->start + 1
@@ -356,8 +356,8 @@ static int valid_problem(
         problem->final_location != NULL && problem->anchors != NULL &&
         problem->productions != NULL && problem->latest_access_task != NULL &&
         problem->output_reservations != NULL && problem->write_prefix != NULL &&
-        problem->first_input_task != NULL && problem->h2d_runtime_ns != NULL &&
-        problem->d2h_runtime_ns != NULL && problem->task_ideal_end_ns != NULL &&
+        problem->first_input_task != NULL && problem->fetch_runtime_ns != NULL &&
+        problem->evict_runtime_ns != NULL && problem->task_ideal_end_ns != NULL &&
         problem->device_capacity_bytes != NULL &&
         problem->device_priority != NULL && options->seed_resident != NULL &&
         options->seed_breaks != NULL && options->extra_pressure_bytes != NULL &&

@@ -191,9 +191,9 @@ static void append_retry(
 ShadowSpillRetirementWork shadowspill_handle_retirements(
     ShadowSpillRuntime *runtime
 ) {
-    ShadowSpillRetirementWork progress = {0};
+    ShadowSpillRetirementWork work = {0};
     if (runtime == NULL) {
-        return progress;
+        return work;
     }
     ShadowSpillRetirementQueue *queue = &runtime->retirements;
     pthread_mutex_lock(&queue->lock);
@@ -223,7 +223,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
         if (!shadowspill_memory_pool_try_lock_reclamation(
                 shadowspill_execution_pool(runtime)
             )) {
-            progress.pool_busy = 1U;
+            work.pool_busy = 1U;
             append_retry(&retry_head, &retry_tail, record);
             while (next != NULL) {
                 ShadowSpillRetirementRecord *remaining = next->next;
@@ -287,7 +287,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
         queue->tail = retry_tail;
         pthread_mutex_unlock(&queue->lock);
     }
-    return progress;
+    return work;
 }
 
 int shadowspill_has_actionable_retirement(ShadowSpillRuntime *runtime) {

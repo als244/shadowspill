@@ -28,7 +28,7 @@ For every bounded recomputation selection, PressureFit:
 2. checks the irreducible task geometry and workspace floor;
 3. chooses a deterministic initial device placement;
 4. reduces residency spans until capacity fits;
-5. realizes releases, dirty offloads, and packed H2D prefetches;
+5. realizes releases, dirty offloads, and packed FETCH prefetches;
 6. asks the standalone simulator to accept or reject the schedule;
 7. selects the shortest valid makespan, using portfolio order only as a tie
    break.

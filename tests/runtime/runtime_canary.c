@@ -15,7 +15,7 @@ static int best_fit_preserves_largest_range(void) {
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 256U,
+        .execution_pool_bytes = 256U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 1000U,
         .backend = shadowspill_mock_backend_vtable(mock),
@@ -66,8 +66,8 @@ int main(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .h2d_delay_nanoseconds = 100000000U,
-        .d2h_delay_nanoseconds = 100000000U,
+        .fetch_delay_nanoseconds = 100000000U,
+        .evict_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return EXIT_FAILURE;
@@ -75,8 +75,8 @@ int main(void) {
     ShadowSpillRuntime *runtime = NULL;
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 256U,
-        .host_arena_bytes = 256U,
+        .execution_pool_bytes = 256U,
+        .spill_pool_bytes = 256U,
         .minimum_alignment = 1U,
         .worker_poll_nanoseconds = 10000U,
         .backend = shadowspill_mock_backend_vtable(mock),
@@ -153,13 +153,13 @@ int main(void) {
     }
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_write_host_object(
+        shadowspill_write_spill_object(
             runtime,
             object.object_id,
             original_payload,
             sizeof(original_payload)
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_read_host_object(
+        shadowspill_read_spill_object(
             runtime,
             object.object_id,
             restored_payload,
@@ -168,11 +168,11 @@ int main(void) {
         memcmp(
             original_payload, restored_payload, sizeof(original_payload)
         ) != 0 ||
-        shadowspill_runtime_resize_host_arena(runtime, 512U) !=
+        shadowspill_runtime_resize_spill_pool(runtime, 512U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_resize_host_arena(runtime, 255U) !=
+        shadowspill_runtime_resize_spill_pool(runtime, 255U) !=
             SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
-        shadowspill_read_host_object(
+        shadowspill_read_spill_object(
             runtime,
             object.object_id,
             restored_payload,
@@ -183,8 +183,8 @@ int main(void) {
         ) != 0 ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.host_arena_bytes != 512U ||
-        statistics.host_allocated_bytes != 128U ||
+        statistics.spill_pool_bytes != 512U ||
+        statistics.spill_allocated_bytes != 128U ||
         shadowspill_allocate(runtime, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(
@@ -242,7 +242,7 @@ int main(void) {
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
             SHADOWSPILL_RUNTIME_OK ||
-        snapshot.residency != SHADOWSPILL_OBJECT_DEVICE_READY ||
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.authoritative_version != 6U || snapshot.execution_version != 6U ||
         snapshot.spill_current) {
         return EXIT_FAILURE;
@@ -264,10 +264,10 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.transfers_to_host != 1U ||
-        statistics.transfers_to_device != 1U ||
-        statistics.bytes_to_host != 128U ||
-        statistics.bytes_to_device != 128U ||
+        statistics.evict_transfers != 1U ||
+        statistics.fetch_transfers != 1U ||
+        statistics.bytes_evicted != 128U ||
+        statistics.bytes_fetched != 128U ||
         statistics.wait_events_inserted != 1U ||
         statistics.allocated_bytes != 0U ||
         snapshot.authoritative_version != 6U || snapshot.spill_current ||
@@ -322,7 +322,7 @@ int main(void) {
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.wait_events_inserted != 3U ||
-        statistics.transfers_to_device != 3U ||
+        statistics.fetch_transfers != 3U ||
         statistics.allocated_bytes != 0U) {
         return EXIT_FAILURE;
     }

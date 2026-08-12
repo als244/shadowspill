@@ -3,14 +3,34 @@
 ShadowSpill's PyTorch frontend owns capture and ordinary task dispatch. It does
 not move model arithmetic into the neutral runtime.
 
-## Public forward callable
+## Runtime and public callables
 
-`forward_pass(model, example_inputs=..., device_budget=...,
-host_budget=..., partition="auto")` is implemented. Planning must occur before
-an incompatible CUDA allocator has initialized the process. Parameters and
-buffers start on CPU; the returned callable gives the original registered
-tensors CUDA identity while it owns the model and restores them to CPU on
+Initialize one process-lifetime runtime before planning:
+
+```python
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import Runtime
+
+runtime = Runtime(
+    pools={
+        "device": device(physical_capacity=24 << 30),
+        "spill": pinned_host(capacity=64 << 30),
+    }
+)
+```
+
+`plan_forward(model, example_inputs=..., runtime=runtime, execution="device",
+spill="spill", partition="auto")` constructs forward-only execution.
+`plan_step(...)` constructs accumulated training. Planning must occur before an
+incompatible accelerator allocator initializes the process. Parameters and
+buffers start on CPU; the returned callable gives original registrations
+accelerator identity while it owns the model and restores them to CPU on
 `close()`.
+
+`execution_budget` and `spill_budget` default to the selected initialized pool
+capacities and may only reduce them. `execution_device=None` uses PyTorch's
+current accelerator device; an explicit ordinal or `torch.device` selects it.
+The resolved device must equal the execution pool's device.
 
 Every invocation validates the complete tensor geometry, storage alias
 relationships, and static metadata before writing persistent input slots.
@@ -32,19 +52,19 @@ by `load_state_dict()`, matching ordinary PyTorch. Loading a checkpoint first
 preserves the current bytes of every non-persistent registration and then
 overwrites only checkpoint-persistent entries.
 
-The public `plan()` callable composes every fixed microbatch position into
+The public `plan_step()` callable composes every fixed microbatch position into
 forward, objective, backward, and gradient-accumulation tasks followed by one
 optimizer update. It preserves the original model and optimizer checkpoint
 schema and restores CPU storage on deterministic close.
 
 ## Planning and execution diagnostics
 
-Every successful `plan()` and `forward_pass()` returns a callable whose
+Every successful `plan_step()` and `plan_forward()` returns a callable whose
 `plan_report` is already complete. `plan_report.diagnostics` is mandatory and
 does not require a later synchronization:
 
 ```python
-train_step = plan(model, ...)
+train_step = plan_step(model, ..., runtime=runtime, execution="device", spill="spill")
 
 planning = train_step.plan_report.diagnostics
 selected = planning.task("task_000123")
@@ -60,6 +80,12 @@ explicit unattributed remainder; their sum equals its recorded total wall
 time. It also reports structural profile and graph-pair cache work, a direct
 task-to-unique-stage map, the candidate and chosen graph-pair variant for every
 task, and every legal graph-pair alternative for each deduplicated stage.
+
+`PlanReport` also records the selected pool names, effective capacities,
+execution-device ordinal, and the complete immutable transfer-capability
+matrix snapshot. `fetch_profile` and `evict_profile` expose the exact measured
+routes consumed by PressureFit, including matrix generation, digest,
+provenance, timestamp, latency, and bandwidth.
 
 Each forward and backward graph profile contains its calibrated runtime and
 samples; input, mutation, and output object/alias identities and byte sizes;

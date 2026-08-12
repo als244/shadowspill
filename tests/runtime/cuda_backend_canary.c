@@ -35,8 +35,8 @@ int main(void) {
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .device_slab_bytes = 8U << 20U,
-        .host_arena_bytes = 8U << 20U,
+        .execution_pool_bytes = 8U << 20U,
+        .spill_pool_bytes = 8U << 20U,
         .minimum_alignment = capabilities.recommended_minimum_alignment,
         .worker_poll_nanoseconds = 10000U,
         .backend = backend,
@@ -46,7 +46,7 @@ int main(void) {
     if (shadowspill_runtime_create(&runtime_config, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         backend.create_stream(
-            backend.context, SHADOWSPILL_TRANSFER_TO_DEVICE, &compute
+            backend.context, SHADOWSPILL_TRANSFER_FETCH, &compute
         ) != 0 ||
         shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0) {
         return EXIT_FAILURE;
@@ -54,7 +54,7 @@ int main(void) {
     ShadowSpillCudaPhysicalMemory admitted_memory = {0};
     if (shadowspill_cuda_physical_memory(cuda, &admitted_memory) != 0 ||
         admitted_memory.process_bytes <
-            context_memory.process_bytes + runtime_config.device_slab_bytes) {
+            context_memory.process_bytes + runtime_config.execution_pool_bytes) {
         return EXIT_FAILURE;
     }
     unsigned char *original = malloc(PAYLOAD_BYTES);
@@ -78,7 +78,7 @@ int main(void) {
     };
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_write_host_object(
+        shadowspill_write_spill_object(
             runtime, object.object_id, original, PAYLOAD_BYTES
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_after_task(
@@ -108,7 +108,7 @@ int main(void) {
             runtime, 1U, compute, NULL, 0U, &offload, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_read_host_object(
+        shadowspill_read_spill_object(
             runtime, object.object_id, restored, PAYLOAD_BYTES
         ) != SHADOWSPILL_RUNTIME_OK ||
         memcmp(original, restored, PAYLOAD_BYTES) != 0) {
@@ -118,19 +118,19 @@ int main(void) {
     ShadowSpillCudaBackendStatistics cuda_statistics = {0};
     if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        runtime_statistics.transfers_to_device != 1U ||
-        runtime_statistics.transfers_to_host != 1U ||
-        runtime_statistics.bytes_to_device != PAYLOAD_BYTES ||
-        runtime_statistics.bytes_to_host != PAYLOAD_BYTES) {
+        runtime_statistics.fetch_transfers != 1U ||
+        runtime_statistics.evict_transfers != 1U ||
+        runtime_statistics.bytes_fetched != PAYLOAD_BYTES ||
+        runtime_statistics.bytes_evicted != PAYLOAD_BYTES) {
         return EXIT_FAILURE;
     }
     shadowspill_cuda_backend_statistics(cuda, &cuda_statistics);
     if (cuda_statistics.device_allocations != 1U ||
         cuda_statistics.pinned_host_allocations != 1U ||
-        cuda_statistics.copies_to_device != 1U ||
-        cuda_statistics.copies_to_host != 1U ||
-        cuda_statistics.bytes_to_device != PAYLOAD_BYTES ||
-        cuda_statistics.bytes_to_host != PAYLOAD_BYTES) {
+        cuda_statistics.fetch_copies != 1U ||
+        cuda_statistics.evict_copies != 1U ||
+        cuda_statistics.bytes_fetched != PAYLOAD_BYTES ||
+        cuda_statistics.bytes_evicted != PAYLOAD_BYTES) {
         return EXIT_FAILURE;
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||

@@ -15,6 +15,11 @@ operations use nonblocking CUDA streams and timing-disabled events. Copies,
 event recording/query, and stream waits are asynchronous. Only the runtime's
 explicit close path calls stream synchronization.
 
+`shadowspill_cuda_backend_profiler()` returns the neutral profiler vtable
+implemented with NVTX. It names the runtime worker and names the two transfer
+streams `shadowspill_fetch` and `shadowspill_evict` in NSYS. NVTX headers and
+symbols do not enter the neutral runtime or PyTorch storage-adapter source.
+
 The operation ledger is intended for admission and qualification. It reports
 conventional allocation/free counts, pinned allocation/free counts, transfers,
 events, waits, synchronizations, and context activations. A successful sealed

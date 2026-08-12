@@ -18,13 +18,14 @@ from shadowspill.planner import PressureFitResult
 from .executor import ForwardExecutor
 from .guards import InputSignature, validate_training_inputs
 from .materialization import MaterializedForwardState
+from .runtime import Runtime, TransferCapabilities, TransferProfile
 from .training_executor import ExecutionTiming, StepDiagnostics, TrainingExecutor
 from .training_materialization import TrainingMaterializedState
 
 
 @dataclass(frozen=True, slots=True)
 class PlanPhaseTiming:
-    """One non-overlapping interval measured during ``plan()``."""
+    """One non-overlapping interval measured during frontend planning."""
 
     name: str
     duration_ns: int
@@ -217,7 +218,7 @@ class PlanTaskStage:
 
 @dataclass(frozen=True, slots=True)
 class PlanDiagnostics:
-    """Structured evidence describing work performed by ``plan()``.
+    """Structured evidence describing one frontend planning session.
 
     Phase intervals are mutually exclusive. ``unattributed_overhead_ns`` is
     the small remainder spent between measured intervals and constructing the
@@ -314,14 +315,20 @@ class PlanReport:
     execution_plan: ExecutionPlan
     task_profiles: tuple[TaskProfile, ...]
     transfer_actions: tuple[MemoryAction, ...]
-    transfer_bytes_to_host: int
-    transfer_bytes_to_device: int
+    transfer_bytes_evicted: int
+    transfer_bytes_fetched: int
     profile_unique_keys: int
     profile_cache_hits: int
     profile_cache_misses: int
     profiling_provenance: tuple[str, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
     diagnostics: PlanDiagnostics
+    execution_pool: str
+    spill_pool: str
+    execution_budget_bytes: int
+    spill_budget_bytes: int
+    execution_device: int
+    transfer_capabilities: TransferCapabilities
     initial_execution_plan: ExecutionPlan | None = None
     recomputation_cache_hits: int = 0
     recomputation_cache_misses: int = 0
@@ -344,9 +351,21 @@ class PlanReport:
     def predicted_makespan_ns(self) -> int:
         return self.execution_plan.prediction.makespan_ns
 
+    @property
+    def fetch_profile(self) -> TransferProfile:
+        """Measured spill-to-execution route consumed by this plan."""
+
+        return self.transfer_capabilities.route(self.spill_pool, self.execution_pool)
+
+    @property
+    def evict_profile(self) -> TransferProfile:
+        """Measured execution-to-spill route consumed by this plan."""
+
+        return self.transfer_capabilities.route(self.execution_pool, self.spill_pool)
+
 
 class PlannedForward:
-    """Forward-only callable returned by :func:`forward_pass`.
+    """Forward-only callable returned by :func:`plan_forward`.
 
     The original model is runtime-owned until `close()`. Calls validate the
     complete fixed input signature before writing an input slot or launching a
@@ -360,12 +379,15 @@ class PlannedForward:
         executor: ForwardExecutor,
         state: MaterializedForwardState,
         report: PlanReport,
+        runtime: Runtime,
     ) -> None:
         self._model = model
         self._signature = signature
         self._executor = executor
         self._state = state
         self.plan_report = report
+        self._runtime = runtime
+        self._runtime._adopt_plan()
         self._closed = False
 
     def __call__(self, inputs: Sequence[Any]) -> object:
@@ -396,6 +418,7 @@ class PlannedForward:
             return
         self._state.restore_cpu_and_unregister()
         self._closed = True
+        self._runtime._release_plan()
 
     def __enter__(self) -> PlannedForward:
         if self._closed:
@@ -439,7 +462,7 @@ class DiagnosticsHandle:
 
 
 class PlannedTrainStep:
-    """Accumulated training callable returned by :func:`plan`."""
+    """Accumulated training callable returned by :func:`plan_step`."""
 
     def __init__(
         self,
@@ -449,6 +472,7 @@ class PlannedTrainStep:
         state: TrainingMaterializedState,
         optimizer: torch.optim.Optimizer,
         report: PlanReport,
+        runtime: Runtime,
     ) -> None:
         self._model = model
         self._signatures = signatures
@@ -456,6 +480,8 @@ class PlannedTrainStep:
         self._state = state
         self._optimizer = optimizer
         self.plan_report = report
+        self._runtime = runtime
+        self._runtime._adopt_plan()
         self._step = 0
         self._closed = False
         self._trace_prepared = False
@@ -572,6 +598,7 @@ class PlannedTrainStep:
         self._executor.restore_optimizer_cpu()
         self._state.restore_cpu_and_unregister()
         self._closed = True
+        self._runtime._release_plan()
 
     def __enter__(self) -> PlannedTrainStep:
         if self._closed:
@@ -583,19 +610,23 @@ class PlannedTrainStep:
         self.close()
 
 
-def forward_pass(
+def plan_forward(
     model: nn.Module,
     *,
     example_inputs: Sequence[Any],
-    device_budget: int,
-    host_budget: int,
+    runtime: Runtime,
+    execution: str,
+    spill: str,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    execution_device: int | str | torch.device | None = None,
     partition: str = "auto",
     verbose: bool = True,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
-    Planning installs ShadowSpill's process-global CUDA allocator. The original
-    model remains runtime-owned until the returned callable is closed.
+    The runtime and pool roles are explicit. The original model remains
+    runtime-owned until the returned callable is closed.
     """
 
     from .session import build_forward
@@ -603,21 +634,30 @@ def forward_pass(
     return build_forward(
         model,
         example_inputs=example_inputs,
-        device_budget=device_budget,
-        host_budget=host_budget,
+        memory=runtime._resolve_plan(
+            execution=execution,
+            spill=spill,
+            execution_budget=execution_budget,
+            spill_budget=spill_budget,
+            execution_device=execution_device,
+        ),
         partition=partition,
         verbose=verbose,
     )
 
 
-def plan(
+def plan_step(
     model: nn.Module,
     *,
     objective: Any,
     opt: Any,
     example_inputs: Sequence[Sequence[Any]],
-    device_budget: int,
-    host_budget: int,
+    runtime: Runtime,
+    execution: str,
+    spill: str,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    execution_device: int | str | torch.device | None = None,
     partition: str = "auto",
     verbose: bool = True,
 ) -> PlannedTrainStep:
@@ -635,8 +675,13 @@ def plan(
         objective=objective,
         opt=opt,
         example_inputs=example_inputs,
-        device_budget=device_budget,
-        host_budget=host_budget,
+        memory=runtime._resolve_plan(
+            execution=execution,
+            spill=spill,
+            execution_budget=execution_budget,
+            spill_budget=spill_budget,
+            execution_device=execution_device,
+        ),
         partition=partition,
         verbose=verbose,
     )
@@ -658,6 +703,6 @@ __all__ = [
     "PlannedTrainStep",
     "StepDiagnostics",
     "StepResult",
-    "forward_pass",
-    "plan",
+    "plan_forward",
+    "plan_step",
 ]

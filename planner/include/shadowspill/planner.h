@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 2U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 3U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 
 typedef enum ShadowSpillPlannerStatus {
@@ -44,8 +44,8 @@ typedef struct ShadowSpillResidencyProblem {
     const uint8_t *output_reservations;
     const uint8_t *write_prefix;
     const uint32_t *first_input_task;
-    const uint64_t *h2d_runtime_ns;
-    const uint64_t *d2h_runtime_ns;
+    const uint64_t *fetch_runtime_ns;
+    const uint64_t *evict_runtime_ns;
     const uint64_t *task_ideal_end_ns;
     const uint64_t *device_capacity_bytes;
     const uint32_t *device_priority;

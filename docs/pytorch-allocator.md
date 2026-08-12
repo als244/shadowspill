@@ -69,7 +69,7 @@ The private task-boundary bridge accepts borrowed CUDA stream addresses and
 delegates exact input acquisition and annotated action submission to the
 neutral runtime. It does not infer, reorder, or repair schedule directives.
 `before_task` returns the current address and generation after inserting every
-required H2D event wait; the frontend rebinds storages before argument lookup.
+required FETCH event wait; the frontend rebinds storages before argument lookup.
 
 The storage operation is compiled only when CMake finds the exact installed
 PyTorch package. Development and wheel builds therefore pass
@@ -77,9 +77,9 @@ PyTorch package. Development and wheel builds therefore pass
 will make that handshake mandatory; an allocator-only build advertises
 `storage_rebinding = 0` and cannot construct a planned callable.
 
-Task actions do not synchronize transfer streams. Qualification holds two H2D
+Task actions do not synchronize transfer streams. Qualification holds two FETCH
 inputs behind a compute event, verifies that `before_task` inserts both waits,
-and then observes those copies plus a simultaneous D2H finishing while an
+and then observes those copies plus a simultaneous EVICT finishing while an
 independent compute stream remains busy. Explicit `wait_idle`, checkpoint, and
 close boundaries are synchronizing by contract.
 
@@ -88,7 +88,7 @@ Nsight ranges follow the documented namespace:
 - `shadowspill.pytorch.task.<dense-id>` spans frontend task dispatch;
 - `shadowspill.pytorch.storage_rebind` identifies each storage swap;
 - `shadowspill.runtime.allocate` identifies slab-range admission;
-- `shadowspill.runtime.transfer.{h2d,d2h}` identifies copy submission;
+- `shadowspill.runtime.transfer.{fetch,evict}` identifies copy submission;
 - `shadowspill.runtime.wait_event` identifies stream dependency insertion.
 
 The Phase-5 qualification trace is reproducibly checked with

@@ -25,25 +25,25 @@ class DeviceSimulationConfig:
 
     device_id: str
     capacity_bytes: int
-    h2d_bandwidth_bytes_per_second: int
-    d2h_bandwidth_bytes_per_second: int
-    h2d_latency_ns: int = 0
-    d2h_latency_ns: int = 0
+    fetch_bandwidth_bytes_per_second: int
+    evict_bandwidth_bytes_per_second: int
+    fetch_latency_ns: int = 0
+    evict_latency_ns: int = 0
 
     def __post_init__(self) -> None:
         if not self.device_id or self.device_id.strip() != self.device_id:
             raise ValueError("device_id must be a non-empty normalized string")
         _require_non_negative(self.capacity_bytes, "capacity_bytes")
         _require_positive(
-            self.h2d_bandwidth_bytes_per_second,
-            "h2d_bandwidth_bytes_per_second",
+            self.fetch_bandwidth_bytes_per_second,
+            "fetch_bandwidth_bytes_per_second",
         )
         _require_positive(
-            self.d2h_bandwidth_bytes_per_second,
-            "d2h_bandwidth_bytes_per_second",
+            self.evict_bandwidth_bytes_per_second,
+            "evict_bandwidth_bytes_per_second",
         )
-        _require_non_negative(self.h2d_latency_ns, "h2d_latency_ns")
-        _require_non_negative(self.d2h_latency_ns, "d2h_latency_ns")
+        _require_non_negative(self.fetch_latency_ns, "fetch_latency_ns")
+        _require_non_negative(self.evict_latency_ns, "evict_latency_ns")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,20 +72,20 @@ class SimulationConfig:
         *,
         device_capacity_bytes: int,
         host_capacity_bytes: int,
-        h2d_bandwidth_bytes_per_second: int,
-        d2h_bandwidth_bytes_per_second: int,
-        h2d_latency_ns: int = 0,
-        d2h_latency_ns: int = 0,
+        fetch_bandwidth_bytes_per_second: int,
+        evict_bandwidth_bytes_per_second: int,
+        fetch_latency_ns: int = 0,
+        evict_latency_ns: int = 0,
     ) -> SimulationConfig:
         return cls(
             devices=(
                 DeviceSimulationConfig(
                     device_id=device_id,
                     capacity_bytes=device_capacity_bytes,
-                    h2d_bandwidth_bytes_per_second=(h2d_bandwidth_bytes_per_second),
-                    d2h_bandwidth_bytes_per_second=(d2h_bandwidth_bytes_per_second),
-                    h2d_latency_ns=h2d_latency_ns,
-                    d2h_latency_ns=d2h_latency_ns,
+                    fetch_bandwidth_bytes_per_second=(fetch_bandwidth_bytes_per_second),
+                    evict_bandwidth_bytes_per_second=(evict_bandwidth_bytes_per_second),
+                    fetch_latency_ns=fetch_latency_ns,
+                    evict_latency_ns=evict_latency_ns,
                 ),
             ),
             host_capacity_bytes=host_capacity_bytes,
@@ -93,8 +93,8 @@ class SimulationConfig:
 
 
 class TransferDirection(StrEnum):
-    HOST_TO_DEVICE = "host_to_device"
-    DEVICE_TO_HOST = "device_to_host"
+    FETCH = "fetch"
+    EVICT = "evict"
 
 
 @dataclass(frozen=True, slots=True)

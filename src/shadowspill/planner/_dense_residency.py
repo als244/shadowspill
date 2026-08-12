@@ -83,19 +83,19 @@ def compile_residency_template(
     device_priority_by_id = {
         device_id: rank for rank, device_id in enumerate(sorted(device_ids))
     }
-    h2d_runtime: list[int] = []
-    d2h_runtime: list[int] = []
+    fetch_runtime: list[int] = []
+    evict_runtime: list[int] = []
     for alias, size in enumerate(facts.alias_sizes):
         device = configured[facts.alias_devices[alias]]
-        h2d_runtime.append(
-            device.h2d_latency_ns
-            + (size * 1_000_000_000 + device.h2d_bandwidth_bytes_per_second - 1)
-            // device.h2d_bandwidth_bytes_per_second
+        fetch_runtime.append(
+            device.fetch_latency_ns
+            + (size * 1_000_000_000 + device.fetch_bandwidth_bytes_per_second - 1)
+            // device.fetch_bandwidth_bytes_per_second
         )
-        d2h_runtime.append(
-            device.d2h_latency_ns
-            + (size * 1_000_000_000 + device.d2h_bandwidth_bytes_per_second - 1)
-            // device.d2h_bandwidth_bytes_per_second
+        evict_runtime.append(
+            device.evict_latency_ns
+            + (size * 1_000_000_000 + device.evict_bandwidth_bytes_per_second - 1)
+            // device.evict_bandwidth_bytes_per_second
         )
 
     buffers: list[object] = []
@@ -137,8 +137,8 @@ def compile_residency_template(
     reservation_buffer = keep(_array(ctypes.c_uint8, output_reservations))
     write_buffer = keep(_array(ctypes.c_uint8, write_prefix))
     first_input = keep(_array(ctypes.c_uint32, list(facts.first_input_tasks)))
-    h2d_buffer = keep(_array(ctypes.c_uint64, h2d_runtime))
-    d2h_buffer = keep(_array(ctypes.c_uint64, d2h_runtime))
+    fetch_buffer = keep(_array(ctypes.c_uint64, fetch_runtime))
+    evict_buffer = keep(_array(ctypes.c_uint64, evict_runtime))
     task_ends = keep(_array(ctypes.c_uint64, list(facts.task_ideal_end_ns)))
     capacities = keep(
         _array(
@@ -175,8 +175,8 @@ def compile_residency_template(
         output_reservations=reservation_buffer,
         write_prefix=write_buffer,
         first_input_task=first_input,
-        h2d_runtime_ns=h2d_buffer,
-        d2h_runtime_ns=d2h_buffer,
+        fetch_runtime_ns=fetch_buffer,
+        evict_runtime_ns=evict_buffer,
         task_ideal_end_ns=task_ends,
         device_capacity_bytes=capacities,
         device_priority=priorities,

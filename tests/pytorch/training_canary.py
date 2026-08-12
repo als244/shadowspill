@@ -12,7 +12,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import ObjectiveResult, plan
+from shadowspill.memory import device, pinned_host
+from shadowspill.pytorch import ObjectiveResult, Runtime, plan_step
 from shadowspill.pytorch._abi import AdapterStatistics
 from shadowspill.pytorch._allocator import installed_allocator
 
@@ -116,13 +117,21 @@ def main(arguments: Iterable[str] | None = None) -> int:
             optimizer.register_step_post_hook(count_actual_step)
             return optimizer
 
-        planned = plan(
+        runtime = Runtime(
+            pools={
+                "execution": device(physical_capacity=2 << 30),
+                "spill": pinned_host(capacity=1 << 30),
+            },
+            library_path=adapter,
+        )
+        planned = plan_step(
             model,
             objective=_objective,
             opt=optimizer_factory,
             example_inputs=example_inputs,
-            device_budget=2 << 30,
-            host_budget=1 << 30,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
         )
         if len(constructed) != 1:
             raise AssertionError("optimizer factory was not invoked exactly once")
@@ -246,8 +255,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     execution_task_id = f"execution_{execution_ordinal:06d}"
                     if (
                         task_timing.execution_ordinal != execution_ordinal
-                        or task_timing.execution_task_id
-                        != execution_task_id
+                        or task_timing.execution_task_id != execution_task_id
                         or not task_timing.semantic_name
                     ):
                         raise AssertionError(
@@ -356,8 +364,9 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training produced allocator callback failures")
         if statistics.cuda.device_allocations != 1:
             raise AssertionError("training grew the CUDA slab")
-        if statistics.cuda.pinned_host_allocations != 2:
-            raise AssertionError("training did not reconcile pinned host admission")
+        if statistics.cuda.pinned_host_allocations != 1:
+            raise AssertionError("training grew the configured spill pool")
+        runtime.close()
     return 0
 
 

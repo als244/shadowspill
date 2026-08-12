@@ -10,9 +10,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
 ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     ShadowSpillRuntime *runtime
 );
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool_legacy(
     ShadowSpillRuntime *runtime,
-    uint64_t host_arena_bytes
+    uint64_t spill_pool_bytes
 );
 ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     ShadowSpillRuntime *runtime

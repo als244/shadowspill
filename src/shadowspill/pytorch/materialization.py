@@ -183,7 +183,7 @@ class MaterializedForwardState:
                 )
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
-            self.bridge.write_host_tensor(alias_id, owner)
+            self.bridge.write_spill_tensor(alias_id, owner)
 
     def refresh_inputs(self, inputs: Sequence[Any]) -> tuple[object, ...]:
         """Write guarded CPU payloads into persistent input-slot spill storage."""
@@ -198,7 +198,7 @@ class MaterializedForwardState:
             if value.device.type == "cuda":
                 value = value.detach().cpu()
             if alias_id not in written:
-                self.bridge.write_host_tensor(alias_id, value)
+                self.bridge.write_spill_tensor(alias_id, value)
                 written.add(alias_id)
         for index, value in enumerate(actual):
             if not isinstance(value, torch.Tensor):
@@ -250,7 +250,7 @@ class MaterializedForwardState:
         self.bridge.wait_idle()
         owners = self._empty_model_aliases()
         for alias_id, owner in owners.items():
-            self.bridge.read_host_tensor(alias_id, owner)
+            self.bridge.read_spill_tensor(alias_id, owner)
         return owners
 
     @staticmethod

@@ -1,101 +1,97 @@
 # Framework-neutral runtime
 
-`libshadowspill_runtime.so` consumes explicit task-boundary actions and owns
-execution-pool allocation, spill storage, object residency, transfers, readiness,
-retirement, failures, and teardown. It contains no PyTorch, CUDA, HIP, tensor,
-optimizer, model, or operation type.
+`libshadowspill_runtime.so` consumes admitted task boundaries and owns memory
+pools, leases, object residency, transfers, readiness, retirement, failures,
+and teardown. It contains no framework or accelerator-provider type.
 
-## Ownership model
+## Central owners
 
-A runtime instance owns one device slab, one bounded host arena, one H2D stream,
-one D2H stream, and one progress thread. The frontend owns compute streams and
-submits numerical work.
+One runtime contains:
 
-An allocation is an ordinary lease from the coalescing slab. A logical free
-used only by its freeing stream is immediately reusable: subsequent work on
-that stream is already ordered after every prior use. If any distinct stream
-was recorded, retirement records events on all associated streams and delays
-reuse until all complete. If a request cannot fit, it blocks only while a
-cross-stream retirement, release, or offload can create a suitable range.
-Otherwise it returns a structured no-progress OOM.
+- a registry of bounded `MemoryPool` arenas;
+- a hash-indexed object table, where one object is one alias bundle;
+- one `MemoryLease` for each reserved range and residency generation;
+- directed transfer routes and independent fetch/evict lane queues;
+- an allocation/retirement owner;
+- FIFO completion frontiers and a reusable event pool;
+- one worker thread;
+- bounded, default-off trace buffers and a first-failure record.
 
-Allocation IDs are authoritative. Framework protocols that carry only an
-address resolve it through `shadowspill_allocation_for_pointer`, which returns
-the exact live ID and generation. Released and logically freed addresses never
-resolve, even if their numerical range is later reused by a newer generation.
+The initial provider instantiates one execution pool and one spill pool. A pool
+does not encode whether storage is local, accelerator, host, peer, remote, or
+persistent. That meaning belongs to its pool backend and directed routes.
 
-An object record represents one complete alias group. It tracks the current
-allocation, residency generation, authoritative/device/host versions, host
-spill location, and readiness event. Tensor views are deliberately absent: a frontend
-maps every view of an alias group to this one record.
+## Allocation and leases
 
-Frontends populate initial pinned spill storage with
-`shadowspill_write_host_object` before device materialization. After an
-explicit terminal writeback and idle boundary, `shadowspill_read_host_object`
-copies current bytes into ordinary caller-owned CPU storage. Both operations
-require exact object size and a `HOST_ONLY` state, so neither can race an
-asynchronous transfer.
+Framework allocation synchronously leases a coalescing range from the selected
+execution pool. Logical free occurs immediately. Same-stream use is ordered by
+the stream itself; distinct recorded streams attach retirement fences and
+delay physical reuse until completion. Allocation waits only when a known
+retirement or memory action can produce a sufficiently large range. Otherwise
+it returns a diagnostic no-progress OOM.
 
-This host initialization can occur directly from a borrowed CPU payload; no
-device round trip is required. A final `DEVICE_READY` object can instead be
-transferred from plan ownership to caller ownership without a copy. Its logical
-object record is removed, its live slab allocation stays at the same address,
-and ordinary framework free plus recorded-stream retirement governs reuse.
-Transfer is rejected while an action still references the object.
+One stable `MemoryLease` moves through reserved, transferring, active,
+retiring, and released states. Reservation and transfer do not create separate
+allocation identities. A generation prevents stale transfer or retirement
+completion from publishing state for a recycled range.
+
+Object locations are an indexed array over runtime pools. Each entry stores its
+lease and version state. The current frontend selects execution and spill roles
+but the object representation does not contain fixed host/device fields.
 
 ## Task protocol
 
-`shadowspill_before_task` deduplicates input object identities, validates their
-authoritative device generations, inserts one compute-stream wait for every
-unfinished H2D, and returns current addresses. A host-only input is a plan
-violation unless its annotated prefetch is already queued; in that case the
-caller waits only until the progress service admits the destination and then
-uses a stream-event dependency.
+`shadowspill_before_task` resolves the immutable execution record, acquires
+each distinct input generation, validates execution residency, and inserts a
+compute-lane wait for each unfinished fetch event. It returns current addresses
+without synchronizing the host.
 
-`shadowspill_after_task` records one compute fence, applies declared object
-version updates, and enqueues actions in their exact supplied order. Release
-waits for task completion. Offload and prefetch use transfer-stream waits and
-events; they do not synchronize the host or device. A normal offload queued
-immediately after consuming an object whose H2D is still in flight is valid:
-the compute fence already orders both prerequisites.
+`shadowspill_after_task` publishes declared mutations, records one task fence,
+and submits the plan's exact ordered release, evict, and fetch actions. It does
+not move triggers, substitute actions, or launch framework work.
 
-The progress worker polls completions, returns ranges, updates versions and
-residency, wakes blocked allocators, and preserves the first failure. It never
-launches framework work.
+The worker repeatedly:
 
-The host poll is not the device timeline. Once `before_task` has inserted a
-wait, the consumer may be queued and `after_task` may advance the device version
-while the object still appears as `PREFETCHING` to the worker. H2D completion
-therefore changes readiness only; it never overwrites a newer device version.
+1. handles FIFO event completions;
+2. handles stream-safe retirements;
+3. dispatches ready memory actions on the appropriate route lane;
+4. publishes failures and wakes dependent waiters;
+5. polls or waits according to the configured latency policy.
 
-Runtime statistics expose total/free/peak slab bytes, largest free range,
-external fragmentation, host-arena occupancy, blocked allocators, pending
-retirements, transfer counts and bytes, and inserted wait counts. Allocation
-failure snapshots preserve both total free bytes and largest contiguous range
-so capacity exhaustion is distinguishable from fragmentation.
+Backend calls occur outside unrelated data-structure locks. The worker is
+named `shadowspill_worker`. Provider profiler callbacks name route streams
+`shadowspill_fetch` and `shadowspill_evict`.
 
-## Optional trace sessions
+## Transfer capabilities
 
-The runtime exposes a bounded, reusable diagnostic session independently of
-PyTorch. Tracing is off by default. Preparation allocates CPU record arrays;
-begin resets counters and enables append-only recording; end disables it; read
-copies immutable values to caller-owned storage. No trace API introduces a
-device-wide synchronization. A frontend decides whether it wants compute-only
-evidence or a drained terminal-transfer boundary before calling end.
+Each `(source_pool, destination_pool)` route owns asynchronous copy and lane
+lifecycle behavior. Runtime initialization calibrates supported directions and
+publishes a dense N-by-N latency/bandwidth matrix. Diagonal entries explicitly
+represent identity movement. Recalibration may target all or selected routes,
+requires local idleness, and atomically publishes a new generation. Existing
+plans retain their earlier immutable snapshot.
 
-The trace provides one causal clock for task boundaries, readiness waits,
-action queueing, device-destination reservation, transfer dispatch and
-completion, allocation pressure, stream retirement, and failures. Allocation
-lifetimes are returned in a second ordered ledger. This makes simulator/runtime
-comparison possible without relying on NSYS, while NVTX/NSYS remains the
-authority for kernels and vendor-library activity. Buffer overflow is explicit
-in the result and never causes hidden growth from a progress or allocator hot
-path.
+The runtime performs no cross-process barrier. Users can coordinate separate
+processes and invoke calibration concurrently to measure shared-link
+contention.
 
-## Backend contract
+## Tracing and profiling
 
-`ShadowSpillBackend` is a versioned vtable over conventional device/host
-allocation, opaque streams and events, asynchronous copies, event queries, and
-stream waits. Opaque tokens contain no vendor type in the core ABI. Phase 4's
-mock backend implements deterministic delays and failure injection; CUDA and
-future HIP backends implement the same contract.
+Runtime tracing is bounded and off by default. Preparation allocates record
+capacity; begin/end only enable and disable append. Records cover task
+boundaries, waits, action queueing, lease reservation, transfer dispatch and
+completion, allocation pressure, retirement, and first failure. Allocation
+lifetimes have a separate ordered ledger.
+
+Profiler integration is another independent interface. The neutral runtime
+uses a no-op-capable `ShadowSpillProfiler` vtable for thread/stream names and
+ranges. NVTX exists only in the NVIDIA provider implementation; a ROCm provider
+can supply rocTX without changing neutral runtime code.
+
+## Lifecycle
+
+`shadowspill_runtime_wait_idle` and close are explicitly synchronizing.
+Ordinary task boundaries, allocation, result construction, and trace append are
+not device-wide synchronization points. Close rejects new work, drains owned
+work, joins the worker, and releases pools, routes, events, queues, and tables
+while preserving the first failure.

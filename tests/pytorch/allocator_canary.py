@@ -18,7 +18,7 @@ from shadowspill.pytorch._abi import (
     PhysicalMemory,
     RuntimeAction,
 )
-from shadowspill.pytorch._allocator import install_allocator, resize_host_arena
+from shadowspill.pytorch._allocator import install_allocator, resize_spill_pool
 
 
 def main() -> int:
@@ -30,11 +30,11 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        host_arena_bytes=16 << 20,
+        spill_pool_bytes=16 << 20,
         worker_poll_nanoseconds=10_000,
     )
-    resize_host_arena(installed, host_arena_bytes=32 << 20, host_budget_bytes=64 << 20)
-    if installed.admission.host_arena_bytes != 32 << 20:
+    resize_spill_pool(installed, spill_pool_bytes=32 << 20, spill_budget_bytes=64 << 20)
+    if installed.admission.spill_pool_bytes != 32 << 20:
         raise AssertionError("planning-time host admission did not grow")
     capabilities = AdapterCapabilities()
     installed.library.shadowspill_pytorch_adapter_capabilities(
@@ -77,7 +77,7 @@ def main() -> int:
             f"stream_complete={stream.query()} "
             f"record_callbacks={debug.record_stream_callbacks} "
             f"pending={debug.runtime.pending_retirements} "
-            f"slab={debug.runtime.slab_bytes} "
+            f"slab={debug.runtime.execution_pool_bytes} "
             f"allocated={debug.runtime.allocated_bytes} "
             f"free={debug.runtime.free_bytes} "
             f"allocations={debug.allocation_callbacks} "
@@ -301,10 +301,10 @@ def main() -> int:
         != 0
     ):
         raise AssertionError("final statistics query failed")
-    if final_statistics.runtime.transfers_to_host != 1:
-        raise AssertionError("canary did not execute exactly one D2H transfer")
-    if final_statistics.runtime.transfers_to_device != 1:
-        raise AssertionError("canary did not execute exactly one H2D transfer")
+    if final_statistics.runtime.evict_transfers != 1:
+        raise AssertionError("canary did not execute exactly one EVICT transfer")
+    if final_statistics.runtime.fetch_transfers != 1:
+        raise AssertionError("canary did not execute exactly one FETCH transfer")
     if final_statistics.runtime.wait_events_inserted != 1:
         raise AssertionError("prefetched input did not insert exactly one stream wait")
     if (
@@ -430,7 +430,7 @@ def main() -> int:
         raise AssertionError("physical memory query failed")
     if physical.process_bytes > installed.admission.device_budget_bytes:
         raise AssertionError("process exceeded the physical device cap")
-    if physical.process_bytes < installed.admission.slab_bytes:
+    if physical.process_bytes < installed.admission.execution_pool_bytes:
         raise AssertionError("physical ledger does not include the complete slab")
     if (
         int(
@@ -456,7 +456,7 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
-    if int(library.shadowspill_pytorch_resize_host_arena(48 << 20)) == 0:
+    if int(library.shadowspill_pytorch_resize_spill_pool(48 << 20)) == 0:
         raise AssertionError("sealed adapter accepted pinned-host growth")
     if sealed_statistics.physical_checks < 3:
         raise AssertionError("adapter did not record physical reconciliation")

@@ -5,13 +5,21 @@
 #include <c10/cuda/CUDAStream.h>
 #include <torch/library.h>
 
-#include <nvtx3/nvToolsExt.h>
+#include "profiler.h"
 
 #include <cstdint>
 #include <vector>
 #include <utility>
 
 namespace {
+
+struct RangeGuard {
+  explicit RangeGuard(const char* name)
+      : range(shadowspill_pytorch_profile_range_begin(name)) {}
+  ~RangeGuard() { shadowspill_pytorch_profile_range_end(range); }
+
+  ShadowSpillProfilerRange range;
+};
 
 struct CallerLease {
   uint64_t allocation_id;
@@ -31,10 +39,7 @@ at::Tensor rebind_storage(
     int64_t object_id,
     int64_t generation
 ) {
-  nvtxRangePushA("shadowspill.pytorch.storage_rebind");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.storage_rebind");
   TORCH_CHECK(tensor.is_cuda(), "storage rebinding requires a CUDA tensor");
   TORCH_CHECK(target_address >= 0, "storage address must be nonnegative");
   TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
@@ -83,10 +88,7 @@ void rebind_storages(
     at::IntArrayRef object_ids,
     at::IntArrayRef generations
 ) {
-  nvtxRangePushA("shadowspill.pytorch.storage_rebind_batch");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.storage_rebind_batch");
   const size_t count = tensors.size();
   TORCH_CHECK(
       target_addresses.size() == count && object_ids.size() == count &&
@@ -159,10 +161,7 @@ void acquire_storages(
     at::TensorList tensors,
     at::IntArrayRef target_addresses
 ) {
-  nvtxRangePushA("shadowspill.pytorch.storage_acquire_batch");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.storage_acquire_batch");
   const size_t count = tensors.size();
   TORCH_CHECK(
       target_addresses.size() == count,
@@ -273,10 +272,7 @@ std::vector<int64_t> before_execution_storages(
 }
 
 void dematerialize_storages(at::TensorList tensors) {
-  nvtxRangePushA("shadowspill.pytorch.storage_dematerialize_batch");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.storage_dematerialize_batch");
   for (const at::Tensor& tensor : tensors) {
     TORCH_CHECK(
         tensor.is_cuda(), "storage dematerialization requires CUDA tensors");
@@ -298,10 +294,7 @@ std::vector<int64_t> adopt_storages(
     at::IntArrayRef sizes,
     at::IntArrayRef registered
 ) {
-  nvtxRangePushA("shadowspill.pytorch.storage_adopt_batch");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.storage_adopt_batch");
   const size_t count = tensors.size();
   TORCH_CHECK(
       object_ids.size() == count && sizes.size() == count &&
@@ -400,10 +393,7 @@ at::Tensor transfer_storage_to_caller(
     int64_t generation,
     int64_t allocation_id
 ) {
-  nvtxRangePushA("shadowspill.pytorch.caller_lease");
-  struct RangeGuard {
-    ~RangeGuard() { nvtxRangePop(); }
-  } range_guard;
+  RangeGuard range_guard("shadowspill.pytorch.caller_lease");
   TORCH_CHECK(tensor.is_cuda(), "caller transfer requires a CUDA tensor");
   TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
   TORCH_CHECK(generation >= 0, "generation must be nonnegative");

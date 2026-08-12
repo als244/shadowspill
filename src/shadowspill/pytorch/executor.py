@@ -53,9 +53,7 @@ class _ExecutingStage(nn.Module):
             self._abort_task(prepared, error)
             raise
 
-    def _before_task(
-        self, arguments: tuple[object, ...]
-    ) -> _PreparedForwardTask:
+    def _before_task(self, arguments: tuple[object, ...]) -> _PreparedForwardTask:
         leaves, _ = tree_flatten(arguments)
         input_aliases = tuple(
             self._bridge.alias_for_object(slot.object_id)

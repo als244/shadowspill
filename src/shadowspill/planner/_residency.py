@@ -265,13 +265,13 @@ def seed_residency(
     def transfer_time(alias: int) -> int:
         device = device_config[facts.alias_devices[alias]]
         return (
-            device.h2d_latency_ns
+            device.fetch_latency_ns
             + (
                 facts.alias_sizes[alias] * 1_000_000_000
-                + device.h2d_bandwidth_bytes_per_second
+                + device.fetch_bandwidth_bytes_per_second
                 - 1
             )
-            // device.h2d_bandwidth_bytes_per_second
+            // device.fetch_bandwidth_bytes_per_second
         )
 
     first_use = {
@@ -401,11 +401,11 @@ def _transfer_runtime_ns(
     device_id = facts.alias_devices[alias]
     device = next(item for item in config.devices if item.device_id == device_id)
     bandwidth = (
-        device.h2d_bandwidth_bytes_per_second
+        device.fetch_bandwidth_bytes_per_second
         if to_device
-        else device.d2h_bandwidth_bytes_per_second
+        else device.evict_bandwidth_bytes_per_second
     )
-    latency = device.h2d_latency_ns if to_device else device.d2h_latency_ns
+    latency = device.fetch_latency_ns if to_device else device.evict_latency_ns
     size = facts.alias_sizes[alias]
     return latency + (size * 1_000_000_000 + bandwidth - 1) // bandwidth
 
@@ -426,8 +426,8 @@ def _cut_score(
     departure = cut.start - 1
     entry = cut.end + 1
     writeback = int(_writeback_required(facts, cut))
-    h2d_ns = _transfer_runtime_ns(facts, config, cut.alias, to_device=True)
-    d2h_ns = (
+    fetch_ns = _transfer_runtime_ns(facts, config, cut.alias, to_device=True)
+    evict_ns = (
         _transfer_runtime_ns(facts, config, cut.alias, to_device=False)
         if writeback
         else 0
@@ -435,7 +435,7 @@ def _cut_score(
     departure_time = facts.task_ideal_end_ns[departure] if departure >= 0 else 0
     deadline_task = min(entry + 1, len(facts.tasks) - 1)
     deadline = facts.task_ideal_end_ns[deadline_task - 1] if deadline_task > 0 else 0
-    exposed = max(departure_time + d2h_ns + h2d_ns - deadline, 0)
+    exposed = max(departure_time + evict_ns + fetch_ns - deadline, 0)
     first_use_task = facts.first_input_tasks[cut.alias]
     common = (
         writeback,

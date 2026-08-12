@@ -49,7 +49,7 @@ static MockEvent *event_pointer(ShadowSpillBackendEvent event) {
     return (MockEvent *)event.words[0];
 }
 
-static int allocate_device(void *context, uint64_t bytes, void **pointer) {
+static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
     ShadowSpillMockBackend *backend = context;
     if (pointer == NULL || operation_fails(backend)) {
         return -1;
@@ -59,12 +59,12 @@ static int allocate_device(void *context, uint64_t bytes, void **pointer) {
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.device_allocations;
+    ++backend->statistics.execution_allocations;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int free_device(void *context, void *pointer) {
+static int free_execution(void *context, void *pointer) {
     ShadowSpillMockBackend *backend = context;
     if (operation_fails(backend)) {
         return -1;
@@ -73,7 +73,7 @@ static int free_device(void *context, void *pointer) {
     return 0;
 }
 
-static int allocate_host(void *context, uint64_t bytes, void **pointer) {
+static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
     ShadowSpillMockBackend *backend = context;
     if (pointer == NULL || operation_fails(backend)) {
         return -1;
@@ -83,13 +83,13 @@ static int allocate_host(void *context, uint64_t bytes, void **pointer) {
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.host_allocations;
+    ++backend->statistics.spill_allocations;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int free_host(void *context, void *pointer) {
-    return free_device(context, pointer);
+static int free_spill(void *context, void *pointer) {
+    return free_execution(context, pointer);
 }
 
 static int create_stream(
@@ -250,13 +250,13 @@ static int copy_async(
     if (target->ready_nanoseconds < now) {
         target->ready_nanoseconds = now;
     }
-    target->ready_nanoseconds += kind == SHADOWSPILL_TRANSFER_TO_DEVICE
-        ? backend->config.h2d_delay_nanoseconds
-        : backend->config.d2h_delay_nanoseconds;
-    if (kind == SHADOWSPILL_TRANSFER_TO_DEVICE) {
-        ++backend->statistics.copies_to_device;
+    target->ready_nanoseconds += kind == SHADOWSPILL_TRANSFER_FETCH
+        ? backend->config.fetch_delay_nanoseconds
+        : backend->config.evict_delay_nanoseconds;
+    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
+        ++backend->statistics.fetch_copies;
     } else {
-        ++backend->statistics.copies_to_host;
+        ++backend->statistics.evict_copies;
     }
     pthread_mutex_unlock(&backend->mutex);
     return 0;
@@ -325,10 +325,10 @@ ShadowSpillBackend shadowspill_mock_backend_vtable(
     return (ShadowSpillBackend){
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
         .context = backend,
-        .allocate_device = allocate_device,
-        .free_device = free_device,
-        .allocate_host = allocate_host,
-        .free_host = free_host,
+        .allocate_execution = allocate_execution,
+        .free_execution = free_execution,
+        .allocate_spill = allocate_spill,
+        .free_spill = free_spill,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .create_event = create_event,
@@ -345,7 +345,7 @@ int shadowspill_mock_create_compute_stream(
     ShadowSpillMockBackend *backend,
     ShadowSpillBackendStream *stream
 ) {
-    return create_stream(backend, SHADOWSPILL_TRANSFER_TO_DEVICE, stream);
+    return create_stream(backend, SHADOWSPILL_TRANSFER_FETCH, stream);
 }
 
 int shadowspill_mock_destroy_compute_stream(

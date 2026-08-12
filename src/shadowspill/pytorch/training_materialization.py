@@ -236,7 +236,7 @@ class TrainingMaterializedState:
                 if tensor.device.type == "cuda":
                     tensor = tensor.detach().cpu()
                 if alias_id not in written:
-                    self.bridge.write_host_tensor(alias_id, tensor)
+                    self.bridge.write_spill_tensor(alias_id, tensor)
                     written.add(alias_id)
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
@@ -277,7 +277,7 @@ class TrainingMaterializedState:
                 )
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
-            self.bridge.write_host_tensor(alias_id, owner)
+            self.bridge.write_spill_tensor(alias_id, owner)
 
     def restore_cpu_and_unregister(self) -> None:
         if self._closed:
@@ -402,7 +402,7 @@ class TrainingMaterializedState:
         self.bridge.wait_idle()
         owners = self._empty_model_aliases()
         for alias_id, owner in owners.items():
-            self.bridge.read_host_tensor(alias_id, owner)
+            self.bridge.read_spill_tensor(alias_id, owner)
         return owners
 
     def _empty_model_aliases(self) -> dict[str, torch.Tensor]:

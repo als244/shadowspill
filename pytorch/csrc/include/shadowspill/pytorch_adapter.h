@@ -17,14 +17,14 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 22U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 24U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
     int32_t device_ordinal;
     uint64_t device_budget_bytes;
     uint64_t provider_headroom_bytes;
-    uint64_t host_arena_bytes;
+    uint64_t spill_pool_bytes;
     uint64_t worker_poll_nanoseconds;
 } ShadowSpillPytorchAdapterConfig;
 
@@ -34,11 +34,11 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     uint64_t device_budget_bytes;
     uint64_t context_bytes;
     uint64_t provider_headroom_bytes;
-    uint64_t slab_bytes;
+    uint64_t execution_pool_bytes;
     uint64_t bootstrap_process_bytes;
     uint64_t device_used_bytes;
     uint64_t device_total_bytes;
-    uint64_t host_arena_bytes;
+    uint64_t spill_pool_bytes;
 } ShadowSpillPytorchPhysicalAdmission;
 
 typedef struct ShadowSpillPytorchAdapterCapabilities {
@@ -109,6 +109,17 @@ shadowspill_pytorch_allocator_bootstrap(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_adapter_capabilities(
     ShadowSpillPytorchAdapterCapabilities *capabilities
+);
+
+/*
+ * Backend-neutral profiling ranges used by the Python task orchestrator.
+ * These are no-ops when the configured runtime profiler has no provider.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillProfilerRange
+shadowspill_pytorch_profile_range_begin(const char *name);
+
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_profile_range_end(
+    ShadowSpillProfilerRange range
 );
 
 /* Copies immutable bootstrap admission and physical-accounting evidence. */
@@ -191,13 +202,29 @@ shadowspill_pytorch_allocator_failure(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_wait_idle(void);
 
+/* Public frontend bridge for runtime transfer-route calibration and snapshots. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_calibrate_transfer_capabilities(
+    const ShadowSpillTransferCalibrationConfig *config,
+    const ShadowSpillTransferRouteKey *routes,
+    uint32_t route_count
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_transfer_profiles(
+    ShadowSpillTransferProfile *profiles,
+    uint32_t capacity,
+    uint32_t *count,
+    uint64_t *generation
+);
+
 /*
  * Planning-only pinned-host growth before physical sealing. Existing payloads
  * and object offsets are preserved. The caller must admit the brief overlap of
  * old and replacement arenas within its public host budget.
  */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_resize_host_arena(uint64_t host_arena_bytes);
+shadowspill_pytorch_resize_spill_pool(uint64_t spill_pool_bytes);
 
 /* Bounded task-scoped allocation telemetry used by structural profiling. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
@@ -260,17 +287,17 @@ shadowspill_pytorch_register_placeholder_object(
     uint8_t retain_spill_copy
 );
 
-/* Replace one existing HOST_ONLY object's current pinned payload. */
+/* Replace one existing SPILL_ONLY object's current pinned payload. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_write_host_object(
+shadowspill_pytorch_write_spill_object(
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t source_address
 );
 
-/* Copy one current HOST_ONLY payload into borrowed caller memory. */
+/* Copy one current SPILL_ONLY payload into borrowed caller memory. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_read_host_object(
+shadowspill_pytorch_read_spill_object(
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t destination_address
@@ -289,7 +316,7 @@ shadowspill_pytorch_bind_registered_allocation(
     ShadowSpillObjectBinding *binding
 );
 
-/* Transfer one final device allocation from plan to caller ownership. */
+/* Transfer one final execution allocation from plan to caller ownership. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_transfer_output_to_caller(
     uint64_t object_id,

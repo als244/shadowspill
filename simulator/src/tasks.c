@@ -64,8 +64,8 @@ int shadowspill_inputs_ready(
     for (uint32_t index = begin; index < end; ++index) {
         const ShadowSpillAliasState *state =
             &work->aliases[program->input_aliases[index]];
-        if (state->device_ready == 0U || state->h2d_pending != 0U ||
-            state->d2h_pending != 0U) {
+        if (state->device_ready == 0U || state->fetch_pending != 0U ||
+            state->evict_pending != 0U) {
             return 0;
         }
     }
@@ -138,8 +138,8 @@ int shadowspill_try_launch_tasks(
                     program->alias_size_bytes[alias];
             }
             alias_state->device_ready = 0U;
-            alias_state->h2d_pending = 0U;
-            alias_state->d2h_pending = 0U;
+            alias_state->fetch_pending = 0U;
+            alias_state->evict_pending = 0U;
             alias_state->host_ready = 0U;
         }
         work->device_workspace_bytes[device] +=

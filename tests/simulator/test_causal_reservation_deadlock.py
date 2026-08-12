@@ -141,8 +141,8 @@ def _config(capacity: int) -> SimulationConfig:
         "cuda_0",
         device_capacity_bytes=capacity,
         host_capacity_bytes=80,
-        h2d_bandwidth_bytes_per_second=1_000_000_000,
-        d2h_bandwidth_bytes_per_second=1_000_000_000,
+        fetch_bandwidth_bytes_per_second=1_000_000_000,
+        evict_bandwidth_bytes_per_second=1_000_000_000,
     )
 
 
@@ -151,18 +151,18 @@ def test_transfer_start_charging_would_admit_but_causal_admission_rejects(
     record_timeline: bool,
 ) -> None:
     # Under the old rule, the future 40-byte destination was not charged while
-    # it waited behind the earlier H2D. The current head task therefore appeared
-    # to fit: 20 resident + 40 active-H2D + 30 output + 20 workspace = 110 <= 120.
+    # it waited behind the earlier FETCH. The current head task therefore appeared
+    # to fit: 20 resident + 40 active-FETCH + 30 output + 20 workspace = 110 <= 120.
     old_apparent_head_demand = 20 + 40 + 30 + 20
     assert old_apparent_head_demand <= 120
 
-    # At the later predicted H2D start, the head output would already have been
+    # At the later predicted FETCH start, the head output would already have been
     # released, so the old model also thought the future copy fit:
     # 20 resident + 40 earlier state + 40 future state = 100 <= 120.
     old_apparent_transfer_demand = 20 + 40 + 40
     assert old_apparent_transfer_demand <= 120
 
-    # Causal admission reserves both H2D destinations when their triggers
+    # Causal admission reserves both FETCH destinations when their triggers
     # complete. The current task actually needs 20 + 40 + 40 + 30 + 20 = 150.
     with pytest.raises(SimulationInfeasibleError) as caught:
         simulate(
@@ -193,12 +193,12 @@ def test_causal_reservation_preserves_overlap_when_the_plan_really_fits() -> Non
         for item in result.task_intervals
         if item.task_id == "current_head_computation"
     )
-    first_h2d, future_h2d = result.transfer_intervals
-    assert first_h2d.direction is TransferDirection.HOST_TO_DEVICE
-    assert future_h2d.direction is TransferDirection.HOST_TO_DEVICE
+    first_fetch, future_fetch = result.transfer_intervals
+    assert first_fetch.direction is TransferDirection.FETCH
+    assert future_fetch.direction is TransferDirection.FETCH
     assert (head.start_ns, head.end_ns) == (20, 30)
-    assert first_h2d.start_ns == 10
-    assert first_h2d.end_ns == 50
-    assert head.start_ns < first_h2d.end_ns
-    assert (future_h2d.start_ns, future_h2d.end_ns) == (50, 90)
+    assert first_fetch.start_ns == 10
+    assert first_fetch.end_ns == 50
+    assert head.start_ns < first_fetch.end_ns
+    assert (future_fetch.start_ns, future_fetch.end_ns) == (50, 90)
     assert result.device_peak("cuda_0").total_bytes == 150

@@ -43,8 +43,8 @@ class _AliasState:
     host_allocated: bool = False
     host_ready: bool = False
     host_version: int = 0
-    h2d_pending: bool = False
-    d2h_pending: bool = False
+    fetch_pending: bool = False
+    evict_pending: bool = False
 
 
 @dataclass(slots=True)
@@ -126,14 +126,14 @@ class _Simulator:
         self.completed: dict[str, int] = {}
         self.active_tasks: dict[tuple[str, ResourceKind, int], _ActiveTask] = {}
         self.task_waits = {task.task_id: _TaskWait() for task in self.tasks}
-        self.pending_h2d = {
+        self.pending_fetch = {
             device.device_id: deque[_PendingTransfer]() for device in config.devices
         }
-        self.pending_d2h = {
+        self.pending_evict = {
             device.device_id: deque[_PendingTransfer]() for device in config.devices
         }
-        self.active_h2d: dict[str, _ActiveTransfer] = {}
-        self.active_d2h: dict[str, _ActiveTransfer] = {}
+        self.active_fetch: dict[str, _ActiveTransfer] = {}
+        self.active_evict: dict[str, _ActiveTransfer] = {}
         self.transfer_sequence: dict[tuple[str, TransferDirection], int] = {}
         self.device_object_bytes = {device.device_id: 0 for device in config.devices}
         self.device_workspace_bytes = {device.device_id: 0 for device in config.devices}
@@ -264,7 +264,7 @@ class _Simulator:
             self.object_alias[object_id] for object_id in task.inputs
         ):
             state = self.alias_state[alias_id]
-            if not state.device_ready or state.h2d_pending or state.d2h_pending:
+            if not state.device_ready or state.fetch_pending or state.evict_pending:
                 missing.append(alias_id)
         return tuple(missing)
 
@@ -315,8 +315,8 @@ class _Simulator:
                     state.device_allocated = True
                     self.device_object_bytes[device_id] += state.size_bytes
                 state.device_ready = False
-                state.h2d_pending = False
-                state.d2h_pending = False
+                state.fetch_pending = False
+                state.evict_pending = False
                 state.host_ready = False
             self.device_workspace_bytes[device_id] += profile.workspace_bytes
             start = self.now_ns
@@ -342,12 +342,12 @@ class _Simulator:
         direction: TransferDirection,
     ) -> int:
         config = self.device_config[state.device_id]
-        if direction is TransferDirection.HOST_TO_DEVICE:
-            bandwidth = config.h2d_bandwidth_bytes_per_second
-            latency = config.h2d_latency_ns
+        if direction is TransferDirection.FETCH:
+            bandwidth = config.fetch_bandwidth_bytes_per_second
+            latency = config.fetch_latency_ns
         else:
-            bandwidth = config.d2h_bandwidth_bytes_per_second
-            latency = config.d2h_latency_ns
+            bandwidth = config.evict_bandwidth_bytes_per_second
+            latency = config.evict_latency_ns
         transfer = (
             state.size_bytes * _NANOSECONDS_PER_SECOND + bandwidth - 1
         ) // bandwidth
@@ -371,12 +371,12 @@ class _Simulator:
             ready_ns=self.now_ns,
             sequence=sequence,
         )
-        if direction is TransferDirection.HOST_TO_DEVICE:
-            state.h2d_pending = True
-            self.pending_h2d[state.device_id].append(pending)
+        if direction is TransferDirection.FETCH:
+            state.fetch_pending = True
+            self.pending_fetch[state.device_id].append(pending)
         else:
-            state.d2h_pending = True
-            self.pending_d2h[state.device_id].append(pending)
+            state.evict_pending = True
+            self.pending_evict[state.device_id].append(pending)
 
     def _release(self, action: MemoryAction) -> None:
         state = self.alias_state[action.alias_group_id]
@@ -389,7 +389,7 @@ class _Simulator:
                 alias_group_ids=(action.alias_group_id,),
                 location=f"device:{state.device_id}",
             )
-        if state.h2d_pending or state.d2h_pending:
+        if state.fetch_pending or state.evict_pending:
             raise SimulationInfeasibleError(
                 f"release of {action.alias_group_id!r} conflicts with a transfer",
                 kind="release-transfer-conflict",
@@ -444,11 +444,11 @@ class _Simulator:
                 self._enqueue_transfer(
                     action_index,
                     action,
-                    TransferDirection.DEVICE_TO_HOST,
+                    TransferDirection.EVICT,
                 )
             else:
                 state = self.alias_state[action.alias_group_id]
-                if state.device_allocated and not state.d2h_pending:
+                if state.device_allocated and not state.evict_pending:
                     raise SimulationInfeasibleError(
                         f"prefetch of {action.alias_group_id!r} already has a "
                         "device copy",
@@ -457,7 +457,7 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
-                if not state.host_ready and not state.d2h_pending:
+                if not state.host_ready and not state.evict_pending:
                     raise SimulationInfeasibleError(
                         f"prefetch of {action.alias_group_id!r} lacks a host source",
                         kind="invalid-prefetch",
@@ -488,7 +488,7 @@ class _Simulator:
                 self._enqueue_transfer(
                     action_index,
                     action,
-                    TransferDirection.HOST_TO_DEVICE,
+                    TransferDirection.FETCH,
                 )
             self._snapshot()
             self.next_action_index += 1
@@ -530,28 +530,28 @@ class _Simulator:
         device_id: str,
         direction: TransferDirection,
     ) -> bool:
-        if direction is TransferDirection.HOST_TO_DEVICE:
-            queue = self.pending_h2d[device_id]
-            active_table = self.active_h2d
+        if direction is TransferDirection.FETCH:
+            queue = self.pending_fetch[device_id]
+            active_table = self.active_fetch
         else:
-            queue = self.pending_d2h[device_id]
-            active_table = self.active_d2h
+            queue = self.pending_evict[device_id]
+            active_table = self.active_evict
         if device_id in active_table or not queue:
             return False
         pending = queue[0]
         state = self.alias_state[pending.alias_group_id]
-        if direction is TransferDirection.HOST_TO_DEVICE:
-            if state.d2h_pending or not state.host_ready:
+        if direction is TransferDirection.FETCH:
+            if state.evict_pending or not state.host_ready:
                 pending.stall_reasons.add("source-readiness")
                 return False
             if not state.device_allocated:
-                raise AssertionError("queued H2D has no trigger-time reservation")
+                raise AssertionError("queued FETCH has no trigger-time reservation")
         else:
             if not state.device_ready:
                 pending.stall_reasons.add("source-readiness")
                 return False
             if not state.host_allocated:
-                raise AssertionError("queued D2H has no trigger-time reservation")
+                raise AssertionError("queued EVICT has no trigger-time reservation")
         queue.popleft()
         runtime = self._transfer_runtime_ns(state, direction)
         active_table[device_id] = _ActiveTransfer(
@@ -565,12 +565,8 @@ class _Simulator:
     def _try_start_transfers(self) -> bool:
         changed = False
         for device_id in self.device_config:
-            changed |= self._try_start_direction(
-                device_id, TransferDirection.HOST_TO_DEVICE
-            )
-            changed |= self._try_start_direction(
-                device_id, TransferDirection.DEVICE_TO_HOST
-            )
+            changed |= self._try_start_direction(device_id, TransferDirection.FETCH)
+            changed |= self._try_start_direction(device_id, TransferDirection.EVICT)
         return changed
 
     def _complete_transfer(
@@ -578,16 +574,16 @@ class _Simulator:
         device_id: str,
         direction: TransferDirection,
     ) -> None:
-        if direction is TransferDirection.HOST_TO_DEVICE:
-            active = self.active_h2d.pop(device_id)
+        if direction is TransferDirection.FETCH:
+            active = self.active_fetch.pop(device_id)
         else:
-            active = self.active_d2h.pop(device_id)
+            active = self.active_evict.pop(device_id)
         pending = active.pending
         state = self.alias_state[pending.alias_group_id]
-        if direction is TransferDirection.HOST_TO_DEVICE:
+        if direction is TransferDirection.FETCH:
             state.device_ready = True
             state.device_version = state.host_version
-            state.h2d_pending = False
+            state.fetch_pending = False
             if not state.retain_spill_copy:
                 state.host_allocated = False
                 state.host_ready = False
@@ -595,9 +591,9 @@ class _Simulator:
         else:
             state.host_ready = True
             state.host_version = state.device_version
-            state.d2h_pending = False
+            state.evict_pending = False
             state.device_ready = False
-            if not state.h2d_pending:
+            if not state.fetch_pending:
                 state.device_allocated = False
                 self.device_object_bytes[device_id] -= state.size_bytes
         self.transfer_intervals.append(
@@ -618,17 +614,17 @@ class _Simulator:
 
     def _next_event_time(self) -> int | None:
         ends = [active.end_ns for active in self.active_tasks.values()]
-        ends.extend(active.end_ns for active in self.active_h2d.values())
-        ends.extend(active.end_ns for active in self.active_d2h.values())
+        ends.extend(active.end_ns for active in self.active_fetch.values())
+        ends.extend(active.end_ns for active in self.active_evict.values())
         return min(ends) if ends else None
 
     def _complete_events(self) -> None:
-        for device_id in sorted(self.active_h2d):
-            if self.active_h2d[device_id].end_ns == self.now_ns:
-                self._complete_transfer(device_id, TransferDirection.HOST_TO_DEVICE)
-        for device_id in sorted(self.active_d2h):
-            if self.active_d2h[device_id].end_ns == self.now_ns:
-                self._complete_transfer(device_id, TransferDirection.DEVICE_TO_HOST)
+        for device_id in sorted(self.active_fetch):
+            if self.active_fetch[device_id].end_ns == self.now_ns:
+                self._complete_transfer(device_id, TransferDirection.FETCH)
+        for device_id in sorted(self.active_evict):
+            if self.active_evict[device_id].end_ns == self.now_ns:
+                self._complete_transfer(device_id, TransferDirection.EVICT)
         completed_keys = sorted(
             (
                 key
@@ -642,15 +638,15 @@ class _Simulator:
 
     def _deadlock(self) -> Never:
         for direction, queues in (
-            (TransferDirection.HOST_TO_DEVICE, self.pending_h2d),
-            (TransferDirection.DEVICE_TO_HOST, self.pending_d2h),
+            (TransferDirection.FETCH, self.pending_fetch),
+            (TransferDirection.EVICT, self.pending_evict),
         ):
             for device_id, queue in queues.items():
                 if not queue:
                     continue
                 pending = queue[0]
                 state = self.alias_state[pending.alias_group_id]
-                if direction is TransferDirection.HOST_TO_DEVICE:
+                if direction is TransferDirection.FETCH:
                     used = (
                         self.device_object_bytes[device_id]
                         + self.device_workspace_bytes[device_id]
@@ -721,7 +717,7 @@ class _Simulator:
                     task_id=task.task_id,
                     aliases=output_aliases,
                 )
-        for queues in (self.pending_h2d, self.pending_d2h):
+        for queues in (self.pending_fetch, self.pending_evict):
             for queue in queues.values():
                 if not queue:
                     continue
@@ -761,10 +757,10 @@ class _Simulator:
         while (
             self.unlaunched
             or self.active_tasks
-            or any(self.pending_h2d.values())
-            or any(self.pending_d2h.values())
-            or self.active_h2d
-            or self.active_d2h
+            or any(self.pending_fetch.values())
+            or any(self.pending_evict.values())
+            or self.active_fetch
+            or self.active_evict
         ):
             changed = True
             while changed:

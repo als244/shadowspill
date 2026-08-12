@@ -7,8 +7,8 @@ int main(void) {
     const ShadowSpillSimulationDevice devices[] = {
         {
             .capacity_bytes = 512U,
-            .h2d_bandwidth_bytes_per_second = 1000000000U,
-            .d2h_bandwidth_bytes_per_second = 1000000000U,
+            .fetch_bandwidth_bytes_per_second = 1000000000U,
+            .evict_bandwidth_bytes_per_second = 1000000000U,
         },
     };
     const uint32_t alias_device[] = {0U, 0U};

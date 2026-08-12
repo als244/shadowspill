@@ -69,7 +69,7 @@ int shadowspill_report_deadlock(
         uint32_t alias = transfer->alias;
         uint32_t device = transfer->device;
         ShadowSpillAliasState *state = &work->aliases[alias];
-        if (transfer->direction == SHADOWSPILL_TRANSFER_HOST_TO_DEVICE &&
+        if (transfer->direction == SHADOWSPILL_TRANSFER_FETCH &&
             state->device_allocated == 0U) {
             uint64_t used = work->device_object_bytes[device] +
                 work->device_workspace_bytes[device];
@@ -92,7 +92,7 @@ int shadowspill_report_deadlock(
                 return 0;
             }
         }
-        if (transfer->direction == SHADOWSPILL_TRANSFER_DEVICE_TO_HOST &&
+        if (transfer->direction == SHADOWSPILL_TRANSFER_EVICT &&
             state->host_allocated == 0U) {
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
@@ -132,8 +132,8 @@ int shadowspill_report_deadlock(
         for (uint32_t index = input_begin; index < input_end; ++index) {
             uint32_t alias = program->input_aliases[index];
             if (work->aliases[alias].device_ready == 0U ||
-                work->aliases[alias].h2d_pending != 0U ||
-                work->aliases[alias].d2h_pending != 0U) {
+                work->aliases[alias].fetch_pending != 0U ||
+                work->aliases[alias].evict_pending != 0U) {
                 shadowspill_set_error(
                     result,
                     SHADOWSPILL_SIMULATION_TASK_INPUT_DEADLOCK,

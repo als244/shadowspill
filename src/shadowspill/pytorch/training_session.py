@@ -34,15 +34,15 @@ from .public import (
     PlanTaskStage,
     PlanUniqueStage,
 )
+from .runtime import PlanMemory
 from .runtime_bridge import RuntimeBridge
 from .session import (
-    _ensure_allocator,
     _forward_report,
-    _host_arena_estimate,
     _PhaseTimer,
-    _reconcile_host_arena,
+    _reconcile_spill_pool,
     _seal_physical_budget,
     _simulation_capacity,
+    _spill_pool_estimate,
     _workspace_reserve,
 )
 from .spatial_admission import (
@@ -63,8 +63,7 @@ def build_training(
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     opt: Callable[[Any], torch.optim.Optimizer],
     example_inputs: Sequence[Sequence[Any]],
-    device_budget: int,
-    host_budget: int,
+    memory: PlanMemory,
     partition: str,
     verbose: bool,
 ) -> PlannedTrainStep:
@@ -77,33 +76,32 @@ def build_training(
             model,
             objective,
             opt,
-            device_budget,
-            host_budget,
+            memory.execution_budget,
+            memory.spill_budget,
         )
         signatures = capture_training_signatures(example_inputs)
         cpu_inputs = tuple(
             tuple(representative_cpu_inputs(microbatch))
             for microbatch in example_inputs
         )
-        host_arena = _host_arena_estimate(model, cpu_inputs, host_budget)
+        _spill_pool_estimate(model, cpu_inputs, memory.spill_budget)
 
-    with timer.measure("allocator_bootstrap"):
-        installed = _ensure_allocator(
-            device_budget=device_budget,
-            host_arena=host_arena,
-            device_ordinal=0,
-        )
+    with timer.measure("runtime_binding"):
+        installed = memory.installed
+        device_ordinal = memory.execution_device
 
     with timer.measure("capture_lowering"):
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-        fake_model = fake_cuda_model(model, fake_mode, device_index=0)
+        fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
         with fake_mode:
             with timer.measure("objective_export"):
                 captures = tuple(
                     capture_training_objective(
                         fake_model,
                         objective,
-                        fake_cuda_inputs(microbatch, fake_mode, device_index=0),
+                        fake_cuda_inputs(
+                            microbatch, fake_mode, device_index=device_ordinal
+                        ),
                     )
                     for microbatch in cpu_inputs
                 )
@@ -131,7 +129,7 @@ def build_training(
                 captures,
                 cpu_inputs,
                 provisional_bridge,
-                device_ordinal=0,
+                device_ordinal=device_ordinal,
             )
         with timer.measure("optimizer_capture"):
             optimizer = opt(model.parameters())
@@ -171,12 +169,13 @@ def build_training(
                 optimizer_capture.recurrent
             )
         artifacts = tuple(artifact_by_digest.values())
-        profiler = CudaTaskProfiler(installed.library, device_ordinal=0)
+        profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
         with timer.measure("structural_profiling"):
             profiles = profile_unique_artifacts(
                 artifacts,
                 environment=profile_environment(
-                    device_ordinal=0, provider_id="shadowspill.cuda_slab"
+                    device_ordinal=device_ordinal,
+                    provider_id="shadowspill.device_pool",
                 ),
                 measure=profiler.measure,
                 cache=ProfileCache(),
@@ -220,16 +219,24 @@ def build_training(
             simulation_config = SimulationConfig.single_device(
                 "cuda_0",
                 device_capacity_bytes=_simulation_capacity(
-                    int(installed.admission.slab_bytes),
+                    memory.execution_budget,
                     workspace_reserve,
                     profiles.measurements,
                     fixed_slab_bytes=profiles.fixed_slab_bytes,
                 ),
-                host_capacity_bytes=host_budget,
-                h2d_bandwidth_bytes_per_second=24 << 30,
-                d2h_bandwidth_bytes_per_second=24 << 30,
-                h2d_latency_ns=5_000,
-                d2h_latency_ns=5_000,
+                host_capacity_bytes=memory.spill_budget,
+                fetch_bandwidth_bytes_per_second=memory.transfers.route(
+                    memory.spill.name, memory.execution.name
+                ).bandwidth_bytes_per_second,
+                evict_bandwidth_bytes_per_second=memory.transfers.route(
+                    memory.execution.name, memory.spill.name
+                ).bandwidth_bytes_per_second,
+                fetch_latency_ns=memory.transfers.route(
+                    memory.spill.name, memory.execution.name
+                ).latency_nanoseconds,
+                evict_latency_ns=memory.transfers.route(
+                    memory.execution.name, memory.spill.name
+                ).latency_nanoseconds,
             )
         with timer.measure("pressurefit_simulation"):
             selection_cache = PressureFitCache()
@@ -255,7 +262,7 @@ def build_training(
             )
             initial_selected = None if initial_cached is None else initial_cached.result
         with timer.measure("host_admission"):
-            _reconcile_host_arena(
+            _reconcile_spill_pool(
                 installed,
                 predicted_host_peak=max(
                     recurrent_selected.simulation.host_peak_bytes,
@@ -263,7 +270,7 @@ def build_training(
                     if initial_selected is None
                     else initial_selected.simulation.host_peak_bytes,
                 ),
-                host_budget=host_budget,
+                host_budget=memory.spill_budget,
             )
         with timer.measure("slab_admission"):
             try:
@@ -271,9 +278,8 @@ def build_training(
                     replay_selected_schedule(
                         recurrent_selected,
                         measurements,
-                        slab_bytes=(
-                            int(installed.admission.slab_bytes)
-                            - profiles.fixed_slab_bytes
+                        execution_pool_bytes=(
+                            memory.execution_budget - profiles.fixed_slab_bytes
                         ),
                         output_bindings=output_bindings_for_entrypoints(
                             recurrent_selected.program.selected_tasks(
@@ -292,9 +298,8 @@ def build_training(
                         replay_selected_schedule(
                             initial_selected,
                             measurements,
-                            slab_bytes=(
-                                int(installed.admission.slab_bytes)
-                                - profiles.fixed_slab_bytes
+                            execution_pool_bytes=(
+                                memory.execution_budget - profiles.fixed_slab_bytes
                             ),
                             output_bindings=output_bindings_for_entrypoints(
                                 initial_selected.program.selected_tasks(
@@ -314,13 +319,15 @@ def build_training(
                 item.peak_fragmentation_bytes for item in replays
             )
         admission = PhysicalAdmission(
-            device_budget_bytes=device_budget,
-            host_budget_bytes=host_budget,
+            device_budget_bytes=(
+                memory.execution.physical_capacity or memory.execution_budget
+            ),
+            host_budget_bytes=memory.spill_budget,
             context_bytes=int(installed.admission.context_bytes),
             provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
-            slab_bytes=int(installed.admission.slab_bytes),
+            slab_bytes=memory.execution_budget,
             workspace_reserve_bytes=workspace_reserve,
-            host_reservation_bytes=int(installed.admission.host_arena_bytes),
+            host_reservation_bytes=int(installed.admission.spill_pool_bytes),
             predicted_fragmentation_bytes=predicted_fragmentation,
         )
         recurrent_plan = _execution_plan(
@@ -395,6 +402,7 @@ def build_training(
             ),
             task_stage_map=task_stage_map,
             unique_stages=unique_stages,
+            memory=memory,
         )
         return PlannedTrainStep(
             model,
@@ -403,6 +411,7 @@ def build_training(
             state,
             optimizer,
             report,
+            memory.runtime,
         )
     except BaseException:
         if state is not None:
@@ -416,8 +425,8 @@ def _validate_training_request(
     model: nn.Module,
     objective: object,
     opt: object,
-    device_budget: int,
-    host_budget: int,
+    execution_budget: int,
+    spill_budget: int,
 ) -> None:
     if not isinstance(model, nn.Module):
         raise TypeError("model must be a torch.nn.Module")
@@ -425,14 +434,14 @@ def _validate_training_request(
         raise TypeError("objective must be callable")
     if not callable(opt):
         raise TypeError("opt must be an optimizer factory")
-    if isinstance(device_budget, bool) or not isinstance(device_budget, int):
-        raise TypeError("device_budget must be an integer byte count")
-    if isinstance(host_budget, bool) or not isinstance(host_budget, int):
-        raise TypeError("host_budget must be an integer byte count")
-    if device_budget <= 512 << 20:
-        raise PlanningError("device_budget must exceed provider headroom")
-    if host_budget <= 0:
-        raise PlanningError("host_budget must be positive")
+    if isinstance(execution_budget, bool) or not isinstance(execution_budget, int):
+        raise TypeError("execution_budget must be an integer byte count")
+    if isinstance(spill_budget, bool) or not isinstance(spill_budget, int):
+        raise TypeError("spill_budget must be an integer byte count")
+    if execution_budget <= 0:
+        raise PlanningError("execution_budget must be positive")
+    if spill_budget <= 0:
+        raise PlanningError("spill_budget must be positive")
     for name, tensor in tuple(model.named_parameters()) + tuple(model.named_buffers()):
         if tensor.device.type != "cpu":
             raise PlanningError(f"registered tensor {name!r} must be CPU resident")
@@ -502,6 +511,7 @@ def _training_report(
     pressurefit_results: tuple[Any, ...] = (),
     task_stage_map: tuple[PlanTaskStage, ...] = (),
     unique_stages: tuple[PlanUniqueStage, ...] = (),
+    memory: PlanMemory,
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -522,6 +532,7 @@ def _training_report(
         aot_unique_stage_abis=aot_graph_pair_cache_misses,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        memory=memory,
     )
     base_diagnostics = report.diagnostics
     diagnostics = PlanDiagnostics(
@@ -546,8 +557,8 @@ def _training_report(
         execution_plan=report.execution_plan,
         task_profiles=report.task_profiles,
         transfer_actions=report.transfer_actions,
-        transfer_bytes_to_host=report.transfer_bytes_to_host,
-        transfer_bytes_to_device=report.transfer_bytes_to_device,
+        transfer_bytes_evicted=report.transfer_bytes_evicted,
+        transfer_bytes_fetched=report.transfer_bytes_fetched,
         profile_unique_keys=report.profile_unique_keys,
         profile_cache_hits=report.profile_cache_hits,
         profile_cache_misses=report.profile_cache_misses,
@@ -563,6 +574,12 @@ def _training_report(
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         pressurefit_results=pressurefit_results,
         diagnostics=diagnostics,
+        execution_pool=report.execution_pool,
+        spill_pool=report.spill_pool,
+        execution_budget_bytes=report.execution_budget_bytes,
+        spill_budget_bytes=report.spill_budget_bytes,
+        execution_device=report.execution_device,
+        transfer_capabilities=report.transfer_capabilities,
     )
 
 

@@ -87,26 +87,42 @@ static void cpu_relax(void) {
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
     uint32_t pool_id,
-    void *base,
+    const ShadowSpillMemoryPoolBackend *backend,
     uint64_t capacity,
     uint64_t minimum_alignment
 ) {
     if (pool == NULL || minimum_alignment == 0U ||
-        (capacity != 0U && base == NULL)) {
+        !shadowspill_memory_pool_backend_is_valid(backend)) {
+        return -1;
+    }
+    void *base = NULL;
+    if (capacity != 0U && backend->allocate_arena(
+            backend->context, capacity, &base
+        ) != 0) {
         return -1;
     }
     if (pthread_mutex_init(&pool->lock, NULL) != 0) {
+        if (base != NULL) {
+            (void)backend->free_arena(backend->context, base);
+        }
         return -1;
     }
     if (pthread_cond_init(&pool->capacity_changed, NULL) != 0) {
         pthread_mutex_destroy(&pool->lock);
+        if (base != NULL) {
+            (void)backend->free_arena(backend->context, base);
+        }
         return -1;
     }
     if (shadowspill_range_initialize(&pool->ranges, capacity) != 0) {
         pthread_cond_destroy(&pool->capacity_changed);
         pthread_mutex_destroy(&pool->lock);
+        if (base != NULL) {
+            (void)backend->free_arena(backend->context, base);
+        }
         return -1;
     }
+    pool->backend = *backend;
     pool->base = base;
     pool->pool_id = pool_id;
     pool->minimum_alignment = minimum_alignment;
@@ -121,6 +137,9 @@ void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool) {
         return;
     }
     shadowspill_range_destroy(&pool->ranges);
+    if (pool->base != NULL) {
+        (void)pool->backend.free_arena(pool->backend.context, pool->base);
+    }
     pthread_cond_destroy(&pool->capacity_changed);
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};

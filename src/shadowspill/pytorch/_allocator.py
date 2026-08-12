@@ -43,38 +43,36 @@ def installed_allocator() -> InstalledAllocator | None:
     return _installed
 
 
-def resize_host_arena(
-    installed: InstalledAllocator, *, host_arena_bytes: int, host_budget_bytes: int
+def resize_spill_pool(
+    installed: InstalledAllocator, *, spill_pool_bytes: int, spill_budget_bytes: int
 ) -> None:
     """Grow the pinned spill pool during planning without exceeding its cap."""
 
-    current = int(installed.admission.host_arena_bytes)
-    if host_arena_bytes < current:
-        raise AllocatorInstallError("pinned host arena cannot shrink")
-    if host_arena_bytes == current:
+    current = int(installed.admission.spill_pool_bytes)
+    if spill_pool_bytes < current:
+        raise AllocatorInstallError("spill pool cannot shrink")
+    if spill_pool_bytes == current:
         return
-    if host_arena_bytes > host_budget_bytes or current + host_arena_bytes > (
-        host_budget_bytes
+    if spill_pool_bytes > spill_budget_bytes or current + spill_pool_bytes > (
+        spill_budget_bytes
     ):
         raise AllocatorInstallError(
-            "planning-time pinned arena replacement exceeds host_budget"
+            "planning-time spill pool replacement exceeds spill_budget"
         )
     status = int(
-        installed.library.shadowspill_pytorch_resize_host_arena(host_arena_bytes)
+        installed.library.shadowspill_pytorch_resize_spill_pool(spill_pool_bytes)
     )
     if status != 0:
-        raise AllocatorInstallError(
-            f"pinned host arena growth failed with status {status}"
-        )
+        raise AllocatorInstallError(f"spill pool growth failed with status {status}")
     admission = PhysicalAdmission()
     status = int(
         installed.library.shadowspill_pytorch_physical_admission(
             ctypes.byref(admission)
         )
     )
-    if status != 0 or int(admission.host_arena_bytes) != host_arena_bytes:
-        raise AllocatorInstallError("pinned host arena admission was not updated")
-    installed.admission.host_arena_bytes = admission.host_arena_bytes
+    if status != 0 or int(admission.spill_pool_bytes) != spill_pool_bytes:
+        raise AllocatorInstallError("spill pool admission was not updated")
+    installed.admission.spill_pool_bytes = admission.spill_pool_bytes
 
 
 def _function_pointer(library: Any, name: str) -> int:
@@ -94,7 +92,7 @@ def install_allocator(
     device_ordinal: int,
     device_budget_bytes: int,
     provider_headroom_bytes: int,
-    host_arena_bytes: int,
+    spill_pool_bytes: int,
     worker_poll_nanoseconds: int = 100_000,
 ) -> InstalledAllocator:
     """Install the process-global CUDA allocator before PyTorch CUDA init.
@@ -113,7 +111,7 @@ def install_allocator(
         raise AllocatorInstallError(
             "provider headroom must be non-negative and smaller than device budget"
         )
-    if host_arena_bytes < 0:
+    if spill_pool_bytes < 0:
         raise AllocatorInstallError("host arena bytes must be non-negative")
     if worker_poll_nanoseconds < 0:
         raise AllocatorInstallError("progress poll interval must be non-negative")
@@ -163,7 +161,7 @@ def install_allocator(
         device_ordinal=device_ordinal,
         device_budget_bytes=device_budget_bytes,
         provider_headroom_bytes=provider_headroom_bytes,
-        host_arena_bytes=host_arena_bytes,
+        spill_pool_bytes=spill_pool_bytes,
         worker_poll_nanoseconds=worker_poll_nanoseconds,
     )
     status = int(library.shadowspill_pytorch_allocator_bootstrap(ctypes.byref(config)))
@@ -180,7 +178,7 @@ def install_allocator(
         or admission.abi_version != ADAPTER_ABI_VERSION
         or admission.device_budget_bytes != device_budget_bytes
         or admission.provider_headroom_bytes != provider_headroom_bytes
-        or admission.slab_bytes == 0
+        or admission.execution_pool_bytes == 0
     ):
         raise AllocatorInstallError("physical admission handshake failed")
     physical = PhysicalMemory()

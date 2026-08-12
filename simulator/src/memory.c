@@ -19,10 +19,10 @@ int shadowspill_allocate_work(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
     );
-    work->active_h2d = malloc(program->device_count * sizeof(*work->active_h2d));
-    work->active_d2h = malloc(program->device_count * sizeof(*work->active_d2h));
-    work->h2d_sequence = calloc(program->device_count, sizeof(*work->h2d_sequence));
-    work->d2h_sequence = calloc(program->device_count, sizeof(*work->d2h_sequence));
+    work->active_fetch = malloc(program->device_count * sizeof(*work->active_fetch));
+    work->active_evict = malloc(program->device_count * sizeof(*work->active_evict));
+    work->fetch_sequence = calloc(program->device_count, sizeof(*work->fetch_sequence));
+    work->evict_sequence = calloc(program->device_count, sizeof(*work->evict_sequence));
     work->device_object_bytes = calloc(
         program->device_count, sizeof(*work->device_object_bytes)
     );
@@ -39,9 +39,9 @@ int shadowspill_allocate_work(
         program->device_count, sizeof(*work->device_total_peaks)
     );
     if (work->aliases == NULL || work->tasks == NULL ||
-        work->transfers == NULL || work->active_h2d == NULL ||
-        work->active_d2h == NULL || work->h2d_sequence == NULL ||
-        work->d2h_sequence == NULL || work->device_object_bytes == NULL ||
+        work->transfers == NULL || work->active_fetch == NULL ||
+        work->active_evict == NULL || work->fetch_sequence == NULL ||
+        work->evict_sequence == NULL || work->device_object_bytes == NULL ||
         work->device_workspace_bytes == NULL ||
         work->device_object_peaks == NULL ||
         work->device_workspace_peaks == NULL ||
@@ -49,8 +49,8 @@ int shadowspill_allocate_work(
         return 0;
     }
     for (uint32_t index = 0; index < program->device_count; ++index) {
-        work->active_h2d[index] = -1;
-        work->active_d2h[index] = -1;
+        work->active_fetch[index] = -1;
+        work->active_evict[index] = -1;
     }
     return 1;
 }
@@ -59,10 +59,10 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->aliases);
     free(work->tasks);
     free(work->transfers);
-    free(work->active_h2d);
-    free(work->active_d2h);
-    free(work->h2d_sequence);
-    free(work->d2h_sequence);
+    free(work->active_fetch);
+    free(work->active_evict);
+    free(work->fetch_sequence);
+    free(work->evict_sequence);
     free(work->device_object_bytes);
     free(work->device_workspace_bytes);
     free(work->device_object_peaks);

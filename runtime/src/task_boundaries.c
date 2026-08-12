@@ -19,7 +19,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
         ShadowSpillObject *object = update->object;
         pthread_mutex_lock(&object->lock);
         if (update->version_delta == 0U ||
-            (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+            (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             update->version_delta >
                 UINT64_MAX - object->authoritative_version) {
@@ -197,13 +197,13 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         *failure_object_id = object->object_id;
         *failure_allocation_id = object->allocation_id;
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            if (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+            if (object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
                 !shadowspill_spill_location(runtime, object)->current ||
                 shadowspill_spill_location(runtime, object)->version != object->authoritative_version) {
                 pthread_mutex_unlock(&object->lock);
                 return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             }
-        } else if (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
+        } else if (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
                    object->residency != SHADOWSPILL_OBJECT_PREFETCHING) {
             pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;

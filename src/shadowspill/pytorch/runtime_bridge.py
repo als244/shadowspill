@@ -80,6 +80,18 @@ class RuntimeBridge:
         self._debug_task_timing_capacity = 0
         self._admitted_tasks: dict[str, int] = {}
 
+    def profile_range_begin(self, name: str) -> int:
+        """Open one optional provider-backed profiling range."""
+
+        return int(
+            self.library.shadowspill_pytorch_profile_range_begin(name.encode("utf-8"))
+        )
+
+    def profile_range_end(self, range_id: int) -> None:
+        """Close a range returned by :meth:`profile_range_begin`."""
+
+        self.library.shadowspill_pytorch_profile_range_end(range_id)
+
     def admit_execution(
         self,
         task: TaskSpec,
@@ -320,7 +332,7 @@ class RuntimeBridge:
         )
         self._registered.add(alias_id)
 
-    def write_host_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
+    def write_spill_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
         if alias_id not in self._registered:
             raise RuntimeExecutionError(f"object {alias_id!r} is not registered")
         if tensor.device.type != "cpu":
@@ -333,13 +345,13 @@ class RuntimeBridge:
                 f"the plan requires {expected}"
             )
         self._require(
-            self.library.shadowspill_pytorch_write_host_object(
+            self.library.shadowspill_pytorch_write_spill_object(
                 _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
             ),
             "write host object",
         )
 
-    def read_host_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
+    def read_spill_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
         if tensor.device.type != "cpu":
             raise RuntimeExecutionError("writeback destination must be CPU resident")
         storage = tensor.untyped_storage()
@@ -350,7 +362,7 @@ class RuntimeBridge:
                 f"the plan requires {expected}"
             )
         self._require(
-            self.library.shadowspill_pytorch_read_host_object(
+            self.library.shadowspill_pytorch_read_spill_object(
                 _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
             ),
             "read host object",

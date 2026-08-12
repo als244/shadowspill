@@ -14,12 +14,12 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     return shadowspill_runtime_wait_idle_legacy(runtime);
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena(
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool(
     ShadowSpillRuntime *runtime,
-    uint64_t host_arena_bytes
+    uint64_t spill_pool_bytes
 ) {
-    return shadowspill_runtime_resize_host_arena_legacy(
-        runtime, host_arena_bytes
+    return shadowspill_runtime_resize_spill_pool_legacy(
+        runtime, spill_pool_bytes
     );
 }
 

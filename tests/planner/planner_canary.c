@@ -37,8 +37,8 @@ static ShadowSpillSimulationProgram make_program(
 int main(void) {
     const ShadowSpillSimulationDevice device = {
         .capacity_bytes = 1U,
-        .h2d_bandwidth_bytes_per_second = 1U,
-        .d2h_bandwidth_bytes_per_second = 1U,
+        .fetch_bandwidth_bytes_per_second = 1U,
+        .evict_bandwidth_bytes_per_second = 1U,
     };
     const uint32_t task_device[] = {0U};
     const uint8_t task_kind[] = {0U};
@@ -140,8 +140,8 @@ int main(void) {
         .output_reservations = empty_cells,
         .write_prefix = empty_cells,
         .first_input_task = first_input_tasks,
-        .h2d_runtime_ns = transfer_runtimes,
-        .d2h_runtime_ns = transfer_runtimes,
+        .fetch_runtime_ns = transfer_runtimes,
+        .evict_runtime_ns = transfer_runtimes,
         .task_ideal_end_ns = task_ends,
         .device_capacity_bytes = capacities,
         .device_priority = priorities,
