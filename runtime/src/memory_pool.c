@@ -184,17 +184,21 @@ void shadowspill_memory_pool_unlock_transfer(ShadowSpillMemoryPool *pool) {
 }
 
 int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool) {
-    if (atomic_load_explicit(
-            &pool->transfer_waiters, memory_order_acquire
-        ) != 0U) {
+    const int transfer_waiting = atomic_load_explicit(
+        &pool->transfer_waiters, memory_order_acquire
+    ) != 0U;
+    /*
+     * A destination reservation may depend on a completed retirement from
+     * the same causal prefix. Let that reclamation satisfy the reservation
+     * before either yields to foreground allocation. Without this ordering,
+     * each worker operation can wait for the other indefinitely.
+     */
+    if ((!transfer_waiting && atomic_load_explicit(
+             &pool->foreground_waiters, memory_order_relaxed
+         ) != 0U) || pthread_mutex_trylock(&pool->lock) != 0) {
         return 0;
     }
-    if (atomic_load_explicit(
-            &pool->foreground_waiters, memory_order_relaxed
-        ) != 0U || pthread_mutex_trylock(&pool->lock) != 0) {
-        return 0;
-    }
-    if (atomic_load_explicit(
+    if (!transfer_waiting && atomic_load_explicit(
             &pool->foreground_waiters, memory_order_relaxed
         ) != 0U) {
         pthread_mutex_unlock(&pool->lock);

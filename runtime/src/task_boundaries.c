@@ -241,6 +241,24 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             object->prefetch_pending = 1U;
         }
+        ShadowSpillObjectLocation *spill = shadowspill_spill_location(
+            runtime, object
+        );
+        /*
+         * Publish destination priority at the host trigger boundary. The
+         * dispatcher may run ahead of the trigger's CUDA event, but its later
+         * malloc callbacks must not overtake this causal capacity promise.
+         */
+        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
+            (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
+             spill->lease == NULL)) {
+            ShadowSpillMemoryPool *pool =
+                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+                ? shadowspill_execution_pool(runtime)
+                : shadowspill_spill_pool(runtime);
+            shadowspill_memory_pool_declare_transfer(pool);
+            queued->destination_priority_declared = 1U;
+        }
         pthread_mutex_unlock(&object->lock);
         if (batch->tail == NULL) {
             batch->head = queued;

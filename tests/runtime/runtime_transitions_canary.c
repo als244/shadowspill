@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -108,8 +109,8 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.live_allocations != 0U ||
-        statistics.allocated_bytes != 0U ||
+        statistics.live_allocations != 2U ||
+        statistics.allocated_bytes != 64U ||
         statistics.fetch_transfers != 0U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -138,6 +139,15 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 2U ||
         statistics.fetch_transfers != 2U;
+    if (failed) {
+        fprintf(
+            stderr,
+            "prefetch window mismatch: live=%llu, allocated=%llu, fetches=%llu\n",
+            (unsigned long long)statistics.live_allocations,
+            (unsigned long long)statistics.allocated_bytes,
+            (unsigned long long)statistics.fetch_transfers
+        );
+    }
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
@@ -195,10 +205,11 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
     failed = failed || shadowspill_after_task(
             runtime, 1U, compute, NULL, 0U, actions, 2U
         ) != SHADOWSPILL_RUNTIME_OK;
+    sleep_milliseconds(5U);
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.spill_allocated_bytes != 0U ||
+        statistics.spill_allocated_bytes != 64U ||
         statistics.evict_transfers != 0U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -211,6 +222,14 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.spill_allocated_bytes != 64U ||
         statistics.evict_transfers != 2U;
+    if (failed) {
+        fprintf(
+            stderr,
+            "evict window mismatch: spill=%llu, evicts=%llu\n",
+            (unsigned long long)statistics.spill_allocated_bytes,
+            (unsigned long long)statistics.evict_transfers
+        );
+    }
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
@@ -247,6 +266,17 @@ static int trigger_reservation_failure_is_a_plan_violation(void) {
         failure.object_id != 2U || failure.requested_bytes != 80U ||
         failure.free_bytes != 48U ||
         failure.largest_free_range_bytes != 48U;
+    if (failed) {
+        fprintf(
+            stderr,
+            "trigger reservation mismatch: status=%u, object=%llu, requested=%llu, free=%llu, largest=%llu\n",
+            (unsigned)failure.status,
+            (unsigned long long)failure.object_id,
+            (unsigned long long)failure.requested_bytes,
+            (unsigned long long)failure.free_bytes,
+            (unsigned long long)failure.largest_free_range_bytes
+        );
+    }
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }

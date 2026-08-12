@@ -341,7 +341,7 @@ static int all_completed_retirements_precede_action_admission(void) {
         snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.execution_pointer == NULL;
     if (failed) {
-        fprintf(stderr, "action admission ran before all completed retirements\n");
+        fprintf(stderr, "causal reservation did not await completed retirements\n");
     }
     destroy_runtime(mock, runtime, compute);
     return failed ? -1 : 0;

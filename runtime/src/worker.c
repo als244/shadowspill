@@ -147,6 +147,21 @@ static int event_complete_locked(
     return 0;
 }
 
+static int execution_capacity_can_still_change(
+    const ShadowSpillRuntime *runtime,
+    const ShadowSpillQueuedAction *action
+) {
+    /* Only execution destinations are released by these runtime counters. */
+    if (action->kind != SHADOWSPILL_RUNTIME_PREFETCH) {
+        return 0;
+    }
+    return atomic_load_explicit(
+        &runtime->pending_retirements, memory_order_acquire
+    ) != 0U || atomic_load_explicit(
+        &runtime->pending_capacity_actions, memory_order_acquire
+    ) != 0U;
+}
+
 static int reserve_destination_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
@@ -158,22 +173,6 @@ static int reserve_destination_locked(
         (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
          spill->lease != NULL)) {
         return 1;
-    }
-    int trigger_complete = 0;
-    if (shadowspill_task_fence_complete_locked(
-            runtime, action->fence, &trigger_complete
-        ) != 0) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            action->object->object_id,
-            action->object->allocation_id,
-            0U
-        );
-        return -1;
-    }
-    if (!trigger_complete) {
-        return 0;
     }
     ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
         ? shadowspill_execution_pool(runtime)
@@ -222,10 +221,15 @@ static int reserve_destination_locked(
             action->destination_lease = NULL;
         }
     }
-    shadowspill_memory_pool_relinquish_transfer(pool);
-    action->destination_priority_declared = 0U;
     shadowspill_memory_pool_unlock_transfer(pool);
     if (range_status != 0) {
+        if (range_status > 0 && execution_capacity_can_still_change(
+                runtime, action
+            )) {
+            return 0;
+        }
+        shadowspill_memory_pool_relinquish_transfer(pool);
+        action->destination_priority_declared = 0U;
         ShadowSpillRuntimeStatus status = range_status < 0
             ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
             : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
@@ -238,6 +242,8 @@ static int reserve_destination_locked(
         );
         return -1;
     }
+    shadowspill_memory_pool_relinquish_transfer(pool);
+    action->destination_priority_declared = 0U;
     shadowspill_append_trace_event_locked(
         runtime,
         SHADOWSPILL_TRACE_DESTINATION_RESERVED,
@@ -648,6 +654,25 @@ static int handle_action(
                 }
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
                     object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+                    pthread_mutex_unlock(&object->lock);
+                    return 0;
+                }
+                /* Capacity is owned; transfer dispatch still obeys the task. */
+                int trigger_complete = 0;
+                if (shadowspill_task_fence_complete_locked(
+                        runtime, action->fence, &trigger_complete
+                    ) != 0) {
+                    shadowspill_latch_failure_locked(
+                        runtime,
+                        SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                        object->object_id,
+                        object->allocation_id,
+                        0U
+                    );
+                    pthread_mutex_unlock(&object->lock);
+                    return -1;
+                }
+                if (!trigger_complete) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }

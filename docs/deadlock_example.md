@@ -489,7 +489,9 @@ dispatch**:
 
 ```text
 at the annotated trigger boundary:
-    reserve destination slab/host capacity causally
+    publish a destination-capacity claim before later task allocation
+    reserve the range immediately, or retain priority over an already-causal
+    retirement that will provide it
 
 when the request reaches the physical transfer-lane head:
     bind the reserved range to the new object generation
@@ -506,6 +508,18 @@ later. The runtime does not create a PyTorch allocation or start a copy early;
 it only prevents other work from consuming capacity that the immutable schedule
 has already promised.
 
+The PyTorch dispatcher can run ahead of the CUDA compute stream. Consequently,
+"at the trigger boundary" cannot mean "whenever the worker eventually notices
+that the CUDA event is complete." The frontend publishes the trigger from
+`after_task` after the compiled call has been enqueued. At that moment the
+destination pool gives the worker reservation priority over subsequent
+foreground `malloc` callbacks. The worker normally leases the range
+immediately. If an already-submitted same-or-earlier retirement provides the
+range, the claim remains ahead of foreground allocation until that retirement
+completes. Actual transfer dispatch still waits for the trigger event. A later
+task allocation can therefore never overtake the capacity promise merely
+because Python dispatch ran ahead.
+
 The same rule applies symmetrically to an offload's host destination. Actual
 H2D/D2H start times remain serialized and continue to determine overlap and
 makespan.
@@ -516,9 +530,10 @@ All three admission layers must implement the same lifetime:
    complete, not at predicted transfer start.
 2. Exact slab replay reserves the destination at the trigger task's end event,
    not at the simulated transfer interval's start.
-3. The runtime reserves the range after observing the trigger task's completion
-   event and consumes that reservation only when the transfer reaches the lane
-   head.
+3. The runtime publishes reservation priority when `after_task` submits the
+   trigger, before the dispatcher can make a later allocation. It consumes the
+   resulting lease only after the trigger event is complete and the transfer
+   reaches the lane head.
 
 If a trigger-time reservation cannot be satisfied, the schedule is causally
 infeasible and planning must reject it or PressureFit must select another
@@ -572,12 +587,14 @@ flowchart LR
     class F,G rejection;
 ```
 
-Trigger completion changes only capacity ownership:
+Trigger publication changes capacity ownership; CUDA-event completion only
+makes transfer dispatch eligible:
 
 | Corrected output-head first-moment state (`alias_000483`) | Device range | Copy/event state |
 |---|---|---|
-| Before the trigger backward stage completes | none | no dispatch |
-| At trigger backward-stage completion | **501 MiB reserved** | still queued |
+| Before host `after_task` publishes the trigger | none | no dispatch |
+| At host trigger publication | **501 MiB claimed/reserved** | CUDA trigger may still be incomplete |
+| At trigger backward-stage completion | **same reservation retained** | eligible for lane dispatch |
 | Waiting behind earlier H2Ds | **same reservation retained** | no copy yet |
 | At actual H2D head | reservation becomes allocation generation | async copy dispatched |
 | While copy is active | generation owns same range | `PREFETCHING` |
