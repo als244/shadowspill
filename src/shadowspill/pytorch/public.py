@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,8 +17,256 @@ from shadowspill.planner import PressureFitResult
 from .executor import ForwardExecutor
 from .guards import InputSignature, validate_training_inputs
 from .materialization import MaterializedForwardState
-from .training_executor import TrainingExecutor
+from .training_executor import ExecutionTiming, StepDiagnostics, TrainingExecutor
 from .training_materialization import TrainingMaterializedState
+
+
+@dataclass(frozen=True, slots=True)
+class PlanPhaseTiming:
+    """One non-overlapping interval measured during ``plan()``."""
+
+    name: str
+    duration_ns: int
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.duration_ns / 1e9
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "duration_ns": self.duration_ns,
+            "duration_seconds": self.duration_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanObjectFootprint:
+    """One logical tensor view and the allocator extent containing it."""
+
+    object_id: str
+    alias_group_id: str
+    role: str
+    logical_size_bytes: int
+    allocation_size_bytes: int
+    offset_bytes: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "object_id": self.object_id,
+            "alias_group_id": self.alias_group_id,
+            "role": self.role,
+            "logical_size_bytes": self.logical_size_bytes,
+            "allocation_size_bytes": self.allocation_size_bytes,
+            "offset_bytes": self.offset_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanAllocationEvent:
+    """One allocation/free point in a profiled graph's local timeline."""
+
+    allocation_ordinal: int
+    operation: str
+    requested_bytes: int
+    charged_bytes: int
+    output_leaf_indices: tuple[int, ...]
+    reuses_ordinal: int | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "allocation_ordinal": self.allocation_ordinal,
+            "operation": self.operation,
+            "requested_bytes": self.requested_bytes,
+            "charged_bytes": self.charged_bytes,
+            "output_leaf_indices": list(self.output_leaf_indices),
+            "reuses_ordinal": self.reuses_ordinal,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanGraphProfile:
+    """Measured cost and memory geometry for one executable graph ABI."""
+
+    direction: str
+    structural_abi_key: str
+    representative_task_id: str
+    runtime_ns: int
+    samples_ns: tuple[int, ...]
+    provenance: str
+    inputs: tuple[PlanObjectFootprint, ...]
+    mutations: tuple[PlanObjectFootprint, ...]
+    outputs: tuple[PlanObjectFootprint, ...]
+    input_logical_bytes: int
+    input_allocation_bytes: int
+    mutation_logical_bytes: int
+    mutation_allocation_bytes: int
+    output_logical_bytes: int
+    output_allocation_bytes: int
+    workspace_requested_bytes: int
+    workspace_charged_bytes: int
+    task_workspace_bytes: int
+    workspace_extent_bytes: tuple[int, ...]
+    persistent_extent_bytes: tuple[int, ...]
+    allocation_timeline: tuple[PlanAllocationEvent, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "direction": self.direction,
+            "structural_abi_key": self.structural_abi_key,
+            "representative_task_id": self.representative_task_id,
+            "runtime_ns": self.runtime_ns,
+            "samples_ns": list(self.samples_ns),
+            "provenance": self.provenance,
+            "inputs": [item.as_dict() for item in self.inputs],
+            "mutations": [item.as_dict() for item in self.mutations],
+            "outputs": [item.as_dict() for item in self.outputs],
+            "input_logical_bytes": self.input_logical_bytes,
+            "input_allocation_bytes": self.input_allocation_bytes,
+            "mutation_logical_bytes": self.mutation_logical_bytes,
+            "mutation_allocation_bytes": self.mutation_allocation_bytes,
+            "output_logical_bytes": self.output_logical_bytes,
+            "output_allocation_bytes": self.output_allocation_bytes,
+            "workspace_requested_bytes": self.workspace_requested_bytes,
+            "workspace_charged_bytes": self.workspace_charged_bytes,
+            "task_workspace_bytes": self.task_workspace_bytes,
+            "workspace_extent_bytes": list(self.workspace_extent_bytes),
+            "persistent_extent_bytes": list(self.persistent_extent_bytes),
+            "allocation_timeline": [
+                item.as_dict() for item in self.allocation_timeline
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanGraphPair:
+    """One legal stage choice; forward-only choices omit ``backward``."""
+
+    variant: str
+    recomputation: bool
+    saved_value_count: int
+    forward: PlanGraphProfile
+    backward: PlanGraphProfile | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "variant": self.variant,
+            "recomputation": self.recomputation,
+            "saved_value_count": self.saved_value_count,
+            "forward": self.forward.as_dict(),
+            "backward": None if self.backward is None else self.backward.as_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanUniqueStage:
+    """Deduplicated structural stage and every legal graph-pair choice."""
+
+    unique_stage_id: str
+    structural_key: str
+    module_targets: tuple[str, ...]
+    occurrence_count: int
+    graph_pairs: tuple[PlanGraphPair, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "unique_stage_id": self.unique_stage_id,
+            "structural_key": self.structural_key,
+            "module_targets": list(self.module_targets),
+            "occurrence_count": self.occurrence_count,
+            "graph_pairs": [item.as_dict() for item in self.graph_pairs],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanTaskStage:
+    """Direct task-to-stage and selected-variant lookup record."""
+
+    task_id: str
+    phase: str
+    microbatch: int | None
+    stage_occurrence_id: str | None
+    unique_stage_id: str
+    structural_abi_key: str
+    graph_pair_variant: str | None
+    chosen_graph_pair_variant: str | None
+    selected: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "task_id": self.task_id,
+            "phase": self.phase,
+            "microbatch": self.microbatch,
+            "stage_occurrence_id": self.stage_occurrence_id,
+            "unique_stage_id": self.unique_stage_id,
+            "structural_abi_key": self.structural_abi_key,
+            "graph_pair_variant": self.graph_pair_variant,
+            "chosen_graph_pair_variant": self.chosen_graph_pair_variant,
+            "selected": self.selected,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanDiagnostics:
+    """Structured evidence describing work performed by ``plan()``.
+
+    Phase intervals are mutually exclusive. ``unattributed_overhead_ns`` is
+    the small remainder spent between measured intervals and constructing the
+    immutable report; phases plus that remainder equal ``total_wall_time_ns``.
+    """
+
+    phases: tuple[PlanPhaseTiming, ...]
+    total_wall_time_ns: int
+    unattributed_overhead_ns: int
+    profile_unique_keys: int
+    profile_cache_hits: int
+    profile_cache_misses: int
+    captured_stage_count: int
+    aot_unique_stage_abis: int
+    aot_graph_pair_cache_hits: int
+    aot_graph_pair_cache_misses: int
+    recomputation_cache_hits: int
+    recomputation_cache_misses: int
+    task_stage_map: tuple[PlanTaskStage, ...] = ()
+    unique_stages: tuple[PlanUniqueStage, ...] = ()
+
+    @property
+    def measured_wall_time_ns(self) -> int:
+        return sum(item.duration_ns for item in self.phases)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema": "shadowspill.plan_diagnostics/v1",
+            "phases": [item.as_dict() for item in self.phases],
+            "measured_wall_time_ns": self.measured_wall_time_ns,
+            "unattributed_overhead_ns": self.unattributed_overhead_ns,
+            "total_wall_time_ns": self.total_wall_time_ns,
+            "profile": {
+                "unique_keys": self.profile_unique_keys,
+                "cache_hits": self.profile_cache_hits,
+                "cache_misses": self.profile_cache_misses,
+            },
+            "capture": {
+                "stage_count": self.captured_stage_count,
+                "aot_unique_stage_abis": self.aot_unique_stage_abis,
+                "aot_graph_pair_cache_hits": self.aot_graph_pair_cache_hits,
+                "aot_graph_pair_cache_misses": self.aot_graph_pair_cache_misses,
+            },
+            "recomputation": {
+                "cache_hits": self.recomputation_cache_hits,
+                "cache_misses": self.recomputation_cache_misses,
+            },
+            "task_stage_map": [item.as_dict() for item in self.task_stage_map],
+            "unique_stages": [item.as_dict() for item in self.unique_stages],
+        }
+
+    def task(self, task_id: str) -> PlanTaskStage:
+        """Return direct selected-variant information for ``task_id``."""
+
+        for item in self.task_stage_map:
+            if item.task_id == task_id:
+                return item
+        raise KeyError(task_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +285,7 @@ class PlanReport:
     profile_cache_misses: int
     profiling_provenance: tuple[str, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
+    diagnostics: PlanDiagnostics
     initial_execution_plan: ExecutionPlan | None = None
     recomputation_cache_hits: int = 0
     recomputation_cache_misses: int = 0
@@ -128,7 +378,28 @@ class StepResult:
     objectives: tuple[torch.Tensor, ...]
     metrics: tuple[Any, ...]
     step_number: int
-    diagnostics: object | None = None
+    diagnostics: DiagnosticsHandle | None = None
+
+
+class DiagnosticsHandle:
+    """Deferred collection of an explicitly enabled detailed execution trace."""
+
+    def __init__(self, collector: Callable[[], StepDiagnostics]) -> None:
+        self._collector = collector
+        self._result: StepDiagnostics | None = None
+
+    @property
+    def resolved(self) -> bool:
+        return self._result is not None
+
+    def result(self) -> StepDiagnostics:
+        """Synchronize trace completion and return immutable step evidence."""
+
+        if self._result is None:
+            self._result = self._collector()
+        return self._result
+
+    wait = result
 
 
 class PlannedTrainStep:
@@ -151,14 +422,47 @@ class PlannedTrainStep:
         self.plan_report = report
         self._step = 0
         self._closed = False
+        self._trace_prepared = False
+        self._pending_diagnostics: DiagnosticsHandle | None = None
 
-    def __call__(self, inputs: Sequence[Sequence[Any]]) -> StepResult:
+    def __call__(
+        self, inputs: Sequence[Sequence[Any]], *, trace: bool = False
+    ) -> StepResult:
         if self._closed:
             raise RuntimeError("planned training callable is closed")
+        if (
+            self._pending_diagnostics is not None
+            and not self._pending_diagnostics.resolved
+        ):
+            raise RuntimeError(
+                "resolve the preceding traced StepResult diagnostics before "
+                "launching another traced step"
+            )
+        if not isinstance(trace, bool):
+            raise TypeError("trace must be a bool")
         validate_training_inputs(inputs, self._signatures)
-        objectives, metrics = self._executor(inputs)
+        trace_setup_ns = 0
+        if trace:
+            if not self._trace_prepared:
+                started_ns = time.perf_counter_ns()
+                self._executor.prepare_execution_tracing()
+                trace_setup_ns = time.perf_counter_ns() - started_ns
+                self._trace_prepared = True
+            self._executor.arm_compute_timing(trace_setup_ns=trace_setup_ns)
+        try:
+            objectives, metrics = self._executor(inputs)
+        except BaseException:
+            if trace:
+                self._executor.cancel_execution_timing()
+            raise
         self._step += 1
-        return StepResult(objectives, metrics, self._step)
+        diagnostics = (
+            DiagnosticsHandle(self._executor.collect_step_diagnostics)
+            if trace
+            else None
+        )
+        self._pending_diagnostics = diagnostics
+        return StepResult(objectives, metrics, self._step, diagnostics)
 
     def _arm_compute_timing(self) -> None:
         """Arm qualification-only first-task-to-final-optimizer timing."""
@@ -169,6 +473,11 @@ class PlannedTrainStep:
         """Collect a previously armed qualification timing interval."""
 
         return self._executor.collect_compute_seconds()
+
+    def _collect_execution_timing(self) -> ExecutionTiming:
+        """Collect qualification-only per-task and per-phase timings."""
+
+        return self._executor.collect_execution_timing()
 
     def state_dict(self) -> dict[str, object]:
         """Synchronously snapshot model, optimizer, and logical step state."""
@@ -207,6 +516,11 @@ class PlannedTrainStep:
     def close(self) -> None:
         if self._closed:
             return
+        if (
+            self._pending_diagnostics is not None
+            and not self._pending_diagnostics.resolved
+        ):
+            self._pending_diagnostics.result()
         for parameter in self._model.parameters():
             parameter.grad = None
         self._executor.restore_optimizer_cpu()
@@ -221,9 +535,6 @@ class PlannedTrainStep:
     def __exit__(self, *exception: object) -> None:
         del exception
         self.close()
-
-
-__all__ = ["PlanReport", "PlannedForward", "PlannedTrainStep", "StepResult"]
 
 
 def forward_pass(
@@ -277,9 +588,20 @@ def plan(
 
 
 __all__ = [
+    "DiagnosticsHandle",
+    "ExecutionTiming",
+    "PlanAllocationEvent",
+    "PlanDiagnostics",
+    "PlanGraphPair",
+    "PlanGraphProfile",
+    "PlanObjectFootprint",
+    "PlanPhaseTiming",
     "PlanReport",
+    "PlanTaskStage",
+    "PlanUniqueStage",
     "PlannedForward",
     "PlannedTrainStep",
+    "StepDiagnostics",
     "StepResult",
     "forward_pass",
     "plan",

@@ -744,9 +744,29 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 break;
             }
         }
+        shadowspill_append_trace_event_locked(
+            runtime,
+            SHADOWSPILL_TRACE_ALLOCATION_WAIT_BEGIN,
+            task_id,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            bytes,
+            shadowspill_range_free_bytes(&runtime->device_ranges),
+            shadowspill_range_largest_free(&runtime->device_ranges)
+        );
         ++runtime->blocked_allocators;
         pthread_cond_wait(&runtime->condition, &runtime->mutex);
         --runtime->blocked_allocators;
+        shadowspill_append_trace_event_locked(
+            runtime,
+            SHADOWSPILL_TRACE_ALLOCATION_WAIT_END,
+            task_id,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            bytes,
+            shadowspill_range_free_bytes(&runtime->device_ranges),
+            shadowspill_range_largest_free(&runtime->device_ranges)
+        );
         status = shadowspill_current_status_locked(runtime);
     }
     pthread_mutex_unlock(&runtime->mutex);

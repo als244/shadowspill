@@ -1167,3 +1167,107 @@ the ignored internal progress log before this tracked summary is updated.
   throughput gates, freeze the five supported cold model/provider cells, then
   make the complete C PressureFit exactly match and outperform those direct
   PressureFit goldens.
+
+## 2026-08-11 — Phase-1 task timing and trace extraction
+
+- Moved execution attribution ahead of the five-cell golden matrix as a hard
+  gate. The installed internal agenda now prohibits matrix collection until at
+  least 95% of the 201.485-ms Qwen compute discrepancy is explained.
+- Extended qualification timing from one whole-program event pair to one
+  precreated CUDA-event pair per selected task. Results identify forward,
+  backward, and optimizer tasks, exact GPU intervals, host time in
+  `before_task`, rebinding/input lookup, compiled dispatch, output processing,
+  and `after_task`, plus the real first-to-last optimizer span.
+- Added an optional native debug clock using `cuLaunchHostFunc`. `before_task`
+  enqueues a readiness callback after all input waits; `after_task` enqueues a
+  completion callback after the task's compute. Callbacks write only a
+  `CLOCK_MONOTONIC` timestamp and sequence into preallocated records: they make
+  no CUDA calls, allocate no memory, take no lock, and never enter Python.
+- Decision: callback timing is a reusable task/simulator ordering cross-check,
+  not the sole duration authority. Host-callback scheduling can delay a stream,
+  so CUDA events and NSYS remain authoritative and measured runs must quantify
+  callback perturbation. The facility is disabled outside explicitly armed
+  qualification calls.
+- Added `qualification.extract_execution_trace`, a deterministic NSYS SQLite
+  extractor for task kernels, compute idle gaps, optimizer span, host launch
+  gaps, task-boundary ranges, transfer overlap/dispatch, and event/synchronize
+  API counts.
+- Adapter ABI v13 advertises the optional debug facility. All 16 CMake tests,
+  the fresh-process CUDA training canary, focused ABI/extractor tests, and Ruff
+  pass.
+
+## 2026-08-11 — Structured plan and real-step diagnostics
+
+- Split diagnostic ownership cleanly. `PlanReport.diagnostics` is now
+  mandatory and fully resolved when `plan()` or `forward_pass()` returns.
+  `StepResult.diagnostics` exists only for a real call made with `trace=True`;
+  resolving its handle is explicitly synchronizing.
+- Execution tracing is armed only with `train_step(inputs, trace=True)`. The
+  first explicit trace request prepares bounded CPU buffers and timing events
+  before `trace_begin`, reports that setup separately, and reuses them later.
+  Planning/profile activity cannot enter a step trace, and untraced calls
+  allocate no trace resources.
+- Every traced task exposes exactly seven `CLOCK_MONOTONIC` boundaries: four
+  host enter/exit timestamps and the stream-ordered
+  `before_readiness_waits`, `before_task_compute`, and `after_task_compute`
+  callbacks. The same task record includes its expected structural-profile
+  runtime and a CUDA-event duration cross-check.
+- Plan diagnostics now retain mutually exclusive phase timings, structural
+  profile/cache counts, direct task-to-unique-stage mappings, candidate and
+  chosen graph-pair variants, and all legal save/recompute graph pairs for
+  each unique stage. Each forward/backward graph record includes input,
+  mutation, output, alias, workspace, persistent-provider, sample/runtime, and
+  allocation-lifetime geometry. The inventory is always constructed; the
+  measured `diagnostic_inventory` phase makes its one-time cost visible.
+- The first 30-GiB Qwen detailed run measured a 494.6–502.9-ms compute bracket
+  over its stable steps. Per-task CUDA-event durations sum to 285.0–289.5 ms,
+  leaving 205.0–216.7 ms as inter-task gaps. Median host-category sums were
+  approximately 170 ms in `before_task`, 72 ms in storage rebinding/input
+  lookup, 275 ms inside compiled dispatch, 33 ms in output postprocessing, and
+  11 ms in `after_task`; these categories overlap GPU execution and therefore
+  are not added to the gap. The evidence localizes the discrepancy to staged
+  task-boundary/launch behavior rather than optimizer kernels, but the
+  trace-on/trace-off control and staged standard-allocator control are still
+  required before declaring a root cause.
+- The same run planned in 86.220 seconds: 17.581 seconds capture/lowering,
+  37.488 seconds compiled-entrypoint construction, 0.358 seconds structural
+  profiling from 43 cache hits, and 19.964 seconds PressureFit. Five numerical
+  steps and checkpoint replay stayed within the configured loss/vector
+  tolerances; the qualification aggregate remained false because this
+  30-GiB diagnostic schedule intentionally had terminal D2H but no
+  in-schedule H2D, while the stressed gate requires both directions.
+
+## 2026-08-11 — Default-off runtime trace integration
+
+- Finalized the public execution switch as
+  `train_step(inputs, trace=False)`. There is no planning-time trace option.
+  `PlanReport.diagnostics` remains unconditional, while real-step tracing is
+  requested only for the individual invocation being investigated.
+- Added runtime trace ABI v1 to neutral runtime ABI v8 and exposed it through
+  PyTorch adapter ABI v14. The API has explicit prepare, begin, end, and read
+  operations. Current preparation owns reusable CPU arrays but does not enable
+  tracing; this storage policy is private and may later become chunked without
+  changing the ABI or Python result.
+- The native event ledger records session bounds, task boundaries, readiness
+  waits, action queueing, destination reservation, H2D/D2H dispatch and
+  observed completion, allocation-pressure waits, stream retirement, and
+  first failure. Allocation lifetimes are copied alongside the causal runtime
+  ledger. Capacity exhaustion is explicit in diagnostics and cannot silently
+  change numerical execution.
+- `StepDiagnostics` separates timing, per-task boundaries, allocator
+  lifetimes, transfer events, runtime events/counters, and simulator
+  comparisons. Resolving the asynchronous diagnostics handle drains the
+  transfer service before ending the trace, so terminal D2H is included. This
+  synchronization occurs only after the caller explicitly requests
+  `diagnostics.result()`.
+- The first trace request precreates and initializes reusable per-task CUDA
+  timing events, compute-bracket events, native trace storage, and callback
+  records before `trace_begin`; `trace_setup_seconds` reports that one-time
+  work. Later traces reuse those resources. The normal path creates no trace
+  resources and launches no trace callbacks.
+- A mock-runtime canary proves tracing is opt-in and validates ordered
+  queue/reservation/dispatch/completion events. The real CUDA accumulated
+  training canary validates all seven task timestamps, native trace
+  completeness, no overflow, reuse across steps, and numerical/checkpoint
+  behavior. All native/CUDA canaries, the full Python suite, strict mypy, and
+  Ruff pass.

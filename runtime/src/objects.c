@@ -390,6 +390,16 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_BEFORE_TASK,
+        task_id,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        0U,
+        input_count,
+        runtime->queued_actions
+    );
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     for (uint32_t index = 0; status == SHADOWSPILL_RUNTIME_OK &&
          index < input_count; ++index) {
@@ -412,6 +422,16 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
             if (!pending_prefetch) {
                 break;
             }
+            shadowspill_append_trace_event_locked(
+                runtime,
+                SHADOWSPILL_TRACE_READINESS_WAIT,
+                task_id,
+                object->object_id,
+                object->allocation_id,
+                object->size_bytes,
+                0U,
+                runtime->queued_actions
+            );
             pthread_cond_wait(&runtime->condition, &runtime->mutex);
             status = shadowspill_current_status_locked(runtime);
         }
@@ -460,6 +480,16 @@ ShadowSpillRuntimeStatus shadowspill_before_task(
                 break;
             }
             ++runtime->wait_events_inserted;
+            shadowspill_append_trace_event_locked(
+                runtime,
+                SHADOWSPILL_TRACE_READINESS_WAIT,
+                task_id,
+                object->object_id,
+                object->allocation_id,
+                object->size_bytes,
+                1U,
+                runtime->wait_events_inserted
+            );
         }
         bindings[index] = (ShadowSpillObjectBinding){
             .object_id = object->object_id,
@@ -680,10 +710,36 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         }
         runtime->action_tail = tail;
         runtime->queued_actions += action_count;
+        for (ShadowSpillQueuedAction *queued = head; queued != NULL;
+             queued = queued->next) {
+            shadowspill_append_trace_event_locked(
+                runtime,
+                SHADOWSPILL_TRACE_ACTION_QUEUED,
+                task_id,
+                queued->object->object_id,
+                queued->object->allocation_id,
+                queued->object->size_bytes,
+                queued->kind,
+                runtime->queued_actions
+            );
+            if (queued == tail) {
+                break;
+            }
+        }
     }
     pthread_cond_broadcast(&runtime->condition);
 
 done:
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_AFTER_TASK,
+        task_id,
+        failure_object_id,
+        failure_allocation_id,
+        0U,
+        (uint64_t)status,
+        action_count
+    );
     pthread_mutex_unlock(&runtime->mutex);
     shadowspill_leave_task_scope(runtime);
     return status;

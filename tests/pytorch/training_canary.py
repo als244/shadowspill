@@ -126,11 +126,44 @@ def main(arguments: Iterable[str] | None = None) -> int:
         )
         if len(constructed) != 1:
             raise AssertionError("optimizer factory was not invoked exactly once")
+        plan_diagnostics = planned.plan_report.diagnostics
+        if (
+            plan_diagnostics.measured_wall_time_ns
+            + plan_diagnostics.unattributed_overhead_ns
+            != plan_diagnostics.total_wall_time_ns
+        ):
+            raise AssertionError("plan diagnostic wall time does not reconcile")
+        phase_names = {item.name for item in plan_diagnostics.phases}
+        if (
+            "pressurefit_simulation" not in phase_names
+            or "compilation" not in phase_names
+        ):
+            raise AssertionError("plan diagnostic omitted a required phase")
+        if not plan_diagnostics.unique_stages:
+            raise AssertionError("plan diagnostic omitted unique graph stages")
+        for stage in plan_diagnostics.unique_stages:
+            if tuple(pair.variant for pair in stage.graph_pairs) != (
+                "save",
+                "recompute",
+            ):
+                raise AssertionError("unique stage omitted a graph-pair choice")
+            for pair in stage.graph_pairs:
+                if pair.forward.runtime_ns <= 0 or pair.backward.runtime_ns <= 0:
+                    raise AssertionError("graph pair omitted a profile runtime")
         if planned.plan_report.initial_execution_plan is None:
             raise AssertionError("lazy AdamW state has no initial execution plan")
         active = planned.plan_report.execution_plan.program.selected_tasks(
             planned.plan_report.execution_plan.selections
         )
+        for task in active:
+            task_diagnostic = plan_diagnostics.task(task.task_id)
+            if not task_diagnostic.selected:
+                raise AssertionError("selected task is not marked selected")
+            if task.phase != "optimizer" and (
+                task_diagnostic.graph_pair_variant
+                != task_diagnostic.chosen_graph_pair_variant
+            ):
+                raise AssertionError("selected task has the wrong graph-pair choice")
         if tuple(task.phase for task in active) != (
             "forward",
             "backward",
@@ -149,13 +182,85 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 result.loss.backward()
                 reference_losses.append(result.loss.detach())
             reference_optimizer.step()
+            actual = planned(microbatches, trace=True)
+            if actual.diagnostics is None:
+                raise AssertionError("trace=True omitted StepResult diagnostics")
+            diagnostics = actual.diagnostics.result()
+            execution_timing = diagnostics.timing
             if step == 0:
-                planned._arm_compute_timing()
-            actual = planned(microbatches)
-            if step == 0 and planned._collect_compute_seconds() <= 0.0:
-                raise AssertionError(
-                    "compute-only qualification timing is not positive"
-                )
+                if execution_timing.trace_setup_seconds <= 0.0:
+                    raise AssertionError("first trace omitted lazy setup time")
+                if (
+                    not diagnostics.runtime.events
+                    or diagnostics.runtime.begin_timestamp_ns <= 0
+                    or diagnostics.runtime.end_timestamp_ns
+                    < diagnostics.runtime.begin_timestamp_ns
+                    or diagnostics.runtime.event_overflow
+                    or diagnostics.runtime.allocation_event_overflow
+                ):
+                    raise AssertionError("native runtime trace is incomplete")
+                native_kinds = {
+                    item.kind.name.lower() for item in diagnostics.runtime.events
+                }
+                if not {
+                    "session_begin",
+                    "session_end",
+                    "before_task",
+                    "after_task",
+                    "action_queued",
+                }.issubset(native_kinds):
+                    raise AssertionError("native runtime trace omitted core events")
+                if execution_timing.compute_seconds <= 0.0:
+                    raise AssertionError(
+                        "compute-only qualification timing is not positive"
+                    )
+                if execution_timing.optimizer_seconds <= 0.0:
+                    raise AssertionError("optimizer timing is not positive")
+                phases = dict(execution_timing.phase_gpu_seconds)
+                if set(phases) != {"forward", "backward", "optimizer"}:
+                    raise AssertionError("execution timing omitted a task phase")
+                if len(execution_timing.tasks) != len(active):
+                    raise AssertionError("execution timing omitted a selected task")
+                for task_timing in execution_timing.tasks:
+                    if task_timing.expected_profile_seconds <= 0.0:
+                        raise AssertionError("task omitted expected profile time")
+                    if any(
+                        timestamp <= 0
+                        for timestamp in (
+                            task_timing.before_task_enter_timestamp_ns,
+                            task_timing.before_task_exit_timestamp_ns,
+                            task_timing.after_task_enter_timestamp_ns,
+                            task_timing.after_task_exit_timestamp_ns,
+                            task_timing.before_readiness_waits_timestamp_ns,
+                            task_timing.before_task_compute_timestamp_ns,
+                            task_timing.after_task_compute_timestamp_ns,
+                        )
+                    ):
+                        raise AssertionError("task omitted one of seven timestamps")
+                    if (
+                        task_timing.before_readiness_waits_seconds is None
+                        or task_timing.before_task_compute_seconds is None
+                        or task_timing.after_task_compute_seconds is None
+                        or task_timing.readiness_wait_seconds is None
+                        or task_timing.task_compute_seconds is None
+                        or task_timing.native_before_task_enter_seconds is None
+                        or task_timing.native_before_task_exit_seconds is None
+                        or task_timing.native_after_task_enter_seconds is None
+                        or task_timing.native_after_task_exit_seconds is None
+                    ):
+                        raise AssertionError("host callback timing omitted a boundary")
+                    if (
+                        not task_timing.before_readiness_waits_sequence
+                        < task_timing.before_task_compute_sequence
+                        < task_timing.after_task_compute_sequence
+                    ):
+                        raise AssertionError(
+                            "host callback boundary order is invalid for "
+                            f"{task_timing.task_id}: "
+                            f"{task_timing.before_readiness_waits_sequence}, "
+                            f"{task_timing.before_task_compute_sequence}, "
+                            f"{task_timing.after_task_compute_sequence}"
+                        )
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
                 raise AssertionError("StepResult has the wrong logical step")
             for loss, expected in zip(actual.objectives, reference_losses, strict=True):
@@ -172,7 +277,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
         uninterrupted = _clone_model_state(planned.state_dict())
         planned.load_state_dict(checkpoint)
         for microbatches in steps[3:]:
-            planned(microbatches)
+            replay_result = planned(microbatches, trace=True)
+            if replay_result.diagnostics is None:
+                raise AssertionError("replay omitted trace diagnostics")
+            replay_result.diagnostics.result()
         replayed = _clone_model_state(planned.state_dict())
         _assert_bitwise(uninterrupted, replayed)
         if len(optimizer_calls) != 7:

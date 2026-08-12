@@ -203,24 +203,77 @@ def _reference_worker(
     losses: list[list[float]] = []
     timings: list[float] = []
     compute_timings: list[float] = []
+    execution_timings: list[dict[str, object]] = []
     with case.implementations():
         for step in range(5):
             optimizer.zero_grad(set_to_none=True)
-            compute_start = torch.cuda.Event(enable_timing=True)
-            compute_end = torch.cuda.Event(enable_timing=True)
+            event_factory: Any = torch.cuda.Event
+            compute_start = event_factory(enable_timing=True)
+            compute_end = event_factory(enable_timing=True)
+            task_events: list[
+                tuple[str, int | None, torch.cuda.Event, torch.cuda.Event]
+            ] = []
             started = time.perf_counter()
             compute_start.record(torch.cuda.current_stream())
             step_losses: list[float] = []
-            for microbatch in microbatches:
+            for microbatch_index, microbatch in enumerate(microbatches):
+                forward_start = event_factory(enable_timing=True)
+                forward_end = event_factory(enable_timing=True)
+                forward_start.record(torch.cuda.current_stream())
                 loss = compiled_objective(*microbatch)
+                forward_end.record(torch.cuda.current_stream())
+                task_events.append(
+                    ("forward", microbatch_index, forward_start, forward_end)
+                )
+                backward_start = event_factory(enable_timing=True)
+                backward_end = event_factory(enable_timing=True)
+                backward_start.record(torch.cuda.current_stream())
                 loss.backward()
+                backward_end.record(torch.cuda.current_stream())
+                task_events.append(
+                    ("backward", microbatch_index, backward_start, backward_end)
+                )
                 step_losses.append(float(loss.detach()))
+            optimizer_start = event_factory(enable_timing=True)
+            optimizer_end = event_factory(enable_timing=True)
+            optimizer_start.record(torch.cuda.current_stream())
             optimizer.step()
+            optimizer_end.record(torch.cuda.current_stream())
+            task_events.append(("optimizer", None, optimizer_start, optimizer_end))
             compute_end.record(torch.cuda.current_stream())
             torch.cuda.current_stream().synchronize()
             elapsed = time.perf_counter() - started
             timings.append(elapsed)
             compute_timings.append(float(compute_start.elapsed_time(compute_end)) / 1e3)
+            task_records: list[dict[str, object]] = []
+            phase_seconds: dict[str, float] = {}
+            for phase, recorded_microbatch, task_start, task_end in task_events:
+                duration = float(task_start.elapsed_time(task_end)) / 1e3
+                phase_seconds[phase] = phase_seconds.get(phase, 0.0) + duration
+                task_records.append(
+                    {
+                        "phase": phase,
+                        "microbatch": recorded_microbatch,
+                        "gpu_start_seconds": (
+                            float(compute_start.elapsed_time(task_start)) / 1e3
+                        ),
+                        "gpu_end_seconds": (
+                            float(compute_start.elapsed_time(task_end)) / 1e3
+                        ),
+                        "gpu_duration_seconds": duration,
+                    }
+                )
+            execution_timings.append(
+                {
+                    "compute_seconds": compute_timings[-1],
+                    "optimizer_seconds": (
+                        float(optimizer_start.elapsed_time(optimizer_end)) / 1e3
+                    ),
+                    "host_call_seconds": elapsed,
+                    "phase_gpu_seconds": phase_seconds,
+                    "tasks": task_records,
+                }
+            )
             losses.append(step_losses)
             print(
                 f"reference {model_implementation}/{family} "
@@ -244,6 +297,7 @@ def _reference_worker(
         "losses": losses,
         "step_seconds": timings,
         "compute_step_seconds": compute_timings,
+        "execution_timings": execution_timings,
         "model": cpu_state(model.state_dict()),
         "optimizer": cpu_state(optimizer.state_dict()),
     }
@@ -311,16 +365,22 @@ def _planned_worker(
         losses: list[list[float]] = []
         timings: list[float] = []
         compute_timings: list[float] = []
+        execution_timings: list[dict[str, object]] = []
+        step_diagnostics: list[dict[str, object]] = []
         checkpoint: object | None = None
         expected_replay: list[list[float]] = []
         for step in range(5):
-            training._arm_compute_timing()
             started = time.perf_counter()
-            step_result = training(case.microbatches)
-            torch.cuda.current_stream().synchronize()
+            step_result = training(case.microbatches, trace=True)
+            if step_result.diagnostics is None:
+                raise AssertionError("trace=True omitted execution diagnostics")
+            diagnostics = step_result.diagnostics.result()
+            execution_timing = diagnostics.timing
             physical_statuses.append(_check_physical_budget())
             timings.append(time.perf_counter() - started)
-            compute_timings.append(training._collect_compute_seconds())
+            compute_timings.append(execution_timing.compute_seconds)
+            execution_timings.append(execution_timing.as_dict())
+            step_diagnostics.append(diagnostics.as_dict())
             values = [float(item) for item in step_result.objectives]
             losses.append(values)
             print(
@@ -340,8 +400,10 @@ def _planned_worker(
         replay_losses: list[list[float]] = []
         for replay_step in range(2):
             replay_started = time.perf_counter()
-            step_result = training(case.microbatches)
-            torch.cuda.current_stream().synchronize()
+            step_result = training(case.microbatches, trace=True)
+            if step_result.diagnostics is None:
+                raise AssertionError("trace=True omitted replay diagnostics")
+            step_result.diagnostics.result()
             physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
             print(
@@ -432,11 +494,15 @@ def _planned_worker(
         "planning_breakdown_seconds": _planning_breakdown(
             phase_seconds, planning_seconds=planning_seconds
         ),
+        "plan_diagnostics": report.diagnostics.as_dict(),
         "pressurefit_seconds": phase_seconds.get("pressurefit_simulation", 0.0),
         "planned_step_seconds": timings,
         "planned_compute_seconds": compute_timings,
+        "planned_execution_timings": execution_timings,
+        "planned_step_diagnostics": step_diagnostics,
         "reference_step_seconds": reference["step_seconds"],
         "reference_compute_seconds": reference.get("compute_step_seconds", []),
+        "reference_execution_timings": reference.get("execution_timings", []),
         "planned_losses": losses,
         "reference_losses": reference["losses"],
         "worst_loss_relative": worst_loss_relative,

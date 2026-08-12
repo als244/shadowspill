@@ -376,11 +376,136 @@ static int overflow_is_failure(void) {
     return failed ? -1 : 0;
 }
 
+static int bounded_runtime_trace_is_opt_in(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = 256U,
+        .host_arena_bytes = 128U,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 1000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig configured_runtime = runtime_config;
+    configured_runtime.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&configured_runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        destroy_runtime(mock, runtime, compute);
+        return -1;
+    }
+    const ShadowSpillTraceConfig trace_config = {
+        .abi_version = SHADOWSPILL_TRACE_ABI_VERSION,
+        .event_capacity = 64U,
+        .allocation_event_capacity = 64U,
+    };
+    ShadowSpillTraceSummary summary = {0};
+    const ShadowSpillObjectDescription object = {
+        .object_id = 50U,
+        .size_bytes = 32U,
+        .initially_host_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction prefetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillRuntimeAction release = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    int failed = shadowspill_trace_prepare(runtime, &trace_config) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_trace_read(
+            runtime, &summary, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        summary.event_count != 0U || summary.active != 0U ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_trace_begin(runtime, 7U) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 100U, compute, NULL, 0U, &prefetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillObjectBinding binding = {0};
+    const uint64_t input = object.object_id;
+    failed = failed || shadowspill_before_task(
+            runtime, 101U, compute, &input, 1U, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 101U, compute, NULL, 0U, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_trace_end(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_trace_read(
+            runtime, &summary, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        summary.abi_version != SHADOWSPILL_TRACE_ABI_VERSION ||
+        summary.step_id != 7U || summary.active != 0U ||
+        summary.event_count < 9U || summary.allocation_event_count == 0U ||
+        summary.event_overflow != 0U ||
+        summary.allocation_event_overflow != 0U;
+    ShadowSpillTraceEvent events[64] = {{0}};
+    ShadowSpillAllocationEvent allocations[64] = {{0}};
+    failed = failed || shadowspill_trace_read(
+            runtime,
+            &summary,
+            events,
+            64U,
+            allocations,
+            64U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    int saw_queued = 0;
+    int saw_reserved = 0;
+    int saw_dispatched = 0;
+    int saw_completed = 0;
+    int saw_before = 0;
+    int saw_after = 0;
+    for (uint64_t index = 0U; !failed && index < summary.event_count; ++index) {
+        failed = events[index].sequence != index ||
+            events[index].step_id != 7U || events[index].timestamp_ns == 0U;
+        saw_queued |= events[index].kind == SHADOWSPILL_TRACE_ACTION_QUEUED;
+        saw_reserved |=
+            events[index].kind == SHADOWSPILL_TRACE_DESTINATION_RESERVED;
+        saw_dispatched |=
+            events[index].kind == SHADOWSPILL_TRACE_TRANSFER_DISPATCHED;
+        saw_completed |=
+            events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED;
+        saw_before |= events[index].kind == SHADOWSPILL_TRACE_BEFORE_TASK;
+        saw_after |= events[index].kind == SHADOWSPILL_TRACE_AFTER_TASK;
+    }
+    failed = failed || events[0].kind != SHADOWSPILL_TRACE_SESSION_BEGIN ||
+        events[summary.event_count - 1U].kind != SHADOWSPILL_TRACE_SESSION_END ||
+        !saw_queued || !saw_reserved || !saw_dispatched || !saw_completed ||
+        !saw_before || !saw_after ||
+        shadowspill_unregister_object(runtime, object.object_id) !=
+            SHADOWSPILL_RUNTIME_OK;
+    if (failed) {
+        fprintf(
+            stderr,
+            "runtime trace events=%llu allocations=%llu overflow=%u/%u\n",
+            (unsigned long long)summary.event_count,
+            (unsigned long long)summary.allocation_event_count,
+            (unsigned int)summary.event_overflow,
+            (unsigned int)summary.allocation_event_overflow
+        );
+    }
+    destroy_runtime(mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     return ordered_task_capture() == 0 &&
         same_stream_retirement_is_task_batched() == 0 &&
         queued_transfers_survive_retirement_only_task() == 0 &&
         all_completed_retirements_precede_action_admission() == 0 &&
+        bounded_runtime_trace_is_opt_in() == 0 &&
         overflow_is_failure() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;

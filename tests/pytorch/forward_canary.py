@@ -60,6 +60,13 @@ def main() -> int:
         )
         if len(planned.plan_report.execution_plan.program.tasks) != 3:
             raise AssertionError("automatic partition did not retain three stages")
+        plan_diagnostics = planned.plan_report.diagnostics
+        if (
+            plan_diagnostics.measured_wall_time_ns
+            + plan_diagnostics.unattributed_overhead_ns
+            != plan_diagnostics.total_wall_time_ns
+        ):
+            raise AssertionError("plan diagnostic wall time does not reconcile")
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("planning replaced a Parameter object")
         if (

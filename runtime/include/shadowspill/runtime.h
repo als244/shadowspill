@@ -15,7 +15,8 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 7U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 8U
+#define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -64,6 +65,22 @@ typedef enum ShadowSpillAllocationCategory {
     SHADOWSPILL_ALLOCATION_PLANNED_OBJECT = 1,
     SHADOWSPILL_ALLOCATION_CALLER_OWNED = 2,
 } ShadowSpillAllocationCategory;
+
+typedef enum ShadowSpillTraceEventKind {
+    SHADOWSPILL_TRACE_SESSION_BEGIN = 0,
+    SHADOWSPILL_TRACE_SESSION_END = 1,
+    SHADOWSPILL_TRACE_BEFORE_TASK = 2,
+    SHADOWSPILL_TRACE_AFTER_TASK = 3,
+    SHADOWSPILL_TRACE_READINESS_WAIT = 4,
+    SHADOWSPILL_TRACE_ACTION_QUEUED = 5,
+    SHADOWSPILL_TRACE_DESTINATION_RESERVED = 6,
+    SHADOWSPILL_TRACE_TRANSFER_DISPATCHED = 7,
+    SHADOWSPILL_TRACE_TRANSFER_COMPLETED = 8,
+    SHADOWSPILL_TRACE_ALLOCATION_WAIT_BEGIN = 9,
+    SHADOWSPILL_TRACE_ALLOCATION_WAIT_END = 10,
+    SHADOWSPILL_TRACE_RETIREMENT_COMPLETED = 11,
+    SHADOWSPILL_TRACE_FAILURE_LATCHED = 12,
+} ShadowSpillTraceEventKind;
 
 typedef struct ShadowSpillRuntimeConfig {
     uint32_t abi_version;
@@ -119,6 +136,44 @@ typedef struct ShadowSpillAllocationEvent {
     uint8_t kind;
     uint8_t category;
 } ShadowSpillAllocationEvent;
+
+typedef struct ShadowSpillTraceConfig {
+    uint32_t abi_version;
+    uint64_t event_capacity;
+    uint64_t allocation_event_capacity;
+} ShadowSpillTraceConfig;
+
+/*
+ * One host-clock observation emitted by the neutral runtime. ``detail_0`` and
+ * ``detail_1`` have event-specific meanings documented in runtime.md. IDs use
+ * SHADOWSPILL_RUNTIME_NO_ID when they do not apply.
+ */
+typedef struct ShadowSpillTraceEvent {
+    uint64_t sequence;
+    uint64_t timestamp_ns;
+    uint64_t step_id;
+    uint64_t task_id;
+    uint64_t object_id;
+    uint64_t allocation_id;
+    uint64_t bytes;
+    uint64_t detail_0;
+    uint64_t detail_1;
+    uint8_t kind;
+} ShadowSpillTraceEvent;
+
+typedef struct ShadowSpillTraceSummary {
+    uint32_t abi_version;
+    uint64_t step_id;
+    uint64_t event_count;
+    uint64_t allocation_event_count;
+    uint64_t event_capacity;
+    uint64_t allocation_event_capacity;
+    uint64_t begin_timestamp_ns;
+    uint64_t end_timestamp_ns;
+    uint8_t active;
+    uint8_t event_overflow;
+    uint8_t allocation_event_overflow;
+} ShadowSpillTraceSummary;
 
 typedef struct ShadowSpillRuntimeStatistics {
     uint64_t slab_bytes;
@@ -376,6 +431,44 @@ shadowspill_allocation_telemetry_read(
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
     uint64_t *count
+);
+
+/*
+ * Planning-only allocation of reusable trace buffers. Calling this does not
+ * enable tracing. Growth is rejected while a trace or allocation-profile
+ * session is active; no trace buffer grows from a runtime hot path.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_trace_prepare(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTraceConfig *config
+);
+
+/* Begins one prepared trace and its allocation-lifetime capture. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_trace_begin(
+    ShadowSpillRuntime *runtime,
+    uint64_t step_id
+);
+
+/*
+ * Stops appending without synchronizing a stream or worker. Callers establish
+ * their required completion boundary before ending the trace.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_trace_end(
+    ShadowSpillRuntime *runtime
+);
+
+/*
+ * Copies one stopped trace into caller-owned arrays. NULL arrays with zero
+ * capacities query the required counts through summary. No runtime pointer or
+ * backend handle escapes.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_trace_read(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTraceSummary *summary,
+    ShadowSpillTraceEvent *events,
+    uint64_t event_capacity,
+    ShadowSpillAllocationEvent *allocation_events,
+    uint64_t allocation_event_capacity
 );
 
 /* Explicitly synchronizing test/checkpoint helper; returns first failure. */

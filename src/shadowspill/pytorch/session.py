@@ -29,6 +29,7 @@ from ._allocator import (
     installed_allocator,
     resize_host_arena,
 )
+from ._plan_diagnostics import forward_stage_inventory
 from .aot import capture_forward
 from .compiler import CudaTaskProfiler, profile_environment
 from .contracts import PlanningError
@@ -39,7 +40,14 @@ from .lowering import lower_forward_program
 from .materialization import MaterializedForwardState, representative_cpu_inputs
 from .partition import capture_forward_stages, partition_export
 from .profiling import ProfileCache, profile_unique_artifacts
-from .public import PlannedForward, PlanReport
+from .public import (
+    PlanDiagnostics,
+    PlannedForward,
+    PlanPhaseTiming,
+    PlanReport,
+    PlanTaskStage,
+    PlanUniqueStage,
+)
 from .runtime_bridge import RuntimeBridge
 from .spatial_admission import (
     output_bindings_for_entrypoints,
@@ -237,6 +245,12 @@ def build_forward(
             )
         with timer.measure("physical_sealing"):
             _seal_physical_budget(installed, execution_plan)
+        with timer.measure("diagnostic_inventory"):
+            task_stage_map, unique_stages = forward_stage_inventory(
+                lowered,
+                execution_plan,
+                measurements,
+            )
         with timer.measure("callable_construction"):
             executor = ForwardExecutor(
                 partitioned,
@@ -248,16 +262,20 @@ def build_forward(
                 capture.user_output_indices,
                 output_tree_spec,
             )
-            report = _forward_report(
-                signature.digest,
-                execution_plan,
-                profiles,
-                tuple(timer.values),
-                started,
-                recomputation_cache_hit=cached_selection.cache_hit,
-                pressurefit_results=(selected,),
-            )
-            return PlannedForward(model, signature, executor, state, report)
+        report = _forward_report(
+            signature.digest,
+            execution_plan,
+            profiles,
+            tuple(timer.values),
+            started,
+            recomputation_cache_hit=cached_selection.cache_hit,
+            pressurefit_results=(selected,),
+            captured_stage_count=len(partitioned.stages),
+            aot_unique_stage_abis=profiles.unique_keys,
+            task_stage_map=task_stage_map,
+            unique_stages=unique_stages,
+        )
+        return PlannedForward(model, signature, executor, state, report)
     except BaseException:
         if state is not None:
             state.restore_cpu_and_unregister()
@@ -457,6 +475,12 @@ def _forward_report(
     *,
     recomputation_cache_hit: bool = False,
     pressurefit_results: tuple[Any, ...] = (),
+    captured_stage_count: int = 0,
+    aot_unique_stage_abis: int = 0,
+    aot_graph_pair_cache_hits: int = 0,
+    aot_graph_pair_cache_misses: int = 0,
+    task_stage_map: tuple[PlanTaskStage, ...] = (),
+    unique_stages: tuple[PlanUniqueStage, ...] = (),
 ) -> PlanReport:
     identity = {
         "mode": "forward",
@@ -474,6 +498,36 @@ def _forward_report(
     }
     actions = execution_plan.schedule.actions
     elapsed = time.perf_counter_ns() - started
+    # Training historically retained the aggregate ``capture_lowering`` timing
+    # as well as its three children for report compatibility. The structured
+    # diagnostic publishes only mutually exclusive leaves.
+    nested_capture = any(name == "objective_export" for name, _ in timings)
+    phases = tuple(
+        PlanPhaseTiming(name, duration)
+        for name, duration in timings
+        if not (nested_capture and name == "capture_lowering")
+    )
+    measured = sum(item.duration_ns for item in phases)
+    if measured > elapsed:
+        raise RuntimeError(
+            "plan phase intervals overlap: measured phase time exceeds wall time"
+        )
+    diagnostics = PlanDiagnostics(
+        phases=phases,
+        total_wall_time_ns=elapsed,
+        unattributed_overhead_ns=elapsed - measured,
+        profile_unique_keys=profiles.unique_keys,
+        profile_cache_hits=profiles.cache_hits,
+        profile_cache_misses=profiles.cache_misses,
+        captured_stage_count=captured_stage_count,
+        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
+        aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        recomputation_cache_hits=int(recomputation_cache_hit),
+        recomputation_cache_misses=int(not recomputation_cache_hit),
+        task_stage_map=task_stage_map,
+        unique_stages=unique_stages,
+    )
     return PlanReport(
         mode="forward",
         capture_identity=capture_identity,
@@ -501,6 +555,11 @@ def _forward_report(
         recomputation_cache_misses=int(not recomputation_cache_hit),
         fixed_slab_bytes=profiles.fixed_slab_bytes,
         pressurefit_results=pressurefit_results,
+        captured_stage_count=captured_stage_count,
+        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
+        aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        diagnostics=diagnostics,
     )
 
 

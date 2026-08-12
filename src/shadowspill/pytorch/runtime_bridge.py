@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -12,10 +13,19 @@ from shadowspill.ir import MemoryAction, MemoryActionKind, MutationSpec, Program
 
 from ._abi import (
     AdapterFailure,
+    AdapterStatistics,
     ObjectBinding,
     ObjectSnapshot,
     ObjectUpdate,
     RuntimeAction,
+    TaskHostTiming,
+)
+from ._runtime_trace import (
+    CapturedRuntimeTrace,
+    begin_runtime_trace,
+    end_runtime_trace,
+    prepare_runtime_trace,
+    read_runtime_trace,
 )
 from .contracts import PlanningError
 
@@ -29,6 +39,20 @@ _ACTION_KIND = {
     MemoryActionKind.OFFLOAD: 1,
     MemoryActionKind.PREFETCH: 2,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class TaskHostTimestamps:
+    before_readiness_waits_ns: int
+    before_task_compute_ns: int
+    after_task_compute_ns: int
+    before_readiness_waits_sequence: int
+    before_task_compute_sequence: int
+    after_task_compute_sequence: int
+    before_task_enter_ns: int
+    before_task_exit_ns: int
+    after_task_enter_ns: int
+    after_task_exit_ns: int
 
 
 def _dense_id(value: str, prefix: str) -> int:
@@ -52,6 +76,89 @@ class RuntimeBridge:
             item.alias_group_id: item.size_bytes for item in program.alias_groups
         }
         self._registered: set[str] = set()
+        self._debug_task_timing_capacity = 0
+
+    def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
+        """Enable optional compute-stream host callbacks for selected tasks."""
+
+        dense_ids = tuple(_dense_id(task_id, "task_") for task_id in task_ids)
+        capacity = max(dense_ids, default=-1) + 1
+        if capacity <= 0:
+            raise RuntimeExecutionError("debug task timing requires a task")
+        self._require(
+            self.library.shadowspill_pytorch_debug_task_timing_enable(capacity),
+            "enable debug task timing",
+        )
+        self._debug_task_timing_capacity = capacity
+
+    def read_debug_task_timing(
+        self,
+    ) -> dict[str, TaskHostTimestamps]:
+        """Read host-callback timestamps after the compute stream is idle."""
+
+        capacity = self._debug_task_timing_capacity
+        if capacity <= 0:
+            return {}
+        records = (TaskHostTiming * capacity)()
+        count = ctypes.c_uint32()
+        self._require(
+            self.library.shadowspill_pytorch_debug_task_timing_read(
+                records, capacity, ctypes.byref(count)
+            ),
+            "read debug task timing",
+        )
+        return {
+            f"task_{int(item.task_id):06d}": TaskHostTimestamps(
+                before_readiness_waits_ns=int(item.before_readiness_waits_timestamp_ns),
+                before_task_compute_ns=int(item.before_task_compute_timestamp_ns),
+                after_task_compute_ns=int(item.after_task_compute_timestamp_ns),
+                before_readiness_waits_sequence=int(
+                    item.before_readiness_waits_sequence
+                ),
+                before_task_compute_sequence=int(item.before_task_compute_sequence),
+                after_task_compute_sequence=int(item.after_task_compute_sequence),
+                before_task_enter_ns=int(item.before_task_enter_timestamp_ns),
+                before_task_exit_ns=int(item.before_task_exit_timestamp_ns),
+                after_task_enter_ns=int(item.after_task_enter_timestamp_ns),
+                after_task_exit_ns=int(item.after_task_exit_timestamp_ns),
+            )
+            for item in records[: count.value]
+        }
+
+    def disable_debug_task_timing(self) -> None:
+        if self._debug_task_timing_capacity <= 0:
+            return
+        self._require(
+            self.library.shadowspill_pytorch_debug_task_timing_disable(),
+            "disable debug task timing",
+        )
+        self._debug_task_timing_capacity = 0
+
+    def prepare_runtime_trace(
+        self, *, event_capacity: int, allocation_event_capacity: int
+    ) -> None:
+        """Allocate reusable bounded CPU trace buffers without enabling trace."""
+
+        prepare_runtime_trace(
+            self.library,
+            event_capacity=event_capacity,
+            allocation_event_capacity=allocation_event_capacity,
+        )
+
+    def begin_runtime_trace(self, *, step_id: int) -> None:
+        begin_runtime_trace(self.library, step_id=step_id)
+
+    def end_and_read_runtime_trace(self) -> CapturedRuntimeTrace:
+        end_runtime_trace(self.library)
+        return read_runtime_trace(self.library)
+
+    def statistics(self) -> AdapterStatistics:
+        result = AdapterStatistics()
+        self._require(
+            self.library.shadowspill_pytorch_allocator_statistics(ctypes.byref(result)),
+            "read runtime statistics",
+        )
+        return result
 
     def alias_for_object(self, object_id: str) -> str:
         try:

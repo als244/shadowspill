@@ -21,6 +21,10 @@ from shadowspill.pytorch._abi import (
     RuntimeAction,
     RuntimeFailure,
     RuntimeStatistics,
+    TaskHostTiming,
+    TraceConfig,
+    TraceEvent,
+    TraceSummary,
     configure_adapter_library,
 )
 from shadowspill.pytorch._allocator import (
@@ -47,10 +51,17 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
+    shadowspill_pytorch_debug_task_timing_enable = _Function()
+    shadowspill_pytorch_debug_task_timing_read = _Function()
+    shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_resize_host_arena = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
+    shadowspill_pytorch_trace_prepare = _Function()
+    shadowspill_pytorch_trace_begin = _Function()
+    shadowspill_pytorch_trace_end = _Function()
+    shadowspill_pytorch_trace_read = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_register_host_object = _Function()
     shadowspill_pytorch_write_host_object = _Function()
@@ -67,7 +78,7 @@ class _Library:
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 40
-    assert ctypes.sizeof(AdapterCapabilities) == 16
+    assert ctypes.sizeof(AdapterCapabilities) == 20
     assert ctypes.sizeof(RuntimeStatistics) == 24 * 8
     assert ctypes.sizeof(AllocationEvent) == 64
     assert ctypes.sizeof(Allocation) == 40
@@ -81,6 +92,10 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectSnapshot) == 88
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32
+    assert ctypes.sizeof(TaskHostTiming) == 88
+    assert ctypes.sizeof(TraceConfig) == 24
+    assert ctypes.sizeof(TraceEvent) == 80
+    assert ctypes.sizeof(TraceSummary) == 72
 
 
 def test_adapter_signatures_are_configured_together() -> None:
@@ -108,6 +123,15 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_debug_task_timing_enable.argtypes == [
+        ctypes.c_uint32
+    ]
+    assert library.shadowspill_pytorch_debug_task_timing_read.argtypes == [
+        ctypes.POINTER(TaskHostTiming),
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    assert library.shadowspill_pytorch_debug_task_timing_disable.argtypes == []
     assert library.shadowspill_pytorch_resize_host_arena.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
         ctypes.c_uint64
@@ -117,6 +141,18 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AllocationEvent),
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint64),
+    ]
+    assert library.shadowspill_pytorch_trace_prepare.argtypes == [
+        ctypes.POINTER(TraceConfig)
+    ]
+    assert library.shadowspill_pytorch_trace_begin.argtypes == [ctypes.c_uint64]
+    assert library.shadowspill_pytorch_trace_end.argtypes == []
+    assert library.shadowspill_pytorch_trace_read.argtypes == [
+        ctypes.POINTER(TraceSummary),
+        ctypes.POINTER(TraceEvent),
+        ctypes.c_uint64,
+        ctypes.POINTER(AllocationEvent),
+        ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
         ctypes.c_uint64,

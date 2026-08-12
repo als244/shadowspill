@@ -5,8 +5,9 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 12
-RUNTIME_ABI_VERSION: Final = 7
+ADAPTER_ABI_VERSION: Final = 14
+RUNTIME_ABI_VERSION: Final = 8
+TRACE_ABI_VERSION: Final = 1
 
 
 class AdapterConfig(ctypes.Structure):
@@ -52,6 +53,24 @@ class AdapterCapabilities(ctypes.Structure):
         ("slab_memory_strategy", ctypes.c_uint8),
         ("record_stream_callback", ctypes.c_uint8),
         ("storage_rebinding", ctypes.c_uint8),
+        ("debug_task_host_timing", ctypes.c_uint8),
+        ("runtime_trace", ctypes.c_uint8),
+    ]
+
+
+class TaskHostTiming(ctypes.Structure):
+    _fields_ = [
+        ("task_id", ctypes.c_uint64),
+        ("before_readiness_waits_timestamp_ns", ctypes.c_uint64),
+        ("before_task_compute_timestamp_ns", ctypes.c_uint64),
+        ("after_task_compute_timestamp_ns", ctypes.c_uint64),
+        ("before_readiness_waits_sequence", ctypes.c_uint64),
+        ("before_task_compute_sequence", ctypes.c_uint64),
+        ("after_task_compute_sequence", ctypes.c_uint64),
+        ("before_task_enter_timestamp_ns", ctypes.c_uint64),
+        ("before_task_exit_timestamp_ns", ctypes.c_uint64),
+        ("after_task_enter_timestamp_ns", ctypes.c_uint64),
+        ("after_task_exit_timestamp_ns", ctypes.c_uint64),
     ]
 
 
@@ -95,6 +114,45 @@ class AllocationEvent(ctypes.Structure):
         ("slab_offset", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
         ("category", ctypes.c_uint8),
+    ]
+
+
+class TraceConfig(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("event_capacity", ctypes.c_uint64),
+        ("allocation_event_capacity", ctypes.c_uint64),
+    ]
+
+
+class TraceEvent(ctypes.Structure):
+    _fields_ = [
+        ("sequence", ctypes.c_uint64),
+        ("timestamp_ns", ctypes.c_uint64),
+        ("step_id", ctypes.c_uint64),
+        ("task_id", ctypes.c_uint64),
+        ("object_id", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("bytes", ctypes.c_uint64),
+        ("detail_0", ctypes.c_uint64),
+        ("detail_1", ctypes.c_uint64),
+        ("kind", ctypes.c_uint8),
+    ]
+
+
+class TraceSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("step_id", ctypes.c_uint64),
+        ("event_count", ctypes.c_uint64),
+        ("allocation_event_count", ctypes.c_uint64),
+        ("event_capacity", ctypes.c_uint64),
+        ("allocation_event_capacity", ctypes.c_uint64),
+        ("begin_timestamp_ns", ctypes.c_uint64),
+        ("end_timestamp_ns", ctypes.c_uint64),
+        ("active", ctypes.c_uint8),
+        ("event_overflow", ctypes.c_uint8),
+        ("allocation_event_overflow", ctypes.c_uint8),
     ]
 
 
@@ -253,6 +311,16 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_allocator_failure.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocator_wait_idle.argtypes = []
     library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_debug_task_timing_enable.argtypes = [ctypes.c_uint32]
+    library.shadowspill_pytorch_debug_task_timing_enable.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_debug_task_timing_read.argtypes = [
+        ctypes.POINTER(TaskHostTiming),
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    library.shadowspill_pytorch_debug_task_timing_read.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_debug_task_timing_disable.argtypes = []
+    library.shadowspill_pytorch_debug_task_timing_disable.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocation_telemetry_start.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_allocation_telemetry_start.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocation_telemetry_stop.argtypes = []
@@ -263,6 +331,20 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(ctypes.c_uint64),
     ]
     library.shadowspill_pytorch_allocation_telemetry_read.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_trace_prepare.argtypes = [ctypes.POINTER(TraceConfig)]
+    library.shadowspill_pytorch_trace_prepare.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_trace_begin.argtypes = [ctypes.c_uint64]
+    library.shadowspill_pytorch_trace_begin.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_trace_end.argtypes = []
+    library.shadowspill_pytorch_trace_end.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_trace_read.argtypes = [
+        ctypes.POINTER(TraceSummary),
+        ctypes.POINTER(TraceEvent),
+        ctypes.c_uint64,
+        ctypes.POINTER(AllocationEvent),
+        ctypes.c_uint64,
+    ]
+    library.shadowspill_pytorch_trace_read.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocation_for_pointer.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),

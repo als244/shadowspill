@@ -17,6 +17,7 @@ from shadowspill.planner._cache import PressureFitCache
 from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
+from ._plan_diagnostics import training_stage_inventory
 from .aot import capture_training_objective
 from .compiler import CudaTaskProfiler, profile_environment
 from .contracts import ObjectiveResult, PlanningError
@@ -26,7 +27,13 @@ from .materialization import representative_cpu_inputs
 from .optimizer import OptimizerTaskArtifact, capture_optimizer
 from .partition import _TrainingGraphPairCache, partition_training_capture
 from .profiling import ProfileCache, profile_unique_artifacts
-from .public import PlannedTrainStep, PlanReport
+from .public import (
+    PlanDiagnostics,
+    PlannedTrainStep,
+    PlanReport,
+    PlanTaskStage,
+    PlanUniqueStage,
+)
 from .runtime_bridge import RuntimeBridge
 from .session import (
     _ensure_allocator,
@@ -65,7 +72,13 @@ def build_training(
     started = time.perf_counter_ns()
     timer = _PhaseTimer()
     with timer.measure("validation"):
-        _validate_training_request(model, objective, opt, device_budget, host_budget)
+        _validate_training_request(
+            model,
+            objective,
+            opt,
+            device_budget,
+            host_budget,
+        )
         signatures = capture_training_signatures(example_inputs)
         cpu_inputs = tuple(
             tuple(representative_cpu_inputs(microbatch))
@@ -326,6 +339,13 @@ def build_training(
             )
         with timer.measure("physical_sealing"):
             _seal_physical_budget(installed, recurrent_plan)
+        with timer.measure("diagnostic_inventory"):
+            task_stage_map, unique_stages = training_stage_inventory(
+                partitioned_captures,
+                recurrent_lowered,
+                recurrent_plan,
+                measurements,
+            )
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
                 None if initial_plan is None else (initial_lowered, initial_plan),
@@ -339,39 +359,42 @@ def build_training(
                 ),
                 optimizer_state_was_lazy=bool(optimizer_capture.created_state_names),
             )
-            report = _training_report(
-                tuple(signature.digest for signature in signatures),
-                recurrent_plan,
-                profiles,
-                tuple(timer.values),
-                started,
-                initial_execution_plan=initial_plan,
-                recomputation_cache_hits=(
-                    int(recurrent_cached.cache_hit)
-                    + (0 if initial_cached is None else int(initial_cached.cache_hit))
-                ),
-                recomputation_cache_misses=(
-                    int(not recurrent_cached.cache_hit)
-                    + (
-                        0
-                        if initial_cached is None
-                        else int(not initial_cached.cache_hit)
-                    )
-                ),
-                captured_stage_count=sum(
-                    len(capture.stages) for capture in partitioned_captures
-                ),
-                aot_graph_pair_cache_hits=graph_pair_cache.hits,
-                aot_graph_pair_cache_misses=graph_pair_cache.misses,
-                pressurefit_results=tuple(
-                    item
-                    for item in (initial_selected, recurrent_selected)
-                    if item is not None
-                ),
-            )
-            return PlannedTrainStep(
-                model, signatures, executor, state, optimizer, report
-            )
+        report = _training_report(
+            tuple(signature.digest for signature in signatures),
+            recurrent_plan,
+            profiles,
+            tuple(timer.values),
+            started,
+            initial_execution_plan=initial_plan,
+            recomputation_cache_hits=(
+                int(recurrent_cached.cache_hit)
+                + (0 if initial_cached is None else int(initial_cached.cache_hit))
+            ),
+            recomputation_cache_misses=(
+                int(not recurrent_cached.cache_hit)
+                + (0 if initial_cached is None else int(not initial_cached.cache_hit))
+            ),
+            captured_stage_count=sum(
+                len(capture.stages) for capture in partitioned_captures
+            ),
+            aot_graph_pair_cache_hits=graph_pair_cache.hits,
+            aot_graph_pair_cache_misses=graph_pair_cache.misses,
+            pressurefit_results=tuple(
+                item
+                for item in (initial_selected, recurrent_selected)
+                if item is not None
+            ),
+            task_stage_map=task_stage_map,
+            unique_stages=unique_stages,
+        )
+        return PlannedTrainStep(
+            model,
+            signatures,
+            executor,
+            state,
+            optimizer,
+            report,
+        )
     except BaseException:
         if state is not None:
             for parameter in model.parameters():
@@ -468,6 +491,8 @@ def _training_report(
     aot_graph_pair_cache_hits: int = 0,
     aot_graph_pair_cache_misses: int = 0,
     pressurefit_results: tuple[Any, ...] = (),
+    task_stage_map: tuple[PlanTaskStage, ...] = (),
+    unique_stages: tuple[PlanUniqueStage, ...] = (),
 ) -> PlanReport:
     identity = {
         "mode": "training",
@@ -478,7 +503,34 @@ def _training_report(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     # The report construction is identical to forward apart from capture identity.
-    report = _forward_report(digest, execution_plan, profiles, timings, started)
+    report = _forward_report(
+        digest,
+        execution_plan,
+        profiles,
+        timings,
+        started,
+        captured_stage_count=captured_stage_count,
+        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
+        aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+    )
+    base_diagnostics = report.diagnostics
+    diagnostics = PlanDiagnostics(
+        phases=base_diagnostics.phases,
+        total_wall_time_ns=base_diagnostics.total_wall_time_ns,
+        unattributed_overhead_ns=base_diagnostics.unattributed_overhead_ns,
+        profile_unique_keys=base_diagnostics.profile_unique_keys,
+        profile_cache_hits=base_diagnostics.profile_cache_hits,
+        profile_cache_misses=base_diagnostics.profile_cache_misses,
+        captured_stage_count=captured_stage_count,
+        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
+        aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        recomputation_cache_hits=recomputation_cache_hits,
+        recomputation_cache_misses=recomputation_cache_misses,
+        task_stage_map=task_stage_map,
+        unique_stages=unique_stages,
+    )
     return PlanReport(
         mode="training",
         capture_identity=digest,
@@ -501,6 +553,7 @@ def _training_report(
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         pressurefit_results=pressurefit_results,
+        diagnostics=diagnostics,
     )
 
 

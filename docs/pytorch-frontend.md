@@ -37,6 +37,77 @@ forward, objective, backward, and gradient-accumulation tasks followed by one
 optimizer update. It preserves the original model and optimizer checkpoint
 schema and restores CPU storage on deterministic close.
 
+## Planning and execution diagnostics
+
+Every successful `plan()` and `forward_pass()` returns a callable whose
+`plan_report` is already complete. `plan_report.diagnostics` is mandatory and
+does not require a later synchronization:
+
+```python
+train_step = plan(model, ...)
+
+planning = train_step.plan_report.diagnostics
+selected = planning.task("task_000123")
+print(selected.chosen_graph_pair_variant)
+
+for stage in planning.unique_stages:
+    for pair in stage.graph_pairs:
+        print(pair.variant, pair.forward.runtime_ns)
+```
+
+The planning diagnostic reports mutually exclusive phase intervals and an
+explicit unattributed remainder; their sum equals its recorded total wall
+time. It also reports structural profile and graph-pair cache work, a direct
+task-to-unique-stage map, the candidate and chosen graph-pair variant for every
+task, and every legal graph-pair alternative for each deduplicated stage.
+
+Each forward and backward graph profile contains its calibrated runtime and
+samples; input, mutation, and output object/alias identities and byte sizes;
+logical and allocation-byte totals; anonymous workspace requested/charged
+peaks and live extent multiset; persistent provider extents; and the complete
+task-local allocation/free timeline. These records are deterministic logical
+evidence and contain no framework pointer or CUDA handle.
+
+Detailed real-step tracing is separate and opt-in. An individual call requests
+a trace without changing the normal behavior of other calls:
+
+```python
+result = train_step(microbatches, trace=True)  # trace=False by default
+# Explicitly synchronizing: waits for callbacks/events and copies trace data.
+step_diagnostics = result.diagnostics.result()
+```
+
+`StepResult` construction remains asynchronous. Starting another call before
+resolving the preceding traced result is rejected because the bounded trace
+buffers cannot be reused safely. The first `trace=True` call prepares bounded
+CPU trace buffers and timing events before `trace_begin`; diagnostics report
+that one-time setup separately, and later traces reuse the buffers. Untraced
+calls allocate no trace resources. Each task record includes its expected
+profiled wall time, a CUDA-event duration cross-check, allocator/transfer
+evidence, and exactly seven `CLOCK_MONOTONIC` boundary timestamps:
+
+1. host `before_task.enter`;
+2. host `before_task.exit`;
+3. host `after_task.enter`;
+4. host `after_task.exit`;
+5. compute-stream `before_readiness_waits`;
+6. compute-stream `before_task_compute`;
+7. compute-stream `after_task_compute`.
+
+The three stream-ordered timestamps use minimal `cuLaunchHostFunc` callbacks.
+They are a debug facility and can perturb fine-grained schedules, so the trace
+also retains CUDA-event measurements and must report its overhead against an
+untraced control during performance qualification.
+
+`StepDiagnostics` is organized into `timing`, `tasks`, `allocator`,
+`transfers`, `runtime`, and `simulator_comparison`. The runtime section carries
+the complete ordered neutral-C event stream and overflow/capacity summary. The
+transfer section provides the schedule actions, completed byte/count deltas,
+and a filtered queue/reservation/dispatch/completion view. Allocation records
+remain a separate lifetime ledger. Resolving diagnostics drains the progress
+service so terminal transfers are included; this synchronization happens only
+because the caller explicitly requested and resolved a trace.
+
 ## Fixed input contract
 
 `TensorSpec` describes storage-free shape, stride, dtype, layout, and gradient

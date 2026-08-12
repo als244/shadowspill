@@ -51,6 +51,16 @@ void shadowspill_latch_failure_locked(
         .largest_free_range_bytes =
             shadowspill_range_largest_free(&runtime->device_ranges),
     };
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_FAILURE_LATCHED,
+        shadowspill_current_task_id(runtime),
+        object_id,
+        allocation_id,
+        requested_bytes,
+        (uint64_t)status,
+        runtime->failure.free_bytes
+    );
     pthread_cond_broadcast(&runtime->condition);
 }
 

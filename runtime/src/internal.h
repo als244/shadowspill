@@ -160,6 +160,17 @@ struct ShadowSpillRuntime {
     uint64_t next_allocation_event_sequence;
     int allocation_telemetry_active;
     int allocation_event_overflow;
+    ShadowSpillTraceEvent *trace_events;
+    uint64_t trace_event_count;
+    uint64_t trace_event_capacity;
+    uint64_t next_trace_event_sequence;
+    uint64_t trace_step_id;
+    uint64_t trace_begin_timestamp_ns;
+    uint64_t trace_end_timestamp_ns;
+    uint64_t trace_allocation_event_capacity;
+    int trace_prepared;
+    int trace_active;
+    int trace_event_overflow;
     ShadowSpillRuntimeFailure failure;
 };
 
@@ -269,6 +280,16 @@ void shadowspill_append_allocation_event_locked(
     const ShadowSpillAllocationRecord *allocation,
     ShadowSpillAllocationEventKind kind,
     ShadowSpillAllocationCategory category
+);
+void shadowspill_append_trace_event_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTraceEventKind kind,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t bytes,
+    uint64_t detail_0,
+    uint64_t detail_1
 );
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 void *shadowspill_progress_main(void *pointer);

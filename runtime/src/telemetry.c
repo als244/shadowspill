@@ -52,13 +52,15 @@ void shadowspill_append_allocation_event_locked(
     if (runtime->allocation_event_count >=
         runtime->allocation_event_capacity) {
         runtime->allocation_event_overflow = 1;
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            allocation->allocation_id,
-            allocation->requested_bytes
-        );
+        if (!runtime->trace_active) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                allocation->allocation_id,
+                allocation->requested_bytes
+            );
+        }
         return;
     }
     uint64_t task_id = shadowspill_current_task_id(runtime);
@@ -91,23 +93,36 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_start(
         capacity > SIZE_MAX / sizeof(ShadowSpillAllocationEvent)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillAllocationEvent *events = calloc(
-        (size_t)capacity, sizeof(*events)
-    );
-    if (events == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     if (status == SHADOWSPILL_RUNTIME_OK &&
         runtime->allocation_telemetry_active) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
+    const int needs_growth = status == SHADOWSPILL_RUNTIME_OK &&
+        runtime->allocation_event_capacity < capacity;
+    pthread_mutex_unlock(&runtime->mutex);
+    ShadowSpillAllocationEvent *events = NULL;
+    if (needs_growth) {
+        events = calloc((size_t)capacity, sizeof(*events));
+        if (events == NULL) {
+            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        }
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    status = shadowspill_current_status_locked(runtime);
+    if (status == SHADOWSPILL_RUNTIME_OK &&
+        runtime->allocation_telemetry_active) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     if (status == SHADOWSPILL_RUNTIME_OK) {
-        free(runtime->allocation_events);
-        runtime->allocation_events = events;
+        if (events != NULL && runtime->allocation_event_capacity < capacity) {
+            free(runtime->allocation_events);
+            runtime->allocation_events = events;
+            runtime->allocation_event_capacity = capacity;
+            events = NULL;
+        }
         runtime->allocation_event_count = 0U;
-        runtime->allocation_event_capacity = capacity;
         runtime->next_allocation_event_sequence = 0U;
         runtime->allocation_event_overflow = 0;
         runtime->allocation_telemetry_active = 1;

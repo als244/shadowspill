@@ -110,6 +110,7 @@ add_library(
   runtime/src/runtime.c
   runtime/src/status.c
   runtime/src/telemetry.c
+  runtime/src/trace.c
 )
 target_include_directories(
   shadowspill_runtime

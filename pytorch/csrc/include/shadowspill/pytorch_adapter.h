@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 12U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 14U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -48,7 +48,29 @@ typedef struct ShadowSpillPytorchAdapterCapabilities {
     uint8_t slab_memory_strategy;
     uint8_t record_stream_callback;
     uint8_t storage_rebinding;
+    uint8_t debug_task_host_timing;
+    uint8_t runtime_trace;
 } ShadowSpillPytorchAdapterCapabilities;
+
+/*
+ * Optional debug timestamps written by cuLaunchHostFunc callbacks on the
+ * PyTorch compute stream. Timestamps use CLOCK_MONOTONIC and callbacks perform
+ * no CUDA calls, allocation, locking, or Python interaction. Enabling this
+ * facility can perturb stream execution and is for qualification only.
+ */
+typedef struct ShadowSpillPytorchTaskHostTiming {
+    uint64_t task_id;
+    uint64_t before_readiness_waits_timestamp_ns;
+    uint64_t before_task_compute_timestamp_ns;
+    uint64_t after_task_compute_timestamp_ns;
+    uint64_t before_readiness_waits_sequence;
+    uint64_t before_task_compute_sequence;
+    uint64_t after_task_compute_sequence;
+    uint64_t before_task_enter_timestamp_ns;
+    uint64_t before_task_exit_timestamp_ns;
+    uint64_t after_task_enter_timestamp_ns;
+    uint64_t after_task_exit_timestamp_ns;
+} ShadowSpillPytorchTaskHostTiming;
 
 typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t allocation_callbacks;
@@ -147,6 +169,29 @@ shadowspill_pytorch_allocation_telemetry_read(
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
     uint64_t *count
+);
+
+/*
+ * Optional bounded runtime tracing. Preparation allocates reusable CPU-side
+ * buffers but does not enable tracing. Begin/end are per-step operations;
+ * callers establish the desired completion boundary before ending a trace.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_trace_prepare(const ShadowSpillTraceConfig *config);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_trace_begin(uint64_t step_id);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_trace_end(void);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_trace_read(
+    ShadowSpillTraceSummary *summary,
+    ShadowSpillTraceEvent *events,
+    uint64_t event_capacity,
+    ShadowSpillAllocationEvent *allocation_events,
+    uint64_t allocation_event_capacity
 );
 
 /* Read-only exact pointer lookup used to classify profiled task outputs. */
@@ -256,6 +301,22 @@ shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
 );
+
+/* Allocate/reset pre-sized callback records before a measured invocation. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_debug_task_timing_enable(uint32_t task_capacity);
+
+/* Read completed records after synchronizing the measured compute stream. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_debug_task_timing_read(
+    ShadowSpillPytorchTaskHostTiming *records,
+    uint32_t record_capacity,
+    uint32_t *record_count
+);
+
+/* Disable and release records; rejected while a callback remains in flight. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_debug_task_timing_disable(void);
 
 /* Closes a task NVTX range when frontend execution raises before after_task. */
 SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_abort_task_range(void);

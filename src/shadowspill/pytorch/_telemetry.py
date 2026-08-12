@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -114,8 +114,16 @@ def read_allocation_telemetry(library: Any) -> tuple[CapturedAllocationEvent, ..
         raise AllocationTelemetryError(
             "allocation telemetry changed or failed during its bounded copy"
         )
+    return decode_allocation_events(buffer)
+
+
+def decode_allocation_events(
+    events: Iterable[CAllocationEvent],
+) -> tuple[CapturedAllocationEvent, ...]:
+    """Decode one caller-owned sequence of native allocation records."""
+
     decoded: list[CapturedAllocationEvent] = []
-    for expected_sequence, event in enumerate(buffer):
+    for expected_sequence, event in enumerate(events):
         if event.sequence != expected_sequence:
             raise AllocationTelemetryError(
                 "allocation telemetry sequence is not contiguous"

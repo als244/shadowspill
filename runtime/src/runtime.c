@@ -101,6 +101,10 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     runtime->allocation_events = NULL;
     runtime->allocation_event_count = 0U;
     runtime->allocation_event_capacity = 0U;
+    free(runtime->trace_events);
+    runtime->trace_events = NULL;
+    runtime->trace_event_count = 0U;
+    runtime->trace_event_capacity = 0U;
     shadowspill_range_destroy(&runtime->device_ranges);
     shadowspill_range_destroy(&runtime->host_ranges);
     if (runtime->h2d_stream_created) {

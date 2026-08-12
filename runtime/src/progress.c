@@ -89,6 +89,16 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
             continue;
         }
         destroy_retirement_events_locked(runtime, allocation);
+        shadowspill_append_trace_event_locked(
+            runtime,
+            SHADOWSPILL_TRACE_RETIREMENT_COMPLETED,
+            allocation->release_task_id,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            allocation->allocation_id,
+            allocation->requested_bytes,
+            allocation->offset,
+            allocation->charged_bytes
+        );
         shadowspill_release_allocation_locked(runtime, allocation);
         if (runtime->pending_retirements != 0U) {
             --runtime->pending_retirements;
@@ -209,6 +219,16 @@ static int reserve_destination_locked(
     action->destination_reserved = 1U;
     action->destination_offset = offset;
     action->destination_bytes = charged;
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_DESTINATION_RESERVED,
+        action->task_id,
+        action->object->object_id,
+        action->object->allocation_id,
+        action->object->size_bytes,
+        action->kind,
+        offset
+    );
     pthread_cond_broadcast(&runtime->condition);
     return 1;
 }
@@ -290,6 +310,16 @@ static int dispatch_offload_locked(
     object->residency = SHADOWSPILL_OBJECT_OFFLOADING;
     ++runtime->transfers_to_host;
     runtime->bytes_to_host += object->size_bytes;
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_TRANSFER_DISPATCHED,
+        action->task_id,
+        object->object_id,
+        allocation->allocation_id,
+        object->size_bytes,
+        SHADOWSPILL_TRANSFER_TO_HOST,
+        runtime->queued_actions
+    );
     return 1;
 
 backend_failure:
@@ -397,6 +427,16 @@ static int dispatch_prefetch_locked(
     object->residency = SHADOWSPILL_OBJECT_PREFETCHING;
     ++runtime->transfers_to_device;
     runtime->bytes_to_device += object->size_bytes;
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_TRANSFER_DISPATCHED,
+        action->task_id,
+        object->object_id,
+        allocation->allocation_id,
+        object->size_bytes,
+        SHADOWSPILL_TRANSFER_TO_DEVICE,
+        runtime->queued_actions
+    );
     return 1;
 
 backend_failure:
@@ -533,6 +573,18 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                 return changed;
             }
             if (complete) {
+                shadowspill_append_trace_event_locked(
+                    runtime,
+                    SHADOWSPILL_TRACE_TRANSFER_COMPLETED,
+                    action->task_id,
+                    object->object_id,
+                    object->allocation_id,
+                    object->size_bytes,
+                    action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
+                        ? SHADOWSPILL_TRANSFER_TO_HOST
+                        : SHADOWSPILL_TRANSFER_TO_DEVICE,
+                    runtime->queued_actions
+                );
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
                     ShadowSpillAllocationRecord *allocation =
                         shadowspill_find_allocation(

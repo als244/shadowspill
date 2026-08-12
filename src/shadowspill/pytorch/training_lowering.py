@@ -83,6 +83,7 @@ class TrainingTaskEntrypoint:
     gradient_output_slots: tuple[TensorSlot, ...] = ()
     public_output_count: int = 0
     optimizer_binding_names: tuple[str, ...] = ()
+    stage_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +403,7 @@ def lower_partitioned_training_program(
                         item.forward_inputs,
                         item.forward_outputs,
                         public_output_count=item.public_output_count,
+                        stage_index=stage_index,
                     )
                 )
                 current_ids.append(task_id)
@@ -485,6 +487,7 @@ def lower_partitioned_training_program(
                         item.backward_inputs,
                         (),
                         gradient_output_slots=item.contributions,
+                        stage_index=stage_index,
                     )
                 )
                 all_backward_ids.append(task_id)

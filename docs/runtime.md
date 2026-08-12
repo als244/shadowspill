@@ -74,6 +74,24 @@ retirements, transfer counts and bytes, and inserted wait counts. Allocation
 failure snapshots preserve both total free bytes and largest contiguous range
 so capacity exhaustion is distinguishable from fragmentation.
 
+## Optional trace sessions
+
+The runtime exposes a bounded, reusable diagnostic session independently of
+PyTorch. Tracing is off by default. Preparation allocates CPU record arrays;
+begin resets counters and enables append-only recording; end disables it; read
+copies immutable values to caller-owned storage. No trace API introduces a
+device-wide synchronization. A frontend decides whether it wants compute-only
+evidence or a drained terminal-transfer boundary before calling end.
+
+The trace provides one causal clock for task boundaries, readiness waits,
+action queueing, device-destination reservation, transfer dispatch and
+completion, allocation pressure, stream retirement, and failures. Allocation
+lifetimes are returned in a second ordered ledger. This makes simulator/runtime
+comparison possible without relying on NSYS, while NVTX/NSYS remains the
+authority for kernels and vendor-library activity. Buffer overflow is explicit
+in the result and never causes hidden growth from a progress or allocator hot
+path.
+
 ## Backend contract
 
 `ShadowSpillBackend` is a versioned vtable over conventional device/host
