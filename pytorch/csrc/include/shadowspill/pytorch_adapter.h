@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 17U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 18U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -138,6 +138,12 @@ shadowspill_pytorch_admit_execution(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_resolve_execution(
+    uint64_t task_id,
+    uintptr_t *execution_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_before_execution(
     uint64_t task_id,
     uintptr_t compute_stream_address,
@@ -147,6 +153,22 @@ shadowspill_pytorch_before_execution(
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_after_execution(
+    uint64_t task_id,
+    uintptr_t compute_stream_address
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_before_execution_handle(
+    uintptr_t execution_handle,
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_after_execution_handle(
+    uintptr_t execution_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address
 );

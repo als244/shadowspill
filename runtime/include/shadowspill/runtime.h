@@ -15,11 +15,12 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 10U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 11U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
+typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
 
 /*
  * Runtime instances are thread-safe. Returned pointers are accelerator
@@ -423,6 +424,18 @@ shadowspill_admit_execution(
     const ShadowSpillExecutionDescription *description
 );
 
+/*
+ * Resolves one stable, immutable execution handle on the cold path. The handle
+ * is borrowed from runtime and remains valid until that runtime is destroyed.
+ * It must only be passed back to the runtime that produced it.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_resolve_execution(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    const ShadowSpillExecutionHandle **handle
+);
+
 /* Execute an admitted boundary without resupplying or decoding its topology. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_before_execution(
@@ -437,6 +450,23 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_after_execution(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
+    ShadowSpillBackendStream compute_stream
+);
+
+/* Hot-path equivalents that bypass execution-table lookup and locking. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_before_execution_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionHandle *handle,
+    ShadowSpillBackendStream compute_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_after_execution_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionHandle *handle,
     ShadowSpillBackendStream compute_stream
 );
 

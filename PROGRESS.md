@@ -2033,3 +2033,27 @@ the ignored internal progress log before this tracked summary is updated.
   schedule; no semantic conclusion is drawn from this intermediate run. The
   final repeated control after predecoded task records remains the acceptance
   measurement.
+
+## 2026-08-12 — Predecoded Python records and native execution handles
+
+- Added immutable frontend execution records containing the selected task,
+  semantic execution identity, distinct input aliases, exact ordered actions,
+  compiled callable, and graph-argument template. Repeated execution no longer
+  resolves those fields from task/action dictionaries or recomputes trace
+  identities.
+- Added a versioned neutral-runtime opaque execution handle. It is resolved
+  once after admission, is borrowed until runtime teardown, and points to the
+  immutable record that already retains direct input-object, mutation, and
+  action references. Handle-based `before_execution`/`after_execution` bypass
+  execution-table hashing and its RW lock; ID-based entrypoints remain as
+  compatibility wrappers.
+- Runtime ABI is now 11 and the private PyTorch adapter ABI is 18. A native
+  transition canary executes the same admitted task through both compatibility
+  and direct-handle paths. All 17 native/CUDA/PyTorch canaries pass.
+- Final frozen control
+  `qualification/results/phase1/qwen35_predecoded_execution_control.json`
+  preserves the exact Program/schedule digests, 129 tasks, and 1,415 actions.
+  Selected spans are 310.061, 312.179, and 310.928 ms (310.928-ms median,
+  within the 312.4-ms gate); task sums are 294.188--295.807 ms. Summed
+  before/after frontend boundary work is 27.634 ms versus 29.436 ms before
+  batching/predecoding. The reset-inclusive untraced median is 463.518 ms.

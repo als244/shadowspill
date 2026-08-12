@@ -578,6 +578,7 @@ static int immutable_execution_admission(void) {
         .task_id = execution.task_id,
     };
     ShadowSpillObjectBinding binding = {0};
+    const ShadowSpillExecutionHandle *handle = NULL;
     int failed = shadowspill_register_object(
             fixture.runtime, &description
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
@@ -597,6 +598,15 @@ static int immutable_execution_admission(void) {
         binding.allocation_id != allocation.allocation_id ||
         shadowspill_after_execution(
             fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_resolve_execution(
+            fixture.runtime, execution.task_id, &handle
+        ) != SHADOWSPILL_RUNTIME_OK || handle == NULL ||
+        shadowspill_before_execution_handle(
+            fixture.runtime, handle, fixture.compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || binding.object_id != description.object_id ||
+        binding.allocation_id != allocation.allocation_id ||
+        shadowspill_after_execution_handle(
+            fixture.runtime, handle, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;

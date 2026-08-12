@@ -85,7 +85,7 @@ class RuntimeBridge:
         task: TaskSpec,
         input_alias_ids: tuple[str, ...],
         actions: tuple[MemoryAction, ...],
-    ) -> None:
+    ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
         referenced_aliases = tuple(
@@ -140,6 +140,53 @@ class RuntimeBridge:
             f"admit execution {task.task_id}",
         )
         self._admitted_tasks[task.task_id] = len(input_alias_ids)
+        handle = ctypes.c_size_t()
+        self._require(
+            self.library.shadowspill_pytorch_resolve_execution(
+                _dense_id(task.task_id, "task_"), ctypes.byref(handle)
+            ),
+            f"resolve execution {task.task_id}",
+        )
+        if handle.value == 0:
+            raise RuntimeExecutionError(
+                f"execution {task.task_id} resolved to a null handle"
+            )
+        return int(handle.value)
+
+    def before_execution(
+        self,
+        execution_handle: int,
+        task_id: str,
+        stream: torch.cuda.Stream,
+        input_count: int,
+    ) -> tuple[ObjectBinding, ...]:
+        bindings = (ObjectBinding * input_count)()
+        self._require(
+            self.library.shadowspill_pytorch_before_execution_handle(
+                execution_handle,
+                _dense_id(task_id, "task_"),
+                stream.cuda_stream,
+                bindings if input_count else None,
+                input_count,
+            ),
+            f"before admitted task {task_id}",
+        )
+        return tuple(bindings)
+
+    def after_execution(
+        self,
+        execution_handle: int,
+        task_id: str,
+        stream: torch.cuda.Stream,
+    ) -> None:
+        self._require(
+            self.library.shadowspill_pytorch_after_execution_handle(
+                execution_handle,
+                _dense_id(task_id, "task_"),
+                stream.cuda_stream,
+            ),
+            f"after admitted task {task_id}",
+        )
 
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""

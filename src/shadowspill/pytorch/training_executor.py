@@ -6,7 +6,7 @@ import copy
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -26,18 +26,31 @@ from .training_materialization import TrainingMaterializedState
 
 
 @dataclass(frozen=True, slots=True)
+class _ExecutionTaskRecord:
+    """Immutable, predecoded repeated-path view of one selected task."""
+
+    entrypoint: TrainingTaskEntrypoint
+    task: TaskSpec
+    input_aliases: tuple[str, ...]
+    actions: tuple[MemoryAction, ...]
+    execution_ordinal: int
+    semantic_name: str
+    trace_label: str
+    function: Callable[..., object] | None
+    argument_template: tuple[object, ...] | None
+    native_handle: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class _PlanRun:
     lowered: LoweredTrainingProgram
     plan: ExecutionPlan
-    actions: Mapping[str, tuple[MemoryAction, ...]]
-    tasks: dict[str, TaskSpec]
     expected_task_seconds: Mapping[str, float]
-    entrypoints: tuple[TrainingTaskEntrypoint, ...]
+    execution: tuple[_ExecutionTaskRecord, ...]
     initial_device_aliases: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
     ephemeral_aliases: frozenset[str]
     objects_by_alias: Mapping[str, tuple[str, ...]]
-    input_aliases_by_task: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,11 +403,8 @@ class _ArmedExecutionTiming:
 @dataclass(slots=True)
 class _PreparedTask:
     run: _PlanRun
-    entrypoint: TrainingTaskEntrypoint
-    task: TaskSpec
+    record: _ExecutionTaskRecord
     stream: torch.cuda.Stream
-    input_aliases: tuple[str, ...]
-    trace_label: str
     arguments: Sequence[object]
     function: Callable[..., object] | None
     eager_optimizer: bool
@@ -424,8 +434,8 @@ class TrainingExecutor:
         self._initial = None if initial is None else self._prepare(*initial)
         self._recurrent = self._prepare(*recurrent)
         if self._initial is None:
-            self._admit_run(self._recurrent)
-        self._task_trace_labels = self._configure_task_trace_labels()
+            self._recurrent = self._admit_run(self._recurrent)
+        self._configure_task_trace_labels()
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
             for item in recurrent[0].gradients
@@ -447,8 +457,8 @@ class TrainingExecutor:
             65_536,
             64
             * max(
-                len(self._recurrent.entrypoints),
-                len(self._initial.entrypoints) if self._initial is not None else 0,
+                len(self._recurrent.execution),
+                len(self._initial.execution) if self._initial is not None else 0,
             ),
         )
         self._trace_start_event: torch.cuda.Event | None = None
@@ -458,21 +468,27 @@ class TrainingExecutor:
             str, tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]
         ] = {}
 
-    def _admit_run(self, run: _PlanRun) -> None:
-        for entrypoint in run.entrypoints:
-            task = run.tasks[entrypoint.task_id]
-            self._bridge.admit_execution(
-                task,
-                run.input_aliases_by_task[task.task_id],
-                run.actions.get(task.task_id, ()),
+    def _admit_run(self, run: _PlanRun) -> _PlanRun:
+        admitted: list[_ExecutionTaskRecord] = []
+        for record in run.execution:
+            admitted.append(
+                replace(
+                    record,
+                    native_handle=self._bridge.admit_execution(
+                        record.task,
+                        record.input_aliases,
+                        record.actions,
+                    ),
+                )
             )
+        return replace(run, execution=tuple(admitted))
 
     def prepare_execution_tracing(self) -> None:
         """Lazily allocate reusable trace buffers and timing events."""
 
         runs = tuple(run for run in (self._initial, self._recurrent) if run is not None)
         self._bridge.enable_debug_task_timing(
-            entrypoint.task_id for run in runs for entrypoint in run.entrypoints
+            record.task.task_id for run in runs for record in run.execution
         )
         self._bridge.disable_debug_task_timing()
         self._bridge.prepare_runtime_trace(
@@ -482,7 +498,7 @@ class TrainingExecutor:
         event_factory: Any = torch.cuda.Event
         task_ids = tuple(
             dict.fromkeys(
-                entrypoint.task_id for run in runs for entrypoint in run.entrypoints
+                record.task.task_id for run in runs for record in run.execution
             )
         )
         self._trace_origin_event = event_factory(enable_timing=True)
@@ -543,8 +559,9 @@ class TrainingExecutor:
         if timing is not None:
             timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
         public_tensors: dict[int, tuple[torch.Tensor, ...]] = {}
-        for entrypoint in run.entrypoints:
-            outputs = self._execute_task(run, entrypoint)
+        for record in run.execution:
+            entrypoint = record.entrypoint
+            outputs = self._execute_task(run, record)
             if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
                 public_tensors[entrypoint.microbatch] = outputs[
                     : entrypoint.public_output_count
@@ -606,23 +623,22 @@ class TrainingExecutor:
         end_event = self._trace_end_event
         if origin_event is None or start_event is None or end_event is None:
             raise AssertionError("trace event preparation did not complete")
-        identities = _selected_entrypoint_identities(run.entrypoints)
         tasks = {
-            entrypoint.task_id: _ArmedTaskTiming(
-                entrypoint,
-                run.expected_task_seconds[entrypoint.task_id],
-                identities[entrypoint.task_id][0],
-                identities[entrypoint.task_id][1],
-                *self._trace_task_events[entrypoint.task_id],
+            record.task.task_id: _ArmedTaskTiming(
+                record.entrypoint,
+                run.expected_task_seconds[record.task.task_id],
+                record.execution_ordinal,
+                record.semantic_name,
+                *self._trace_task_events[record.task.task_id],
             )
-            for entrypoint in run.entrypoints
+            for record in run.execution
         }
         armed = _ArmedExecutionTiming(
             origin_event,
             start_event,
             end_event,
             tasks,
-            tuple(entrypoint.task_id for entrypoint in run.entrypoints),
+            tuple(record.task.task_id for record in run.execution),
             statistics_before=self._bridge.statistics(),
             actions=(
                 tuple(
@@ -1127,9 +1143,9 @@ class TrainingExecutor:
     def _execute_task(
         self,
         run: _PlanRun,
-        entrypoint: TrainingTaskEntrypoint,
+        record: _ExecutionTaskRecord,
     ) -> tuple[torch.Tensor, ...]:
-        prepared = self._before_task(run, entrypoint)
+        prepared = self._before_task(run, record)
         try:
             raw_outputs = self._run_compiled_task(prepared)
             return self._after_task(prepared, raw_outputs)
@@ -1142,11 +1158,11 @@ class TrainingExecutor:
     def _before_task(
         self,
         run: _PlanRun,
-        entrypoint: TrainingTaskEntrypoint,
+        record: _ExecutionTaskRecord,
     ) -> _PreparedTask:
         """Acquire, rebind, and assemble one complete frontend task boundary."""
 
-        prepared = self._prepare_task(run, entrypoint)
+        prepared = self._prepare_task(run, record)
         try:
             self._record_compute_start(prepared.stream)
             self._record_task_start(prepared.timing, prepared.stream)
@@ -1159,16 +1175,17 @@ class TrainingExecutor:
     def _prepare_task(
         self,
         run: _PlanRun,
-        entrypoint: TrainingTaskEntrypoint,
+        record: _ExecutionTaskRecord,
     ) -> _PreparedTask:
         """Perform preparation while keeping its trace before compute start."""
 
+        entrypoint = record.entrypoint
         task_timing = self._begin_task_timing(entrypoint)
-        task = run.tasks[entrypoint.task_id]
-        trace_label = self._task_trace_labels[task.task_id]
+        task = record.task
+        trace_label = record.trace_label
         with self._nvtx(f"shadowspill.before_task.{trace_label}"):
             stream = torch.cuda.current_stream()
-            input_aliases = run.input_aliases_by_task[task.task_id]
+            input_aliases = record.input_aliases
             runtime_scope_open = False
             try:
                 started_ns = (
@@ -1179,8 +1196,17 @@ class TrainingExecutor:
                     with self._nvtx(
                         f"shadowspill.runtime.before_task.{trace_label}"
                     ):
-                        bindings = self._bridge.before_task(
-                            task.task_id, stream, input_aliases
+                        bindings = (
+                            self._bridge.before_execution(
+                                record.native_handle,
+                                task.task_id,
+                                stream,
+                                len(input_aliases),
+                            )
+                            if record.native_handle
+                            else self._bridge.before_task(
+                                task.task_id, stream, input_aliases
+                            )
                         )
                 except RuntimeError as error:
                     states = self._bridge.input_failure_states(input_aliases)
@@ -1237,35 +1263,30 @@ class TrainingExecutor:
                                 raise RuntimeError(
                                     f"optimizer tensor {exc.args[0]!r} is unbound"
                                 ) from exc
-                            function = self._functions[
-                                artifact.compatibility_digest
-                            ]
+                            function = record.function
                     else:
                         eager_optimizer = False
                         if not isinstance(artifact, GraphArtifact):
                             raise RuntimeError(
                                 "graph task has no captured artifact"
                             )
-                        graph_arguments = list(artifact.example_arguments)
+                        if record.argument_template is None:
+                            raise AssertionError("graph argument template is absent")
+                        graph_arguments = list(record.argument_template)
                         for slot in entrypoint.input_slots:
                             graph_arguments[slot.leaf_index] = (
                                 self._state.object_tensors[slot.object_id]
                             )
                         arguments = graph_arguments
-                        function = self._functions[
-                            artifact.compatibility_digest
-                        ]
+                        function = record.function
                 if task_timing is not None:
                     task_timing.host_rebind_ns = (
                         time.perf_counter_ns() - started_ns
                     )
                 return _PreparedTask(
                     run=run,
-                    entrypoint=entrypoint,
-                    task=task,
+                    record=record,
                     stream=stream,
-                    input_aliases=input_aliases,
-                    trace_label=trace_label,
                     arguments=arguments,
                     function=function,
                     eager_optimizer=eager_optimizer,
@@ -1284,7 +1305,9 @@ class TrainingExecutor:
 
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         with (
-            self._nvtx(f"shadowspill.compiled_call.{prepared.trace_label}"),
+            self._nvtx(
+                f"shadowspill.compiled_call.{prepared.record.trace_label}"
+            ),
             torch.no_grad(),
         ):
             if prepared.eager_optimizer:
@@ -1296,7 +1319,7 @@ class TrainingExecutor:
         if prepared.timing is not None:
             prepared.timing.host_dispatch_ns = time.perf_counter_ns() - started_ns
         self._record_task_end(prepared.timing, prepared.stream)
-        if prepared.task.task_id == prepared.run.lowered.optimizer_task_id:
+        if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._record_compute_end(prepared.stream)
         return raw_outputs
 
@@ -1307,18 +1330,17 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         """Publish outputs, actions, and cleanup for one frontend task."""
 
-        with self._nvtx(f"shadowspill.after_task.{prepared.trace_label}"):
+        record = prepared.record
+        with self._nvtx(f"shadowspill.after_task.{record.trace_label}"):
             started_ns = (
                 time.perf_counter_ns() if prepared.timing is not None else 0
             )
             with self._nvtx(
-                f"shadowspill.output_processing.{prepared.trace_label}"
+                f"shadowspill.output_processing.{record.trace_label}"
             ):
                 outputs = self._process_task_outputs(prepared, raw_outputs)
                 del raw_outputs
-                self._dematerialize_actions(
-                    prepared.run, prepared.task.task_id
-                )
+                self._dematerialize_actions(record)
             if prepared.timing is not None:
                 prepared.timing.host_postprocess_ns = (
                     time.perf_counter_ns() - started_ns
@@ -1328,14 +1350,21 @@ class TrainingExecutor:
                 time.perf_counter_ns() if prepared.timing is not None else 0
             )
             with self._nvtx(
-                f"shadowspill.runtime.after_task.{prepared.trace_label}"
+                f"shadowspill.runtime.after_task.{record.trace_label}"
             ):
-                self._bridge.after_task(
-                    prepared.task.task_id,
-                    prepared.stream,
-                    prepared.task.mutations,
-                    prepared.run.actions.get(prepared.task.task_id, ()),
-                )
+                if record.native_handle:
+                    self._bridge.after_execution(
+                        record.native_handle,
+                        record.task.task_id,
+                        prepared.stream,
+                    )
+                else:
+                    self._bridge.after_task(
+                        record.task.task_id,
+                        prepared.stream,
+                        record.task.mutations,
+                        record.actions,
+                    )
             prepared.runtime_scope_open = False
             if prepared.timing is not None:
                 prepared.timing.host_native_after_task_ns = (
@@ -1345,7 +1374,7 @@ class TrainingExecutor:
             started_ns = (
                 time.perf_counter_ns() if prepared.timing is not None else 0
             )
-            with self._nvtx(f"shadowspill.cleanup.{prepared.trace_label}"):
+            with self._nvtx(f"shadowspill.cleanup.{record.trace_label}"):
                 self._cleanup_after_task(prepared)
             if prepared.timing is not None:
                 prepared.timing.host_cleanup_ns = (
@@ -1359,32 +1388,33 @@ class TrainingExecutor:
         raw_outputs: object,
     ) -> tuple[torch.Tensor, ...]:
         outputs: tuple[torch.Tensor, ...] = ()
-        if prepared.entrypoint.phase == "optimizer":
+        entrypoint = prepared.record.entrypoint
+        if entrypoint.phase == "optimizer":
             if prepared.eager_optimizer and not self._optimizer_state_available:
                 self._bind_created_optimizer_state(prepared.run.lowered)
                 self._optimizer_state_available = True
         else:
             leaves, _ = tree_flatten(raw_outputs)
-            if prepared.entrypoint.phase == "forward":
+            if entrypoint.phase == "forward":
                 tensor_outputs = tuple(
                     value for value in leaves if isinstance(value, torch.Tensor)
                 )
                 if len(tensor_outputs) != len(leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
                 self._bind_forward_outputs(
-                    prepared.entrypoint,
+                    entrypoint,
                     tensor_outputs,
-                    prepared.input_aliases,
+                    prepared.record.input_aliases,
                 )
-                outputs = tensor_outputs[: prepared.entrypoint.public_output_count]
+                outputs = tensor_outputs[: entrypoint.public_output_count]
             else:
-                self._accumulate_gradients(prepared.entrypoint, leaves)
+                self._accumulate_gradients(entrypoint, leaves)
             del leaves
         return outputs
 
     def _cleanup_after_task(self, prepared: _PreparedTask) -> None:
-        self._forget_released_objects(prepared.run, prepared.task.task_id)
-        if prepared.task.task_id == prepared.run.lowered.optimizer_task_id:
+        self._forget_released_objects(prepared.run, prepared.record)
+        if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._optimizer_state_initialized = True
             for parameter in self._gradients.values():
                 parameter.grad = None
@@ -1405,7 +1435,7 @@ class TrainingExecutor:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
             self._bridge.abort_task_after_failure(
-                f"execute task {prepared.task.task_id}", error
+                f"execute task {prepared.record.task.task_id}", error
             )
 
     def _bind_forward_outputs(
@@ -1618,9 +1648,9 @@ class TrainingExecutor:
             layout.stride,
         )
 
-    def _dematerialize_actions(self, run: _PlanRun, task_id: str) -> None:
+    def _dematerialize_actions(self, record: _ExecutionTaskRecord) -> None:
         pending: list[tuple[torch.Tensor, str, int]] = []
-        for action in run.actions.get(task_id, ()):
+        for action in record.actions:
             if action.kind not in {MemoryActionKind.RELEASE, MemoryActionKind.OFFLOAD}:
                 continue
             alias_id = action.alias_group_id
@@ -1637,11 +1667,14 @@ class TrainingExecutor:
                 for tensor, alias_id, generation in pending
             )
             raise RuntimeError(
-                f"failed to dematerialize objects after {task_id!r}: {detail}"
+                f"failed to dematerialize objects after "
+                f"{record.task.task_id!r}: {detail}"
             ) from exc
 
-    def _forget_released_objects(self, run: _PlanRun, task_id: str) -> None:
-        for action in run.actions.get(task_id, ()):
+    def _forget_released_objects(
+        self, run: _PlanRun, record: _ExecutionTaskRecord
+    ) -> None:
+        for action in record.actions:
             alias_id = action.alias_group_id
             if (
                 action.kind is not MemoryActionKind.RELEASE
@@ -1663,16 +1696,55 @@ class TrainingExecutor:
         entrypoints = tuple(
             item for item in lowered.entrypoints if item.task_id in tasks
         )
+        actions = actions_by_task(plan.schedule.actions)
+        input_aliases_by_task = {
+            task_id: tuple(
+                dict.fromkeys(
+                    self._bridge.alias_for_object(object_id)
+                    for object_id in task.inputs
+                )
+            )
+            for task_id, task in tasks.items()
+        }
+        identities = _selected_entrypoint_identities(entrypoints)
+        execution: list[_ExecutionTaskRecord] = []
+        for entrypoint in entrypoints:
+            artifact = entrypoint.artifact
+            function = (
+                self._functions[artifact.compatibility_digest]
+                if isinstance(artifact, GraphArtifact)
+                else None
+            )
+            argument_template = (
+                tuple(artifact.example_arguments)
+                if isinstance(artifact, GraphArtifact)
+                and entrypoint.phase != "optimizer"
+                else None
+            )
+            execution_ordinal, semantic_name = identities[entrypoint.task_id]
+            execution.append(
+                _ExecutionTaskRecord(
+                    entrypoint=entrypoint,
+                    task=tasks[entrypoint.task_id],
+                    input_aliases=input_aliases_by_task[entrypoint.task_id],
+                    actions=actions.get(entrypoint.task_id, ()),
+                    execution_ordinal=execution_ordinal,
+                    semantic_name=semantic_name,
+                    trace_label=(
+                        f"execution_{execution_ordinal:06d}.{semantic_name}"
+                    ),
+                    function=function,
+                    argument_template=argument_template,
+                )
+            )
         return _PlanRun(
             lowered=lowered,
             plan=plan,
-            actions=actions_by_task(plan.schedule.actions),
-            tasks=tasks,
             expected_task_seconds={
                 task_id: profiles[task.profile_id].runtime_ns / 1e9
                 for task_id, task in tasks.items()
             },
-            entrypoints=entrypoints,
+            execution=tuple(execution),
             initial_device_aliases=tuple(
                 item.alias_group_id
                 for item in plan.schedule.initial_residency
@@ -1698,15 +1770,6 @@ class TrainingExecutor:
                     item.alias_group_id for item in plan.program.alias_groups
                 )
             },
-            input_aliases_by_task={
-                task_id: tuple(
-                    dict.fromkeys(
-                        self._bridge.alias_for_object(object_id)
-                        for object_id in task.inputs
-                    )
-                )
-                for task_id, task in tasks.items()
-            },
         )
 
     def _configure_task_trace_labels(self) -> dict[str, str]:
@@ -1716,14 +1779,14 @@ class TrainingExecutor:
         for run in (self._initial, self._recurrent):
             if run is None:
                 continue
-            identities = _selected_entrypoint_identities(run.entrypoints)
-            for task_id, (execution_ordinal, semantic_name) in identities.items():
-                label = f"execution_{execution_ordinal:06d}.{semantic_name}"
-                previous = result.setdefault(task_id, label)
-                if previous != label:
+            for record in run.execution:
+                previous = result.setdefault(
+                    record.task.task_id, record.trace_label
+                )
+                if previous != record.trace_label:
                     raise RuntimeError(
-                        f"task {task_id} has conflicting trace labels "
-                        f"{previous!r} and {label!r}"
+                        f"task {record.task.task_id} has conflicting trace labels "
+                        f"{previous!r} and {record.trace_label!r}"
                     )
         self._bridge.configure_task_labels(result)
         return result

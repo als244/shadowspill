@@ -267,6 +267,7 @@ typedef struct ShadowSpillExecutionAction {
 } ShadowSpillExecutionAction;
 
 typedef struct ShadowSpillExecutionRecord {
+    ShadowSpillRuntime *runtime_owner;
     uint64_t task_id;
     ShadowSpillObjectRecord **inputs;
     uint32_t input_count;

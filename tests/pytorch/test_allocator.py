@@ -75,8 +75,11 @@ class _Library:
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_admit_execution = _Function()
+    shadowspill_pytorch_resolve_execution = _Function()
     shadowspill_pytorch_before_execution = _Function()
     shadowspill_pytorch_after_execution = _Function()
+    shadowspill_pytorch_before_execution_handle = _Function()
+    shadowspill_pytorch_after_execution_handle = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
     shadowspill_pytorch_abort_task_range = _Function()
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 17
-RUNTIME_ABI_VERSION: Final = 10
+ADAPTER_ABI_VERSION: Final = 18
+RUNTIME_ABI_VERSION: Final = 11
 TRACE_ABI_VERSION: Final = 1
 
 
@@ -439,6 +439,11 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(ExecutionDescription)
     ]
     library.shadowspill_pytorch_admit_execution.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_resolve_execution.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    library.shadowspill_pytorch_resolve_execution.restype = ctypes.c_uint32
     library.shadowspill_pytorch_before_execution.argtypes = [
         ctypes.c_uint64,
         ctypes.c_size_t,
@@ -451,6 +456,20 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.c_size_t,
     ]
     library.shadowspill_pytorch_after_execution.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_before_execution_handle.argtypes = [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.POINTER(ObjectBinding),
+        ctypes.c_uint32,
+    ]
+    library.shadowspill_pytorch_before_execution_handle.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_after_execution_handle.argtypes = [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+    ]
+    library.shadowspill_pytorch_after_execution_handle.restype = ctypes.c_uint32
     library.shadowspill_pytorch_object_snapshot.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(ObjectSnapshot),
