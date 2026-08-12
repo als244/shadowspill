@@ -167,14 +167,19 @@ static void discard_action_batch_locked(
             const uint8_t kind = action->kind;
             ShadowSpillObject *object = action->object;
             const uint64_t task_id = action->task_id;
+            const char *trace_label = action->trace_label;
             *action = (ShadowSpillQueuedAction){
                 .task_id = task_id,
                 .kind = kind,
                 .object = object,
+                .trace_label = trace_label,
                 .admitted = 1U,
             };
         } else {
             shadowspill_object_release(action->object);
+            if (action->owns_trace_label) {
+                free((void *)action->trace_label);
+            }
             free(action);
         }
         action = next;
@@ -365,7 +370,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         }
         if (status == SHADOWSPILL_RUNTIME_OK) {
             publish_action_batch_locked(runtime, record, &batch);
-            pthread_cond_broadcast(&runtime->condition);
+            shadowspill_notify_worker(runtime);
         }
     }
     if (status != SHADOWSPILL_RUNTIME_OK) {

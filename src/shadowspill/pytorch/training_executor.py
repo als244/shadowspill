@@ -18,6 +18,7 @@ from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSp
 from ._abi import AdapterStatistics
 from ._runtime_trace import RuntimeTraceEvent, RuntimeTraceEventKind
 from ._telemetry import CapturedAllocationEvent
+from ._transfer_labels import TransferLabelIndex
 from .capture import GraphArtifact
 from .optimizer import OpaqueOptimizerArtifact, current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge, actions_by_task
@@ -55,6 +56,7 @@ class _ForwardOutputRecord:
     object_id: str
     alias_id: str
     adopt: bool
+    replace: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,6 +329,7 @@ class RuntimeTrace:
     materialized_allocation_requests: int
     free_requests: int
     record_stream_callbacks: int
+    event_queries: int
     queued_actions_after: int
     pending_retirements_after: int
     callback_failures_after: int
@@ -347,6 +350,7 @@ class RuntimeTrace:
             "materialized_allocation_requests": self.materialized_allocation_requests,
             "free_requests": self.free_requests,
             "record_stream_callbacks": self.record_stream_callbacks,
+            "event_queries": self.event_queries,
             "queued_actions_after": self.queued_actions_after,
             "pending_retirements_after": self.pending_retirements_after,
             "callback_failures_after": self.callback_failures_after,
@@ -492,6 +496,7 @@ class _PreparedTask:
 class _ProcessedTaskOutputs:
     outputs: tuple[torch.Tensor, ...]
     adopted: tuple[tuple[torch.Tensor, str], ...]
+    replacement_aliases: frozenset[str]
 
 
 class TrainingExecutor:
@@ -534,6 +539,7 @@ class TrainingExecutor:
         }
         self._armed_execution_timing: _ArmedExecutionTiming | None = None
         self._armed_span_timing: _ArmedSpanTiming | None = None
+        self._profiler_annotations_enabled = False
         self._trace_allocation_capacity = 1_000_000
         self._trace_event_capacity = max(
             65_536,
@@ -553,6 +559,10 @@ class TrainingExecutor:
         self._span_end_event: torch.cuda.Event | None = None
 
     def _admit_run(self, run: _PlanRun) -> _PlanRun:
+        labels = TransferLabelIndex(
+            run.plan.program,
+            {record.task.task_id: record.trace_label for record in run.execution},
+        )
         admitted: list[_ExecutionTaskRecord] = []
         for record in run.execution:
             admitted.append(
@@ -562,6 +572,7 @@ class TrainingExecutor:
                         record.task,
                         record.input_aliases,
                         record.actions,
+                        labels.labels_for(record.actions),
                     ),
                 )
             )
@@ -607,6 +618,20 @@ class TrainingExecutor:
             start_event.record(stream)
             end_event.record(stream)
         stream.synchronize()
+
+    def set_profiler_annotations(self, enabled: bool) -> None:
+        """Toggle provider annotations independently of runtime tracing."""
+
+        self._bridge.set_profiler_annotations(enabled)
+        self._profiler_annotations_enabled = enabled
+
+    def finish_profiler_annotations(self) -> None:
+        """Drain annotated asynchronous work before disabling its provider."""
+
+        if not self._profiler_annotations_enabled:
+            return
+        self._bridge.wait_idle()
+        self.set_profiler_annotations(False)
 
     def __call__(
         self, inputs: Sequence[Sequence[Any]]
@@ -1050,6 +1075,10 @@ class TrainingExecutor:
                 statistics_after.record_stream_callbacks
                 - statistics_before.record_stream_callbacks
             ),
+            event_queries=int(
+                statistics_after.cuda.event_queries
+                - statistics_before.cuda.event_queries
+            ),
             queued_actions_after=int(statistics_after.runtime.queued_actions),
             pending_retirements_after=int(statistics_after.runtime.pending_retirements),
             callback_failures_after=int(statistics_after.callback_failures),
@@ -1175,7 +1204,7 @@ class TrainingExecutor:
 
     @contextmanager
     def _profile_range(self, name: str) -> Iterator[None]:
-        if self._armed_execution_timing is None:
+        if not self._profiler_annotations_enabled:
             yield
             return
         range_id = self._bridge.profile_range_begin(name)
@@ -1574,9 +1603,13 @@ class TrainingExecutor:
                         self._state.device.index or 0,
                         processed.adopted,
                         dematerialized,
+                        replacement_aliases=processed.replacement_aliases,
                     )
                 else:
-                    generations = self._bridge.adopt_many(processed.adopted)
+                    generations = self._bridge.adopt_many(
+                        processed.adopted,
+                        replacement_aliases=processed.replacement_aliases,
+                    )
                     pending_dematerialization: list[tuple[torch.Tensor, str, int]] = []
                     for tensor, alias_id in zip(
                         dematerialized,
@@ -1604,10 +1637,15 @@ class TrainingExecutor:
                     time.perf_counter_ns() - started_ns
                 )
             started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-            for (_, alias_id), generation in zip(
+            for (tensor, alias_id), generation in zip(
                 processed.adopted, generations, strict=True
             ):
-                self._state.generations[alias_id] = generation
+                if alias_id in processed.replacement_aliases:
+                    self._state.replace_alias_generation(
+                        alias_id, tensor, generation
+                    )
+                else:
+                    self._state.generations[alias_id] = generation
             if prepared.timing is not None:
                 prepared.timing.host_output_state_publish_ns = (
                     time.perf_counter_ns() - started_ns
@@ -1627,6 +1665,7 @@ class TrainingExecutor:
     ) -> _ProcessedTaskOutputs:
         outputs: tuple[torch.Tensor, ...] = ()
         adopted: tuple[tuple[torch.Tensor, str], ...] = ()
+        replacement_aliases: frozenset[str] = frozenset()
         entrypoint = prepared.record.entrypoint
         timing = prepared.timing
         if entrypoint.phase == "optimizer":
@@ -1648,18 +1687,21 @@ class TrainingExecutor:
                 )
                 if len(tensor_outputs) != len(leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
-                adopted = self._bind_forward_outputs(
+                adopted, replacement_aliases = self._bind_forward_outputs(
                     prepared.record,
                     tensor_outputs,
                     timing,
                 )
-                outputs = tensor_outputs[: entrypoint.public_output_count]
+                outputs = tuple(
+                    tensor_outputs[index]
+                    for index in entrypoint.public_output_leaves
+                )
             else:
                 adopted = self._accumulate_gradients(prepared.record, leaves, timing)
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
-        return _ProcessedTaskOutputs(outputs, adopted)
+        return _ProcessedTaskOutputs(outputs, adopted, replacement_aliases)
 
     def _cleanup_after_task(self, prepared: _PreparedTask) -> None:
         self._forget_released_objects(prepared.run, prepared.record)
@@ -1691,18 +1733,22 @@ class TrainingExecutor:
         record: _ExecutionTaskRecord,
         outputs: tuple[torch.Tensor, ...],
         timing: _ArmedTaskTiming | None,
-    ) -> tuple[tuple[torch.Tensor, str], ...]:
+    ) -> tuple[tuple[tuple[torch.Tensor, str], ...], frozenset[str]]:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         adopted: list[tuple[torch.Tensor, str]] = []
+        replacements: set[str] = set()
         for item in record.forward_outputs:
             tensor = outputs[item.leaf_index]
             if item.adopt:
                 adopted.append((tensor, item.alias_id))
-            self._state.object_store.setdefault(item.alias_id, tensor)
-            self._state.object_tensors[item.object_id] = tensor
+            if item.replace:
+                replacements.add(item.alias_id)
+            else:
+                self._state.object_store.setdefault(item.alias_id, tensor)
+                self._state.object_tensors[item.object_id] = tensor
         if timing is not None:
             timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
-        return tuple(adopted)
+        return tuple(adopted), frozenset(replacements)
 
     def _accumulate_gradients(
         self,
@@ -1728,6 +1774,9 @@ class TrainingExecutor:
                 first.append((item.object_id, item.alias_id, contribution))
             elif _same_tensor_view(destination, contribution):
                 self._state.object_tensors[item.object_id] = destination
+                parameter = self._gradients.get(item.alias_id)
+                if parameter is not None:
+                    parameter.grad = destination
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
@@ -1973,9 +2022,13 @@ class TrainingExecutor:
             input_aliases = input_aliases_by_task[entrypoint.task_id]
             produced: set[str] = set()
             forward_outputs: list[_ForwardOutputRecord] = []
+            replacement_leaves = set(entrypoint.replacement_output_leaves)
             for slot in entrypoint.output_slots:
                 alias_id = self._bridge.alias_for_object(slot.object_id)
-                adopt = alias_id not in input_aliases and alias_id not in produced
+                replace_output = slot.leaf_index in replacement_leaves
+                adopt = (
+                    replace_output or alias_id not in input_aliases
+                ) and alias_id not in produced
                 if adopt:
                     produced.add(alias_id)
                 forward_outputs.append(
@@ -1984,6 +2037,7 @@ class TrainingExecutor:
                         slot.object_id,
                         alias_id,
                         adopt,
+                        replace_output,
                     )
                 )
             gradient_by_alias: dict[str, tuple[str, list[int]]] = {}
@@ -2075,8 +2129,14 @@ class TrainingExecutor:
             if entrypoint.phase != "forward" or entrypoint.microbatch is None:
                 continue
             result[entrypoint.microbatch] = tuple(
-                self._bridge.alias_for_object(slot.object_id)
-                for slot in entrypoint.output_slots[: entrypoint.public_output_count]
+                self._bridge.alias_for_object(
+                    next(
+                        slot.object_id
+                        for slot in entrypoint.output_slots
+                        if slot.leaf_index == leaf_index
+                    )
+                )
+                for leaf_index in entrypoint.public_output_leaves
             )
         return tuple(result[index] for index in range(len(result)))
 

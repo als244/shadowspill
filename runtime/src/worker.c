@@ -7,6 +7,49 @@
 #include <stdlib.h>
 #include <time.h>
 
+static int submit_transfer_copy(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillQueuedAction *action,
+    const ShadowSpillTransferRoute *route,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    const char *fallback = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+        ? "shadowspill.runtime.transfer.fetch.unlabeled"
+        : "shadowspill.runtime.transfer.evict.unlabeled";
+    const ShadowSpillProfilerRange range = shadowspill_profiler_range_begin(
+        &runtime->profiler,
+        action->trace_label == NULL ? fallback : action->trace_label
+    );
+    const int status = route->copy_async(
+        route->context, destination, source, bytes, stream
+    );
+    shadowspill_profiler_range_end(&runtime->profiler, range);
+    return status;
+}
+
+void shadowspill_notify_worker(ShadowSpillRuntime *runtime) {
+    pthread_mutex_lock(&runtime->mutex);
+    pthread_cond_broadcast(&runtime->condition);
+    pthread_mutex_unlock(&runtime->mutex);
+}
+
+static void wait_while_idle(ShadowSpillRuntime *runtime) {
+    struct timespec deadline;
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+        return;
+    }
+    uint64_t nanoseconds = (uint64_t)deadline.tv_nsec + UINT64_C(1000000);
+    deadline.tv_sec += (time_t)(nanoseconds / UINT64_C(1000000000));
+    deadline.tv_nsec = (long)(nanoseconds % UINT64_C(1000000000));
+    (void)pthread_cond_timedwait(
+        &runtime->condition, &runtime->mutex, &deadline
+    );
+}
+
 static void unlink_action_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
@@ -57,14 +100,19 @@ static void complete_action(
         const uint8_t kind = action->kind;
         ShadowSpillObject *object = action->object;
         const uint64_t task_id = action->task_id;
+        const char *trace_label = action->trace_label;
         *action = (ShadowSpillQueuedAction){
             .task_id = task_id,
             .kind = kind,
             .object = object,
+            .trace_label = trace_label,
             .admitted = 1U,
         };
     } else {
         shadowspill_object_release(action->object);
+        if (action->owns_trace_label) {
+            free((void *)action->trace_label);
+        }
         free(action);
     }
     const uint64_t previous_actions = atomic_fetch_sub_explicit(
@@ -270,8 +318,10 @@ static int dispatch_offload_locked(
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (runtime->evict_route.copy_async(
-            runtime->evict_route.context,
+    if (!backend_failed && (submit_transfer_copy(
+            runtime,
+            action,
+            &runtime->evict_route,
             spill_lease->pointer,
             execution_pointer,
             bytes,
@@ -380,8 +430,10 @@ static int dispatch_prefetch_locked(
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (runtime->fetch_route.copy_async(
-            runtime->fetch_route.context,
+    if (!backend_failed && (submit_transfer_copy(
+            runtime,
+            action,
+            &runtime->fetch_route,
             allocation->pointer,
             spill->lease->pointer,
             bytes,
@@ -799,30 +851,6 @@ static int handle_actions(ShadowSpillRuntime *runtime) {
     return changed;
 }
 
-static void timed_wait_locked(
-    ShadowSpillRuntime *runtime,
-    uint64_t completion_wait_nanoseconds
-) {
-    uint64_t wait_ns = completion_wait_nanoseconds;
-    if (wait_ns == 0U) {
-        wait_ns = runtime->worker_poll_nanoseconds;
-    }
-    if (wait_ns == 0U) {
-        wait_ns = 1000000U;
-    }
-    struct timespec deadline;
-    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
-        return;
-    }
-    uint64_t nanoseconds = (uint64_t)deadline.tv_nsec + wait_ns;
-    deadline.tv_sec += (time_t)(nanoseconds / 1000000000U);
-    deadline.tv_nsec = (long)(nanoseconds % 1000000000U);
-    (void)pthread_cond_timedwait(
-        &runtime->condition, &runtime->mutex, &deadline
-    );
-}
-
 void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     shadowspill_profiler_name_current_thread(
@@ -861,26 +889,31 @@ void *shadowspill_worker_main(void *pointer) {
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
             pthread_cond_broadcast(&runtime->condition);
         }
-        /* Park only when idle; otherwise poll the next causal frontier. */
+        /*
+         * Park only when no work exists. With actions or retirements active,
+         * immediately run another nonblocking pass. Completion polling checks
+         * each stream's FIFO head at a short fixed cadence and drains its
+         * already-complete prefix, so an actionable transition incurs neither
+         * exponential backoff nor a sleep/wake round trip.
+         */
         if (atomic_load_explicit(
             &runtime->worker_stop, memory_order_acquire
         ) == 0U) {
-            pthread_mutex_lock(&runtime->mutex);
-            if (atomic_load_explicit(
+            const int idle = atomic_load_explicit(
                 &runtime->actions.count, memory_order_acquire
-                ) == 0U && !shadowspill_has_actionable_retirement(runtime)) {
-                pthread_cond_wait(&runtime->condition, &runtime->mutex);
-            } else {
-                /*
-                 * Always release the runtime lock between worker passes.
-                 * A FIFO transfer window can complete one item per pass for
-                 * many consecutive passes.  Immediately rescanning after
-                 * each completion otherwise starves framework malloc/free
-                 * callbacks that need the same state lock.
-                 */
-                timed_wait_locked(runtime, next_completion_poll);
+            ) == 0U && !shadowspill_has_actionable_retirement(runtime);
+            if (idle) {
+                pthread_mutex_lock(&runtime->mutex);
+                const int still_idle = atomic_load_explicit(
+                    &runtime->actions.count, memory_order_acquire
+                ) == 0U && !shadowspill_has_actionable_retirement(runtime);
+                if (still_idle && atomic_load_explicit(
+                        &runtime->worker_stop, memory_order_acquire
+                    ) == 0U) {
+                    wait_while_idle(runtime);
+                }
+                pthread_mutex_unlock(&runtime->mutex);
             }
-            pthread_mutex_unlock(&runtime->mutex);
         }
     }
     return NULL;

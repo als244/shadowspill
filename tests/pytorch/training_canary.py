@@ -159,6 +159,15 @@ def main(arguments: Iterable[str] | None = None) -> int:
             for pair in stage.graph_pairs:
                 if pair.forward.runtime_ns <= 0 or pair.backward.runtime_ns <= 0:
                     raise AssertionError("graph pair omitted a profile runtime")
+                for profile in (pair.forward, pair.backward):
+                    if not profile.semantic_roots or not profile.compiled_roots:
+                        raise AssertionError(
+                            "graph pair omitted semantic/physical layout"
+                        )
+                    if profile.semantic_contract_capture_ns <= 0:
+                        raise AssertionError("graph pair omitted contract timing")
+                    if profile.physical_profile_wall_time_ns <= 0:
+                        raise AssertionError("graph pair omitted profiling timing")
         if planned.plan_report.initial_execution_plan is None:
             raise AssertionError("lazy AdamW state has no initial execution plan")
         active = planned.plan_report.execution_plan.program.selected_tasks(
@@ -171,6 +180,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 return 1
             if not task_diagnostic.selected:
                 raise AssertionError("selected task is not marked selected")
+            if task.phase != "optimizer" and (
+                not task_diagnostic.semantic_contract_digest
+                or not task_diagnostic.compiled_layout_digest
+            ):
+                raise AssertionError("selected task omitted lowering diagnostics")
             if task.phase != "optimizer" and (
                 task_diagnostic.graph_pair_variant
                 != task_diagnostic.chosen_graph_pair_variant
@@ -201,9 +215,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 result.loss.backward()
                 reference_losses.append(result.loss.detach())
             reference_optimizer.step()
-            actual = planned(microbatches, trace=True)
+            actual = planned(microbatches, runtime_trace=True)
             if actual.diagnostics is None:
-                raise AssertionError("trace=True omitted StepResult diagnostics")
+                raise AssertionError(
+                    "runtime_trace=True omitted StepResult diagnostics"
+                )
             diagnostics = actual.diagnostics.result()
             execution_timing = diagnostics.timing
             if step == 0:
@@ -328,7 +344,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         uninterrupted = _clone_model_state(planned.state_dict())
         planned.load_state_dict(checkpoint)
         for microbatches in steps[3:]:
-            replay_result = planned(microbatches, trace=True)
+            replay_result = planned(microbatches, runtime_trace=True)
             if replay_result.diagnostics is None:
                 raise AssertionError("replay omitted trace diagnostics")
             replay_result.diagnostics.result()

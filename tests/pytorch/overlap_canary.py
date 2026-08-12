@@ -77,6 +77,14 @@ def _after_task(
     )
 
 
+def _action(
+    object_id: int,
+    kind: int,
+    semantic_label: str,
+) -> RuntimeAction:
+    return RuntimeAction(object_id, kind, semantic_label.encode("utf-8"))
+
+
 def main() -> int:
     adapter_path = Path(sys.argv[1]).resolve()
     if torch.cuda.is_initialized():
@@ -90,6 +98,10 @@ def main() -> int:
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library
+    _require_ok(
+        int(library.shadowspill_pytorch_profiler_annotations_set(1)),
+        "enable profiler annotations",
+    )
     first = torch.full((ELEMENTS,), 1.0, device="cuda")
     second = torch.full((ELEMENTS,), 2.0, device="cuda")
     third = torch.full((ELEMENTS,), 3.0, device="cuda")
@@ -112,8 +124,20 @@ def main() -> int:
         200,
         stream_address,
         (
-            RuntimeAction(second_binding.object_id, 1),
-            RuntimeAction(third_binding.object_id, 1),
+            _action(
+                second_binding.object_id,
+                1,
+                "shadowspill.runtime.transfer.evict.second_tensor."
+                "role_activation.bytes_67108864.from_output."
+                "execution_000200.initial_offload",
+            ),
+            _action(
+                third_binding.object_id,
+                1,
+                "shadowspill.runtime.transfer.evict.third_tensor."
+                "role_activation.bytes_67108864.from_output."
+                "execution_000200.initial_offload",
+            ),
         ),
     )
     _require_ok(
@@ -139,9 +163,27 @@ def main() -> int:
         201,
         stream_address,
         (
-            RuntimeAction(first_binding.object_id, 1),
-            RuntimeAction(second_binding.object_id, 2),
-            RuntimeAction(third_binding.object_id, 2),
+            _action(
+                first_binding.object_id,
+                1,
+                "shadowspill.runtime.transfer.evict.first_tensor."
+                "role_activation.bytes_67108864.from_output."
+                "execution_000201.overlap_producer",
+            ),
+            _action(
+                second_binding.object_id,
+                2,
+                "shadowspill.runtime.transfer.fetch.second_tensor."
+                "role_activation.bytes_67108864.for_input."
+                "execution_000202.two_input_consumer",
+            ),
+            _action(
+                third_binding.object_id,
+                2,
+                "shadowspill.runtime.transfer.fetch.third_tensor."
+                "role_activation.bytes_67108864.for_input."
+                "execution_000202.two_input_consumer",
+            ),
         ),
     )
 
@@ -234,6 +276,10 @@ def main() -> int:
     _require_ok(
         int(library.shadowspill_pytorch_allocator_wait_idle()),
         "final release drain",
+    )
+    _require_ok(
+        int(library.shadowspill_pytorch_profiler_annotations_set(0)),
+        "disable profiler annotations",
     )
     return 0
 

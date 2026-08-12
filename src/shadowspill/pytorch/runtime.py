@@ -146,7 +146,7 @@ class Runtime:
         pools: Mapping[str, MemoryPoolConfig],
         library_path: str | Path | None = None,
         calibrate: bool = True,
-        worker_poll_nanoseconds: int = 100_000,
+        worker_poll_nanoseconds: int = 1_000,
     ) -> None:
         normalized = _validate_pool_configs(pools)
         device_name, device_config = next(

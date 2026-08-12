@@ -68,6 +68,22 @@ void shadowspill_pytorch_profile_range_end(ShadowSpillProfilerRange range) {
     }
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_profiler_annotations_set(
+    uint8_t enabled
+) {
+    pthread_mutex_lock(&adapter.mutex);
+    const int available = adapter.runtime != NULL &&
+        adapter.profiler.abi_version != 0U &&
+        adapter.profiler.set_enabled != NULL;
+    ShadowSpillProfiler profiler = adapter.profiler;
+    pthread_mutex_unlock(&adapter.mutex);
+    if (!available) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    profiler.set_enabled(profiler.context, enabled != 0U);
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 static void end_task_range(void) {
     if (task_range_active) {
         shadowspill_pytorch_profile_range_end(task_range_id);
@@ -92,6 +108,26 @@ static void format_task_range_name(
     const char *operation,
     uint64_t task_id
 ) {
+    const uint64_t caller_handoff_base = UINT64_C(1) << 59U;
+    const uint64_t initial_actions_base = UINT64_C(1) << 60U;
+    if (task_id >= initial_actions_base) {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.initial_actions.invocation_%06llu",
+            (unsigned long long)(task_id - initial_actions_base)
+        );
+        return;
+    }
+    if (task_id >= caller_handoff_base) {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.caller_handoff.invocation_%06llu",
+            (unsigned long long)(task_id - caller_handoff_base)
+        );
+        return;
+    }
     pthread_mutex_lock(&adapter.mutex);
     const char *label = task_id < adapter.task_label_count
         ? adapter.task_labels[task_id]
@@ -809,6 +845,36 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_bind_registered_allocation(
         .pointer = allocation.pointer,
     };
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_replace_registered_allocation(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes,
+    ShadowSpillObjectBinding *binding
+) {
+    if (address == 0U || binding == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
+        runtime, (const void *)(uintptr_t)address, &allocation
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK ||
+        allocation.requested_bytes < size_bytes) {
+        return status == SHADOWSPILL_RUNTIME_OK
+            ? SHADOWSPILL_RUNTIME_INVALID_STATE
+            : status;
+    }
+    return shadowspill_replace_object_allocation(
+        runtime, object_id, allocation.allocation_id, binding
+    );
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_output_to_caller(

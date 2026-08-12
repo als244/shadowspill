@@ -98,15 +98,34 @@ Detailed real-step tracing is separate and opt-in. An individual call requests
 a trace without changing the normal behavior of other calls:
 
 ```python
-result = train_step(microbatches, trace=True)  # trace=False by default
+result = train_step(microbatches, runtime_trace=True)
 # Explicitly synchronizing: waits for callbacks/events and copies trace data.
 step_diagnostics = result.diagnostics.result()
 ```
 
+Provider annotations are an independent switch and are also off by default:
+
+```python
+result = train_step(
+    microbatches,
+    runtime_trace=True,
+    profiler_annotations=True,
+)
+```
+
+`runtime_trace` controls `StepResult.diagnostics`, the seven task timestamps,
+and the bounded allocator/runtime event logs. `profiler_annotations` controls
+NVTX (or the active backend profiler) only. Either can be enabled without the
+other. Provider annotations remain active long enough to include asynchronous
+terminal transfers; the next unannotated call or `close()` drains that prior
+work and disables them. Forward callables expose the same
+`profiler_annotations=False` switch while continuing to return their ordinary
+output pytree.
+
 `StepResult` construction remains asynchronous. Starting another call before
 resolving the preceding traced result is rejected because the bounded trace
-buffers cannot be reused safely. The first `trace=True` call prepares bounded
-CPU trace buffers and timing events before `trace_begin`; diagnostics report
+buffers cannot be reused safely. The first `runtime_trace=True` call prepares
+bounded CPU trace buffers and timing events before `trace_begin`; diagnostics report
 that one-time setup separately, and later traces reuse the buffers. Untraced
 calls allocate no trace resources. Each task record includes its expected
 profiled wall time, a CUDA-event duration cross-check, allocator/transfer

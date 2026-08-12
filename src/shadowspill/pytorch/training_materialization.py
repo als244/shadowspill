@@ -13,6 +13,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.ir import MemoryAction, MemoryActionKind
 
+from ._live_storage import unique_live_tensors
 from .aot import TrainingObjectiveCapture
 from .contracts import PlanningError
 from .lowering import RegistrationBinding
@@ -55,6 +56,14 @@ class TrainingMaterializedState:
         self._input_aliases: set[str] = set()
         self._user_alias_by_position: tuple[dict[int, str], ...] = ()
         self._planning_cpu_owners: dict[str, torch.Tensor] = {}
+        self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
+            group.alias_group_id: tuple(
+                item.object_id
+                for item in layout.program.objects
+                if item.alias_group_id == group.alias_group_id
+            )
+            for group in layout.program.alias_groups
+        }
         self._flat_arguments = tuple(
             _flat_training_arguments(capture, model, microbatch)
             for capture, microbatch in zip(captures, example_inputs, strict=True)
@@ -238,6 +247,38 @@ class TrainingMaterializedState:
                 if alias_id not in written:
                     self.bridge.write_spill_tensor(alias_id, tensor)
                     written.add(alias_id)
+
+    def replace_alias_generation(
+        self,
+        alias_id: str,
+        target: torch.Tensor,
+        target_generation: int,
+    ) -> None:
+        """Rebind every persistent frontend view to a functional replacement."""
+
+        previous_generation = self.generations.get(alias_id)
+        if previous_generation is None:
+            raise RuntimeError(f"replacement alias {alias_id!r} has no generation")
+        tensors: list[torch.Tensor] = []
+        representative = self.object_store.get(alias_id)
+        if representative is not None:
+            tensors.append(representative)
+        for object_id in self._object_ids_by_alias.get(alias_id, ()):
+            tensor = self.object_tensors.get(object_id)
+            if tensor is not None:
+                tensors.append(tensor)
+        unique = unique_live_tensors(tensors)
+        if not unique:
+            raise RuntimeError(f"replacement alias {alias_id!r} has no frontend view")
+        self.bridge.replace_many(
+            unique,
+            alias_id,
+            previous_generation=previous_generation,
+            target_tensor=target,
+            target_generation=target_generation,
+        )
+        self.object_store[alias_id] = unique[0]
+        self.generations[alias_id] = target_generation
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         if self._closed:

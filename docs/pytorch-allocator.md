@@ -83,12 +83,20 @@ and then observes those copies plus a simultaneous EVICT finishing while an
 independent compute stream remains busy. Explicit `wait_idle`, checkpoint, and
 close boundaries are synchronizing by contract.
 
+Provider annotations are disabled by default and are independent of bounded
+runtime tracing. Passing `profiler_annotations=True` to a planned call enables
+them for that call and its asynchronous terminal actions.
+
 Nsight ranges follow the documented namespace:
 
 - `shadowspill.pytorch.task.<dense-id>` spans frontend task dispatch;
 - `shadowspill.pytorch.storage_rebind` identifies each storage swap;
 - `shadowspill.runtime.allocate` identifies slab-range admission;
-- `shadowspill.runtime.transfer.{fetch,evict}` identifies copy submission;
+- `shadowspill.runtime.transfer.{fetch,evict}.<alias>.<relationship>` identifies
+  copy submission. Each label includes the alias bundle, object role, byte
+  count, trigger execution, and either the next input consumer (FETCH) or the
+  latest output/mutation/last-input source (EVICT). Labels are constructed once
+  during execution admission; the worker performs no lookup or formatting;
 - `shadowspill.runtime.wait_event` identifies stream dependency insertion.
 
 The Phase-5 qualification trace is reproducibly checked with

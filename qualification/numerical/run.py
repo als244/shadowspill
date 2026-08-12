@@ -387,9 +387,11 @@ def _planned_worker(
         expected_replay: list[list[float]] = []
         for step in range(steps):
             started = time.perf_counter()
-            step_result = training(case.microbatches, trace=True)
+            step_result = training(case.microbatches, runtime_trace=True)
             if step_result.diagnostics is None:
-                raise AssertionError("trace=True omitted execution diagnostics")
+                raise AssertionError(
+                    "runtime_trace=True omitted execution diagnostics"
+                )
             diagnostics = step_result.diagnostics.result()
             execution_timing = diagnostics.timing
             physical_statuses.append(_check_physical_budget())
@@ -417,9 +419,11 @@ def _planned_worker(
         replay_steps = steps - checkpoint_step
         for replay_step in range(replay_steps):
             replay_started = time.perf_counter()
-            step_result = training(case.microbatches, trace=True)
+            step_result = training(case.microbatches, runtime_trace=True)
             if step_result.diagnostics is None:
-                raise AssertionError("trace=True omitted replay diagnostics")
+                raise AssertionError(
+                    "runtime_trace=True omitted replay diagnostics"
+                )
             step_result.diagnostics.result()
             physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])

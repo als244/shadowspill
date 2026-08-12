@@ -22,12 +22,13 @@ from .training_lowering import TrainingTaskEntrypoint
 
 
 class _SpatialEventKind(IntEnum):
-    FREE_ALIAS = 0
-    FREE_TEMPORARY_OUTPUT = 1
-    ALLOCATE_PREFETCH = 2
-    TASK_ALLOCATION = 3
-    TASK_FREE = 4
-    TASK_REUSE = 5
+    REPLACE_ALIAS = 0
+    FREE_ALIAS = 1
+    FREE_TEMPORARY_OUTPUT = 2
+    ALLOCATE_PREFETCH = 3
+    TASK_ALLOCATION = 4
+    TASK_FREE = 5
+    TASK_REUSE = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class TaskOutputBinding:
 
     leaf_index: int
     alias_group_id: str
+    replacement: bool = False
 
     def __post_init__(self) -> None:
         if self.leaf_index < 0:
@@ -165,7 +167,11 @@ def replay_selected_schedule(
                 source_identity=event.source_identity,
             )
         _validate_profile_workspace(
-            task, profile.workspace_bytes, measurement, object_size
+            task,
+            profile.workspace_bytes,
+            measurement,
+            object_size,
+            task_bindings,
         )
         for event in task_events:
             if event.kind not in {
@@ -173,14 +179,21 @@ def replay_selected_schedule(
                 _SpatialEventKind.TASK_REUSE,
             }:
                 continue
-            if not event.identity.startswith(f"temporary-output:{task_id}:"):
-                continue
-            append(
-                interval.end_ns,
-                _SpatialEventKind.FREE_TEMPORARY_OUTPUT,
-                event.identity,
-                event.bytes,
-            )
+            if event.replacement_alias is not None:
+                append(
+                    interval.end_ns,
+                    _SpatialEventKind.REPLACE_ALIAS,
+                    event.replacement_alias,
+                    event.bytes,
+                    source_identity=event.identity,
+                )
+            elif event.identity.startswith(f"temporary-output:{task_id}:"):
+                append(
+                    interval.end_ns,
+                    _SpatialEventKind.FREE_TEMPORARY_OUTPUT,
+                    event.identity,
+                    event.bytes,
+                )
 
     transfer_keys: set[tuple[str, str, TransferDirection]] = set()
     for transfer in selected.simulation.transfer_intervals:
@@ -269,6 +282,22 @@ def replay_selected_schedule(
                     alignment=alignment,
                 )
             )
+        elif item.kind is _SpatialEventKind.REPLACE_ALIAS:
+            if item.identity not in live_aliases or item.source_identity is None:
+                raise ValueError(
+                    f"spatial admission replaces nonresident alias {item.identity!r}"
+                )
+            old_allocation_id = live_aliases[item.identity]
+            allocation_events.append(
+                AllocationEvent(
+                    position,
+                    old_allocation_id,
+                    AllocationOperation.FREE,
+                    item.bytes,
+                    alignment=alignment,
+                )
+            )
+            live_aliases[item.identity] = item.source_identity
         elif item.kind in {
             _SpatialEventKind.TASK_ALLOCATION,
             _SpatialEventKind.TASK_REUSE,
@@ -327,6 +356,7 @@ def _validate_profile_workspace(
     workspace_bytes: int,
     measurement: TaskMeasurement,
     object_size: Mapping[str, int],
+    bindings: Sequence[TaskOutputBinding] = (),
 ) -> None:
     """Ensure the scalar simulator charge has complete physical evidence."""
 
@@ -336,12 +366,27 @@ def _validate_profile_workspace(
         raise ValueError("profile workspace extents exceed charged workspace")
     if not unclassified:
         return
-    contribution_extents = tuple(object_size[item.object_id] for item in task.mutations)
-    if sum(contribution_extents) != unclassified:
+    replacement_leaves = {
+        item.leaf_index for item in bindings if item.replacement
+    }
+    replacement_ordinals: set[int] = set()
+    replacement_bytes = 0
+    for event in measurement.allocation_trace:
+        if event.operation is not TaskAllocationOperation.ALLOCATE:
+            continue
+        if (
+            replacement_leaves.intersection(event.output_leaf_indices)
+            and event.allocation_ordinal not in replacement_ordinals
+        ):
+            replacement_ordinals.add(event.allocation_ordinal)
+            replacement_bytes += event.charged_bytes
+    mutation_bytes = sum(object_size[item.object_id] for item in task.mutations)
+    if unclassified not in {replacement_bytes, mutation_bytes}:
         raise ValueError(
             "task workspace has no complete physical extent distribution: "
             f"task={task.task_id}, "
-            f"unclassified={unclassified}, mutations={sum(contribution_extents)}"
+            f"unclassified={unclassified}, replacements={replacement_bytes}, "
+            f"mutations={mutation_bytes}"
         )
     return
 
@@ -353,6 +398,7 @@ class _TaskSpatialAllocation:
     bytes: int
     alias_output: bool = False
     source_identity: str | None = None
+    replacement_alias: str | None = None
 
 
 def _task_allocation_events(
@@ -364,6 +410,11 @@ def _task_allocation_events(
     """Bind a structural ABI trace to one task's concrete Program outputs."""
 
     alias_by_leaf = {item.leaf_index: item.alias_group_id for item in bindings}
+    replacement_by_leaf = {
+        item.leaf_index: item.alias_group_id
+        for item in bindings
+        if item.replacement
+    }
     if len(alias_by_leaf) != len(bindings):
         raise ValueError(f"task {task.task_id} binds an output leaf twice")
     local_identity: dict[int, str] = {}
@@ -384,22 +435,45 @@ def _task_allocation_events(
             }
             if len(aliases) > 1:
                 raise ValueError(
-                    f"task {task.task_id} maps one storage to multiple aliases"
+                    f"task {task.task_id} allocation "
+                    f"{event.allocation_ordinal} maps output leaves "
+                    f"{event.output_leaf_indices} to multiple aliases "
+                    f"{sorted(aliases)}"
                 )
             if aliases:
-                identity = next(iter(aliases))
-                expected = alias_size[identity]
+                alias_identity = next(iter(aliases))
+                replacement_aliases = {
+                    replacement_by_leaf[index]
+                    for index in event.output_leaf_indices
+                    if index in replacement_by_leaf
+                }
+                if replacement_aliases and replacement_aliases != {alias_identity}:
+                    raise ValueError(
+                        f"task {task.task_id} allocation mixes replacement aliases"
+                    )
+                expected = alias_size[alias_identity]
                 if event.charged_bytes != expected:
                     raise ValueError(
-                        f"task {task.task_id} output {identity!r} allocated "
+                        f"task {task.task_id} output {alias_identity!r} allocated "
                         f"{event.charged_bytes} bytes; expected {expected}"
                     )
-                bound_aliases.add(identity)
+                bound_aliases.add(alias_identity)
+                if replacement_aliases:
+                    identity = (
+                        f"replacement-output:{task.task_id}:"
+                        f"{event.allocation_ordinal}"
+                    )
+                    replacement_alias = alias_identity
+                else:
+                    identity = alias_identity
+                    replacement_alias = None
             elif event.output_leaf_indices:
                 identity = f"temporary-output:{task.task_id}:{event.allocation_ordinal}"
                 temporary_outputs.add(event.allocation_ordinal)
+                replacement_alias = None
             else:
                 identity = f"workspace:{task.task_id}:{event.allocation_ordinal}"
+                replacement_alias = None
             local_identity[event.allocation_ordinal] = identity
             source_identity = (
                 None
@@ -417,8 +491,9 @@ def _task_allocation_events(
                     else _SpatialEventKind.TASK_ALLOCATION,
                     identity,
                     event.charged_bytes,
-                    bool(aliases),
+                    bool(aliases) and replacement_alias is None,
                     source_identity,
+                    replacement_alias,
                 )
             )
             continue
@@ -482,15 +557,19 @@ def output_bindings_for_entrypoints(
             else entrypoint.output_slots
         )
         output_objects = set(task.outputs)
+        replacement_leaves = set(entrypoint.replacement_output_leaves)
         seen_aliases: set[str] = set()
         bindings: list[TaskOutputBinding] = []
         for slot in slots:
-            if slot.object_id not in output_objects:
+            replacement = slot.leaf_index in replacement_leaves
+            if slot.object_id not in output_objects and not replacement:
                 continue
             alias_id = alias_by_object[slot.object_id]
             if alias_id in seen_aliases:
                 continue
-            bindings.append(TaskOutputBinding(slot.leaf_index, alias_id))
+            bindings.append(
+                TaskOutputBinding(slot.leaf_index, alias_id, replacement)
+            )
             seen_aliases.add(alias_id)
         result[task.task_id] = tuple(bindings)
     return result

@@ -3,7 +3,48 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+char *shadowspill_copy_action_trace_label(
+    const ShadowSpillRuntimeAction *action,
+    uint64_t task_id,
+    uint64_t size_bytes
+) {
+    if (action->trace_label != NULL) {
+        const size_t length = strnlen(
+            action->trace_label,
+            SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U
+        );
+        if (length > SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES) {
+            return NULL;
+        }
+        char *copy = malloc(length + 1U);
+        if (copy == NULL) {
+            return NULL;
+        }
+        memcpy(copy, action->trace_label, length + 1U);
+        return copy;
+    }
+    const char *operation = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+        ? "fetch"
+        : action->kind == SHADOWSPILL_RUNTIME_OFFLOAD ? "evict" : "release";
+    char fallback[256];
+    const int written = snprintf(
+        fallback,
+        sizeof(fallback),
+        "shadowspill.runtime.transfer.%s.object_%llu.bytes_%llu.trigger_task_%llu",
+        operation,
+        (unsigned long long)action->object_id,
+        (unsigned long long)size_bytes,
+        (unsigned long long)task_id
+    );
+    if (written < 0 || (size_t)written >= sizeof(fallback)) {
+        return NULL;
+    }
+    return strdup(fallback);
+}
 
 static uint64_t execution_bucket(
     const ShadowSpillExecutionTable *table,
@@ -44,6 +85,7 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         shadowspill_object_release(record->actions[index].object);
+        free(record->actions[index].trace_label);
     }
     free(record->inputs);
     free(record->unique_inputs);
@@ -133,7 +175,12 @@ static int same_description(
         if (record->actions[index].object->object_id !=
                 description->actions[index].object_id ||
             record->actions[index].kind !=
-                description->actions[index].kind) {
+                description->actions[index].kind ||
+            (description->actions[index].trace_label != NULL &&
+             strcmp(
+                 record->actions[index].trace_label,
+                 description->actions[index].trace_label
+             ) != 0)) {
             return 0;
         }
     }
@@ -240,14 +287,24 @@ static ShadowSpillExecutionRecord *create_record(
             destroy_record(record);
             return NULL;
         }
+        char *trace_label = shadowspill_copy_action_trace_label(
+            &description->actions[index], record->task_id, object->size_bytes
+        );
+        if (trace_label == NULL) {
+            shadowspill_object_release(object);
+            destroy_record(record);
+            return NULL;
+        }
         record->actions[index] = (ShadowSpillExecutionAction){
             .object = object,
             .kind = description->actions[index].kind,
+            .trace_label = trace_label,
         };
         record->queued_actions[index] = (ShadowSpillQueuedAction){
             .task_id = record->task_id,
             .kind = description->actions[index].kind,
             .object = object,
+            .trace_label = trace_label,
             .admitted = 1U,
         };
     }

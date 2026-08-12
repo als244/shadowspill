@@ -204,6 +204,9 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
         shadowspill_release_task_fence_locked(runtime, action->fence);
         if (!action->admitted) {
             shadowspill_object_release(action->object);
+            if (action->owns_trace_label) {
+                free((void *)action->trace_label);
+            }
             free(action);
         } else {
             action->active = 0U;

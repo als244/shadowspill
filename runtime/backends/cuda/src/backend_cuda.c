@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <nvml.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -25,9 +26,30 @@ struct ShadowSpillCudaBackend {
     ShadowSpillCudaBackendStatistics statistics;
     ShadowSpillCudaEventNode *all_events;
     ShadowSpillCudaEventNode *free_events;
+    _Atomic uint8_t profiler_enabled;
     CUresult last_error;
     nvmlReturn_t last_nvml_error;
 };
+
+void shadowspill_cuda_backend_profiler_enable(
+    ShadowSpillCudaBackend *backend, uint8_t enabled
+) {
+    if (backend != NULL) {
+        atomic_store_explicit(
+            &backend->profiler_enabled, enabled != 0U, memory_order_release
+        );
+    }
+}
+
+uint8_t shadowspill_cuda_backend_profiler_is_enabled(
+    const ShadowSpillCudaBackend *backend
+) {
+    return backend == NULL
+        ? 0U
+        : atomic_load_explicit(
+              &backend->profiler_enabled, memory_order_acquire
+          );
+}
 
 static _Thread_local ShadowSpillCudaBackend *attached_backend;
 
@@ -341,13 +363,8 @@ static int copy_async(
     ShadowSpillBackendStream stream
 ) {
     ShadowSpillCudaBackend *backend = context;
-    const char *range_name = kind == SHADOWSPILL_TRANSFER_FETCH
-        ? "shadowspill.runtime.transfer.fetch"
-        : "shadowspill.runtime.transfer.evict";
-    const ShadowSpillProfilerRange range = profile_begin(backend, range_name);
     if ((bytes != 0U && (destination == NULL || source == NULL)) ||
         bytes > SIZE_MAX || activate_context(backend) != 0) {
-        profile_end(backend, range);
         return -1;
     }
     CUresult result;
@@ -367,7 +384,6 @@ static int copy_async(
         );
     }
     if (record_result(backend, result) != 0) {
-        profile_end(backend, range);
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
@@ -379,7 +395,6 @@ static int copy_async(
         backend->statistics.bytes_evicted += bytes;
     }
     pthread_mutex_unlock(&backend->mutex);
-    profile_end(backend, range);
     return 0;
 }
 

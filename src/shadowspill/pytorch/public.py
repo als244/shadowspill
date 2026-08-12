@@ -73,6 +73,7 @@ class PlanAllocationEvent:
     requested_bytes: int
     charged_bytes: int
     output_leaf_indices: tuple[int, ...]
+    output_view_offsets: tuple[int, ...]
     reuses_ordinal: int | None
 
     def as_dict(self) -> dict[str, object]:
@@ -82,7 +83,114 @@ class PlanAllocationEvent:
             "requested_bytes": self.requested_bytes,
             "charged_bytes": self.charged_bytes,
             "output_leaf_indices": list(self.output_leaf_indices),
+            "output_view_offsets": list(self.output_view_offsets),
             "reuses_ordinal": self.reuses_ordinal,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanStorageRoot:
+    """Offline semantic root exposed in planning diagnostics."""
+
+    root_id: int
+    kind: str
+    source_input: int | None
+    producer_node: str | None
+    producer_target: str | None
+    producer_result: int | None
+    minimum_span_bytes: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "root_id": self.root_id,
+            "kind": self.kind,
+            "source_input": self.source_input,
+            "producer_node": self.producer_node,
+            "producer_target": self.producer_target,
+            "producer_result": self.producer_result,
+            "minimum_span_bytes": self.minimum_span_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanOutputView:
+    """Semantic output-view geometry exposed in planning diagnostics."""
+
+    leaf_index: int
+    root_id: int
+    offset_bytes: int
+    span_bytes: int
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    dtype: str
+    layout: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "leaf_index": self.leaf_index,
+            "root_id": self.root_id,
+            "offset_bytes": self.offset_bytes,
+            "span_bytes": self.span_bytes,
+            "shape": list(self.shape),
+            "stride": list(self.stride),
+            "dtype": self.dtype,
+            "layout": self.layout,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanMutationBinding:
+    """Schema- or Export-derived task-input mutation diagnostics."""
+
+    input_position: int
+    replacement_output_leaf: int | None
+    producer_node: str
+    producer_target: str
+    argument_name: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "input_position": self.input_position,
+            "replacement_output_leaf": self.replacement_output_leaf,
+            "producer_node": self.producer_node,
+            "producer_target": self.producer_target,
+            "argument_name": self.argument_name,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCompiledRoot:
+    """Observed physical allocation for one semantic root."""
+
+    root_id: int
+    allocation_ordinal: int | None
+    requested_bytes: int
+    charged_bytes: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "root_id": self.root_id,
+            "allocation_ordinal": self.allocation_ordinal,
+            "requested_bytes": self.requested_bytes,
+            "charged_bytes": self.charged_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCompiledOutputView:
+    """Observed physical binding for one returned tensor leaf."""
+
+    leaf_index: int
+    root_id: int
+    allocation_ordinal: int | None
+    offset_bytes: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "leaf_index": self.leaf_index,
+            "root_id": self.root_id,
+            "allocation_ordinal": self.allocation_ordinal,
+            "offset_bytes": self.offset_bytes,
         }
 
 
@@ -92,6 +200,15 @@ class PlanGraphProfile:
 
     direction: str
     structural_abi_key: str
+    semantic_contract_digest: str
+    semantic_contract_capture_ns: int
+    semantic_roots: tuple[PlanStorageRoot, ...]
+    semantic_output_views: tuple[PlanOutputView, ...]
+    semantic_mutations: tuple[PlanMutationBinding, ...]
+    compiled_layout_digest: str
+    compiled_roots: tuple[PlanCompiledRoot, ...]
+    compiled_output_views: tuple[PlanCompiledOutputView, ...]
+    physical_profile_wall_time_ns: int
     representative_task_id: str
     runtime_ns: int
     samples_ns: tuple[int, ...]
@@ -107,6 +224,7 @@ class PlanGraphProfile:
     output_allocation_bytes: int
     workspace_requested_bytes: int
     workspace_charged_bytes: int
+    replacement_transition_bytes: int
     task_workspace_bytes: int
     workspace_extent_bytes: tuple[int, ...]
     persistent_extent_bytes: tuple[int, ...]
@@ -116,6 +234,21 @@ class PlanGraphProfile:
         return {
             "direction": self.direction,
             "structural_abi_key": self.structural_abi_key,
+            "semantic_contract_digest": self.semantic_contract_digest,
+            "semantic_contract_capture_ns": self.semantic_contract_capture_ns,
+            "semantic_roots": [item.as_dict() for item in self.semantic_roots],
+            "semantic_output_views": [
+                item.as_dict() for item in self.semantic_output_views
+            ],
+            "semantic_mutations": [
+                item.as_dict() for item in self.semantic_mutations
+            ],
+            "compiled_layout_digest": self.compiled_layout_digest,
+            "compiled_roots": [item.as_dict() for item in self.compiled_roots],
+            "compiled_output_views": [
+                item.as_dict() for item in self.compiled_output_views
+            ],
+            "physical_profile_wall_time_ns": self.physical_profile_wall_time_ns,
             "representative_task_id": self.representative_task_id,
             "runtime_ns": self.runtime_ns,
             "samples_ns": list(self.samples_ns),
@@ -131,6 +264,7 @@ class PlanGraphProfile:
             "output_allocation_bytes": self.output_allocation_bytes,
             "workspace_requested_bytes": self.workspace_requested_bytes,
             "workspace_charged_bytes": self.workspace_charged_bytes,
+            "replacement_transition_bytes": self.replacement_transition_bytes,
             "task_workspace_bytes": self.task_workspace_bytes,
             "workspace_extent_bytes": list(self.workspace_extent_bytes),
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
@@ -195,6 +329,8 @@ class PlanTaskStage:
     stage_occurrence_id: str | None
     unique_stage_id: str
     structural_abi_key: str
+    semantic_contract_digest: str | None
+    compiled_layout_digest: str | None
     graph_pair_variant: str | None
     chosen_graph_pair_variant: str | None
     selected: bool
@@ -210,6 +346,8 @@ class PlanTaskStage:
             "stage_occurrence_id": self.stage_occurrence_id,
             "unique_stage_id": self.unique_stage_id,
             "structural_abi_key": self.structural_abi_key,
+            "semantic_contract_digest": self.semantic_contract_digest,
+            "compiled_layout_digest": self.compiled_layout_digest,
             "graph_pair_variant": self.graph_pair_variant,
             "chosen_graph_pair_variant": self.chosen_graph_pair_variant,
             "selected": self.selected,
@@ -389,10 +527,24 @@ class PlannedForward:
         self._runtime = runtime
         self._runtime._adopt_plan()
         self._closed = False
+        self._profiler_annotations_active = False
 
-    def __call__(self, inputs: Sequence[Any]) -> object:
+    def __call__(
+        self,
+        inputs: Sequence[Any],
+        *,
+        profiler_annotations: bool = False,
+    ) -> object:
         if self._closed:
             raise RuntimeError("planned forward callable is closed")
+        if not isinstance(profiler_annotations, bool):
+            raise TypeError("profiler_annotations must be a bool")
+        if self._profiler_annotations_active and not profiler_annotations:
+            self._executor.finish_profiler_annotations()
+            self._profiler_annotations_active = False
+        elif profiler_annotations and not self._profiler_annotations_active:
+            self._executor.set_profiler_annotations(True)
+            self._profiler_annotations_active = True
         self._signature.validate(inputs)
         return self._executor(inputs)
 
@@ -416,6 +568,9 @@ class PlannedForward:
 
         if self._closed:
             return
+        if self._profiler_annotations_active:
+            self._executor.finish_profiler_annotations()
+            self._profiler_annotations_active = False
         self._state.restore_cpu_and_unregister()
         self._closed = True
         self._runtime._release_plan()
@@ -486,9 +641,14 @@ class PlannedTrainStep:
         self._closed = False
         self._trace_prepared = False
         self._pending_diagnostics: DiagnosticsHandle | None = None
+        self._profiler_annotations_active = False
 
     def __call__(
-        self, inputs: Sequence[Sequence[Any]], *, trace: bool = False
+        self,
+        inputs: Sequence[Sequence[Any]],
+        *,
+        runtime_trace: bool = False,
+        profiler_annotations: bool = False,
     ) -> StepResult:
         if self._closed:
             raise RuntimeError("planned training callable is closed")
@@ -500,11 +660,19 @@ class PlannedTrainStep:
                 "resolve the preceding traced StepResult diagnostics before "
                 "launching another traced step"
             )
-        if not isinstance(trace, bool):
-            raise TypeError("trace must be a bool")
+        if not isinstance(runtime_trace, bool):
+            raise TypeError("runtime_trace must be a bool")
+        if not isinstance(profiler_annotations, bool):
+            raise TypeError("profiler_annotations must be a bool")
+        if self._profiler_annotations_active and not profiler_annotations:
+            self._executor.finish_profiler_annotations()
+            self._profiler_annotations_active = False
+        elif profiler_annotations and not self._profiler_annotations_active:
+            self._executor.set_profiler_annotations(True)
+            self._profiler_annotations_active = True
         validate_training_inputs(inputs, self._signatures)
         trace_setup_ns = 0
-        if trace:
+        if runtime_trace:
             if not self._trace_prepared:
                 started_ns = time.perf_counter_ns()
                 self._executor.prepare_execution_tracing()
@@ -514,13 +682,13 @@ class PlannedTrainStep:
         try:
             objectives, metrics = self._executor(inputs)
         except BaseException:
-            if trace:
+            if runtime_trace:
                 self._executor.cancel_execution_timing()
             raise
         self._step += 1
         diagnostics = (
             DiagnosticsHandle(self._executor.collect_step_diagnostics)
-            if trace
+            if runtime_trace
             else None
         )
         self._pending_diagnostics = diagnostics
@@ -593,6 +761,9 @@ class PlannedTrainStep:
             and not self._pending_diagnostics.resolved
         ):
             self._pending_diagnostics.result()
+        if self._profiler_annotations_active:
+            self._executor.finish_profiler_annotations()
+            self._profiler_annotations_active = False
         for parameter in self._model.parameters():
             parameter.grad = None
         self._executor.restore_optimizer_cpu()
@@ -691,12 +862,17 @@ __all__ = [
     "DiagnosticsHandle",
     "ExecutionTiming",
     "PlanAllocationEvent",
+    "PlanCompiledOutputView",
+    "PlanCompiledRoot",
     "PlanDiagnostics",
     "PlanGraphPair",
     "PlanGraphProfile",
+    "PlanMutationBinding",
     "PlanObjectFootprint",
+    "PlanOutputView",
     "PlanPhaseTiming",
     "PlanReport",
+    "PlanStorageRoot",
     "PlanTaskStage",
     "PlanUniqueStage",
     "PlannedForward",

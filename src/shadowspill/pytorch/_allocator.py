@@ -93,7 +93,7 @@ def install_allocator(
     device_budget_bytes: int,
     provider_headroom_bytes: int,
     spill_pool_bytes: int,
-    worker_poll_nanoseconds: int = 100_000,
+    worker_poll_nanoseconds: int = 1_000,
 ) -> InstalledAllocator:
     """Install the process-global CUDA allocator before PyTorch CUDA init.
 

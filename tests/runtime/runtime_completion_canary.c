@@ -9,6 +9,13 @@ enum {
     COMPLETION_COUNT = 64,
     WAIT_IDLE_ROUNDS = 256,
     ALLOCATION_BYTES = 16,
+    /*
+     * One delayed FIFO head may be queried repeatedly; successors on the same
+     * stream are queried only after that head completes. This bound detects a
+     * return to full-population scans without constraining the intentional
+     * low-latency head polling cadence.
+     */
+    MAX_HEAD_POLL_QUERIES = 4096,
 };
 
 int main(void) {
@@ -63,7 +70,8 @@ int main(void) {
     }
     ShadowSpillMockBackendStatistics batch_statistics = {0};
     shadowspill_mock_backend_statistics(mock, &batch_statistics);
-    if (batch_statistics.event_queries > 4U * COMPLETION_COUNT) {
+    if (batch_statistics.event_queries >
+            COMPLETION_COUNT + MAX_HEAD_POLL_QUERIES) {
         return EXIT_FAILURE;
     }
 

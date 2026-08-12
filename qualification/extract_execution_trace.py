@@ -270,12 +270,14 @@ def extract_trace(path: Path) -> dict[str, object]:
         transfer_dispatch_ns: dict[str, int] = defaultdict(int)
         for item in ranges:
             name = str(item["name"])
-            if name not in {
-                "shadowspill.runtime.transfer.fetch",
-                "shadowspill.runtime.transfer.evict",
-            }:
+            fetch_prefix = "shadowspill.runtime.transfer.fetch"
+            evict_prefix = "shadowspill.runtime.transfer.evict"
+            if name.startswith(fetch_prefix):
+                direction = "fetch"
+            elif name.startswith(evict_prefix):
+                direction = "evict"
+            else:
                 continue
-            direction = name.rsplit(".", 1)[-1]
             transfer_dispatch_ns[direction] += int(item["end_ns"]) - int(
                 item["start_ns"]
             )

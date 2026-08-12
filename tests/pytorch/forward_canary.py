@@ -83,6 +83,17 @@ def main() -> int:
             range(len(selected_task_diagnostics))
         ):
             raise AssertionError("forward diagnostics are not chronologically dense")
+        for item in selected_task_diagnostics:
+            if not item.semantic_contract_digest or not item.compiled_layout_digest:
+                raise AssertionError("forward task omitted lowering diagnostics")
+        for stage in plan_diagnostics.unique_stages:
+            profile = stage.graph_pairs[0].forward
+            if not profile.semantic_roots or not profile.compiled_roots:
+                raise AssertionError("forward ABI omitted semantic/physical layout")
+            if profile.semantic_contract_capture_ns <= 0:
+                raise AssertionError("forward ABI omitted contract extraction time")
+            if profile.physical_profile_wall_time_ns <= 0:
+                raise AssertionError("forward ABI omitted physical profiling time")
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("planning replaced a Parameter object")
         if (

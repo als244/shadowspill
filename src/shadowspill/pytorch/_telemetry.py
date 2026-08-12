@@ -155,7 +155,7 @@ def summarize_task_workspace(
     events: tuple[CapturedAllocationEvent, ...],
     *,
     task_id: int,
-    output_allocation_leaves: Mapping[int, tuple[int, ...]] | None = None,
+    output_allocation_views: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
 ) -> TaskWorkspaceProfile:
     """Replay task-local anonymous lifetimes; sequential buffers do not add."""
 
@@ -167,11 +167,11 @@ def summarize_task_workspace(
         for event in selected
         if event.kind is AllocationEventKind.PROMOTED
     }
-    output_leaves = dict(output_allocation_leaves or {})
-    outputs = set(output_leaves)
+    output_views = dict(output_allocation_views or {})
+    outputs = set(output_views)
     allocation_trace, persistent_ids = _normalize_task_allocation_trace(
         selected,
-        output_leaves=output_leaves,
+        output_views=output_views,
         retained_allocation_ids=promoted,
     )
     persistent = set(persistent_ids)
@@ -224,7 +224,7 @@ def summarize_task_workspace(
 def _normalize_task_allocation_trace(
     events: tuple[CapturedAllocationEvent, ...],
     *,
-    output_leaves: Mapping[int, tuple[int, ...]],
+    output_views: Mapping[int, tuple[tuple[int, int], ...]],
     retained_allocation_ids: set[int],
 ) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
     """Replace process allocation IDs with stable task-local ordinals."""
@@ -257,7 +257,18 @@ def _normalize_task_allocation_trace(
                     TaskAllocationOperation.ALLOCATE,
                     event.requested_bytes,
                     event.charged_bytes,
-                    tuple(output_leaves.get(event.allocation_id, ())),
+                    tuple(
+                        leaf_index
+                        for leaf_index, _offset in output_views.get(
+                            event.allocation_id, ()
+                        )
+                    ),
+                    tuple(
+                        offset
+                        for _leaf_index, offset in output_views.get(
+                            event.allocation_id, ()
+                        )
+                    ),
                     None if pending is None else pending[1],
                 )
             )
@@ -265,7 +276,7 @@ def _normalize_task_allocation_trace(
             freed_ordinal = ordinal_by_id.get(event.allocation_id)
             if freed_ordinal is None:
                 continue
-            if event.allocation_id in output_leaves:
+            if event.allocation_id in output_views:
                 continue
             requested, charged = sizes_by_id[event.allocation_id]
             trace.append(

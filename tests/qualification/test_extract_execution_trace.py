@@ -48,7 +48,7 @@ def _create_trace(path: Path) -> None:
               (1100, 1200, 'shadowspill.storage_rebind.task_000001', 10, NULL),
               (1200, 1600, 'shadowspill.compiled_call.task_000001', 10, NULL),
               (1600, 1900, 'shadowspill.after_task.task_000001', 10, NULL),
-              (700, 900, 'shadowspill.runtime.transfer.fetch', 20, NULL);
+              (700, 900, 'shadowspill.runtime.transfer.fetch.alias_000001', 20, NULL);
 
             INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES
               (250, 260, 1, 10, 2),

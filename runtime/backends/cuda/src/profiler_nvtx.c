@@ -29,11 +29,17 @@ static void name_stream(
     }
 }
 
+static void set_enabled(void *context, uint8_t enabled) {
+    shadowspill_cuda_backend_profiler_enable(context, enabled);
+}
+
 static ShadowSpillProfilerRange range_begin(
     void *context, const char *name
 ) {
-    (void)context;
-    return name == NULL ? 0U : (ShadowSpillProfilerRange)nvtxRangeStartA(name);
+    return name == NULL ||
+            !shadowspill_cuda_backend_profiler_is_enabled(context)
+        ? 0U
+        : (ShadowSpillProfilerRange)nvtxRangeStartA(name);
 }
 
 static void range_end(void *context, ShadowSpillProfilerRange range) {
@@ -51,6 +57,7 @@ ShadowSpillProfiler shadowspill_cuda_backend_profiler(
         .context = backend,
         .name_current_thread = name_current_thread,
         .name_stream = name_stream,
+        .set_enabled = set_enabled,
         .range_begin = range_begin,
         .range_end = range_end,
     };

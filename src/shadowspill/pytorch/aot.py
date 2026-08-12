@@ -12,7 +12,7 @@ import torch.nn as nn
 from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
 from torch._functorch.aot_autograd import aot_function
 from torch._functorch.partitioners import min_cut_rematerialization_partition
-from torch.export.graph_signature import OutputKind
+from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
 from torch.utils._pytree import tree_flatten
 
 from .capture import (
@@ -23,6 +23,7 @@ from .capture import (
     normalize_objective_result,
 )
 from .contracts import CaptureError, ObjectiveError, ObjectiveResult
+from .output_contract import ExplicitMutation
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +33,17 @@ class ExportCapture:
     exported_program: torch.export.ExportedProgram
     flat_inputs: tuple[object, ...]
     user_output_indices: tuple[int, ...]
+    mutations: tuple[ExportMutation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExportMutation:
+    """One Export signature output that replaces explicit input state."""
+
+    output_index: int
+    input_index: int
+    kind: OutputKind
+    target: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,11 +108,61 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     )
     if not user_outputs:
         raise CaptureError("exported graph has no user output")
+    mutations = _export_mutations(exported.graph_signature)
     return ExportCapture(
         exported_program=exported,
         flat_inputs=flat_inputs,
         user_output_indices=user_outputs,
+        mutations=mutations,
     )
+
+
+def _export_mutations(
+    signature: ExportGraphSignature,
+) -> tuple[ExportMutation, ...]:
+    """Normalize Export's target/name mutation maps into dense positions."""
+
+    input_specs = tuple(signature.input_specs)
+    output_specs = tuple(signature.output_specs)
+    mutable_kinds = {
+        OutputKind.BUFFER_MUTATION,
+        OutputKind.PARAMETER_MUTATION,
+        OutputKind.USER_INPUT_MUTATION,
+    }
+    result: list[ExportMutation] = []
+    for output_index, output in enumerate(output_specs):
+        if output.kind not in mutable_kinds:
+            continue
+        target = output.target
+        if not isinstance(target, str) or not target:
+            raise CaptureError("Export mutation output has no target")
+        candidates: list[int] = []
+        for input_index, input_spec in enumerate(input_specs):
+            argument_name = getattr(input_spec.arg, "name", None)
+            if output.kind is OutputKind.USER_INPUT_MUTATION:
+                matches = (
+                    input_spec.kind is InputKind.USER_INPUT
+                    and argument_name == target
+                )
+            else:
+                expected = (
+                    InputKind.BUFFER
+                    if output.kind is OutputKind.BUFFER_MUTATION
+                    else InputKind.PARAMETER
+                )
+                matches = input_spec.kind is expected and input_spec.target == target
+            if matches:
+                candidates.append(input_index)
+        if len(candidates) != 1:
+            raise CaptureError(
+                "Export mutation target does not resolve to exactly one input: "
+                f"output={output_index}, kind={output.kind.name}, "
+                f"target={target!r}, candidates={candidates}"
+            )
+        result.append(
+            ExportMutation(output_index, candidates[0], output.kind, target)
+        )
+    return tuple(result)
 
 
 def capture_forward(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
@@ -156,18 +218,21 @@ def inference_artifact(capture: ExportCapture) -> GraphArtifact:
         kind="inference",
         graph_module=capture.exported_program.graph_module,
         example_inputs=capture.flat_inputs,
+        explicit_mutations=_explicit_mutations(capture),
     )
 
 
 def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPair:
-    eager_output = capture.exported_program.graph_module(*capture.flat_inputs)
+    graph_module = capture.exported_program.graph_module
+    eager_output = graph_module(*capture.flat_inputs)
     return capture_graph_pair(
-        capture.exported_program.graph_module,
+        graph_module,
         capture.flat_inputs,
         original_output=eager_output,
         recomputation=recomputation,
         root_output_positions=(capture.user_output_indices[0],),
         specialize_unit_tangents=True,
+        explicit_mutations=_explicit_mutations(capture),
     )
 
 
@@ -179,9 +244,11 @@ def capture_graph_pair(
     recomputation: bool,
     root_output_positions: tuple[int, ...] | None = None,
     specialize_unit_tangents: bool = False,
+    explicit_mutations: tuple[ExplicitMutation, ...] = (),
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
 
+    normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
     capture_inputs = tuple(
         value.detach().requires_grad_(value.requires_grad)
         if isinstance(value, torch.Tensor)
@@ -197,6 +264,7 @@ def capture_graph_pair(
             kind="forward",
             graph_module=graph_module,
             example_inputs=tuple(example_inputs),
+            explicit_mutations=normalized_mutations,
         )
         return make_boxed_func(graph_module.forward)
 
@@ -275,6 +343,41 @@ def capture_graph_pair(
         saved_value_count=saved,
         specialized_unit_tangent_count=specialized_count,
     )
+
+
+def _explicit_mutations(capture: ExportCapture) -> tuple[ExplicitMutation, ...]:
+    return tuple(
+        ExplicitMutation(item.input_index, item.output_index, item.target)
+        for item in capture.mutations
+    )
+
+
+def _tensor_only_mutations(
+    mutations: tuple[ExplicitMutation, ...],
+    inputs: tuple[object, ...],
+) -> tuple[ExplicitMutation, ...]:
+    """Translate a mixed positional ABI to AOT's tensor-only forward ABI."""
+
+    tensor_position = {
+        original: compact
+        for compact, original in enumerate(
+            index
+            for index, value in enumerate(inputs)
+            if isinstance(value, torch.Tensor)
+        )
+    }
+    result: list[ExplicitMutation] = []
+    for mutation in mutations:
+        try:
+            position = tensor_position[mutation.input_position]
+        except KeyError as exc:
+            raise CaptureError(
+                "functional mutation target is not an AOT tensor input"
+            ) from exc
+        result.append(
+            ExplicitMutation(position, mutation.output_leaf_index, mutation.target)
+        )
+    return tuple(result)
 
 
 def _specialize_terminal_unit_tangents(

@@ -12,6 +12,7 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 
 from ._abi import ObjectBinding
+from ._transfer_labels import TransferLabelIndex
 from .lowering import LoweredForwardProgram, TaskEntrypoint
 from .materialization import MaterializedForwardState
 from .partition import PartitionedExport
@@ -67,6 +68,7 @@ class _ExecutingStage(nn.Module):
             )
             runtime_scope_open = True
             rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+            compiled_arguments: list[torch.Tensor] = []
             for slot, alias_id, binding in zip(
                 self._entrypoint.input_slots,
                 input_aliases,
@@ -77,11 +79,14 @@ class _ExecutingStage(nn.Module):
                 if not isinstance(tensor, torch.Tensor):
                     raise RuntimeError("task tensor input became static")
                 rebound.append((tensor, alias_id, binding))
+                compiled_arguments.append(tensor)
             self._bridge.rebind_many(rebound)
             for tensor, alias_id, binding in rebound:
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = binding.generation
-            return _PreparedForwardTask(arguments, input_aliases, stream)
+            return _PreparedForwardTask(
+                tuple(compiled_arguments), input_aliases, stream
+            )
         except BaseException as error:
             if runtime_scope_open:
                 self._bridge.abort_task_after_failure(
@@ -103,16 +108,26 @@ class _ExecutingStage(nn.Module):
         output_leaves, _ = tree_flatten(output)
         produced: set[str] = set()
         rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+        replacement_leaves = set(self._entrypoint.replacement_output_leaves)
         for slot in self._entrypoint.output_slots:
             tensor = output_leaves[slot.leaf_index]
             if not isinstance(tensor, torch.Tensor):
                 raise RuntimeError("task tensor output became static")
             alias_id = self._bridge.alias_for_object(slot.object_id)
-            if alias_id not in prepared.input_aliases and alias_id not in produced:
+            replacement = slot.leaf_index in replacement_leaves
+            if replacement and alias_id not in produced:
+                binding = self._bridge.replace_output(alias_id, tensor)
+                self._state.replace_alias_generation(
+                    alias_id, tensor, binding.generation
+                )
+                produced.add(alias_id)
+            elif alias_id not in prepared.input_aliases and alias_id not in produced:
                 binding = self._bridge.promote_output(alias_id, tensor)
                 rebound.append((tensor, alias_id, binding))
                 produced.add(alias_id)
-            self._state.object_store[alias_id] = tensor
+                self._state.object_store[alias_id] = tensor
+            elif not replacement:
+                self._state.object_store[alias_id] = tensor
         self._bridge.rebind_many(rebound)
         for _, alias_id, binding in rebound:
             self._state.generations[alias_id] = binding.generation
@@ -184,6 +199,7 @@ class ForwardExecutor:
             for execution_ordinal, entrypoint in enumerate(lowered.entrypoints)
         }
         bridge.configure_task_labels(trace_labels)
+        transfer_labels = TransferLabelIndex(plan.program, trace_labels)
         for entrypoint in lowered.entrypoints:
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
@@ -194,6 +210,7 @@ class ForwardExecutor:
                     for slot in entrypoint.input_slots
                 ),
                 task_actions,
+                transfer_labels.labels_for(task_actions),
             )
             function = functions[entrypoint.artifact.compatibility_digest]
             wrapper = _ExecutingStage(
@@ -213,7 +230,8 @@ class ForwardExecutor:
         self._caller_output_aliases = tuple(
             dict.fromkeys(
                 bridge.alias_for_object(slot.object_id)
-                for slot in lowered.entrypoints[-1].output_slots
+                for entrypoint in lowered.entrypoints
+                for slot in entrypoint.output_slots
                 if slot.object_id in output_objects
             )
         )
@@ -223,6 +241,21 @@ class ForwardExecutor:
             if item.location.value == "device"
         )
         self._invocations = 0
+        self._profiler_annotations_enabled = False
+
+    def set_profiler_annotations(self, enabled: bool) -> None:
+        """Toggle provider annotations for this forward callable."""
+
+        self._bridge.set_profiler_annotations(enabled)
+        self._profiler_annotations_enabled = enabled
+
+    def finish_profiler_annotations(self) -> None:
+        """Drain annotated asynchronous work before disabling its provider."""
+
+        if not self._profiler_annotations_enabled:
+            return
+        self._bridge.wait_idle()
+        self.set_profiler_annotations(False)
 
     def __call__(self, arguments: Sequence[object]) -> object:
         if self._invocations:

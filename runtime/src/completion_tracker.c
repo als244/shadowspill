@@ -106,21 +106,6 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-static uint64_t backoff_nanoseconds(
-    const ShadowSpillRuntime *runtime,
-    uint64_t misses
-) {
-    uint64_t delay = runtime->worker_poll_nanoseconds;
-    if (delay < 10000U) {
-        delay = 10000U;
-    }
-    const uint64_t shifts = misses > 10U ? 10U : misses;
-    for (uint64_t index = 0U; index < shifts && delay < 10000000U; ++index) {
-        delay *= 2U;
-    }
-    return delay > 10000000U ? 10000000U : delay;
-}
-
 int shadowspill_completion_poll(
     ShadowSpillRuntime *runtime,
     uint64_t *next_poll_nanoseconds,
@@ -180,10 +165,7 @@ int shadowspill_completion_poll(
                 return -1;
             }
             if (!complete) {
-                ++stream->poll_misses;
-                const uint64_t delay = backoff_nanoseconds(
-                    runtime, stream->poll_misses
-                );
+                const uint64_t delay = runtime->worker_poll_nanoseconds;
                 stream->next_poll_timestamp_ns = now + delay;
                 if (*next_poll_nanoseconds == 0U ||
                     delay < *next_poll_nanoseconds) {
@@ -197,7 +179,6 @@ int shadowspill_completion_poll(
             if (stream->head == NULL) {
                 stream->tail = NULL;
             }
-            stream->poll_misses = 0U;
             stream->next_poll_timestamp_ns = 0U;
             if (tracker->pending != 0U) {
                 --tracker->pending;

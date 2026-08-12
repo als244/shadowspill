@@ -457,6 +457,21 @@ if(BUILD_TESTING)
         TIMEOUT 90
     )
     add_test(
+      NAME shadowspill_pytorch_mutation_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/mutation_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_mutation_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT
+          "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src;SHADOWSPILL_SIMULATOR_LIBRARY=$<TARGET_FILE:shadowspill_simulator>;SHADOWSPILL_PLANNER_LIBRARY=$<TARGET_FILE:shadowspill_planner>"
+        TIMEOUT 90
+    )
+    add_test(
       NAME shadowspill_pytorch_training_canary
       COMMAND
         ${Python3_EXECUTABLE}

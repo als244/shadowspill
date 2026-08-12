@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import ctypes
 import statistics
+import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -176,12 +177,17 @@ class CudaTaskProfiler:
         executable = self._compiled(artifact)
         digest = artifact.compatibility_digest
         try:
+            profiling_started = time.perf_counter_ns()
             measurement = self._measure_callable(
                 executable,
                 execution_provider=(
                     f"{executable.execution_provider}"
                     f"[fx_nodes={executable.graph_node_count}]"
                 ),
+            )
+            measurement = replace(
+                measurement,
+                profiling_wall_time_ns=time.perf_counter_ns() - profiling_started,
             )
         except AllocationTelemetryError as exc:
             self._executables.pop(digest, None)
@@ -483,7 +489,7 @@ class CudaTaskProfiler:
                 raise CaptureError(f"profiling before_task failed with status {status}")
             task_open = True
             output = executable()
-            output_allocations = self._output_allocation_leaves(output)
+            output_allocations = self._output_allocation_views(output)
             # Profiling does not retain task results. Release them while the
             # task range is still active so output-dependent temporary frees
             # remain attributable to this ABI. The allocator retires their
@@ -509,11 +515,14 @@ class CudaTaskProfiler:
         return summarize_task_workspace(
             events,
             task_id=task_id,
-            output_allocation_leaves=output_allocations,
+            output_allocation_views=output_allocations,
         )
 
-    def _output_allocation_leaves(self, output: object) -> dict[int, tuple[int, ...]]:
-        leaves_by_allocation: dict[int, list[int]] = {}
+    def _output_allocation_views(
+        self, output: object
+    ) -> dict[int, tuple[tuple[int, int], ...]]:
+
+        views_by_allocation: dict[int, list[tuple[int, int]]] = {}
         leaves, _ = tree_flatten(output)
         for leaf_index, leaf in enumerate(leaves):
             if not isinstance(leaf, torch.Tensor) or not leaf.is_cuda:
@@ -531,10 +540,17 @@ class CudaTaskProfiler:
                 raise CaptureError(
                     "compiled task returned storage outside the ShadowSpill slab"
                 )
-            leaves_by_allocation.setdefault(allocation.allocation_id, []).append(
-                leaf_index
+            allocation_pointer = int(allocation.pointer or 0)
+            view_pointer = int(leaf.data_ptr())
+            offset_bytes = view_pointer - allocation_pointer
+            if offset_bytes < 0 or offset_bytes > int(allocation.requested_bytes):
+                raise CaptureError(
+                    "compiled output view lies outside its allocator record"
+                )
+            views_by_allocation.setdefault(allocation.allocation_id, []).append(
+                (leaf_index, offset_bytes)
             )
         return {
-            allocation_id: tuple(indices)
-            for allocation_id, indices in leaves_by_allocation.items()
+            allocation_id: tuple(views)
+            for allocation_id, views in views_by_allocation.items()
         }

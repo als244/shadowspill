@@ -10,11 +10,16 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.ir import RecomputationSelection
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.aot import capture_training
+from shadowspill.pytorch.capture import GraphArtifact
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.partition import partition_training_capture
-from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskMeasurement,
+)
 from shadowspill.pytorch.training_lowering import (
     LoweredTrainingProgram,
     lower_partitioned_training_program,
@@ -81,6 +86,17 @@ class _AuxiliaryPassThroughModel(nn.Module):
         return value, auxiliary
 
 
+class _StatefulTrainingModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(8))
+        self.register_buffer("running", torch.zeros(8))
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        self.running.add_(value.mean(0))
+        return value * self.weight + self.running
+
+
 def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
@@ -95,6 +111,43 @@ def _auxiliary_objective(
 ) -> torch.Tensor:
     output, passed = model(value, auxiliary)
     return torch.nn.functional.mse_loss(output, target) + passed
+
+
+def _stateful_objective(
+    model: nn.Module, value: torch.Tensor, target: torch.Tensor
+) -> torch.Tensor:
+    return torch.nn.functional.mse_loss(model(value), target)
+
+
+def _measurement(artifact: object) -> TaskMeasurement:
+    events: list[TaskAllocationEvent] = []
+    if isinstance(artifact, GraphArtifact):
+        contract = artifact.storage_contract
+        for root in contract.roots:
+            if root.kind.value != "fresh" or root.minimum_span_bytes == 0:
+                continue
+            views = tuple(
+                view for view in contract.output_views if view.root_id == root.root_id
+            )
+            events.append(
+                TaskAllocationEvent(
+                    len(events),
+                    TaskAllocationOperation.ALLOCATE,
+                    root.minimum_span_bytes,
+                    root.minimum_span_bytes,
+                    tuple(view.leaf_index for view in views),
+                    tuple(view.offset_bytes for view in views),
+                )
+            )
+    return TaskMeasurement(
+        100,
+        10,
+        10,
+        (10,),
+        (100,),
+        "unit-test",
+        tuple(events),
+    )
 
 
 def _lowered() -> LoweredTrainingProgram:
@@ -128,9 +181,7 @@ def _lowered() -> LoweredTrainingProgram:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
     }
     return lower_training_program(model, captures, measurements, optimizer_capture)
@@ -215,9 +266,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
     }
     lowered = lower_training_program(model, captures, measurements, optimizer_capture)
@@ -273,9 +322,7 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
     }
     initial = lower_training_program(
@@ -345,9 +392,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
     }
     lowered = lower_partitioned_training_program(
@@ -430,9 +475,7 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
         if artifact is not None
     }
@@ -481,9 +524,7 @@ def test_partitioned_backward_preserves_identity_cotangent_alias() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: TaskMeasurement(
-            100, 10, 10, (10,), (100,), "unit-test"
-        )
+        artifact.compatibility_digest: _measurement(artifact)
         for artifact in artifacts
         if artifact is not None
     }
@@ -506,6 +547,63 @@ def test_partitioned_backward_preserves_identity_cotangent_alias() -> None:
                 identity_aliases.add(alias_id)
                 assert slot.object_id not in task.outputs
     assert identity_aliases
+
+
+def test_functional_buffer_mutation_does_not_displace_objective_output() -> None:
+    real_model = _StatefulTrainingModel()
+    optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
+    for parameter in real_model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    optimizer_capture = capture_optimizer(
+        dict(real_model.named_parameters()), optimizer
+    )
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(real_model, mode)
+    with mode:
+        capture = partition_training_capture(
+            capture_training(
+                model,
+                _stateful_objective,
+                fake_cuda_inputs(
+                    [torch.randn(2, 8), torch.randn(2, 8)], mode
+                ),
+            )
+        )
+    artifacts = (
+        *(
+            artifact
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.recurrent,
+        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+    )
+    measurements = {
+        artifact.compatibility_digest: _measurement(artifact)
+        for artifact in artifacts
+        if artifact is not None
+    }
+    lowered = lower_partitioned_training_program(
+        model, (capture,), measurements, optimizer_capture
+    )
+    forward_entries = tuple(
+        entrypoint
+        for entrypoint in lowered.entrypoints
+        if entrypoint.phase == "forward"
+    )
+    assert forward_entries
+    assert all(entrypoint.public_output_count == 1 for entrypoint in forward_entries)
+    assert all(entrypoint.public_output_leaves for entrypoint in forward_entries)
+    assert any(
+        entrypoint.replacement_output_leaves for entrypoint in forward_entries
+    )
+    assert all(
+        set(entrypoint.public_output_leaves).isdisjoint(
+            entrypoint.replacement_output_leaves
+        )
+        for entrypoint in forward_entries
+    )
 
 
 def test_training_lowering_rejects_empty_templates() -> None:

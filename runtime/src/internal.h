@@ -57,7 +57,6 @@ typedef struct ShadowSpillCompletionStream {
     ShadowSpillBackendStream stream;
     ShadowSpillCompletionRecord *head;
     ShadowSpillCompletionRecord *tail;
-    uint64_t poll_misses;
     uint64_t next_poll_timestamp_ns;
     struct ShadowSpillCompletionStream *next;
 } ShadowSpillCompletionStream;
@@ -235,6 +234,8 @@ typedef struct ShadowSpillQueuedAction {
     ShadowSpillObject *object;
     ShadowSpillTaskFence *fence;
     ShadowSpillEventLease *completion_event;
+    const char *trace_label;
+    uint8_t owns_trace_label;
     uint8_t has_completion_event;
     uint8_t processing;
     uint8_t admitted;
@@ -284,6 +285,7 @@ typedef struct ShadowSpillExecutionUpdate {
 typedef struct ShadowSpillExecutionAction {
     ShadowSpillObject *object;
     uint8_t kind;
+    char *trace_label;
 } ShadowSpillExecutionAction;
 
 typedef struct ShadowSpillExecutionRecord {
@@ -663,6 +665,11 @@ ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
     ShadowSpillExecutionTable *table,
     uint64_t task_id
 );
+char *shadowspill_copy_action_trace_label(
+    const ShadowSpillRuntimeAction *action,
+    uint64_t task_id,
+    uint64_t size_bytes
+);
 ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
@@ -691,8 +698,12 @@ int shadowspill_transfer_lane_complete(
     ShadowSpillQueuedAction *action
 );
 void *shadowspill_worker_main(void *pointer);
+void shadowspill_notify_worker(ShadowSpillRuntime *runtime);
 
 int shadowspill_profiler_is_valid(const ShadowSpillProfiler *profiler);
+void shadowspill_profiler_set_enabled(
+    const ShadowSpillProfiler *profiler, uint8_t enabled
+);
 void shadowspill_profiler_name_current_thread(
     const ShadowSpillProfiler *profiler, const char *name
 );

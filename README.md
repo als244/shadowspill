@@ -54,6 +54,14 @@ result = train_step(
     ]
 )
 
+# Independent, opt-in diagnostics and provider annotations:
+debug_result = train_step(
+    [[tokens_0, targets_0], [tokens_1, targets_1]],
+    runtime_trace=True,
+    profiler_annotations=True,
+)
+step_diagnostics = debug_result.diagnostics.result()
+
 train_step.close()
 runtime.close()
 ```

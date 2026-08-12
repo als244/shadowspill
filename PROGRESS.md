@@ -2215,3 +2215,107 @@ the ignored internal progress log before this tracked summary is updated.
   CUDA-disabled neutral build (10/10 compiled canaries) pass. Ruff and strict
   mypy pass, and the complete Python suite passes with five expected skips for
   fresh-process-only public accelerator tests.
+
+## 2026-08-12 — Semantic transfer annotations and active worker passes
+
+- Finding: transfer NVTX ranges were emitted inside the concrete CUDA copy
+  function, where only physical direction and byte pointers were available.
+  Consequently every range was the generic
+  `shadowspill.runtime.transfer.fetch` or `.evict`, even though the immutable
+  `ExecutionPlan` knew the alias, graph relationship, and semantic execution
+  identities.
+- Fix: admission now copies one preformatted semantic label into each ordered
+  execution action. FETCH labels include alias bundle, object role, bytes,
+  trigger execution, and next input consumer. EVICT labels include the same
+  object metadata plus the latest output, mutation, last-input, or persistent
+  source. The worker reads the immutable label directly around route
+  submission; it performs no string formatting or object/task lookup. The
+  backend's old generic nested range was removed.
+- Isolated NSYS evidence is
+  `qualification/results/semantic_transfer_annotations/overlap_semantic.nsys-rep`.
+  It contains five distinct semantic transfer ranges (three EVICT, two FETCH)
+  and zero exact generic transfer ranges.
+- API decision: bounded diagnostics and provider annotations are orthogonal.
+  Planned training calls now accept `runtime_trace=False` and
+  `profiler_annotations=False`; forward calls expose the latter. Runtime trace
+  controls `StepResult.diagnostics` and the seven task timestamps. Profiler
+  annotations control the generic provider, including allocator, task, and
+  transfer ranges. Both are disabled by default.
+- Worker finding: the worker still entered `pthread_cond_timedwait` after every
+  non-progress pass, including while actions or retirements were outstanding.
+  That retained sleep/wake latency despite the completion and action handlers
+  themselves being nonblocking. The hot loop now immediately repeats while
+  work exists. It uses a one-millisecond condition wait only when both queues
+  are truly idle, which avoids burning a core before work exists and provides
+  a lost-wakeup safety bound. CUDA-event queries remain FIFO and adaptively
+  throttled; this change does not restore the former query storm.
+- Validation before model-scale qualification: the CUDA/Torch build passes all
+  18 compiled canaries, all Python tests pass, and Ruff plus strict mypy pass.
+  Runtime ABI is 15, profiler ABI is 2, and private PyTorch adapter ABI is 25.
+
+## 2026-08-12 — Qwen control and completion-polling correction
+
+- The post-change 30 GiB Qwen control retained Program digest
+  `a83f56768b5de19ef2162844acb492fbb83e819693726e512ff83203d4ed4044`
+  and schedule digest
+  `6eec901b7293a1237496d8496d32f95cd8059a8750e6137537ae1c40e8a2d7e6`.
+  Its production-like first-selected-task through final-optimizer span was
+  290.328 ms median (296.686 ms in the detailed traced call), versus the
+  312.4 ms gate. It executed 129 tasks and all 1,549 actions with 388 evicts,
+  394 fetches, no callback failure, no trace overflow, and no allocator left
+  blocked.
+- The matching NSYS capture contains 782 distinct semantic transfer ranges and
+  zero exact generic transfer ranges. It observed 1,351 ShadowSpill driver
+  `cuEventQuery` calls totaling 0.749 ms, or about 0.55 us per query. This
+  established that the former 223,208-query problem was harmful because those
+  queries occurred beneath a shared runtime lock, not because a lock-free
+  FIFO-head query is intrinsically expensive.
+- Finding: the completion tracker still exponentially delayed an incomplete
+  FIFO head. With the public 100 us base, successive checks occurred after
+  200 us, 400 us, 800 us, 1.6 ms, 3.2 ms, 6.4 ms, and then as much as 10 ms.
+  That can delay publication and dependent actions by milliseconds merely to
+  save sub-microsecond queries.
+- Fix under qualification: preserve FIFO head-only queries outside all object,
+  pool, and action locks, but replace the exponential policy with a fixed 1 us
+  default cadence. Runtime diagnostics now report the exact per-step event
+  query delta. This is not considered accepted until the Qwen control, NSYS,
+  and tight-budget correctness/checkpoint gates are repeated.
+- A 2 us calibration control was retained as an intermediate measurement: it
+  made 49,988 queries during the detailed call and reduced the selected-task
+  median to 285.747 ms without changing either plan digest. The requested
+  production candidate is 1 us; the interrupted 2 us NSYS attempt is not an
+  accepted artifact.
+
+## 2026-08-12 — Robust offline lowering and no-copy state replacement
+
+- Added an immutable offline `TaskStorageContract` that derives task-output
+  roots, views, aliases, and mutations solely from FX provenance, Export graph
+  signatures, dispatcher schemas, and fresh symbolic geometry evaluation.
+  FakeTensor storage IDs and allocator observations no longer determine task
+  semantics.
+- Added a separate `CompiledTaskLayout` that reconciles observed physical
+  output allocations, offsets, workspace lifetimes, and provider growth with
+  the already-fixed semantic contract. Physical evidence may reject a
+  mismatch, but cannot merge or split semantic roots.
+- Replaced duplicated forward/backward output binding with `ObjectCatalog` and
+  `TaskBindingResolver`. Split-root FX topology now carries cross-stage value
+  provenance directly, including explicit stage-local user-output and mutation
+  projections.
+- Export-functionalized state changes remain fresh compiled results. The
+  runtime installs the result allocation as the canonical object's next
+  generation, retires the prior generation behind the same task fence, and the
+  private PyTorch adapter rebinds registered views. No `aten.copy_` or other
+  numerical copy is inserted.
+- Simulator and slab admission charge the exact physical replacement extent
+  during the task's old/new overlap and replay the corresponding atomic alias
+  generation change. `PlanReport.diagnostics` exposes the semantic contract,
+  physical layout, replacement-transition bytes, all legal graph pairs, and
+  the selected execution-task variant.
+- A native delayed-transfer test proves that replacement remains causally
+  correct while the old generation's fetch is still in flight, and that its
+  storage cannot be reused before task completion. The fresh CUDA mutation
+  canary executes three recurrent replacements, matches eager PyTorch, and
+  restores final CPU state through checkpointing and close.
+- Validation: all 19 compiled native/CUDA/PyTorch canaries pass; Ruff and
+  strict mypy pass; and the complete Python suite passes. The runtime ABI is
+  16 and the private PyTorch adapter ABI is 26.

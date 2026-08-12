@@ -63,7 +63,7 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
         _event(2, 11, AllocationEventKind.LOGICAL_FREED, 64),
     )
     profile = summarize_task_workspace(
-        events, task_id=7, output_allocation_leaves={10: (0,)}
+        events, task_id=7, output_allocation_views={10: ((0, 0),)}
     )
     assert profile.peak_charged_bytes == 64
     assert profile.output_allocation_ids == (10,)
@@ -134,7 +134,7 @@ def test_physical_release_breaks_cached_extent_reuse() -> None:
     profile = summarize_task_workspace(
         events,
         task_id=7,
-        output_allocation_leaves={2: (0,)},
+        output_allocation_views={2: ((0, 0),)},
     )
     assert profile.allocation_trace[2].reuses_ordinal is None
 

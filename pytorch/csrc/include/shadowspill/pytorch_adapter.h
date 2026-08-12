@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 24U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 26U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -121,6 +121,10 @@ shadowspill_pytorch_profile_range_begin(const char *name);
 SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_profile_range_end(
     ShadowSpillProfilerRange range
 );
+
+/* Enable or disable provider annotations independently of runtime tracing. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_profiler_annotations_set(uint8_t enabled);
 
 /* Copies immutable bootstrap admission and physical-accounting evidence. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
@@ -310,6 +314,15 @@ shadowspill_pytorch_unregister_object(uint64_t object_id);
 /* Bind an already registered object to one ordinary framework allocation. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_bind_registered_allocation(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes,
+    ShadowSpillObjectBinding *binding
+);
+
+/* Replace a registered object's lease with a fresh functional output. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_replace_registered_allocation(
     uint64_t object_id,
     uint64_t address,
     uint64_t size_bytes,

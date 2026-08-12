@@ -12,8 +12,17 @@ int shadowspill_profiler_is_valid(const ShadowSpillProfiler *profiler) {
     }
     return profiler->abi_version == SHADOWSPILL_PROFILER_ABI_VERSION &&
         profiler->name_current_thread != NULL &&
-        profiler->name_stream != NULL && profiler->range_begin != NULL &&
-        profiler->range_end != NULL;
+        profiler->name_stream != NULL && profiler->set_enabled != NULL &&
+        profiler->range_begin != NULL && profiler->range_end != NULL;
+}
+
+void shadowspill_profiler_set_enabled(
+    const ShadowSpillProfiler *profiler, uint8_t enabled
+) {
+    if (profiler != NULL && profiler->abi_version != 0U &&
+        profiler->set_enabled != NULL) {
+        profiler->set_enabled(profiler->context, enabled != 0U);
+    }
 }
 
 void shadowspill_profiler_name_current_thread(

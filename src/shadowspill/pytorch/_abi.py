@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 24
-RUNTIME_ABI_VERSION: Final = 14
+ADAPTER_ABI_VERSION: Final = 26
+RUNTIME_ABI_VERSION: Final = 16
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -293,6 +293,7 @@ class RuntimeAction(ctypes.Structure):
     _fields_ = [
         ("object_id", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
+        ("trace_label", ctypes.c_char_p),
     ]
 
 
@@ -337,6 +338,8 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_profile_range_begin.restype = ctypes.c_uint64
     library.shadowspill_pytorch_profile_range_end.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_profile_range_end.restype = None
+    library.shadowspill_pytorch_profiler_annotations_set.argtypes = [ctypes.c_uint8]
+    library.shadowspill_pytorch_profiler_annotations_set.restype = ctypes.c_uint32
     library.shadowspill_pytorch_physical_admission.argtypes = [
         ctypes.POINTER(PhysicalAdmission)
     ]
@@ -461,6 +464,15 @@ def configure_adapter_library(library: Any) -> None:
         ctypes.POINTER(ObjectBinding),
     ]
     library.shadowspill_pytorch_bind_registered_allocation.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_replace_registered_allocation.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    library.shadowspill_pytorch_replace_registered_allocation.restype = (
+        ctypes.c_uint32
+    )
     library.shadowspill_pytorch_transfer_output_to_caller.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),

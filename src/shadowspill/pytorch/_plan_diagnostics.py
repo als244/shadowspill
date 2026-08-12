@@ -15,14 +15,23 @@ from shadowspill.ir import (
 )
 
 from .capture import AotGraphPair, GraphArtifact
+from .compiled_layout import (
+    reconcile_compiled_task_layout,
+    replacement_transition_bytes,
+)
 from .lowering import LoweredForwardProgram
 from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 from .public import (
     PlanAllocationEvent,
+    PlanCompiledOutputView,
+    PlanCompiledRoot,
     PlanGraphPair,
     PlanGraphProfile,
+    PlanMutationBinding,
     PlanObjectFootprint,
+    PlanOutputView,
+    PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
 )
@@ -102,6 +111,17 @@ def training_stage_inventory(
             auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
             auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
             semantic_name = f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
+        if isinstance(artifact, GraphArtifact):
+            contract_digest: str | None = (
+                artifact.storage_contract.compatibility_digest
+            )
+            compiled_layout_digest: str | None = reconcile_compiled_task_layout(
+                artifact.storage_contract,
+                measurements[artifact.compatibility_digest],
+            ).compatibility_digest
+        else:
+            contract_digest = None
+            compiled_layout_digest = None
         ordinal = execution_ordinal.get(entrypoint.task_id)
         task_map.append(
             PlanTaskStage(
@@ -116,6 +136,8 @@ def training_stage_inventory(
                 stage_occurrence_id=stage_occurrence_id,
                 unique_stage_id=unique_stage_id,
                 structural_abi_key=structural_abi,
+                semantic_contract_digest=contract_digest,
+                compiled_layout_digest=compiled_layout_digest,
                 graph_pair_variant=entrypoint.variant,
                 chosen_graph_pair_variant=chosen,
                 selected=entrypoint.task_id in selected_ids,
@@ -209,6 +231,13 @@ def forward_stage_inventory(
             stage_occurrence_id=f"stage_{index:04d}",
             unique_stage_id=unique_id_by_key[entrypoint.artifact.compatibility_digest],
             structural_abi_key=entrypoint.artifact.compatibility_digest,
+            semantic_contract_digest=(
+                entrypoint.artifact.storage_contract.compatibility_digest
+            ),
+            compiled_layout_digest=reconcile_compiled_task_layout(
+                entrypoint.artifact.storage_contract,
+                measurements[entrypoint.artifact.compatibility_digest],
+            ).compatibility_digest,
             graph_pair_variant="inference",
             chosen_graph_pair_variant="inference",
             selected=entrypoint.task_id in selected_ids,
@@ -311,9 +340,71 @@ def _graph_profile(
     profile = next(
         item for item in program.profiles if item.profile_id == task.profile_id
     )
+    layout = reconcile_compiled_task_layout(
+        artifact.storage_contract, measurement
+    )
     return PlanGraphProfile(
         direction=direction,
         structural_abi_key=artifact.compatibility_digest,
+        semantic_contract_digest=(
+            artifact.storage_contract.compatibility_digest
+        ),
+        semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
+        semantic_roots=tuple(
+            PlanStorageRoot(
+                root_id=item.root_id,
+                kind=item.kind.value,
+                source_input=item.source_input,
+                producer_node=item.producer_node,
+                producer_target=item.producer_target,
+                producer_result=item.producer_result,
+                minimum_span_bytes=item.minimum_span_bytes,
+            )
+            for item in artifact.storage_contract.roots
+        ),
+        semantic_output_views=tuple(
+            PlanOutputView(
+                leaf_index=item.leaf_index,
+                root_id=item.root_id,
+                offset_bytes=item.offset_bytes,
+                span_bytes=item.span_bytes,
+                shape=item.shape,
+                stride=item.stride,
+                dtype=item.dtype,
+                layout=item.layout,
+            )
+            for item in artifact.storage_contract.output_views
+        ),
+        semantic_mutations=tuple(
+            PlanMutationBinding(
+                input_position=item.input_position,
+                replacement_output_leaf=item.replacement_output_leaf,
+                producer_node=item.producer_node,
+                producer_target=item.producer_target,
+                argument_name=item.argument_name,
+            )
+            for item in artifact.storage_contract.mutations
+        ),
+        compiled_layout_digest=layout.compatibility_digest,
+        compiled_roots=tuple(
+            PlanCompiledRoot(
+                root_id=item.root_id,
+                allocation_ordinal=item.allocation_ordinal,
+                requested_bytes=item.requested_bytes,
+                charged_bytes=item.charged_bytes,
+            )
+            for item in layout.roots
+        ),
+        compiled_output_views=tuple(
+            PlanCompiledOutputView(
+                leaf_index=item.leaf_index,
+                root_id=item.root_id,
+                allocation_ordinal=item.allocation_ordinal,
+                offset_bytes=item.offset_bytes,
+            )
+            for item in layout.output_views
+        ),
+        physical_profile_wall_time_ns=measurement.profiling_wall_time_ns,
         representative_task_id=task.task_id,
         runtime_ns=measurement.runtime_ns,
         samples_ns=measurement.samples_ns,
@@ -329,6 +420,9 @@ def _graph_profile(
         output_allocation_bytes=_unique_allocation_bytes(outputs),
         workspace_requested_bytes=measurement.workspace_requested_bytes,
         workspace_charged_bytes=measurement.workspace_charged_bytes,
+        replacement_transition_bytes=replacement_transition_bytes(
+            artifact.storage_contract, layout
+        ),
         task_workspace_bytes=profile.workspace_bytes,
         workspace_extent_bytes=measurement.workspace_extent_bytes,
         persistent_extent_bytes=measurement.persistent_extent_bytes,
@@ -339,6 +433,7 @@ def _graph_profile(
                 requested_bytes=event.requested_bytes,
                 charged_bytes=event.charged_bytes,
                 output_leaf_indices=event.output_leaf_indices,
+                output_view_offsets=event.output_view_offsets,
                 reuses_ordinal=event.reuses_ordinal,
             )
             for event in measurement.allocation_trace

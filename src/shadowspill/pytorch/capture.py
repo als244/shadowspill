@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -13,7 +14,13 @@ from torch.fx import GraphModule
 from torch.fx.node import Node, map_arg
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
+from ._live_storage import live_storage_identity
 from .contracts import ObjectiveError, ObjectiveResult
+from .output_contract import (
+    ExplicitMutation,
+    TaskStorageContract,
+    capture_task_storage_contract,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +66,8 @@ class GraphArtifact:
     operator_targets: tuple[str, ...]
     tensor_argument_positions: tuple[int, ...]
     tensor_argument_alias_groups: tuple[int, ...]
+    storage_contract: TaskStorageContract
+    storage_contract_capture_ns: int = field(compare=False)
     compatibility_digest: str
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
 
@@ -69,6 +78,7 @@ class GraphArtifact:
         kind: Literal["forward", "backward", "inference", "optimizer"],
         graph_module: GraphModule,
         example_inputs: tuple[object, ...],
+        explicit_mutations: tuple[ExplicitMutation, ...] = (),
     ) -> GraphArtifact:
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
@@ -82,7 +92,7 @@ class GraphArtifact:
         alias_group_by_storage: dict[int, int] = {}
         tensor_alias_groups = tuple(
             alias_group_by_storage.setdefault(
-                int(value.untyped_storage()._cdata), len(alias_group_by_storage)
+                live_storage_identity(value), len(alias_group_by_storage)
             )
             for value in tensor_arguments
         )
@@ -99,6 +109,31 @@ class GraphArtifact:
             node for node in graph_module.graph.nodes if node.op == "output"
         )
         outputs, _ = tree_flatten(output_node.args[0])
+        contract_started = time.perf_counter_ns()
+        compact_position = {
+            original: compact for compact, original in enumerate(tensor_positions)
+        }
+        compact_mutations: list[ExplicitMutation] = []
+        for mutation in explicit_mutations:
+            try:
+                input_position = compact_position[mutation.input_position]
+            except KeyError as exc:
+                raise ValueError(
+                    "functional mutation target was specialized as static"
+                ) from exc
+            compact_mutations.append(
+                ExplicitMutation(
+                    input_position,
+                    mutation.output_leaf_index,
+                    mutation.target,
+                )
+            )
+        storage_contract = capture_task_storage_contract(
+            graph_module,
+            example_inputs,
+            explicit_mutations=tuple(compact_mutations),
+        )
+        contract_capture_ns = time.perf_counter_ns() - contract_started
         identity = {
             "kind": kind,
             "graph": _canonical_graph(graph_module),
@@ -108,6 +143,8 @@ class GraphArtifact:
             "tensor_argument_alias_groups": tensor_alias_groups,
             "output_count": len(outputs),
             "operators": operators,
+            "storage_contract": storage_contract.identity(),
+            "storage_contract_digest": storage_contract.compatibility_digest,
             "torch": torch.__version__,
             "cuda": torch.version.cuda,
         }
@@ -121,6 +158,8 @@ class GraphArtifact:
             operator_targets=operators,
             tensor_argument_positions=tensor_positions,
             tensor_argument_alias_groups=tensor_alias_groups,
+            storage_contract=storage_contract,
+            storage_contract_capture_ns=contract_capture_ns,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
             example_arguments=example_inputs,
         )

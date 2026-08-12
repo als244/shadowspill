@@ -693,7 +693,7 @@ successors are drained. Shared task fences are tested once regardless of how
 many actions or retirements reference them.
 
 General progress uses nonblocking `cuEventQuery` outside all state locks, with
-adaptive timed backoff. `before_task` does not poll a prefetch: it inserts
+fixed, short FIFO-head polling. `before_task` does not poll a prefetch: it inserts
 `cuStreamWaitEvent`. D2H dispatch does not host-wait for compute: the D2H stream
 waits on the task fence. A targeted blocking `cuEventSynchronize` is permitted
 only on a dedicated background waiter or allocator-pressure slow path; it
@@ -1018,12 +1018,12 @@ after their host enqueue call and remain visible on the H2D/D2H stream rows.
 
 The trace contains exactly 390 `cudaStreamIsCapturing` calls followed one for
 one by 390 `cudaEventRecordWithFlags` calls. They come from the optional
-`trace=True` StepDiagnostics events: three stream timestamps for each of 129
+`runtime_trace=True` StepDiagnostics events: three stream timestamps for each of 129
 tasks, plus the three step-level origin/start/end records. PyTorch checks stream
 capture state before recording its event so that event semantics remain valid
 inside CUDA graph capture. This is intended debug-only behavior, costs
 0.110 ms in aggregate for the capture checks (0.953 ms for their paired event
-records), and is absent from ordinary `trace=False` execution. Neutral-runtime
+records), and is absent from ordinary `runtime_trace=False` execution. Neutral-runtime
 readiness, transfer, fence, and retirement events are separate precreated
 timing-disabled driver events.
 

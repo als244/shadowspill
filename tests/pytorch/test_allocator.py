@@ -59,6 +59,7 @@ class _Library:
     shadowspill_pytorch_debug_task_timing_read = _Function()
     shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_task_labels_configure = _Function()
+    shadowspill_pytorch_profiler_annotations_set = _Function()
     shadowspill_pytorch_resize_spill_pool = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
@@ -74,6 +75,7 @@ class _Library:
     shadowspill_pytorch_read_spill_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
     shadowspill_pytorch_bind_registered_allocation = _Function()
+    shadowspill_pytorch_replace_registered_allocation = _Function()
     shadowspill_pytorch_transfer_output_to_caller = _Function()
     shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_before_task = _Function()
@@ -100,7 +102,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterStatistics) == 480
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
-    assert ctypes.sizeof(RuntimeAction) == 16
+    assert ctypes.sizeof(RuntimeAction) == 24
     assert ctypes.sizeof(ObjectSnapshot) == 88
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32

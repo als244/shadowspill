@@ -237,14 +237,17 @@ def test_output_allocation_lookup_is_exact() -> None:
             assert address != 0
             allocation = ctypes.cast(allocation_pointer, ctypes.POINTER(Allocation))[0]
             allocation.allocation_id = 91
+            allocation.pointer = address
+            allocation.requested_bytes = 16
+            allocation.charged_bytes = 16
             return 0
 
     profiler = CudaTaskProfiler(
         _Lookup(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     tensor = torch.empty(4, device="cuda")
-    assert profiler._output_allocation_leaves((tensor, tensor.view(2, 2))) == {
-        91: (0, 1)
+    assert profiler._output_allocation_views((tensor, tensor.view(2, 2))) == {
+        91: ((0, 0), (1, 0))
     }
 
     class _Missing:
@@ -257,7 +260,7 @@ def test_output_allocation_lookup_is_exact() -> None:
         _Missing(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     with pytest.raises(CaptureError, match="outside"):
-        missing._output_allocation_leaves(tensor)
+        missing._output_allocation_views(tensor)
 
 
 @pytest.mark.parametrize(
@@ -386,7 +389,10 @@ def test_measurement_releases_cuda_examples_between_structural_abis(
         lambda executable, **options: measurement,
     )
 
-    assert profiler.measure(artifact) is measurement
+    observed = profiler.measure(artifact)
+    assert observed.runtime_ns == measurement.runtime_ns
+    assert observed.workspace_charged_bytes == measurement.workspace_charged_bytes
+    assert observed.profiling_wall_time_ns > 0
     examples.clear()
     gc.collect()
     assert example_reference() is None

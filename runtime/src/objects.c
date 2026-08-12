@@ -328,6 +328,121 @@ done:
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    ShadowSpillObjectBinding *binding
+) {
+    if (runtime == NULL || binding == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    const uint64_t task_id = shadowspill_current_task_id(runtime);
+    if (task_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    ShadowSpillObject *object = shadowspill_object_table_acquire(
+        &runtime->objects, object_id
+    );
+    if (object == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+
+    ShadowSpillEventLease *retired_readiness = NULL;
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    pthread_mutex_lock(&object->lock);
+    shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
+    ShadowSpillMemoryLease *replacement = shadowspill_find_execution_lease(
+        runtime, allocation_id
+    );
+    ShadowSpillMemoryLease *prior = shadowspill_execution_location(
+        runtime, object
+    )->lease;
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
+         object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
+        prior == NULL || prior->pointer == NULL || prior->logical_freed ||
+        prior->allocation_id != object->allocation_id ||
+        prior->generation != object->generation || replacement == NULL ||
+        replacement == prior || replacement->pointer == NULL ||
+        replacement->logical_freed || replacement->plan_owned ||
+        replacement->bound_object_id != SHADOWSPILL_RUNTIME_NO_ID ||
+        replacement->requested_bytes < object->size_bytes) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+
+    replacement->plan_owned = 1;
+    replacement->ever_plan_owned = 1;
+    replacement->bound_object_id = object->object_id;
+    replacement->state = SHADOWSPILL_LEASE_ACTIVE;
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        replacement,
+        SHADOWSPILL_ALLOCATION_PROMOTED,
+        SHADOWSPILL_ALLOCATION_PLANNED_OBJECT
+    );
+    if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_failure_status(runtime);
+        replacement->plan_owned = 0;
+        replacement->ever_plan_owned = 0;
+        replacement->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        goto done;
+    }
+
+    object->retired_generation = object->generation;
+    object->retired_execution_pointer = prior->pointer;
+    prior->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    prior->release_task_id = task_id;
+    prior->logical_freed = 1;
+    prior->state = SHADOWSPILL_LEASE_RETIRING;
+    shadowspill_append_allocation_event_locked(
+        runtime,
+        prior,
+        SHADOWSPILL_ALLOCATION_LOGICAL_FREED,
+        SHADOWSPILL_ALLOCATION_PLANNED_OBJECT
+    );
+    (void)atomic_fetch_add_explicit(
+        &runtime->pending_retirements, 1U, memory_order_acq_rel
+    );
+
+    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
+        runtime, object
+    );
+    execution->lease = replacement;
+    execution->version = object->authoritative_version;
+    execution->current = 1U;
+    object->allocation_id = replacement->allocation_id;
+    object->generation = replacement->generation;
+    object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
+    if (object->has_readiness_event) {
+        retired_readiness = object->readiness_event;
+        object->readiness_event = NULL;
+        object->has_readiness_event = 0U;
+    }
+    *binding = (ShadowSpillObjectBinding){
+        .object_id = object->object_id,
+        .generation = object->generation,
+        .allocation_id = object->allocation_id,
+        .authoritative_version = object->authoritative_version,
+        .pointer = replacement->pointer,
+    };
+    pthread_cond_broadcast(&object->state_changed);
+
+done:
+    shadowspill_memory_pool_unlock_foreground(shadowspill_execution_pool(runtime));
+    pthread_mutex_unlock(&object->lock);
+    shadowspill_object_release(object);
+    if (retired_readiness != NULL &&
+        shadowspill_event_lease_release(runtime, retired_readiness) != 0 &&
+        status == SHADOWSPILL_RUNTIME_OK) {
+        status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+    }
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -603,6 +718,9 @@ static void discard_actions_locked(
         }
         shadowspill_release_task_fence_locked(runtime, head->fence);
         shadowspill_object_release(head->object);
+        if (head->owns_trace_label) {
+            free((void *)head->trace_label);
+        }
         free(head);
         head = next;
     }
@@ -765,6 +883,15 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         created->task_id = task_id;
         created->kind = actions[index].kind;
         created->object = object;
+        created->trace_label = shadowspill_copy_action_trace_label(
+            &actions[index], task_id, object->size_bytes
+        );
+        if (created->trace_label == NULL) {
+            free(created);
+            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            break;
+        }
+        created->owns_trace_label = 1U;
         shadowspill_object_retain(object);
         created->fence = fence;
         shadowspill_retain_task_fence(fence);

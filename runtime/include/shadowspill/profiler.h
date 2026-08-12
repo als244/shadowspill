@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PROFILER_ABI_VERSION 1U
+#define SHADOWSPILL_PROFILER_ABI_VERSION 2U
 
 typedef uint64_t ShadowSpillProfilerRange;
 
@@ -27,6 +27,7 @@ typedef struct ShadowSpillProfiler {
         ShadowSpillBackendStream stream,
         const char *name
     );
+    void (*set_enabled)(void *context, uint8_t enabled);
     ShadowSpillProfilerRange (*range_begin)(
         void *context,
         const char *name

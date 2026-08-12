@@ -612,6 +612,187 @@ static int immutable_execution_admission(void) {
     return failed ? -1 : 0;
 }
 
+static int functional_mutation_replaces_lease_without_copy(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription description = {
+        .object_id = 101U,
+        .size_bytes = 32U,
+        .initial_version = 7U,
+    };
+    ShadowSpillAllocation prior = {0};
+    ShadowSpillAllocation replacement = {0};
+    ShadowSpillAllocation probe = {0};
+    const uint64_t input = description.object_id;
+    const ShadowSpillObjectUpdate update = {
+        .object_id = description.object_id,
+        .version_delta = 1U,
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 41U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .updates = &update,
+        .update_count = 1U,
+    };
+    ShadowSpillObjectBinding acquired = {0};
+    ShadowSpillObjectBinding replaced = {0};
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(
+            fixture.runtime, &description
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            fixture.runtime, description.size_bytes, 1U, fixture.compute, &prior
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+            fixture.runtime, description.object_id, prior.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, &acquired, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            fixture.runtime, description.size_bytes, 1U, fixture.compute,
+            &replacement
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_replace_object_allocation(
+            fixture.runtime,
+            description.object_id,
+            replacement.allocation_id,
+            &replaced
+        ) != SHADOWSPILL_RUNTIME_OK || replaced.pointer != replacement.pointer ||
+        replaced.generation != replacement.generation ||
+        replaced.authoritative_version != 7U || shadowspill_runtime_statistics(
+            fixture.runtime, &statistics
+        ) != SHADOWSPILL_RUNTIME_OK || statistics.allocated_bytes != 64U ||
+        statistics.pending_retirements != 1U || shadowspill_allocate(
+            fixture.runtime, description.size_bytes, 1U, fixture.compute, &probe
+        ) != SHADOWSPILL_RUNTIME_OK || probe.pointer == prior.pointer ||
+        probe.pointer == replacement.pointer || shadowspill_free(
+            fixture.runtime, probe.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_mock_enqueue_compute(
+            fixture.mock, fixture.compute, 100000U
+        ) != 0 || shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+            fixture.runtime
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+            fixture.runtime, description.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
+            fixture.runtime, &statistics
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.execution_pointer != replacement.pointer ||
+        snapshot.generation != replacement.generation ||
+        snapshot.retired_generation != prior.generation ||
+        snapshot.retired_execution_pointer != prior.pointer ||
+        snapshot.authoritative_version != 8U ||
+        statistics.allocated_bytes != description.size_bytes ||
+        statistics.pending_retirements != 0U;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int functional_mutation_supersedes_inflight_prefetch(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = 100000000U,
+        .event_delay_nanoseconds = 50000000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 96U,
+        .spill_pool_bytes = 96U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_mock_create_compute_stream(
+            mock, &compute
+        ) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription description = {
+        .object_id = 102U,
+        .size_bytes = 32U,
+        .initial_version = 3U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = description.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const uint64_t input = description.object_id;
+    const ShadowSpillObjectUpdate update = {
+        .object_id = description.object_id,
+        .version_delta = 1U,
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 42U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .updates = &update,
+        .update_count = 1U,
+    };
+    ShadowSpillObjectSnapshot during_fetch = {0};
+    ShadowSpillObjectSnapshot completed = {0};
+    ShadowSpillObjectBinding acquired = {0};
+    ShadowSpillObjectBinding replaced = {0};
+    ShadowSpillAllocation replacement = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(runtime, &description) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    sleep_milliseconds(75U);
+    failed = failed || shadowspill_object_snapshot(
+            runtime, description.object_id, &during_fetch
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        during_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+        shadowspill_admit_execution(runtime, &execution) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            runtime, execution.task_id, compute, &acquired, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            runtime, description.size_bytes, 1U, compute, &replacement
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_replace_object_allocation(
+            runtime,
+            description.object_id,
+            replacement.allocation_id,
+            &replaced
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_mock_enqueue_compute(
+            mock, compute, 1000000U
+        ) != 0 || shadowspill_after_execution(
+            runtime, execution.task_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+            runtime, description.object_id, &completed
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
+            runtime, &statistics
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        completed.execution_pointer != replacement.pointer ||
+        completed.generation != replacement.generation ||
+        completed.authoritative_version != 4U ||
+        statistics.allocated_bytes != description.size_bytes ||
+        statistics.pending_retirements != 0U ||
+        statistics.wait_events_inserted != 1U;
+
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     return invalid_action(0U, SHADOWSPILL_RUNTIME_PREFETCH) == 0 &&
             invalid_action(1U, SHADOWSPILL_RUNTIME_RELEASE) == 0 &&
@@ -623,7 +804,9 @@ int main(void) {
             prefetch_window_is_enqueued_without_host_blocking() == 0 &&
             offload_window_is_enqueued_without_host_serialization() == 0 &&
             trigger_reservation_failure_is_a_plan_violation() == 0
-            && immutable_execution_admission() == 0
+            && immutable_execution_admission() == 0 &&
+            functional_mutation_replaces_lease_without_copy() == 0 &&
+            functional_mutation_supersedes_inflight_prefetch() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

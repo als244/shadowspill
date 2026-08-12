@@ -13,10 +13,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-# v8 measures every calibrated sample inside the same task-boundary allocator
-# contract used by production execution.  Older entries measured samples
-# outside a task and therefore included conservative per-free retirement cost.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v8"
+# v9 records each returned view's byte offset inside its compiled allocation.
+# Semantic storage identity remains part of GraphArtifact; this observation is
+# used only for physical layout, workspace replay, and admission.
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v9"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -35,6 +35,7 @@ class TaskAllocationEvent:
     requested_bytes: int
     charged_bytes: int
     output_leaf_indices: tuple[int, ...] = ()
+    output_view_offsets: tuple[int, ...] = ()
     reuses_ordinal: int | None = None
 
     def __post_init__(self) -> None:
@@ -48,6 +49,10 @@ class TaskAllocationEvent:
             raise ValueError("task output leaf indices must be non-negative")
         if len(set(self.output_leaf_indices)) != len(self.output_leaf_indices):
             raise ValueError("task output leaf indices must be unique")
+        if len(self.output_view_offsets) != len(self.output_leaf_indices):
+            raise ValueError("task output leaves and view offsets must align")
+        if any(offset < 0 for offset in self.output_view_offsets):
+            raise ValueError("task output view offsets must be non-negative")
         if self.reuses_ordinal is not None:
             if self.operation is not TaskAllocationOperation.ALLOCATE:
                 raise ValueError("only an allocation may reuse a retired extent")
@@ -63,6 +68,7 @@ class TaskAllocationEvent:
             "requested_bytes": self.requested_bytes,
             "charged_bytes": self.charged_bytes,
             "output_leaf_indices": list(self.output_leaf_indices),
+            "output_view_offsets": list(self.output_view_offsets),
             "reuses_ordinal": self.reuses_ordinal,
         }
 
@@ -78,6 +84,9 @@ class TaskAllocationEvent:
                 charged_bytes=int(value["charged_bytes"]),
                 output_leaf_indices=tuple(
                     int(item) for item in value["output_leaf_indices"]
+                ),
+                output_view_offsets=tuple(
+                    int(item) for item in value["output_view_offsets"]
                 ),
                 reuses_ordinal=(
                     None
@@ -135,6 +144,7 @@ class TaskMeasurement:
     provenance: str
     allocation_trace: tuple[TaskAllocationEvent, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
+    profiling_wall_time_ns: int = 0
 
     def __post_init__(self) -> None:
         values = (
@@ -144,6 +154,7 @@ class TaskMeasurement:
             *self.workspace_extent_bytes,
             *self.samples_ns,
             *self.persistent_extent_bytes,
+            self.profiling_wall_time_ns,
         )
         if any(value < 0 for value in values):
             raise ValueError("profile measurements must be non-negative")
@@ -202,6 +213,7 @@ class TaskMeasurement:
             "provenance": self.provenance,
             "allocation_trace": [event.to_dict() for event in self.allocation_trace],
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
+            "profiling_wall_time_ns": self.profiling_wall_time_ns,
         }
 
     @classmethod
@@ -225,6 +237,7 @@ class TaskMeasurement:
                 persistent_extent_bytes=tuple(
                     int(item) for item in value["persistent_extent_bytes"]
                 ),
+                profiling_wall_time_ns=int(value["profiling_wall_time_ns"]),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task measurement has an invalid schema") from exc

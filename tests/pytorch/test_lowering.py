@@ -5,18 +5,20 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.ir import MemoryLocation, ObjectRole, Persistence
+from shadowspill.ir import MemoryLocation, ObjectRole
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.aot import capture_forward
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.lowering import (
-    _CompiledOutputAllocation,
-    _TensorInventory,
     lower_forward_program,
 )
 from shadowspill.pytorch.partition import capture_forward_stages, partition_export
-from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskMeasurement,
+)
 from shadowspill.simulator import SimulationConfig
 
 
@@ -39,11 +41,38 @@ def _lowered() -> object:
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
         artifacts = capture_forward_stages(partitioned)
-    measurements = tuple(
-        TaskMeasurement(1_000, 256, 256, (256,), (1_000,), "unit-test")
-        for _ in artifacts
-    )
+    measurements = tuple(_measurement(artifact) for artifact in artifacts)
     return lower_forward_program(model, partitioned, artifacts, measurements)
+
+
+def _measurement(artifact: object) -> TaskMeasurement:
+    contract = artifact.storage_contract
+    events = []
+    for root in contract.roots:
+        if root.kind.value != "fresh" or root.minimum_span_bytes == 0:
+            continue
+        views = tuple(
+            view for view in contract.output_views if view.root_id == root.root_id
+        )
+        events.append(
+            TaskAllocationEvent(
+                len(events),
+                TaskAllocationOperation.ALLOCATE,
+                root.minimum_span_bytes,
+                root.minimum_span_bytes,
+                tuple(view.leaf_index for view in views),
+                tuple(view.offset_bytes for view in views),
+            )
+        )
+    return TaskMeasurement(
+        1_000,
+        256,
+        256,
+        (256,),
+        (1_000,),
+        "unit-test",
+        tuple(events),
+    )
 
 
 def test_forward_lowering_is_dense_alias_aware_and_plannable() -> None:
@@ -94,82 +123,45 @@ def test_forward_lowering_rejects_incomplete_profile_scatter() -> None:
         lower_forward_program(model, partitioned, artifacts, ())
 
 
-def test_isolated_compiled_output_uses_measured_physical_extent() -> None:
-    inventory = _TensorInventory(device_id="cuda_0")
-    output = torch.empty(20, dtype=torch.bfloat16)[10:]
-    object_id = inventory.add_compiled_output(
-        output,
-        role=ObjectRole.ACTIVATION,
-        persistence=Persistence.STEP,
-        allocation_scope=inventory.compiled_output_scope(),
-        physical_allocation=_CompiledOutputAllocation(0, 24),
+def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> None:
+    class Stateful(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.register_buffer("running", torch.zeros(8))
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            self.running.add_(value.sum(0))
+            return self.running[2:] * 0.5
+
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_cuda_model(Stateful(), mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    with mode, torch.no_grad():
+        partitioned = partition_export(
+            capture_forward(model, inputs), model, partition="whole"
+        )
+        artifacts = capture_forward_stages(partitioned)
+    lowered = lower_forward_program(
+        model,
+        partitioned,
+        artifacts,
+        tuple(_measurement(artifact) for artifact in artifacts),
     )
 
-    object_spec = next(
-        item for item in inventory.objects() if item.object_id == object_id
+    buffer_object = next(
+        item.object_id for item in lowered.registrations if item.name == "running"
     )
-    alias_spec = next(
-        item
-        for item in inventory.alias_groups()
-        if item.alias_group_id == object_spec.alias_group_id
+    task = lowered.program.tasks[0]
+    assert tuple(item.object_id for item in task.mutations) == (buffer_object,)
+    assert buffer_object in task.inputs
+    assert buffer_object not in task.outputs
+    buffer_alias = next(
+        item.alias_group_id
+        for item in lowered.program.objects
+        if item.object_id == buffer_object
     )
-    assert object_spec.offset_bytes == 0
-    assert object_spec.size_bytes == 20
-    assert alias_spec.size_bytes == 24
-
-
-def test_compiled_output_views_keep_shared_storage_bundle() -> None:
-    inventory = _TensorInventory(device_id="cuda_0")
-    storage = torch.empty(20, dtype=torch.bfloat16)
-    left, right = storage[:10], storage[10:]
-    scope = inventory.compiled_output_scope()
-    allocation = _CompiledOutputAllocation(0, 40)
-    left_id = inventory.add_compiled_output(
-        left,
-        role=ObjectRole.ACTIVATION,
-        persistence=Persistence.STEP,
-        allocation_scope=scope,
-        physical_allocation=allocation,
-    )
-    right_id = inventory.add_compiled_output(
-        right,
-        role=ObjectRole.ACTIVATION,
-        persistence=Persistence.STEP,
-        allocation_scope=scope,
-        physical_allocation=allocation,
-    )
-
-    objects = {item.object_id: item for item in inventory.objects()}
-    assert objects[left_id].alias_group_id == objects[right_id].alias_group_id
-    assert objects[left_id].offset_bytes == 0
-    assert objects[right_id].offset_bytes == 0
-    alias = next(
-        item
-        for item in inventory.alias_groups()
-        if item.alias_group_id == objects[left_id].alias_group_id
-    )
-    assert alias.size_bytes == 40
-
-
-def test_compiled_output_allocations_split_one_fake_storage() -> None:
-    inventory = _TensorInventory(device_id="cuda_0")
-    storage = torch.empty(40, dtype=torch.bfloat16)
-    left, right = storage[:10], storage[10:20]
-    scope = inventory.compiled_output_scope()
-    left_id = inventory.add_compiled_output(
-        left,
-        role=ObjectRole.ACTIVATION,
-        persistence=Persistence.STEP,
-        allocation_scope=scope,
-        physical_allocation=_CompiledOutputAllocation(3, 20),
-    )
-    right_id = inventory.add_compiled_output(
-        right,
-        role=ObjectRole.ACTIVATION,
-        persistence=Persistence.STEP,
-        allocation_scope=scope,
-        physical_allocation=_CompiledOutputAllocation(4, 20),
-    )
-
-    objects = {item.object_id: item for item in inventory.objects()}
-    assert objects[left_id].alias_group_id != objects[right_id].alias_group_id
+    assert next(
+        item.location
+        for item in lowered.final_residency
+        if item.alias_group_id == buffer_alias
+    ) is MemoryLocation.HOST

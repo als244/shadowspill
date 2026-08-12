@@ -20,6 +20,15 @@ extern "C" {
 
 typedef struct ShadowSpillCudaBackend ShadowSpillCudaBackend;
 
+/* Provider state used through the framework-neutral profiler vtable. */
+SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_profiler_enable(
+    ShadowSpillCudaBackend *backend, uint8_t enabled
+);
+SHADOWSPILL_BACKEND_CUDA_API uint8_t
+shadowspill_cuda_backend_profiler_is_enabled(
+    const ShadowSpillCudaBackend *backend
+);
+
 typedef struct ShadowSpillCudaBackendConfig {
     uint32_t abi_version;
     int32_t device_ordinal;

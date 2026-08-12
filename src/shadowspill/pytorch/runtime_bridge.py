@@ -92,13 +92,27 @@ class RuntimeBridge:
 
         self.library.shadowspill_pytorch_profile_range_end(range_id)
 
+    def set_profiler_annotations(self, enabled: bool) -> None:
+        """Toggle provider annotations without changing runtime tracing."""
+
+        self._require(
+            self.library.shadowspill_pytorch_profiler_annotations_set(enabled),
+            f"{'enable' if enabled else 'disable'} profiler annotations",
+        )
+
     def admit_execution(
         self,
         task: TaskSpec,
         input_alias_ids: tuple[str, ...],
         actions: tuple[MemoryAction, ...],
+        action_trace_labels: tuple[str, ...] | None = None,
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
+
+        if action_trace_labels is None:
+            action_trace_labels = ("",) * len(actions)
+        if len(action_trace_labels) != len(actions):
+            raise ValueError("action trace labels must align with ordered actions")
 
         referenced_aliases = tuple(
             dict.fromkeys(
@@ -124,13 +138,20 @@ class RuntimeBridge:
                 for item in mutation_values
             )
         )
+        encoded_action_labels = tuple(
+            label.encode("utf-8") if label else None
+            for label in action_trace_labels
+        )
         runtime_actions = (RuntimeAction * len(actions))(
             *(
                 RuntimeAction(
                     _dense_id(item.alias_group_id, "alias_"),
                     _ACTION_KIND[item.kind],
+                    label,
                 )
-                for item in actions
+                for item, label in zip(
+                    actions, encoded_action_labels, strict=True
+                )
             )
         )
         description = ExecutionDescription(
@@ -416,9 +437,31 @@ class RuntimeBridge:
         self._registered.add(alias_id)
         return binding
 
+    def replace_output(self, alias_id: str, tensor: torch.Tensor) -> ObjectBinding:
+        """Install a fresh functional output as an existing object's lease."""
+
+        if alias_id not in self._registered:
+            raise RuntimeExecutionError(
+                f"replacement object {alias_id!r} is not registered"
+            )
+        binding = ObjectBinding()
+        storage = tensor.untyped_storage()
+        self._require(
+            self.library.shadowspill_pytorch_replace_registered_allocation(
+                _dense_id(alias_id, "alias_"),
+                storage.data_ptr(),
+                self._size(alias_id),
+                ctypes.byref(binding),
+            ),
+            "replace task output",
+        )
+        return binding
+
     def adopt_many(
         self,
         items: Sequence[tuple[torch.Tensor, str]],
+        *,
+        replacement_aliases: frozenset[str] = frozenset(),
     ) -> tuple[int, ...]:
         """Adopt task outputs and replace their owning storage in one call."""
 
@@ -428,7 +471,12 @@ class RuntimeBridge:
             [tensor for tensor, _ in items],
             [_dense_id(alias_id, "alias_") for _, alias_id in items],
             [self._size(alias_id) for _, alias_id in items],
-            [int(alias_id in self._registered) for _, alias_id in items],
+            [
+                2
+                if alias_id in replacement_aliases
+                else int(alias_id in self._registered)
+                for _, alias_id in items
+            ],
         )
         if len(generations) != len(items):
             raise RuntimeExecutionError(
@@ -640,6 +688,27 @@ class RuntimeBridge:
             [binding.pointer for _, _, binding in items],
         )
 
+    def replace_many(
+        self,
+        tensors: Sequence[torch.Tensor],
+        alias_id: str,
+        *,
+        previous_generation: int,
+        target_tensor: torch.Tensor,
+        target_generation: int,
+    ) -> None:
+        """Rebind all frontend views after a no-copy lease replacement."""
+
+        if not tensors:
+            return
+        torch.ops.shadowspill._replace_storages(
+            list(tensors),
+            _dense_id(alias_id, "alias_"),
+            previous_generation,
+            target_tensor.untyped_storage().data_ptr(),
+            target_generation,
+        )
+
     def before_execution_and_acquire(
         self,
         execution_handle: int,
@@ -665,6 +734,8 @@ class RuntimeBridge:
         device_ordinal: int,
         adopted: Sequence[tuple[torch.Tensor, str]],
         dematerialized: Sequence[torch.Tensor],
+        *,
+        replacement_aliases: frozenset[str] = frozenset(),
     ) -> tuple[int, ...]:
         """Publish storages and one admitted completion/action batch."""
 
@@ -672,7 +743,12 @@ class RuntimeBridge:
             [tensor for tensor, _ in adopted],
             [_dense_id(alias_id, "alias_") for _, alias_id in adopted],
             [self._size(alias_id) for _, alias_id in adopted],
-            [int(alias_id in self._registered) for _, alias_id in adopted],
+            [
+                2
+                if alias_id in replacement_aliases
+                else int(alias_id in self._registered)
+                for _, alias_id in adopted
+            ],
             list(dematerialized),
             execution_handle,
             task_id,

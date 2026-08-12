@@ -16,9 +16,10 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 14U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 16U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
+#define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
@@ -127,6 +128,12 @@ typedef struct ShadowSpillObjectUpdate {
 typedef struct ShadowSpillRuntimeAction {
     uint64_t object_id;
     uint8_t kind;
+    /*
+     * Optional, borrowed semantic profiler label. Admission copies the string,
+     * so the caller only needs to keep it alive for the duration of the call.
+     * NULL selects a deterministic object/task-ID fallback.
+     */
+    const char *trace_label;
 } ShadowSpillRuntimeAction;
 
 typedef struct ShadowSpillExecutionDescription {
@@ -439,6 +446,21 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_bind_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     uint64_t allocation_id
+);
+
+/*
+ * Replaces an EXECUTION_READY object's current lease with one fresh ordinary
+ * allocation created by the active task. The prior lease is retired behind
+ * that task's completion fence; no payload copy is performed. The returned
+ * binding names the new canonical generation. This operation is valid only
+ * inside a task scope and is used for functional mutation outputs.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_replace_object_allocation(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    ShadowSpillObjectBinding *binding
 );
 
 /*

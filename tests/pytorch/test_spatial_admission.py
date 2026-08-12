@@ -121,6 +121,7 @@ def test_task_allocation_replay_preserves_callback_order_and_output_identity() -
                 11,
                 11,
                 (3,),
+                (0,),
             ),
         ),
     )
@@ -163,6 +164,7 @@ def test_task_allocation_replay_preserves_cached_extent_identity() -> None:
                 48,
                 64,
                 (2,),
+                (0,),
                 reuses_ordinal=0,
             ),
         ),

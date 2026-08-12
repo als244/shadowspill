@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,9 +12,43 @@ from torch.fx import GraphModule, Interpreter, Node
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
 
-from .aot import ExportCapture, TrainingObjectiveCapture, capture_graph_pair
+from .aot import (
+    ExportCapture,
+    TrainingObjectiveCapture,
+    _tensor_only_mutations,
+    capture_graph_pair,
+)
 from .capture import AotGraphPair, GraphArtifact
 from .contracts import CaptureError
+from .output_contract import ExplicitMutation
+
+
+@dataclass(frozen=True, slots=True)
+class StageValueSource:
+    """Root-graph provenance for one positional stage input."""
+
+    root_input_index: int | None = None
+    producer_stage_index: int | None = None
+    producer_output_index: int | None = None
+
+    def __post_init__(self) -> None:
+        root = self.root_input_index is not None
+        produced = self.producer_stage_index is not None
+        if root == produced:
+            raise ValueError("stage source must be either a root input or stage output")
+        if root:
+            if self.root_input_index is None or self.root_input_index < 0:
+                raise ValueError("stage root-input source is invalid")
+            if self.producer_output_index is not None:
+                raise ValueError("root-input source cannot name a producer output")
+        else:
+            if (
+                self.producer_stage_index is None
+                or self.producer_stage_index < 0
+                or self.producer_output_index is None
+                or self.producer_output_index < 0
+            ):
+                raise ValueError("stage-output source is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +59,19 @@ class StageExample:
     module_target: str
     graph_module: GraphModule
     inputs: tuple[object, ...]
+    input_sources: tuple[StageValueSource | None, ...]
+    mutations: tuple[ExplicitMutation, ...]
+    user_output_indices: tuple[int, ...]
     output: object
+
+
+_StageRecord = tuple[
+    str,
+    GraphModule,
+    tuple[object, ...],
+    tuple[StageValueSource | None, ...],
+    object,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +101,7 @@ class PartitionedExport:
     root_inputs: tuple[object, ...]
     stages: tuple[StageExample, ...]
     repeated_groups: tuple[str, ...]
+    user_output_indices: tuple[int, ...]
 
 
 class _StageRecorder(Interpreter):
@@ -92,6 +140,7 @@ class _TrainingGraphPairCache:
             kind="inference",
             graph_module=example.graph_module,
             example_inputs=example.inputs,
+            explicit_mutations=example.mutations,
         )
         key = (stage_abi.compatibility_digest, roots, specialize_unit_tangents)
         existing = self._pairs.get(key)
@@ -104,6 +153,7 @@ class _TrainingGraphPairCache:
                     recomputation=False,
                     root_output_positions=roots,
                     specialize_unit_tangents=specialize_unit_tangents,
+                    explicit_mutations=example.mutations,
                 ),
                 capture_graph_pair(
                     example.graph_module,
@@ -112,6 +162,7 @@ class _TrainingGraphPairCache:
                     recomputation=True,
                     root_output_positions=roots,
                     specialize_unit_tangents=specialize_unit_tangents,
+                    explicit_mutations=example.mutations,
                 ),
             )
             self._pairs[key] = existing
@@ -148,28 +199,185 @@ def partition_export(
         if isinstance(exc, CaptureError):
             raise
         raise CaptureError(f"automatic stage partition failed: {exc}") from exc
-    stages: list[StageExample] = []
-    for index, (target, inputs, output) in enumerate(recorder.calls):
+    stage_records: list[_StageRecord] = []
+    call_nodes = tuple(node for node in root.graph.nodes if node.op == "call_module")
+    if len(call_nodes) != len(recorder.calls):
+        raise CaptureError("split root task topology differs from recorded calls")
+    placeholders = tuple(node for node in root.graph.nodes if node.op == "placeholder")
+    placeholder_index = {node: index for index, node in enumerate(placeholders)}
+    stage_index_by_node = {node: index for index, node in enumerate(call_nodes)}
+    for (target, inputs, output), call_node in zip(
+        recorder.calls, call_nodes, strict=True
+    ):
         child = root.get_submodule(target)
         if not isinstance(child, GraphModule):
             raise CaptureError(f"partition {target!r} is not an FX GraphModule")
-        stages.append(
-            StageExample(
-                stage_id=f"stage_{index:04d}",
-                module_target=target,
-                graph_module=child,
-                inputs=inputs,
-                output=output,
+        argument_leaves, _ = tree_flatten(call_node.args)
+        input_leaves, _ = tree_flatten(inputs)
+        if len(argument_leaves) != len(input_leaves):
+            raise CaptureError("stage input structure differs from split-root topology")
+        sources = tuple(
+            _stage_value_source(
+                leaf,
+                placeholder_index=placeholder_index,
+                stage_index_by_node=stage_index_by_node,
             )
+            if isinstance(value, torch.Tensor)
+            else None
+            for leaf, value in zip(argument_leaves, input_leaves, strict=True)
         )
-    if not stages:
+        stage_records.append((target, child, inputs, sources, output))
+    if not stage_records:
         raise CaptureError("partitioning produced no executable stage")
+    mutations_by_stage = _partition_mutations(
+        capture,
+        root,
+        call_nodes=call_nodes,
+        placeholder_index=placeholder_index,
+        stage_index_by_node=stage_index_by_node,
+        stage_records=tuple(stage_records),
+    )
+    user_outputs_by_stage = _partition_user_outputs(
+        capture,
+        root,
+        placeholder_index=placeholder_index,
+        stage_index_by_node=stage_index_by_node,
+    )
+    stages = tuple(
+        StageExample(
+            stage_id=f"stage_{index:04d}",
+            module_target=target,
+            graph_module=child,
+            inputs=inputs,
+            input_sources=sources,
+            mutations=mutations_by_stage.get(index, ()),
+            user_output_indices=user_outputs_by_stage.get(index, ()),
+            output=output,
+        )
+        for index, (target, child, inputs, sources, output) in enumerate(stage_records)
+    )
     return PartitionedExport(
         root=root,
         root_inputs=capture.flat_inputs,
-        stages=tuple(stages),
+        stages=stages,
         repeated_groups=repeated,
+        user_output_indices=capture.user_output_indices,
     )
+
+
+def _partition_user_outputs(
+    capture: ExportCapture,
+    root: GraphModule,
+    *,
+    placeholder_index: dict[Node, int],
+    stage_index_by_node: dict[Node, int],
+) -> dict[int, tuple[int, ...]]:
+    """Project root user outputs onto their stage-local output positions."""
+
+    output_node = next(node for node in root.graph.nodes if node.op == "output")
+    output_leaves, _ = tree_flatten(output_node.args[0])
+    result: dict[int, list[int]] = {}
+    for output_index in capture.user_output_indices:
+        try:
+            root_output = output_leaves[output_index]
+        except IndexError as exc:
+            raise CaptureError("Export user output is absent from split root") from exc
+        source = _stage_value_source(
+            root_output,
+            placeholder_index=placeholder_index,
+            stage_index_by_node=stage_index_by_node,
+        )
+        if source.producer_stage_index is None or source.producer_output_index is None:
+            raise CaptureError("Export user output is not stage-produced")
+        result.setdefault(source.producer_stage_index, []).append(
+            source.producer_output_index
+        )
+    return {index: tuple(values) for index, values in result.items()}
+
+
+def _stage_value_source(
+    node: object,
+    *,
+    placeholder_index: dict[Node, int],
+    stage_index_by_node: dict[Node, int],
+) -> StageValueSource:
+    if not isinstance(node, Node):
+        raise CaptureError("tensor stage input has no split-root FX provenance")
+    root_index = placeholder_index.get(node)
+    if root_index is not None:
+        return StageValueSource(root_input_index=root_index)
+    stage_index = stage_index_by_node.get(node)
+    if stage_index is not None:
+        return StageValueSource(
+            producer_stage_index=stage_index,
+            producer_output_index=0,
+        )
+    if node.op == "call_function" and node.target is operator.getitem:
+        producer, output_index = node.args[:2]
+        if isinstance(producer, Node) and isinstance(output_index, int):
+            stage_index = stage_index_by_node.get(producer)
+            if stage_index is not None:
+                return StageValueSource(
+                    producer_stage_index=stage_index,
+                    producer_output_index=output_index,
+                )
+    raise CaptureError(
+        "tensor stage input has unsupported split-root provenance: "
+        f"node={node.name}, op={node.op}, target={node.target}"
+    )
+
+
+def _partition_mutations(
+    capture: ExportCapture,
+    root: GraphModule,
+    *,
+    call_nodes: tuple[Node, ...],
+    placeholder_index: dict[Node, int],
+    stage_index_by_node: dict[Node, int],
+    stage_records: tuple[_StageRecord, ...],
+) -> dict[int, tuple[ExplicitMutation, ...]]:
+    """Project root Export mutations onto the stage that creates the value."""
+
+    del call_nodes
+    output_node = next(node for node in root.graph.nodes if node.op == "output")
+    output_leaves, _ = tree_flatten(output_node.args[0])
+    result: dict[int, list[ExplicitMutation]] = {}
+    for mutation in capture.mutations:
+        try:
+            root_output = output_leaves[mutation.output_index]
+        except IndexError as exc:
+            raise CaptureError(
+                "Export mutation output is absent from split root"
+            ) from exc
+        source = _stage_value_source(
+            root_output,
+            placeholder_index=placeholder_index,
+            stage_index_by_node=stage_index_by_node,
+        )
+        if source.producer_stage_index is None or source.producer_output_index is None:
+            raise CaptureError("Export mutation replacement is not stage-produced")
+        stage_index = source.producer_stage_index
+        sources = stage_records[stage_index][3]
+        candidates = tuple(
+            position
+            for position, input_source in enumerate(sources)
+            if input_source is not None
+            and input_source.root_input_index == mutation.input_index
+        )
+        if len(candidates) != 1:
+            raise CaptureError(
+                "Export mutation target does not resolve to one producer-stage input: "
+                f"stage={stage_index}, target={mutation.target!r}, "
+                f"root_input={mutation.input_index}, candidates={candidates}"
+            )
+        result.setdefault(stage_index, []).append(
+            ExplicitMutation(
+                candidates[0],
+                source.producer_output_index,
+                mutation.target,
+            )
+        )
+    return {index: tuple(values) for index, values in result.items()}
 
 
 def capture_training_stages(
@@ -192,7 +400,11 @@ def capture_training_stages(
         )
         if not differentiable:
             raise CaptureError(f"training {example.stage_id} has no gradient output")
-        roots = (0,) if index == len(partitioned.stages) - 1 else differentiable
+        roots = (
+            (partitioned.user_output_indices[0],)
+            if index == len(partitioned.stages) - 1
+            else differentiable
+        )
         if any(position not in differentiable for position in roots):
             raise CaptureError("terminal objective loss is not differentiable")
         save_pair, recompute_pair = cache.resolve(
@@ -234,7 +446,7 @@ def _rebind_graph_pair(
     example: StageExample,
     roots: tuple[int, ...],
 ) -> AotGraphPair:
-    """Bind shared AOT code to one stage occurrence's FakeTensor storages."""
+    """Bind shared AOT code to one occurrence's symbolic input geometry."""
 
     forward_arguments: list[torch.Tensor] = []
     for position in pair.forward.tensor_argument_positions:
@@ -253,6 +465,9 @@ def _rebind_graph_pair(
         kind="forward",
         graph_module=pair.forward.graph_module,
         example_inputs=tuple(forward_arguments),
+        explicit_mutations=_tensor_only_mutations(
+            example.mutations, tuple(example.inputs)
+        ),
     )
     if forward.compatibility_digest != pair.forward.compatibility_digest:
         raise CaptureError("reused stage forward ABI differs from its representative")
@@ -304,6 +519,7 @@ def capture_forward_stages(
             kind="inference",
             graph_module=stage.graph_module,
             example_inputs=stage.inputs,
+            explicit_mutations=stage.mutations,
         )
         for stage in partitioned.stages
     )

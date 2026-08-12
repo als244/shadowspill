@@ -292,13 +292,13 @@ std::vector<int64_t> adopt_storages(
     at::TensorList tensors,
     at::IntArrayRef object_ids,
     at::IntArrayRef sizes,
-    at::IntArrayRef registered
+    at::IntArrayRef modes
 ) {
   RangeGuard range_guard("shadowspill.pytorch.storage_adopt_batch");
   const size_t count = tensors.size();
   TORCH_CHECK(
       object_ids.size() == count && sizes.size() == count &&
-          registered.size() == count,
+          modes.size() == count,
       "storage adoption batch fields must have equal lengths");
 
   std::vector<uint64_t> addresses;
@@ -309,8 +309,8 @@ std::vector<int64_t> adopt_storages(
     TORCH_CHECK(object_ids[index] >= 0, "object ID must be nonnegative");
     TORCH_CHECK(sizes[index] >= 0, "object size must be nonnegative");
     TORCH_CHECK(
-        registered[index] == 0 || registered[index] == 1,
-        "registered flag must be zero or one");
+        modes[index] >= 0 && modes[index] <= 2,
+        "storage adoption mode must be promote, bind, or replace");
     const uint64_t address = static_cast<uint64_t>(
         reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
     TORCH_CHECK(address != 0U, "adopted storage is dematerialized");
@@ -321,13 +321,19 @@ std::vector<int64_t> adopt_storages(
   std::vector<int64_t> generations;
   generations.reserve(count);
   for (const auto index : c10::irange(count)) {
-    ShadowSpillRuntimeStatus status = registered[index] != 0
-        ? shadowspill_pytorch_bind_registered_allocation(
+    ShadowSpillRuntimeStatus status = modes[index] == 2
+        ? shadowspill_pytorch_replace_registered_allocation(
               static_cast<uint64_t>(object_ids[index]),
               addresses[index],
               static_cast<uint64_t>(sizes[index]),
               &bindings[index])
-        : shadowspill_pytorch_promote_allocation(
+        : modes[index] == 1
+          ? shadowspill_pytorch_bind_registered_allocation(
+              static_cast<uint64_t>(object_ids[index]),
+              addresses[index],
+              static_cast<uint64_t>(sizes[index]),
+              &bindings[index])
+          : shadowspill_pytorch_promote_allocation(
               static_cast<uint64_t>(object_ids[index]),
               addresses[index],
               static_cast<uint64_t>(sizes[index]),
@@ -357,11 +363,61 @@ std::vector<int64_t> adopt_storages(
   return generations;
 }
 
+void replace_storages(
+    at::TensorList tensors,
+    int64_t object_id,
+    int64_t previous_generation,
+    int64_t target_address,
+    int64_t target_generation
+) {
+  RangeGuard range_guard("shadowspill.pytorch.storage_replace_batch");
+  TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
+  TORCH_CHECK(
+      previous_generation >= 0 && target_generation >= 0,
+      "storage generations must be nonnegative");
+  TORCH_CHECK(target_address > 0, "replacement address must be positive");
+  const uint64_t object = static_cast<uint64_t>(object_id);
+  const uint64_t target = static_cast<uint64_t>(target_address);
+  ShadowSpillRuntimeStatus status = shadowspill_pytorch_validate_object_binding(
+      object, target, static_cast<uint64_t>(target_generation));
+  TORCH_CHECK(
+      status == SHADOWSPILL_RUNTIME_OK,
+      "replacement storage does not match the new object generation: ",
+      shadowspill_runtime_status_string(status));
+
+  std::vector<uint64_t> current_addresses;
+  current_addresses.reserve(tensors.size());
+  for (const at::Tensor& tensor : tensors) {
+    TORCH_CHECK(tensor.is_cuda(), "storage replacement requires CUDA tensors");
+    const uint64_t current = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
+    if (current != target) {
+      status = shadowspill_pytorch_validate_object_binding(
+          object, current, static_cast<uint64_t>(previous_generation));
+      TORCH_CHECK(
+          status == SHADOWSPILL_RUNTIME_OK,
+          "existing storage does not match the retired object generation: ",
+          shadowspill_runtime_status_string(status));
+    }
+    current_addresses.push_back(current);
+  }
+  for (const auto index : c10::irange(tensors.size())) {
+    if (current_addresses[index] == target) {
+      continue;
+    }
+    c10::Storage storage = tensors[index].storage();
+    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+        reinterpret_cast<void*>(static_cast<uintptr_t>(target)),
+        tensors[index].device()));
+    prior.clear();
+  }
+}
+
 std::vector<int64_t> after_execution_storages(
     at::TensorList adopted_tensors,
     at::IntArrayRef object_ids,
     at::IntArrayRef sizes,
-    at::IntArrayRef registered,
+    at::IntArrayRef modes,
     at::TensorList dematerialized_tensors,
     int64_t execution_handle,
     int64_t task_id,
@@ -371,7 +427,7 @@ std::vector<int64_t> after_execution_storages(
   TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
   std::vector<int64_t> generations = adopt_storages(
-      adopted_tensors, object_ids, sizes, registered);
+      adopted_tensors, object_ids, sizes, modes);
   dematerialize_storages(dematerialized_tensors);
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
@@ -453,10 +509,13 @@ TORCH_LIBRARY(shadowspill, library) {
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_adopt_storages(Tensor(a!)[] tensors, int[] object_ids, int[] sizes, "
-      "int[] registered) -> int[]");
+      "int[] modes) -> int[]");
+  library.def(
+      "_replace_storages(Tensor(a!)[] tensors, int object_id, int "
+      "previous_generation, int target_address, int target_generation) -> ()");
   library.def(
       "_after_execution_storages(Tensor(a!)[] adopted_tensors, int[] "
-      "object_ids, int[] sizes, int[] registered, Tensor(a!)[] "
+      "object_ids, int[] sizes, int[] modes, Tensor(a!)[] "
       "dematerialized_tensors, int execution_handle, int task_id, int "
       "device_ordinal) -> int[]");
   library.def(
@@ -473,6 +532,7 @@ TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
   library.impl(
       "_dematerialize_storages", TORCH_FN(dematerialize_storages));
   library.impl("_adopt_storages", TORCH_FN(adopt_storages));
+  library.impl("_replace_storages", TORCH_FN(replace_storages));
   library.impl(
       "_after_execution_storages", TORCH_FN(after_execution_storages));
   library.impl(

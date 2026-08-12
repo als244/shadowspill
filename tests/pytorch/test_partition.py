@@ -131,3 +131,32 @@ def test_whole_partition_is_one_stage() -> None:
         )
     assert partitioned.repeated_groups == ()
     assert len(partitioned.stages) == 1
+
+
+def test_export_buffer_mutation_is_projected_onto_producer_stage() -> None:
+    class Stateful(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.register_buffer("running", torch.zeros(8))
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            self.running.add_(value.sum(0))
+            return self.running[2:]
+
+    model = Stateful()
+    inputs = (torch.randn(2, 8),)
+    capture = capture_forward(model, inputs)
+    partitioned = partition_export(capture, model, partition="whole")
+    artifacts = capture_forward_stages(partitioned)
+
+    assert len(capture.mutations) == 1
+    assert len(partitioned.stages[0].mutations) == 1
+    mutation = artifacts[0].storage_contract.mutations[0]
+    assert mutation.replacement_output_leaf == 0
+    assert mutation.producer_target == "aten.add.Tensor"
+    assert len(artifacts[0].storage_contract.roots) == 1
+    assert artifacts[0].storage_contract.roots[0].kind.value == "fresh"
+    assert tuple(
+        (view.root_id, view.offset_bytes)
+        for view in artifacts[0].storage_contract.output_views
+    ) == ((0, 0), (0, 8))

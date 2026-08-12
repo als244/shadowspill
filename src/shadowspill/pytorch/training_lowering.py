@@ -28,14 +28,20 @@ from shadowspill.ir import (
     TaskSpec,
 )
 
+from ._live_storage import live_view_key
 from .aot import TrainingCapture, TrainingObjectiveCapture
 from .capture import AotGraphPair, GraphArtifact
+from .compiled_layout import (
+    reconcile_compiled_task_layout,
+    replacement_transition_bytes,
+)
 from .contracts import CaptureError
 from .lowering import (
+    ObjectCatalog,
     RegistrationBinding,
+    TaskBindingResolver,
     TensorSlot,
-    _compiled_output_allocations,
-    _TensorInventory,
+    resolve_stage_input_slots,
 )
 from .optimizer import (
     OptimizerCapture,
@@ -82,8 +88,10 @@ class TrainingTaskEntrypoint:
     output_slots: tuple[TensorSlot, ...]
     gradient_output_slots: tuple[TensorSlot, ...] = ()
     public_output_count: int = 0
+    public_output_leaves: tuple[int, ...] = ()
     optimizer_binding_names: tuple[str, ...] = ()
     stage_index: int | None = None
+    replacement_output_leaves: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +136,9 @@ class _PreparedStageVariant:
     backward_inputs: tuple[TensorSlot, ...]
     contributions: tuple[TensorSlot, ...]
     residual_aliases: tuple[str, ...]
-    public_output_count: int
+    public_output_leaves: tuple[int, ...]
+    mutation_object_ids: tuple[str, ...]
+    replacement_output_leaves: tuple[int, ...]
 
 
 def lower_training_storage_layout(
@@ -142,7 +152,7 @@ def lower_training_storage_layout(
     if not captures:
         raise CaptureError("training storage layout requires a microbatch")
     device_id = f"cuda_{device_ordinal}"
-    inventory = _TensorInventory(device_id=device_id)
+    inventory = ObjectCatalog(device_id=device_id)
     registrations, _parameter_objects = _register_model(model, inventory)
     root_slots, _initial_inputs = _register_microbatch_inputs(captures, inventory)
     return TrainingStorageLayout(
@@ -176,7 +186,7 @@ def lower_partitioned_training_program(
     if optimizer_phase not in {"initial", "recurrent"}:
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     device_id = f"cuda_{device_ordinal}"
-    inventory = _TensorInventory(device_id=device_id)
+    inventory = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = _register_model(model, inventory)
     base_captures = tuple(item.training for item in captures)
     root_slots, _initial_inputs = _register_microbatch_inputs(base_captures, inventory)
@@ -219,8 +229,22 @@ def lower_partitioned_training_program(
         )
         return result
 
+    def mutation_transition_bytes(artifact: GraphArtifact) -> int:
+        measurement = measurement_for(artifact)
+        layout = reconcile_compiled_task_layout(
+            artifact.storage_contract, measurement
+        )
+        return replacement_transition_bytes(artifact.storage_contract, layout)
+
     parameter_ids = set(parameter_objects.values())
     boundary_ids: list[list[tuple[str, ...]]] = []
+    partition_root_objects = tuple(
+        {
+            slot.leaf_index: slot.object_id
+            for slot in _tensor_slots(capture.partitioned.root_inputs, inventory)
+        }
+        for capture in captures
+    )
     cotangent_by_activation: dict[tuple[int, str], str] = {}
     fixed_tensors: dict[str, FixedTensorBinding] = {}
     public_objects_by_position: dict[int, tuple[str, ...]] = {}
@@ -230,25 +254,57 @@ def lower_partitioned_training_program(
         for stage_index, stage in enumerate(capture.stages):
             leaves, _ = tree_flatten(stage.example.output)
             terminal = stage_index == len(capture.stages) - 1
-            public_count = (
+            public_output_leaves = stage.example.user_output_indices
+            expected_public_count = (
                 1 + len(capture.training.objective_schema.tensor_metric_positions)
                 if terminal
                 else 0
             )
-            if terminal and len(leaves) != public_count:
+            if len(public_output_leaves) != expected_public_count:
                 raise CaptureError(
-                    "terminal stage output differs from objective schema"
+                    "stage user outputs differ from objective schema"
                 )
+            save_pair = stage.save_pair
+            boundary_count = (
+                save_pair.forward.output_count - save_pair.saved_value_count
+            )
+            if boundary_count != len(leaves):
+                raise CaptureError("stage boundary output count changed during AOT")
+            save_values = _execute_stage_pair_examples(save_pair).forward_outputs
+            save_inputs = resolve_stage_input_slots(
+                stage.example,
+                save_pair.forward,
+                root_objects=partition_root_objects[position],
+                stage_outputs=tuple(
+                    {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
+                    for ids in position_boundaries
+                ),
+                compact_leaf_indices=True,
+            )
+            boundary_resolver = TaskBindingResolver(
+                inventory,
+                save_pair.forward,
+                save_inputs,
+                reconcile_compiled_task_layout(
+                    save_pair.forward.storage_contract,
+                    measurement_for(save_pair.forward),
+                ),
+            )
             ids: list[str] = []
-            for index, value in enumerate(leaves):
-                if not isinstance(value, torch.Tensor):
+            for index, (value, graph_value) in enumerate(
+                zip(leaves, save_values[:boundary_count], strict=True)
+            ):
+                if not isinstance(value, torch.Tensor) or not isinstance(
+                    graph_value, torch.Tensor
+                ):
                     raise CaptureError("training stage output became non-tensor")
                 ids.append(
-                    inventory.add(
-                        value,
+                    boundary_resolver.bind(
+                        index,
+                        graph_value,
                         role=(
                             ObjectRole.OUTPUT
-                            if terminal and index < public_count
+                            if index in public_output_leaves
                             else ObjectRole.ACTIVATION
                         ),
                         persistence=Persistence.STEP,
@@ -256,9 +312,10 @@ def lower_partitioned_training_program(
                 )
             position_boundaries.append(tuple(ids))
             if terminal:
-                public_objects_by_position[position] = tuple(ids[:public_count])
+                public_objects_by_position[position] = tuple(
+                    ids[index] for index in public_output_leaves
+                )
 
-            save_pair = stage.save_pair
             tangent_values = save_pair.backward.example_arguments[
                 save_pair.saved_value_count :
             ]
@@ -301,23 +358,35 @@ def lower_partitioned_training_program(
         for stage_index, stage in enumerate(capture.stages):
             variants: dict[str, _PreparedStageVariant] = {}
             terminal = stage_index == len(capture.stages) - 1
-            public_count = (
-                1 + len(capture.training.objective_schema.tensor_metric_positions)
-                if terminal
-                else 0
-            )
+            public_output_leaves = stage.example.user_output_indices
             canonical_outputs = boundary_ids[position][stage_index]
             for variant, pair in (
                 ("save", stage.save_pair),
                 ("recompute", stage.recompute_pair),
             ):
                 values = _execute_stage_pair_examples(pair)
-                forward_inputs = _tensor_slots(
-                    pair.forward.example_arguments, inventory
+                forward_inputs = resolve_stage_input_slots(
+                    stage.example,
+                    pair.forward,
+                    root_objects=partition_root_objects[position],
+                    stage_outputs=tuple(
+                        {
+                            leaf_index: object_id
+                            for leaf_index, object_id in enumerate(ids)
+                        }
+                        for ids in boundary_ids[position][:stage_index]
+                    ),
+                    compact_leaf_indices=True,
                 )
-                forward_outputs, residual_aliases = _stage_forward_outputs(
+                (
+                    forward_outputs,
+                    residual_aliases,
+                    mutation_object_ids,
+                    replacement_output_leaves,
+                ) = _stage_forward_outputs(
                     pair,
                     values.forward_outputs,
+                    forward_inputs,
                     canonical_outputs,
                     inventory,
                     measurement_for(pair.forward),
@@ -343,6 +412,7 @@ def lower_partitioned_training_program(
                     gradient_by_parameter,
                     cotangent_by_activation,
                     inventory,
+                    measurement_for(pair.backward),
                 )
                 variants[variant] = _PreparedStageVariant(
                     stage,
@@ -352,7 +422,9 @@ def lower_partitioned_training_program(
                     backward_inputs,
                     contributions,
                     residual_aliases,
-                    public_count,
+                    public_output_leaves,
+                    mutation_object_ids,
+                    replacement_output_leaves,
                 )
             position_variants.append(variants)
         prepared.append(position_variants)
@@ -384,13 +456,20 @@ def lower_partitioned_training_program(
                 task = TaskSpec(
                     task_id,
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
-                    profile_id(item.pair.forward),
+                    profile_id(
+                        item.pair.forward,
+                        mutation_transition_bytes(item.pair.forward),
+                    ),
                     dependencies=_unique(dependencies),
                     inputs=_unique(slot.object_id for slot in item.forward_inputs),
                     outputs=_unique(
                         slot.object_id
                         for slot in item.forward_outputs
                         if inventory.alias_id(slot.object_id) not in input_aliases
+                    ),
+                    mutations=tuple(
+                        MutationSpec(object_id)
+                        for object_id in item.mutation_object_ids
                     ),
                     phase="forward",
                 )
@@ -406,8 +485,12 @@ def lower_partitioned_training_program(
                         item.pair.forward,
                         item.forward_inputs,
                         item.forward_outputs,
-                        public_output_count=item.public_output_count,
+                        public_output_count=len(item.public_output_leaves),
+                        public_output_leaves=item.public_output_leaves,
                         stage_index=stage_index,
+                        replacement_output_leaves=(
+                            item.replacement_output_leaves
+                        ),
                     )
                 )
                 current_ids.append(task_id)
@@ -617,7 +700,7 @@ def lower_training_program(
     if optimizer_phase not in {"initial", "recurrent"}:
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     device_id = f"cuda_{device_ordinal}"
-    inventory = _TensorInventory(device_id=device_id)
+    inventory = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = _register_model(model, inventory)
     root_slots, _initial_inputs = _register_microbatch_inputs(captures, inventory)
     gradients = _register_gradients(model, inventory, parameter_objects)
@@ -659,6 +742,13 @@ def lower_training_program(
         )
         return result
 
+    def mutation_transition_bytes(artifact: GraphArtifact) -> int:
+        measurement = measurement_for(artifact)
+        layout = reconcile_compiled_task_layout(
+            artifact.storage_contract, measurement
+        )
+        return replacement_transition_bytes(artifact.storage_contract, layout)
+
     tasks: list[TaskSpec] = []
     entrypoints: list[TrainingTaskEntrypoint] = []
     groups: list[RecomputationGroup] = []
@@ -686,11 +776,18 @@ def lower_training_program(
             forward_id = f"task_{len(tasks):06d}"
             backward_id = f"task_{len(tasks) + 1:06d}"
             forward_inputs = _tensor_slots(pair.forward.example_arguments, inventory)
-            forward_output_slots, public_ids, residual_aliases = _forward_outputs(
+            (
+                forward_output_slots,
+                public_ids,
+                residual_aliases,
+                mutation_object_ids,
+                replacement_output_leaves,
+            ) = _forward_outputs(
                 position,
                 pair,
                 capture,
                 values.forward_outputs,
+                forward_inputs,
                 inventory,
                 public_objects_by_position,
                 measurement_for(pair.forward),
@@ -710,6 +807,8 @@ def lower_training_program(
                 inventory,
                 parameter_objects,
                 gradient_by_parameter,
+                backward_inputs,
+                measurement_for(pair.backward),
             )
             backward_inputs_objects = [slot.object_id for slot in backward_inputs]
             forward_input_aliases = {
@@ -734,7 +833,10 @@ def lower_training_program(
                     TaskSpec(
                         forward_id,
                         ResourceSpec(device_id, ResourceKind.COMPUTE),
-                        profile_id(pair.forward),
+                        profile_id(
+                            pair.forward,
+                            mutation_transition_bytes(pair.forward),
+                        ),
                         dependencies=previous_backward_ids,
                         inputs=_unique(slot.object_id for slot in forward_inputs),
                         outputs=_unique(
@@ -742,6 +844,10 @@ def lower_training_program(
                             for slot in forward_output_slots
                             if inventory.alias_id(slot.object_id)
                             not in forward_input_aliases
+                        ),
+                        mutations=tuple(
+                            MutationSpec(object_id)
+                            for object_id in mutation_object_ids
                         ),
                         phase="forward",
                     ),
@@ -771,6 +877,8 @@ def lower_training_program(
                         forward_inputs,
                         forward_output_slots,
                         public_output_count=len(public_ids),
+                        public_output_leaves=capture.exported.user_output_indices,
+                        replacement_output_leaves=replacement_output_leaves,
                     ),
                     TrainingTaskEntrypoint(
                         backward_id,
@@ -975,7 +1083,7 @@ def _append_optimizer_tasks(
 
 
 def _register_model(
-    model: nn.Module, inventory: _TensorInventory
+    model: nn.Module, inventory: ObjectCatalog
 ) -> tuple[tuple[RegistrationBinding, ...], dict[tuple[int, int], str]]:
     registrations: list[RegistrationBinding] = []
     parameter_objects: dict[tuple[int, int], str] = {}
@@ -988,9 +1096,7 @@ def _register_model(
             retain_spill_copy=True,
         )
         registrations.append(RegistrationBinding(name, object_id, True))
-        parameter_objects[
-            (parameter.untyped_storage()._cdata, int(parameter.storage_offset()))
-        ] = object_id
+        parameter_objects[live_view_key(parameter)] = object_id
     for name, buffer in model.named_buffers(remove_duplicate=False):
         object_id = inventory.add(
             buffer,
@@ -1005,7 +1111,7 @@ def _register_model(
 
 
 def _register_microbatch_inputs(
-    captures: tuple[TrainingObjectiveCapture, ...], inventory: _TensorInventory
+    captures: tuple[TrainingObjectiveCapture, ...], inventory: ObjectCatalog
 ) -> tuple[tuple[tuple[TensorSlot, ...], ...], set[str]]:
     positions: list[tuple[TensorSlot, ...]] = []
     initial: set[str] = set()
@@ -1036,16 +1142,14 @@ def _register_microbatch_inputs(
 
 def _register_gradients(
     model: nn.Module,
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     parameter_objects: dict[tuple[int, int], str],
 ) -> tuple[GradientBinding, ...]:
     results: list[GradientBinding] = []
     for name, parameter in model.named_parameters():
         if not parameter.requires_grad:
             continue
-        parameter_id = parameter_objects[
-            (parameter.untyped_storage()._cdata, int(parameter.storage_offset()))
-        ]
+        parameter_id = parameter_objects[live_view_key(parameter)]
         gradient = torch.empty_like(parameter, memory_format=torch.preserve_format)
         gradient_id = inventory.add(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
@@ -1056,7 +1160,7 @@ def _register_gradients(
 
 def _register_optimizer_objects(
     optimizer: OptimizerCapture,
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     gradients: tuple[GradientBinding, ...],
 ) -> tuple[OptimizerObjectBinding, ...]:
     parameter_names = {item.parameter_name for item in gradients}
@@ -1127,35 +1231,56 @@ def _execute_stage_pair_examples(pair: AotGraphPair) -> _PairValues:
 def _stage_forward_outputs(
     pair: AotGraphPair,
     values: tuple[object, ...],
+    forward_inputs: tuple[TensorSlot, ...],
     canonical_outputs: tuple[str, ...],
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     measurement: TaskMeasurement,
-) -> tuple[tuple[TensorSlot, ...], tuple[str, ...]]:
+) -> tuple[
+    tuple[TensorSlot, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[int, ...],
+]:
     public_count = pair.forward.output_count - pair.saved_value_count
     if public_count != len(canonical_outputs):
         raise CaptureError("stage boundary output count changed across AOT capture")
     slots: list[TensorSlot] = []
     residual_aliases: list[str] = []
-    allocation_scope = inventory.compiled_output_scope()
-    output_allocations = _compiled_output_allocations(measurement)
+    resolver = TaskBindingResolver(
+        inventory,
+        pair.forward,
+        forward_inputs,
+        reconcile_compiled_task_layout(
+            pair.forward.storage_contract, measurement
+        ),
+    )
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
             raise CaptureError("AOT stage forward returned a non-tensor leaf")
         if index < public_count:
-            object_id = canonical_outputs[index]
-            inventory.associate_storage(value, object_id)
-        else:
-            object_id = inventory.add_compiled_output(
+            object_id = resolver.bind(
+                index,
                 value,
                 role=ObjectRole.ACTIVATION,
                 persistence=Persistence.STEP,
-                allocation_scope=allocation_scope,
-                physical_allocation=output_allocations.get(index),
+                canonical_object_id=canonical_outputs[index],
+            )
+        else:
+            object_id = resolver.bind(
+                index,
+                value,
+                role=ObjectRole.ACTIVATION,
+                persistence=Persistence.STEP,
             )
         slots.append(TensorSlot(index, object_id))
         if index >= public_count:
             residual_aliases.append(inventory.alias_id(object_id))
-    return tuple(slots), tuple(dict.fromkeys(residual_aliases))
+    return (
+        tuple(slots),
+        tuple(dict.fromkeys(residual_aliases)),
+        resolver.mutation_object_ids,
+        resolver.replacement_output_leaves,
+    )
 
 
 def _stage_backward_inputs(
@@ -1166,7 +1291,7 @@ def _stage_backward_inputs(
     canonical_outputs: tuple[str, ...],
     cotangent_by_activation: dict[tuple[int, str], str],
     fixed_tensors: dict[str, FixedTensorBinding],
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     *,
     terminal: bool,
 ) -> tuple[TensorSlot, ...]:
@@ -1223,17 +1348,18 @@ def _stage_backward_contributions(
     parameter_ids: set[str],
     gradient_by_parameter: dict[str, str],
     cotangent_by_activation: dict[tuple[int, str], str],
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
+    measurement: TaskMeasurement,
 ) -> tuple[TensorSlot, ...]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
-    backward_object_by_key = {
-        inventory.key(value): slot.object_id
-        for slot in backward_inputs
-        if slot.leaf_index < len(pair.backward.example_arguments)
-        and isinstance(
-            value := pair.backward.example_arguments[slot.leaf_index], torch.Tensor
-        )
-    }
+    resolver = TaskBindingResolver(
+        inventory,
+        pair.backward,
+        backward_inputs,
+        reconcile_compiled_task_layout(
+            pair.backward.storage_contract, measurement
+        ),
+    )
     results: list[TensorSlot] = []
     for output_index in pair.forward.tensor_argument_positions:
         object_id = input_by_position.get(output_index)
@@ -1249,15 +1375,19 @@ def _stage_backward_contributions(
             destination = cotangent_by_activation.get((position, object_id))
             if destination is None:
                 continue
-            source = backward_object_by_key.get(inventory.key(value))
-            if source is not None:
-                inventory.merge_object_aliases(destination, source)
-        results.append(TensorSlot(output_index, destination))
+        bound = resolver.bind(
+            output_index,
+            value,
+            role=ObjectRole.GRADIENT,
+            persistence=Persistence.STEP,
+            canonical_object_id=destination,
+        )
+        results.append(TensorSlot(output_index, bound))
     return tuple(results)
 
 
 def _tensor_slots(
-    values: tuple[object, ...], inventory: _TensorInventory
+    values: tuple[object, ...], inventory: ObjectCatalog
 ) -> tuple[TensorSlot, ...]:
     return tuple(
         TensorSlot(
@@ -1274,56 +1404,88 @@ def _forward_outputs(
     pair: AotGraphPair,
     capture: TrainingCapture,
     values: tuple[object, ...],
-    inventory: _TensorInventory,
+    forward_inputs: tuple[TensorSlot, ...],
+    inventory: ObjectCatalog,
     public_by_position: dict[int, tuple[str, ...]],
     measurement: TaskMeasurement,
-) -> tuple[tuple[TensorSlot, ...], tuple[str, ...], tuple[str, ...]]:
-    public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
+) -> tuple[
+    tuple[TensorSlot, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[int, ...],
+]:
+    public_leaves = capture.exported.user_output_indices
+    expected_public_count = 1 + len(
+        capture.objective_schema.tensor_metric_positions
+    )
+    if len(public_leaves) != expected_public_count:
+        raise CaptureError("objective user outputs differ from its captured schema")
+    original_output_count = pair.forward.output_count - pair.saved_value_count
     canonical_public = public_by_position.get(position)
     slots: list[TensorSlot] = []
     public_ids: list[str] = []
     residual_aliases: list[str] = []
-    allocation_scope = inventory.compiled_output_scope()
-    output_allocations = _compiled_output_allocations(measurement)
+    resolver = TaskBindingResolver(
+        inventory,
+        pair.forward,
+        forward_inputs,
+        reconcile_compiled_task_layout(
+            pair.forward.storage_contract, measurement
+        ),
+    )
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
             raise CaptureError("AOT forward returned a non-tensor leaf")
-        if index < public_count and canonical_public is not None:
-            object_id = canonical_public[index]
-            inventory.associate_storage(value, object_id)
-        else:
-            object_id = inventory.add_compiled_output(
+        if index in public_leaves and canonical_public is not None:
+            public_position = public_leaves.index(index)
+            object_id = resolver.bind(
+                index,
                 value,
-                role=ObjectRole.OUTPUT
-                if index < public_count
-                else ObjectRole.ACTIVATION,
+                role=ObjectRole.OUTPUT,
                 persistence=Persistence.STEP,
-                allocation_scope=allocation_scope,
-                physical_allocation=output_allocations.get(index),
+                canonical_object_id=canonical_public[public_position],
+            )
+        else:
+            object_id = resolver.bind(
+                index,
+                value,
+                role=(
+                    ObjectRole.OUTPUT
+                    if index in public_leaves
+                    else ObjectRole.ACTIVATION
+                ),
+                persistence=Persistence.STEP,
             )
         slots.append(TensorSlot(index, object_id))
-        if index < public_count:
+        if index in public_leaves:
             public_ids.append(object_id)
-        else:
+        elif index >= original_output_count:
             residual_aliases.append(inventory.alias_id(object_id))
-    if pair.saved_value_count != len(values) - public_count:
+    if pair.saved_value_count != len(values) - original_output_count:
         raise CaptureError("AOT residual count changed during training lowering")
     if canonical_public is None:
         public_by_position[position] = tuple(public_ids)
-    return tuple(slots), tuple(public_ids), tuple(dict.fromkeys(residual_aliases))
+    return (
+        tuple(slots),
+        tuple(public_ids),
+        tuple(dict.fromkeys(residual_aliases)),
+        resolver.mutation_object_ids,
+        resolver.replacement_output_leaves,
+    )
 
 
 def _backward_inputs(
     pair: AotGraphPair,
     values: _PairValues,
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     forward_slots: tuple[TensorSlot, ...],
     capture: TrainingCapture,
 ) -> tuple[tuple[TensorSlot, ...], FixedTensorBinding | None]:
-    public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
+    original_output_count = pair.forward.output_count - pair.saved_value_count
     residual_slots = tuple(
         TensorSlot(index, slot.object_id)
-        for index, slot in enumerate(forward_slots[public_count:])
+        for index, slot in enumerate(forward_slots[original_output_count:])
     )
     if pair.specialized_unit_tangent_count:
         if pair.specialized_unit_tangent_count != 1:
@@ -1347,9 +1509,11 @@ def _backward_inputs(
 def _gradient_outputs(
     pair: AotGraphPair,
     values: tuple[object, ...],
-    inventory: _TensorInventory,
+    inventory: ObjectCatalog,
     parameter_objects: dict[tuple[int, int], str],
     gradient_by_parameter: dict[str, str],
+    backward_inputs: tuple[TensorSlot, ...],
+    measurement: TaskMeasurement,
 ) -> tuple[TensorSlot, ...]:
     tensor_primals = tuple(
         value
@@ -1362,21 +1526,28 @@ def _gradient_outputs(
     ):
         raise CaptureError("AOT backward gradient/primal positions differ")
     results: list[TensorSlot] = []
+    resolver = TaskBindingResolver(
+        inventory,
+        pair.backward,
+        backward_inputs,
+        reconcile_compiled_task_layout(
+            pair.backward.storage_contract, measurement
+        ),
+    )
     for index, primal in zip(positions, tensor_primals, strict=True):
         gradient = values[index]
-        parameter_id = parameter_objects.get(
-            (primal.untyped_storage()._cdata, int(primal.storage_offset()))
-        )
+        parameter_id = parameter_objects.get(live_view_key(primal))
         if parameter_id is None:
             continue
         if not isinstance(gradient, torch.Tensor):
             raise CaptureError("trainable parameter produced no AOT gradient")
-        gradient_id = gradient_by_parameter[parameter_id]
-        expected = next(
-            item for item in inventory.objects() if item.object_id == gradient_id
+        gradient_id = resolver.bind(
+            index,
+            gradient,
+            role=ObjectRole.GRADIENT,
+            persistence=Persistence.STEP,
+            canonical_object_id=gradient_by_parameter[parameter_id],
         )
-        if gradient.untyped_storage().nbytes() < expected.size_bytes:
-            raise CaptureError("parameter gradient has an invalid storage extent")
         results.append(TensorSlot(index, gradient_id))
     return tuple(results)
 

@@ -24,7 +24,7 @@ def _event_bracket(
     training._arm_selected_span_timing()  # type: ignore[attr-defined]
     wall_start = time.perf_counter()
     start.record(stream)
-    training(microbatches, trace=False)  # type: ignore[operator]
+    training(microbatches, runtime_trace=False)  # type: ignore[operator]
     end.record(stream)
     selected_task_seconds = training._collect_selected_span_seconds()  # type: ignore[attr-defined]
     end.synchronize()
@@ -39,6 +39,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("--family", default="qwen35")
+    parser.add_argument(
+        "--model-implementation",
+        choices=("pytorch", "mlops"),
+        default="pytorch",
+    )
     parser.add_argument("--device-budget", type=int, default=30 << 30)
     parser.add_argument("--trace-repetitions", type=int, default=1)
     arguments = parser.parse_args()
@@ -47,7 +52,7 @@ def main() -> int:
 
     case = build_case(
         arguments.family,
-        model_implementation="pytorch",
+        model_implementation=arguments.model_implementation,
         seed=20_260_811,
         model_config={},
         data_geometry=None,
@@ -74,10 +79,10 @@ def main() -> int:
         planning_seconds = time.perf_counter() - planning_start
 
         # Warm the recurrent execution and the lazy trace resources outside NSYS.
-        training(case.microbatches, trace=False)
+        training(case.microbatches, runtime_trace=False)
         torch.cuda.synchronize()
         untraced = [_event_bracket(training, case.microbatches) for _ in range(3)]
-        warm_trace = training(case.microbatches, trace=True)
+        warm_trace = training(case.microbatches, runtime_trace=True)
         assert warm_trace.diagnostics is not None
         warm_trace.diagnostics.result()
 
@@ -88,7 +93,11 @@ def main() -> int:
         diagnostics = None
         for _ in range(arguments.trace_repetitions):
             sample_wall_start = time.perf_counter()
-            traced = training(case.microbatches, trace=True)
+            traced = training(
+                case.microbatches,
+                runtime_trace=True,
+                profiler_annotations=True,
+            )
             assert traced.diagnostics is not None
             diagnostics = traced.diagnostics.result()
             traced_samples.append(
@@ -113,6 +122,7 @@ def main() -> int:
     result = {
         "schema": "shadowspill.phase1_execution_control/v1",
         "family": arguments.family,
+        "model_implementation": arguments.model_implementation,
         "device_budget_bytes": arguments.device_budget,
         "planning_seconds": planning_seconds,
         "untraced_steps": untraced,

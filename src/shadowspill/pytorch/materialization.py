@@ -14,6 +14,7 @@ from torch.utils._pytree import tree_map
 
 from shadowspill.ir import MemoryAction, MemoryActionKind
 
+from ._live_storage import unique_live_tensors
 from .aot import ExportCapture
 from .contracts import PlanningError, TensorSpec
 from .lowering import LoweredForwardProgram, RegistrationBinding
@@ -122,6 +123,14 @@ class MaterializedForwardState:
         self._model_aliases: set[str] = set()
         self._registered_model_aliases: set[str] = set()
         self._user_alias_by_position: dict[int, str] = {}
+        self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
+            group.alias_group_id: tuple(
+                item.object_id
+                for item in lowered.program.objects
+                if item.alias_group_id == group.alias_group_id
+            )
+            for group in lowered.program.alias_groups
+        }
         try:
             self._materialize()
         except BaseException:
@@ -204,6 +213,43 @@ class MaterializedForwardState:
             if not isinstance(value, torch.Tensor):
                 self.root_arguments[index] = value
         return tuple(self.root_arguments)
+
+    def replace_alias_generation(
+        self,
+        alias_id: str,
+        target: torch.Tensor,
+        target_generation: int,
+    ) -> None:
+        """Rebind every persistent frontend view to a functional replacement."""
+
+        previous_generation = self.generations.get(alias_id)
+        if previous_generation is None:
+            raise RuntimeError(f"replacement alias {alias_id!r} has no generation")
+        tensors: list[torch.Tensor] = []
+        representative = self.object_store.get(alias_id)
+        if representative is not None:
+            tensors.append(representative)
+        object_ids = set(self._object_ids_by_alias.get(alias_id, ()))
+        for slot in self.lowered.root_input_slots:
+            if slot.object_id in object_ids:
+                value = self.root_arguments[slot.leaf_index]
+                if isinstance(value, torch.Tensor):
+                    tensors.append(value)
+        for registration in self._registrations():
+            if registration.binding.object_id in object_ids:
+                tensors.append(registration.tensor)
+        unique = unique_live_tensors(tensors)
+        if not unique:
+            raise RuntimeError(f"replacement alias {alias_id!r} has no frontend view")
+        self.bridge.replace_many(
+            unique,
+            alias_id,
+            previous_generation=previous_generation,
+            target_tensor=target,
+            target_generation=target_generation,
+        )
+        self.object_store[alias_id] = unique[0]
+        self.generations[alias_id] = target_generation
 
     def restore_cpu_and_unregister(self) -> None:
         """Synchronize, write model state back, and reclaim all plan objects."""
