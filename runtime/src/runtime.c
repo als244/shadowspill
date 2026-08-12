@@ -62,7 +62,7 @@ static void destroy_objects(ShadowSpillRuntime *runtime) {
 }
 
 static void destroy_actions(ShadowSpillRuntime *runtime) {
-    ShadowSpillQueuedAction *action = runtime->action_head;
+    ShadowSpillQueuedAction *action = runtime->actions.head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
         if (action->has_completion_event) {
@@ -86,8 +86,9 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
         free(action);
         action = next;
     }
-    runtime->action_head = NULL;
-    runtime->action_tail = NULL;
+    runtime->actions.head = NULL;
+    runtime->actions.tail = NULL;
+    atomic_store_explicit(&runtime->actions.count, 0U, memory_order_release);
 }
 
 static void release_resources(ShadowSpillRuntime *runtime) {
@@ -171,6 +172,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     atomic_init(&runtime->failure_status, SHADOWSPILL_RUNTIME_OK);
     atomic_init(&runtime->pending_retirements, 0U);
     atomic_init(&runtime->pending_capacity_actions, 0U);
+    atomic_init(&runtime->actions.count, 0U);
     atomic_init(&runtime->device_free_bytes_snapshot, 0U);
     atomic_init(&runtime->device_largest_free_snapshot, 0U);
     atomic_init(&runtime->allocation_event_count, 0U);
@@ -213,13 +215,23 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->completions_initialized = 1U;
+    if (pthread_mutex_init(&runtime->actions.lock, NULL) != 0) {
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    runtime->actions.lock_initialized = 1U;
     if (pthread_mutex_init(&runtime->failure_lock, NULL) != 0) {
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     if (pthread_mutex_init(&runtime->allocation_pool.lock, NULL) != 0) {
         pthread_mutex_destroy(&runtime->failure_lock);
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -229,6 +241,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         ) != 0) {
         pthread_mutex_destroy(&runtime->allocation_pool.lock);
         pthread_mutex_destroy(&runtime->failure_lock);
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -239,6 +253,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->allocation_pool.lock);
         runtime->allocation_pool_initialized = 0U;
         pthread_mutex_destroy(&runtime->failure_lock);
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -249,6 +265,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->allocation_pool.lock);
         runtime->allocation_pool_initialized = 0U;
         pthread_mutex_destroy(&runtime->failure_lock);
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -309,6 +327,8 @@ fail:
     pthread_mutex_destroy(&runtime->allocation_pool.lock);
     runtime->allocation_pool_initialized = 0U;
     pthread_mutex_destroy(&runtime->failure_lock);
+    pthread_mutex_destroy(&runtime->actions.lock);
+    runtime->actions.lock_initialized = 0U;
     free(runtime);
     return status;
 }
@@ -322,7 +342,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     pthread_mutex_lock(&runtime->mutex);
     while (atomic_load_explicit(&runtime->closed, memory_order_acquire) == 0U &&
            shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
-           (runtime->queued_actions != 0U ||
+           (atomic_load_explicit(
+                &runtime->actions.count, memory_order_acquire
+            ) != 0U ||
             runtime->pending_retirements != 0U)) {
         pthread_cond_wait(&runtime->condition, &runtime->mutex);
     }
@@ -349,7 +371,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_host_arena_legacy(
         goto done;
     }
     if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U ||
-        runtime->queued_actions != 0U ||
+        atomic_load_explicit(
+            &runtime->actions.count, memory_order_acquire
+        ) != 0U ||
         runtime->pending_retirements != 0U) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -410,7 +434,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     }
     atomic_store_explicit(&runtime->closing, 1U, memory_order_release);
     while (shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
-           (runtime->queued_actions != 0U ||
+           (atomic_load_explicit(
+                &runtime->actions.count, memory_order_acquire
+            ) != 0U ||
             runtime->pending_retirements != 0U)) {
         pthread_cond_wait(&runtime->condition, &runtime->mutex);
     }
@@ -463,6 +489,8 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     pthread_mutex_destroy(&runtime->allocation_pool.lock);
     runtime->allocation_pool_initialized = 0U;
     pthread_mutex_destroy(&runtime->failure_lock);
+    pthread_mutex_destroy(&runtime->actions.lock);
+    runtime->actions.lock_initialized = 0U;
     free(runtime);
 }
 
@@ -495,7 +523,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .blocked_allocators = runtime->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
         .registered_objects = runtime->registered_objects,
-        .queued_actions = runtime->queued_actions,
+        .queued_actions = atomic_load_explicit(
+            &runtime->actions.count, memory_order_acquire
+        ),
         .transfers_to_device = runtime->transfers_to_device,
         .transfers_to_host = runtime->transfers_to_host,
         .bytes_to_device = runtime->bytes_to_device,

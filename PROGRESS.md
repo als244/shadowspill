@@ -1630,3 +1630,17 @@ the ignored internal progress log before this tracked summary is updated.
   dispatch, postprocessing, native after-task, and cleanup.
 - Full native/CUDA and Python validation, Ruff, and strict mypy pass without
   changing task IDs, actions, graph-pair selection, or arithmetic.
+
+## 2026-08-12 — Ordered action queue receives a dedicated owner
+
+- Replaced the action-list fields embedded in miscellaneous runtime state with
+  a central `ShadowSpillActionQueue`: its own mutex, ordered head/tail, and
+  atomic count. Queue membership no longer depends implicitly on whichever
+  caller happens to hold the lifecycle mutex.
+- Queue publication, progress traversal, object-detach checks, teardown, and
+  diagnostics now use the queue owner. The atomic count lets lifecycle and
+  allocator code test quiescence/progress without taking the queue lock.
+- Preserved the legacy lifecycle lock around object transition bodies for this
+  mechanical checkpoint. Removing that final overlap requires per-object
+  snapshot/commit and is deliberately a separate behavioral gate.
+- Full native/CUDA, Python, Ruff, and strict-mypy validation passes.

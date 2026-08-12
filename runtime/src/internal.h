@@ -170,6 +170,14 @@ typedef struct ShadowSpillQueuedAction {
     struct ShadowSpillQueuedAction *next;
 } ShadowSpillQueuedAction;
 
+typedef struct ShadowSpillActionQueue {
+    pthread_mutex_t lock;
+    ShadowSpillQueuedAction *head;
+    ShadowSpillQueuedAction *tail;
+    _Atomic uint64_t count;
+    uint8_t lock_initialized;
+} ShadowSpillActionQueue;
+
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
     pthread_mutex_t mutex;
@@ -208,8 +216,7 @@ struct ShadowSpillRuntime {
     ShadowSpillObjectTable objects;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
-    ShadowSpillQueuedAction *action_head;
-    ShadowSpillQueuedAction *action_tail;
+    ShadowSpillActionQueue actions;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -221,7 +228,6 @@ struct ShadowSpillRuntime {
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
     uint64_t registered_objects;
-    uint64_t queued_actions;
     uint64_t transfers_to_device;
     uint64_t transfers_to_host;
     uint64_t bytes_to_device;

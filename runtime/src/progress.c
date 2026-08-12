@@ -109,12 +109,12 @@ static void complete_action_locked(
         );
     }
     if (previous == NULL) {
-        runtime->action_head = action->next;
+        runtime->actions.head = action->next;
     } else {
         previous->next = action->next;
     }
-    if (runtime->action_tail == action) {
-        runtime->action_tail = previous;
+    if (runtime->actions.tail == action) {
+        runtime->actions.tail = previous;
     }
     shadowspill_release_task_fence_locked(runtime, action->fence);
     if (action->has_completion_event) {
@@ -132,9 +132,9 @@ static void complete_action_locked(
     }
     shadowspill_object_release(action->object);
     free(action);
-    if (runtime->queued_actions != 0U) {
-        --runtime->queued_actions;
-    }
+    (void)atomic_fetch_sub_explicit(
+        &runtime->actions.count, 1U, memory_order_release
+    );
     pthread_cond_broadcast(&runtime->condition);
 }
 
@@ -320,7 +320,7 @@ static int dispatch_offload_locked(
         allocation_id,
         object->size_bytes,
         SHADOWSPILL_TRANSFER_TO_HOST,
-        runtime->queued_actions
+        atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
     return 1;
 
@@ -441,7 +441,7 @@ static int dispatch_prefetch_locked(
         allocation->allocation_id,
         object->size_bytes,
         SHADOWSPILL_TRANSFER_TO_DEVICE,
-        runtime->queued_actions
+        atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
     return 1;
 
@@ -466,10 +466,10 @@ backend_failure:
     return -1;
 }
 
-static int progress_actions_locked(ShadowSpillRuntime *runtime) {
+static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
     int changed = 0;
     ShadowSpillQueuedAction *previous = NULL;
-    ShadowSpillQueuedAction *action = runtime->action_head;
+    ShadowSpillQueuedAction *action = runtime->actions.head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
         ShadowSpillObjectRecord *object = action->object;
@@ -599,7 +599,9 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                     action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
                         ? SHADOWSPILL_TRANSFER_TO_HOST
                         : SHADOWSPILL_TRANSFER_TO_DEVICE,
-                    runtime->queued_actions
+                    atomic_load_explicit(
+                        &runtime->actions.count, memory_order_acquire
+                    )
                 );
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
                     pthread_mutex_lock(&runtime->allocation_pool.lock);
@@ -676,6 +678,13 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
     return changed;
 }
 
+static int progress_actions(ShadowSpillRuntime *runtime) {
+    pthread_mutex_lock(&runtime->actions.lock);
+    const int changed = progress_actions_queue_locked(runtime);
+    pthread_mutex_unlock(&runtime->actions.lock);
+    return changed;
+}
+
 static void timed_wait_locked(
     ShadowSpillRuntime *runtime,
     uint64_t completion_wait_nanoseconds
@@ -745,14 +754,16 @@ void *shadowspill_progress_main(void *pointer) {
         pthread_mutex_lock(&runtime->allocation_pool.lock);
         (void)progress_retirements_locked(runtime);
         pthread_mutex_unlock(&runtime->allocation_pool.lock);
-        (void)progress_actions_locked(runtime);
+        (void)progress_actions(runtime);
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
             pthread_cond_broadcast(&runtime->condition);
         }
         if (atomic_load_explicit(
             &runtime->worker_stop, memory_order_acquire
         ) == 0U) {
-            if (runtime->queued_actions == 0U &&
+            if (atomic_load_explicit(
+                    &runtime->actions.count, memory_order_acquire
+                ) == 0U &&
                 !has_actionable_retirement(runtime)) {
                 pthread_cond_wait(&runtime->condition, &runtime->mutex);
             } else {

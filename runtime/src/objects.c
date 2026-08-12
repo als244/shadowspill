@@ -104,13 +104,16 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
-    for (ShadowSpillQueuedAction *action = runtime->action_head;
+    pthread_mutex_lock(&runtime->actions.lock);
+    for (ShadowSpillQueuedAction *action = runtime->actions.head;
          action != NULL; action = action->next) {
         if (action->object == object) {
             status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            pthread_mutex_unlock(&runtime->actions.lock);
             goto done;
         }
     }
+    pthread_mutex_unlock(&runtime->actions.lock);
     if (object->has_host_range) {
         uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
         if (shadowspill_range_free(
@@ -286,27 +289,34 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&runtime->allocation_pool.lock);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
-    ShadowSpillAllocationRecord *record = object == NULL
-        ? NULL
-        : shadowspill_find_allocation(runtime, object->allocation_id);
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        goto done;
+        goto done_runtime;
     }
-    if (object == NULL || record == NULL || record->pointer == NULL ||
-        record->logical_freed || !record->plan_owned ||
+    if (object == NULL ||
         object->residency != SHADOWSPILL_OBJECT_DEVICE_READY) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-        goto done;
+        goto done_runtime;
     }
-    for (ShadowSpillQueuedAction *action = runtime->action_head;
+    pthread_mutex_lock(&runtime->actions.lock);
+    for (ShadowSpillQueuedAction *action = runtime->actions.head;
          action != NULL; action = action->next) {
         if (action->object == object) {
             status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-            goto done;
+            pthread_mutex_unlock(&runtime->actions.lock);
+            goto done_runtime;
         }
+    }
+    pthread_mutex_unlock(&runtime->actions.lock);
+    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    ShadowSpillAllocationRecord *record = shadowspill_find_allocation(
+        runtime, object->allocation_id
+    );
+    if (record == NULL || record->pointer == NULL || record->logical_freed ||
+        !record->plan_owned) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done_allocation;
     }
     if (object->has_host_range) {
         uint64_t charged = object->size_bytes == 0U ? 1U : object->size_bytes;
@@ -314,12 +324,12 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
                 &runtime->host_ranges, object->host_offset, charged
             ) != 0) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-            goto done;
+            goto done_allocation;
         }
     }
     if (shadowspill_object_table_remove(&runtime->objects, object) != 0) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-        goto done;
+        goto done_allocation;
     }
     --runtime->registered_objects;
     record->framework_free_seen = 0;
@@ -339,8 +349,9 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     };
     shadowspill_object_release(object);
 
-done:
+done_allocation:
     pthread_mutex_unlock(&runtime->allocation_pool.lock);
+done_runtime:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
@@ -407,7 +418,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
         SHADOWSPILL_RUNTIME_NO_ID,
         0U,
         input_count,
-        runtime->queued_actions
+        atomic_load_explicit(&runtime->actions.count, memory_order_acquire)
     );
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     for (uint32_t index = 0; status == SHADOWSPILL_RUNTIME_OK &&
@@ -420,7 +431,8 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
                 break;
             }
             int pending_prefetch = 0;
-            for (ShadowSpillQueuedAction *action = runtime->action_head;
+            pthread_mutex_lock(&runtime->actions.lock);
+            for (ShadowSpillQueuedAction *action = runtime->actions.head;
                  action != NULL; action = action->next) {
                 if (action->object == object &&
                     action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
@@ -428,6 +440,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
                     break;
                 }
             }
+            pthread_mutex_unlock(&runtime->actions.lock);
             if (!pending_prefetch) {
                 break;
             }
@@ -439,7 +452,9 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
                 object->allocation_id,
                 object->size_bytes,
                 0U,
-                runtime->queued_actions
+                atomic_load_explicit(
+                    &runtime->actions.count, memory_order_acquire
+                )
             );
             pthread_cond_wait(&runtime->condition, &runtime->mutex);
             status = shadowspill_current_status_locked(runtime);
@@ -728,13 +743,16 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
     }
     pthread_mutex_unlock(&runtime->allocation_pool.lock);
     if (head != NULL) {
-        if (runtime->action_tail == NULL) {
-            runtime->action_head = head;
+        pthread_mutex_lock(&runtime->actions.lock);
+        if (runtime->actions.tail == NULL) {
+            runtime->actions.head = head;
         } else {
-            runtime->action_tail->next = head;
+            runtime->actions.tail->next = head;
         }
-        runtime->action_tail = tail;
-        runtime->queued_actions += action_count;
+        runtime->actions.tail = tail;
+        (void)atomic_fetch_add_explicit(
+            &runtime->actions.count, action_count, memory_order_release
+        );
         for (ShadowSpillQueuedAction *queued = head; queued != NULL;
              queued = queued->next) {
             if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
@@ -753,12 +771,15 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
                 queued->object->allocation_id,
                 queued->object->size_bytes,
                 queued->kind,
-                runtime->queued_actions
+                atomic_load_explicit(
+                    &runtime->actions.count, memory_order_acquire
+                )
             );
             if (queued == tail) {
                 break;
             }
         }
+        pthread_mutex_unlock(&runtime->actions.lock);
     }
     pthread_cond_broadcast(&runtime->condition);
 
