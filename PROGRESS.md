@@ -1822,6 +1822,7 @@ the ignored internal progress log before this tracked summary is updated.
 
 ## 2026-08-12 — Narrow idle-wakeup correction passes the Qwen gate
 
+- Fix commit: `ad2f4ef` (`Fix allocator idle-wait notification race`).
 - The accepted correction separates quiescence notification from progress
   scheduling. `runtime_wait_idle()` waits on a dedicated epoch/condition.
   `complete_action`, physical retirement, and pending-allocation reuse first
