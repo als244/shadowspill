@@ -1644,3 +1644,14 @@ the ignored internal progress log before this tracked summary is updated.
   mechanical checkpoint. Removing that final overlap requires per-object
   snapshot/commit and is deliberately a separate behavioral gate.
 - Full native/CUDA, Python, Ruff, and strict-mypy validation passes.
+
+## 2026-08-12 — Forward tasks use the same explicit boundary shape
+
+- Reworked each forward stage into `_before_task()`,
+  `_run_compiled_task()`, `_after_task()`, and `_abort_task()` around a small
+  prepared-task record. Input rebinding is now wholly before-task work, while
+  output promotion, dematerialization, and action publication are wholly
+  after-task work.
+- The forward-only public behavior, output pytree, alias semantics, and
+  no-autograd execution are unchanged. Forward/training CUDA canaries and the
+  full PyTorch unit suite pass.

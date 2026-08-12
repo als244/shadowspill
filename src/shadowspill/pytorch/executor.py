@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -14,6 +15,14 @@ from .lowering import LoweredForwardProgram, TaskEntrypoint
 from .materialization import MaterializedForwardState
 from .partition import PartitionedExport
 from .runtime_bridge import RuntimeBridge, actions_by_task
+
+
+@dataclass(slots=True)
+class _PreparedForwardTask:
+    arguments: tuple[object, ...]
+    input_aliases: tuple[str, ...]
+    stream: torch.cuda.Stream
+    runtime_scope_open: bool = True
 
 
 class _ExecutingStage(nn.Module):
@@ -35,18 +44,29 @@ class _ExecutingStage(nn.Module):
         self._actions = actions
 
     def forward(self, *arguments: object) -> object:
+        prepared = self._before_task(arguments)
+        try:
+            raw_outputs = self._run_compiled_task(prepared)
+            return self._after_task(prepared, raw_outputs)
+        except BaseException as error:
+            self._abort_task(prepared, error)
+            raise
+
+    def _before_task(
+        self, arguments: tuple[object, ...]
+    ) -> _PreparedForwardTask:
         leaves, _ = tree_flatten(arguments)
         input_aliases = tuple(
             self._bridge.alias_for_object(slot.object_id)
             for slot in self._entrypoint.input_slots
         )
         stream = torch.cuda.current_stream()
-        task_open = False
+        runtime_scope_open = False
         try:
             bindings = self._bridge.before_task(
                 self._task.task_id, stream, input_aliases
             )
-            task_open = True
+            runtime_scope_open = True
             for slot, alias_id, binding in zip(
                 self._entrypoint.input_slots,
                 input_aliases,
@@ -59,54 +79,71 @@ class _ExecutingStage(nn.Module):
                 self._bridge.rebind(tensor, alias_id, binding)
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = binding.generation
-
-            # Forward-only execution has no captured backward. Avoid creating
-            # hidden dispatcher-autograd contexts across planned task bounds.
-            with torch.no_grad():
-                output = self._function(*arguments)
-            output_leaves, _ = tree_flatten(output)
-            produced: set[str] = set()
-            for slot in self._entrypoint.output_slots:
-                tensor = output_leaves[slot.leaf_index]
-                if not isinstance(tensor, torch.Tensor):
-                    raise RuntimeError("task tensor output became static")
-                alias_id = self._bridge.alias_for_object(slot.object_id)
-                if alias_id not in input_aliases and alias_id not in produced:
-                    binding = self._bridge.promote_output(alias_id, tensor)
-                    self._bridge.rebind(tensor, alias_id, binding)
-                    self._state.generations[alias_id] = binding.generation
-                    produced.add(alias_id)
-                self._state.object_store[alias_id] = tensor
-            for action in self._actions:
-                if action.kind not in {
-                    MemoryActionKind.RELEASE,
-                    MemoryActionKind.OFFLOAD,
-                }:
-                    continue
-                alias_id = action.alias_group_id
-                tensor = self._state.object_store.get(alias_id)
-                generation = self._state.generations.get(alias_id)
-                if tensor is None or generation is None:
-                    raise RuntimeError(
-                        f"action references unbound alias group {alias_id!r}"
-                    )
-                self._bridge.dematerialize(tensor, alias_id, generation)
-            try:
-                self._bridge.after_task(
-                    self._task.task_id,
-                    stream,
-                    self._task.mutations,
-                    self._actions,
-                )
-            finally:
-                task_open = False
-            return output
+            return _PreparedForwardTask(arguments, input_aliases, stream)
         except BaseException as error:
-            if task_open:
+            if runtime_scope_open:
                 self._bridge.abort_task_after_failure(
-                    f"execute task {self._task.task_id}", error
+                    f"prepare task {self._task.task_id}", error
                 )
             raise
+
+    def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
+        # Forward-only execution has no captured backward. Avoid creating
+        # hidden dispatcher-autograd contexts across planned task bounds.
+        with torch.no_grad():
+            return self._function(*prepared.arguments)
+
+    def _after_task(
+        self,
+        prepared: _PreparedForwardTask,
+        output: object,
+    ) -> object:
+        output_leaves, _ = tree_flatten(output)
+        produced: set[str] = set()
+        for slot in self._entrypoint.output_slots:
+            tensor = output_leaves[slot.leaf_index]
+            if not isinstance(tensor, torch.Tensor):
+                raise RuntimeError("task tensor output became static")
+            alias_id = self._bridge.alias_for_object(slot.object_id)
+            if alias_id not in prepared.input_aliases and alias_id not in produced:
+                binding = self._bridge.promote_output(alias_id, tensor)
+                self._bridge.rebind(tensor, alias_id, binding)
+                self._state.generations[alias_id] = binding.generation
+                produced.add(alias_id)
+            self._state.object_store[alias_id] = tensor
+        for action in self._actions:
+            if action.kind not in {
+                MemoryActionKind.RELEASE,
+                MemoryActionKind.OFFLOAD,
+            }:
+                continue
+            alias_id = action.alias_group_id
+            tensor = self._state.object_store.get(alias_id)
+            generation = self._state.generations.get(alias_id)
+            if tensor is None or generation is None:
+                raise RuntimeError(
+                    f"action references unbound alias group {alias_id!r}"
+                )
+            self._bridge.dematerialize(tensor, alias_id, generation)
+        self._bridge.after_task(
+            self._task.task_id,
+            prepared.stream,
+            self._task.mutations,
+            self._actions,
+        )
+        prepared.runtime_scope_open = False
+        return output
+
+    def _abort_task(
+        self,
+        prepared: _PreparedForwardTask,
+        error: BaseException,
+    ) -> None:
+        if prepared.runtime_scope_open:
+            prepared.runtime_scope_open = False
+            self._bridge.abort_task_after_failure(
+                f"execute task {self._task.task_id}", error
+            )
 
 
 class ForwardExecutor:
