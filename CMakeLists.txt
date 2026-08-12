@@ -110,6 +110,7 @@ add_library(
   runtime/src/ranges.c
   runtime/src/runtime.c
   runtime/src/status.c
+  runtime/src/task_boundaries.c
   runtime/src/telemetry.c
   runtime/src/trace.c
 )

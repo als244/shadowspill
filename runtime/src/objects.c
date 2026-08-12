@@ -368,7 +368,7 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_before_task(
+ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream compute_stream,
@@ -512,7 +512,7 @@ static void discard_actions_locked(
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_after_task(
+ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream compute_stream,

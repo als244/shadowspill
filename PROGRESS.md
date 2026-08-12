@@ -1,5 +1,18 @@
 # ShadowSpill Progress
 
+## 2026-08-12 — Task-boundary component extraction
+
+- Began the accepted runtime concurrency redesign from clean commit
+  `6783eda` after reconfirming all 16 native/CUDA canaries and the complete
+  Python suite.
+- Added a dedicated neutral `task_boundaries.c` component and private
+  interface. Public `shadowspill_before_task` and `shadowspill_after_task`
+  now enter through that component while the original locked algorithms remain
+  byte-for-byte in legacy implementation functions.
+- This is a mechanical ownership extraction only: the global lock, statement
+  order, actions, synchronization, and runtime behavior are unchanged. All 16
+  canaries and focused runtime/training tests pass.
+
 Last updated: 2026-08-11
 
 ## Current milestone
