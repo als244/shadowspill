@@ -1460,3 +1460,22 @@ the ignored internal progress log before this tracked summary is updated.
   sole prerequisite; the five-cell cold golden matrix in Phase 2 of
   `remaining_agenda.md` stays paused until performance, runtime equivalence,
   and multi-budget numerical/checkpoint gates pass.
+
+## 2026-08-12 — Duplicate task NVTX ownership corrected
+
+- The updated NSYS capture exposed two identical semantic task rows. The C
+  adapter already owns the failure-safe outer range from native `before_task`
+  through native `after_task`; debug execution timing also pushed the same
+  range from Python around the full logical task.
+- Removed only the Python outer task push/pop. The C range remains the sole
+  owner, while nested `before_task`, storage-rebind, `compiled_call`, and
+  `after_task` ranges and all seven diagnostic timestamps remain unchanged.
+- Tightened the NSYS extractor to reject duplicate chronological semantic
+  task ranges instead of silently choosing one. Duplicate tracing is now a
+  qualification failure.
+- A fresh warm Qwen validation at
+  `qualification/results/phase1/qwen35_nvtx_deduplicated.nsys-rep` contains
+  exactly 129 outer semantic ranges for 129 unique execution IDs, zero
+  duplicates, 129 nested `compiled_call` ranges, and 97 optimizer tasks. Its
+  258,781 event queries confirm that the separate concurrency defect remains
+  visible for the next milestone.

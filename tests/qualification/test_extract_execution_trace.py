@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from qualification.extract_execution_trace import extract_trace
 
 
@@ -96,3 +98,20 @@ def test_extracts_tasks_optimizer_idle_and_transfers(tmp_path: Path) -> None:
         "compiled_call": 400,
         "after_task": 300,
     }
+
+
+def test_rejects_duplicate_semantic_task_ranges(tmp_path: Path) -> None:
+    trace = tmp_path / "duplicate.sqlite"
+    _create_trace(trace)
+    name = (
+        "shadowspill.pytorch.task.execution_000000."
+        "microbatch_0000.stage_0000.forward.recompute"
+    )
+    with sqlite3.connect(trace) as connection:
+        connection.executemany(
+            "INSERT INTO NVTX_EVENTS VALUES (?, ?, ?, ?, NULL)",
+            ((0, 1000, name, 10), (1, 999, name, 10)),
+        )
+
+    with pytest.raises(ValueError, match="duplicate semantic task range"):
+        extract_trace(trace)

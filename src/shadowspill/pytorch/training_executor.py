@@ -939,19 +939,12 @@ class TrainingExecutor:
             return None
         task = timing.tasks[entrypoint.task_id]
         task.host_started_ns = time.perf_counter_ns()
-        nvtx: Any = torch.cuda.nvtx
-        nvtx.range_push(
-            f"shadowspill.pytorch.task.execution_{task.execution_ordinal:06d}."
-            f"{task.semantic_name}"
-        )
         return task
 
     @staticmethod
     def _finish_task_timing(task: _ArmedTaskTiming | None) -> None:
         if task is None:
             return
-        nvtx: Any = torch.cuda.nvtx
-        nvtx.range_pop()
         task.host_finished_ns = time.perf_counter_ns()
 
     @staticmethod

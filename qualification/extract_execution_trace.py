@@ -167,15 +167,17 @@ def extract_trace(path: Path) -> dict[str, object]:
             if semantic_match is not None:
                 execution_task_id, semantic_name = semantic_match.groups()
                 previous = task_ranges.get(execution_task_id)
-                if previous is None or (
-                    int(item["end_ns"]) - int(item["start_ns"])
-                    > int(previous[0]["end_ns"]) - int(previous[0]["start_ns"])
-                ):
-                    task_ranges[execution_task_id] = (
-                        item,
-                        _semantic_phase(semantic_name),
-                        semantic_name,
+                if previous is not None:
+                    raise ValueError(
+                        "duplicate semantic task range for "
+                        f"{execution_task_id}: {previous[2]!r} and "
+                        f"{semantic_name!r}"
                     )
+                task_ranges[execution_task_id] = (
+                    item,
+                    _semantic_phase(semantic_name),
+                    semantic_name,
+                )
                 continue
             legacy_match = _TASK.fullmatch(name)
             if legacy_match is not None:
