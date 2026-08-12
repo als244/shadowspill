@@ -448,7 +448,8 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
              ? candidate->reusable_index_next
              : candidate->active_next) {
         if (!candidate->logical_freed || candidate->pointer == NULL ||
-            candidate->ever_plan_owned || candidate->charged_bytes < required ||
+            candidate->retirement_preparing || candidate->ever_plan_owned ||
+            candidate->charged_bytes < required ||
             candidate->offset % alignment != 0U ||
             (exact_only && candidate->charged_bytes != required)) {
             continue;
@@ -490,22 +491,12 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
     }
-    for (ShadowSpillEventRecord *event = selected->retirement_events;
-         event != NULL; event = event->next) {
-        if (runtime->backend.wait_event(
-                runtime->backend.context, stream, event->event->event
-            ) != 0) {
-            shadowspill_latch_failure_locked(
-                runtime,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                selected->allocation_id,
-                bytes
-            );
-            free(split);
-            return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-        }
-    }
+    /*
+     * Every recorded use was on ``stream`` (checked above). CUDA stream order
+     * already retires the old use before later work that consumes the reused
+     * range, so adding a wait for an event recorded on the same stream is both
+     * redundant and an unnecessary driver call in the allocator hot path.
+     */
     unindex_reusable_locked(runtime, selected);
     if (split != NULL) {
         const uint64_t allocation_offset = selected->offset;
@@ -863,6 +854,78 @@ static void destroy_event_list(
     }
 }
 
+typedef struct ShadowSpillStreamSnapshot {
+    ShadowSpillBackendStream *streams;
+    uint64_t count;
+} ShadowSpillStreamSnapshot;
+
+static int snapshot_streams_locked(
+    const ShadowSpillAllocationRecord *allocation,
+    ShadowSpillStreamSnapshot *snapshot
+) {
+    uint64_t count = 0U;
+    for (const ShadowSpillStreamRecord *item = allocation->streams;
+         item != NULL; item = item->next) {
+        ++count;
+    }
+    ShadowSpillBackendStream *streams = count == 0U
+        ? NULL
+        : calloc((size_t)count, sizeof(*streams));
+    if (count != 0U && streams == NULL) {
+        return -1;
+    }
+    uint64_t index = 0U;
+    for (const ShadowSpillStreamRecord *item = allocation->streams;
+         item != NULL; item = item->next) {
+        streams[index++] = item->stream;
+    }
+    *snapshot = (ShadowSpillStreamSnapshot){
+        .streams = streams,
+        .count = count,
+    };
+    return 0;
+}
+
+static ShadowSpillRuntimeStatus record_retirement_events(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillStreamSnapshot *snapshot,
+    uint64_t allocation_id,
+    ShadowSpillEventRecord **events
+) {
+    *events = NULL;
+    for (uint64_t index = 0U; index < snapshot->count; ++index) {
+        ShadowSpillEventRecord *event = calloc(1U, sizeof(*event));
+        const ShadowSpillRuntimeStatus event_status = event == NULL
+            ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+            : shadowspill_event_lease_create_locked(runtime, &event->event);
+        if (event_status != SHADOWSPILL_RUNTIME_OK ||
+            runtime->backend.record_event(
+                runtime->backend.context,
+                event->event->event,
+                snapshot->streams[index]
+            ) != 0 || shadowspill_completion_submit(
+                runtime,
+                snapshot->streams[index],
+                event->event,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                allocation_id
+            ) != SHADOWSPILL_RUNTIME_OK) {
+            if (event != NULL && event->event != NULL) {
+                (void)shadowspill_event_lease_release(runtime, event->event);
+            }
+            free(event);
+            destroy_event_list(runtime, *events);
+            *events = NULL;
+            return event_status == SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+                ? event_status
+                : SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        }
+        event->next = *events;
+        *events = event;
+    }
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 ShadowSpillRuntimeStatus shadowspill_free(
     ShadowSpillRuntime *runtime,
     uint64_t allocation_id,
@@ -915,7 +978,6 @@ ShadowSpillRuntimeStatus shadowspill_free(
         allocation->streams != NULL &&
         allocation->streams->next == NULL &&
         stream_equal(allocation->streams->stream, stream);
-    ShadowSpillEventRecord *events = NULL;
     if (task_local_same_stream) {
         allocation->release_task_id = task_id;
         allocation->logical_freed = 1;
@@ -932,40 +994,15 @@ ShadowSpillRuntimeStatus shadowspill_free(
         }
         goto done;
     }
-    for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
-         item = item->next) {
-        ShadowSpillEventRecord *event = calloc(1U, sizeof(*event));
-        const ShadowSpillRuntimeStatus event_status = event == NULL
-            ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
-            : shadowspill_event_lease_create_locked(runtime, &event->event);
-        if (event_status != SHADOWSPILL_RUNTIME_OK ||
-            runtime->backend.record_event(
-                runtime->backend.context, event->event->event, item->stream
-            ) != 0 || shadowspill_completion_submit(
-                runtime,
-                item->stream,
-                event->event,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                allocation->allocation_id
-            ) != SHADOWSPILL_RUNTIME_OK) {
-            if (event != NULL && event->event != NULL) {
-                (void)shadowspill_event_lease_release(runtime, event->event);
-            }
-            free(event);
-            destroy_event_list(runtime, events);
-            status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-            shadowspill_latch_failure_locked(
-                runtime, status, SHADOWSPILL_RUNTIME_NO_ID, allocation_id, 0U
-            );
-            goto done;
-        }
-        event->next = events;
-        events = event;
+    ShadowSpillStreamSnapshot snapshot = {0};
+    if (snapshot_streams_locked(allocation, &snapshot) != 0) {
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto done;
     }
-    allocation->retirement_events = events;
+    const uint64_t generation = allocation->generation;
     allocation->release_task_id = task_id;
     allocation->logical_freed = 1;
-    index_reusable_locked(runtime, allocation);
+    allocation->retirement_preparing = 1U;
     shadowspill_append_allocation_event_locked(
         runtime,
         allocation,
@@ -973,6 +1010,34 @@ ShadowSpillRuntimeStatus shadowspill_free(
         SHADOWSPILL_ALLOCATION_ANONYMOUS
     );
     ++runtime->pending_retirements;
+    pthread_mutex_unlock(&runtime->allocation_pool.lock);
+
+    ShadowSpillEventRecord *events = NULL;
+    status = record_retirement_events(
+        runtime, &snapshot, allocation_id, &events
+    );
+    free(snapshot.streams);
+
+    pthread_mutex_lock(&runtime->allocation_pool.lock);
+    allocation = shadowspill_find_allocation(runtime, allocation_id);
+    if (allocation == NULL || allocation->generation != generation ||
+        !allocation->retirement_preparing) {
+        destroy_event_list(runtime, events);
+        if (status == SHADOWSPILL_RUNTIME_OK) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        }
+    } else {
+        allocation->retirement_events = events;
+        allocation->retirement_preparing = 0U;
+        if (status == SHADOWSPILL_RUNTIME_OK) {
+            index_reusable_locked(runtime, allocation);
+        }
+    }
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        shadowspill_latch_failure_locked(
+            runtime, status, SHADOWSPILL_RUNTIME_NO_ID, allocation_id, 0U
+        );
+    }
     pthread_cond_broadcast(&runtime->condition);
     if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
         status = shadowspill_failure_status(runtime);

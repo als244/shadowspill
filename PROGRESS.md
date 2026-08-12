@@ -1586,3 +1586,17 @@ the ignored internal progress log before this tracked summary is updated.
   retirement fences are the remaining allocation-path snapshot/commit work;
   this checkpoint intentionally does not claim that the full lock redesign is
   complete.
+
+## 2026-08-12 — Ordinary free uses retirement snapshot/commit
+
+- Converted the non-task logical-free path into two phases: snapshot recorded
+  streams and mark the allocation retirement as preparing under the allocation
+  owner; record and submit completion events with no allocation lock held;
+  then publish the event list only if allocation ID and generation still match.
+- Excluded preparing records from reuse. This preserves immediate logical-free
+  semantics while preventing another allocation from observing a partially
+  built retirement set.
+- Removed redundant same-stream waits during pending-block reuse. Candidate
+  selection already proves that all old uses and the new allocation are on the
+  same CUDA stream, whose ordering is itself the retirement dependency.
+- All native, CUDA, PyTorch, Python, lint, and type-check gates continue to pass.

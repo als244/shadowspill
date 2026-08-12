@@ -87,6 +87,7 @@ typedef struct ShadowSpillAllocationRecord {
     void *pointer;
     _Atomic uint32_t references;
     int logical_freed;
+    uint8_t retirement_preparing;
     int plan_owned;
     int ever_plan_owned;
     int framework_free_seen;
