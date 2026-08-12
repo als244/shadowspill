@@ -165,12 +165,12 @@ void shadowspill_release_task_fence_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillTaskFence *fence
 ) {
-    if (fence == NULL || --fence->references != 0U) {
+    if (fence == NULL || atomic_fetch_sub_explicit(
+            &fence->references, 1U, memory_order_acq_rel
+        ) != 1U) {
         return;
     }
-    if (runtime->backend.destroy_event(
-            runtime->backend.context, fence->event
-        ) != 0) {
+    if (shadowspill_event_lease_release(runtime, fence->event) != 0) {
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -182,6 +182,14 @@ void shadowspill_release_task_fence_locked(
     free(fence);
 }
 
+void shadowspill_retain_task_fence(ShadowSpillTaskFence *fence) {
+    if (fence != NULL) {
+        (void)atomic_fetch_add_explicit(
+            &fence->references, 1U, memory_order_relaxed
+        );
+    }
+}
+
 int shadowspill_task_fence_complete_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillTaskFence *fence,
@@ -190,7 +198,9 @@ int shadowspill_task_fence_complete_locked(
     if (fence == NULL || complete == NULL) {
         return -1;
     }
-    if (fence->completion_known) {
+    if (atomic_load_explicit(
+            &fence->completion_known, memory_order_acquire
+        ) != 0U) {
         *complete = 1;
         return 0;
     }
@@ -198,15 +208,15 @@ int shadowspill_task_fence_complete_locked(
         *complete = fence->last_query_complete != 0U;
         return 0;
     }
-    if (runtime->backend.query_event(
-            runtime->backend.context, fence->event, complete
-        ) != 0) {
+    if (shadowspill_event_lease_query(runtime, fence->event, complete) != 0) {
         return -1;
     }
     fence->last_query_epoch = runtime->event_query_epoch;
     fence->last_query_complete = (uint8_t)(*complete != 0);
     if (*complete) {
-        fence->completion_known = 1U;
+        atomic_store_explicit(
+            &fence->completion_known, 1U, memory_order_release
+        );
     }
     return 0;
 }
@@ -285,19 +295,14 @@ static ShadowSpillRuntimeStatus fence_task_retirements_locked(
         return SHADOWSPILL_RUNTIME_OK;
     }
     ShadowSpillTaskFence *fence = calloc(1U, sizeof(*fence));
-    int created = 0;
-    if (fence != NULL && runtime->backend.create_event(
-            runtime->backend.context, &fence->event
-        ) == 0) {
-        created = 1;
-    }
-    if (fence == NULL || !created || runtime->backend.record_event(
-            runtime->backend.context, fence->event, stream
+    const ShadowSpillRuntimeStatus event_status = fence == NULL
+        ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+        : shadowspill_event_lease_create_locked(runtime, &fence->event);
+    if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
+            runtime->backend.context, fence->event->event, stream
         ) != 0) {
-        if (created) {
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, fence->event
-            );
+        if (fence != NULL && fence->event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, fence->event);
         }
         free(fence);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
@@ -311,7 +316,7 @@ static ShadowSpillRuntimeStatus fence_task_retirements_locked(
             continue;
         }
         allocation->retirement_fence = fence;
-        ++fence->references;
+        shadowspill_retain_task_fence(fence);
     }
     pthread_cond_broadcast(&runtime->condition);
     return SHADOWSPILL_RUNTIME_OK;
@@ -484,7 +489,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     for (ShadowSpillEventRecord *event = selected->retirement_events;
          event != NULL; event = event->next) {
         if (runtime->backend.wait_event(
-                runtime->backend.context, stream, event->event
+                runtime->backend.context, stream, event->event->event
             ) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
@@ -511,6 +516,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         index_reusable_locked(runtime, selected);
 
         split->allocation_id = runtime->next_allocation_id++;
+        atomic_init(&split->references, 1U);
         split->generation = runtime->next_generation++;
         split->requested_bytes = bytes;
         split->charged_bytes = required;
@@ -550,9 +556,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     int destroy_failed = 0;
     while (event != NULL) {
         ShadowSpillEventRecord *next = event->next;
-        if (runtime->backend.destroy_event(
-                runtime->backend.context, event->event
-            ) != 0) {
+        if (shadowspill_event_lease_release(runtime, event->event) != 0) {
             destroy_failed = 1;
         }
         free(event);
@@ -848,9 +852,7 @@ static void destroy_event_list(
 ) {
     while (events != NULL) {
         ShadowSpillEventRecord *next = events->next;
-        (void)runtime->backend.destroy_event(
-            runtime->backend.context, events->event
-        );
+        (void)shadowspill_event_lease_release(runtime, events->event);
         free(events);
         events = next;
     }
@@ -928,19 +930,15 @@ ShadowSpillRuntimeStatus shadowspill_free(
     for (ShadowSpillStreamRecord *item = allocation->streams; item != NULL;
          item = item->next) {
         ShadowSpillEventRecord *event = calloc(1U, sizeof(*event));
-        int event_created = 0;
-        if (event != NULL && runtime->backend.create_event(
-                runtime->backend.context, &event->event
-            ) == 0) {
-            event_created = 1;
-        }
-        if (event == NULL || !event_created || runtime->backend.record_event(
-                runtime->backend.context, event->event, item->stream
+        const ShadowSpillRuntimeStatus event_status = event == NULL
+            ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+            : shadowspill_event_lease_create_locked(runtime, &event->event);
+        if (event_status != SHADOWSPILL_RUNTIME_OK ||
+            runtime->backend.record_event(
+                runtime->backend.context, event->event->event, item->stream
             ) != 0) {
-            if (event_created) {
-                (void)runtime->backend.destroy_event(
-                    runtime->backend.context, event->event
-                );
+            if (event != NULL && event->event != NULL) {
+                (void)shadowspill_event_lease_release(runtime, event->event);
             }
             free(event);
             destroy_event_list(runtime, events);
@@ -994,19 +992,15 @@ void shadowspill_finalize_aborted_task_retirements(
         for (ShadowSpillStreamRecord *item = allocation->streams;
              item != NULL; item = item->next) {
             ShadowSpillEventRecord *event = calloc(1U, sizeof(*event));
-            int created = 0;
-            if (event != NULL && runtime->backend.create_event(
-                    runtime->backend.context, &event->event
-                ) == 0) {
-                created = 1;
-            }
-            if (event == NULL || !created || runtime->backend.record_event(
-                    runtime->backend.context, event->event, item->stream
+            const ShadowSpillRuntimeStatus event_status = event == NULL
+                ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+                : shadowspill_event_lease_create_locked(runtime, &event->event);
+            if (event_status != SHADOWSPILL_RUNTIME_OK ||
+                runtime->backend.record_event(
+                    runtime->backend.context, event->event->event, item->stream
                 ) != 0) {
-                if (created) {
-                    (void)runtime->backend.destroy_event(
-                        runtime->backend.context, event->event
-                    );
+                if (event != NULL && event->event != NULL) {
+                    (void)shadowspill_event_lease_release(runtime, event->event);
                 }
                 free(event);
                 destroy_event_list(runtime, events);

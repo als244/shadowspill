@@ -469,7 +469,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             if (!object->has_readiness_event || runtime->backend.wait_event(
                     runtime->backend.context,
                     compute_stream,
-                    object->readiness_event
+                    object->readiness_event->event
                 ) != 0) {
                 status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
                 shadowspill_latch_failure_locked(
@@ -608,19 +608,14 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         goto done;
     }
     fence = calloc(1U, sizeof(*fence));
-    int fence_created = 0;
-    if (fence != NULL && runtime->backend.create_event(
-            runtime->backend.context, &fence->event
-        ) == 0) {
-        fence_created = 1;
-    }
-    if (fence == NULL || !fence_created || runtime->backend.record_event(
-            runtime->backend.context, fence->event, compute_stream
+    const ShadowSpillRuntimeStatus event_status = fence == NULL
+        ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
+        : shadowspill_event_lease_create_locked(runtime, &fence->event);
+    if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
+            runtime->backend.context, fence->event->event, compute_stream
         ) != 0) {
-        if (fence_created) {
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, fence->event
-            );
+        if (fence != NULL && fence->event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, fence->event);
         }
         free(fence);
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
@@ -673,7 +668,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         created->object = object;
         shadowspill_object_retain(object);
         created->fence = fence;
-        ++fence->references;
+        shadowspill_retain_task_fence(fence);
         if (tail == NULL) {
             head = created;
         } else {
@@ -682,10 +677,10 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         tail = created;
     }
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        if (fence->references == 0U) {
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, fence->event
-            );
+        if (atomic_load_explicit(
+                &fence->references, memory_order_acquire
+            ) == 0U) {
+            (void)shadowspill_event_lease_release(runtime, fence->event);
             free(fence);
         } else {
             discard_actions_locked(runtime, head);
@@ -704,7 +699,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             continue;
         }
         allocation->retirement_fence = fence;
-        ++fence->references;
+        shadowspill_retain_task_fence(fence);
     }
     if (head != NULL) {
         if (runtime->action_tail == NULL) {

@@ -9,6 +9,7 @@
 #include <shadowspill/runtime.h>
 
 #include "internal/failure_state.h"
+#include "internal/event_pool.h"
 
 typedef struct ShadowSpillRange {
     uint64_t offset;
@@ -28,8 +29,15 @@ typedef struct ShadowSpillStreamRecord {
     struct ShadowSpillStreamRecord *next;
 } ShadowSpillStreamRecord;
 
-typedef struct ShadowSpillEventRecord {
+struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
+    uint64_t generation;
+    _Atomic uint32_t references;
+    _Atomic uint8_t completion_known;
+};
+
+typedef struct ShadowSpillEventRecord {
+    ShadowSpillEventLease *event;
     struct ShadowSpillEventRecord *next;
 } ShadowSpillEventRecord;
 
@@ -80,7 +88,7 @@ typedef struct ShadowSpillObjectRecord {
     uint8_t host_current;
     uint8_t has_host_range;
     uint8_t residency;
-    ShadowSpillBackendEvent readiness_event;
+    ShadowSpillEventLease *readiness_event;
     uint8_t has_readiness_event;
     uint64_t retired_generation;
     void *retired_device_pointer;
@@ -96,9 +104,9 @@ typedef struct ShadowSpillObjectTable {
 } ShadowSpillObjectTable;
 
 struct ShadowSpillTaskFence {
-    ShadowSpillBackendEvent event;
-    uint32_t references;
-    uint8_t completion_known;
+    ShadowSpillEventLease *event;
+    _Atomic uint32_t references;
+    _Atomic uint8_t completion_known;
     uint8_t last_query_complete;
     uint64_t last_query_epoch;
 };
@@ -117,7 +125,7 @@ typedef struct ShadowSpillQueuedAction {
     uint64_t destination_bytes;
     ShadowSpillObjectRecord *object;
     ShadowSpillTaskFence *fence;
-    ShadowSpillBackendEvent completion_event;
+    ShadowSpillEventLease *completion_event;
     uint8_t has_completion_event;
     struct ShadowSpillQueuedAction *next;
 } ShadowSpillQueuedAction;
@@ -156,6 +164,7 @@ struct ShadowSpillRuntime {
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
+    uint64_t next_event_generation;
     uint64_t requested_allocated_bytes;
     uint64_t peak_requested_allocated_bytes;
     uint64_t live_allocations;
@@ -284,6 +293,7 @@ void shadowspill_release_task_fence_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillTaskFence *fence
 );
+void shadowspill_retain_task_fence(ShadowSpillTaskFence *fence);
 int shadowspill_task_fence_complete_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillTaskFence *fence,

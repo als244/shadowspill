@@ -31,9 +31,7 @@ static void destroy_allocations(ShadowSpillRuntime *runtime) {
         ShadowSpillEventRecord *event = allocation->retirement_events;
         while (event != NULL) {
             ShadowSpillEventRecord *event_next = event->next;
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, event->event
-            );
+            (void)shadowspill_event_lease_release(runtime, event->event);
             free(event);
             event = event_next;
         }
@@ -50,6 +48,16 @@ static void destroy_allocations(ShadowSpillRuntime *runtime) {
 }
 
 static void destroy_objects(ShadowSpillRuntime *runtime) {
+    for (ShadowSpillObjectRecord *object = runtime->objects.owned_head;
+         object != NULL; object = object->ownership_next) {
+        if (object->readiness_event != NULL) {
+            (void)shadowspill_event_lease_release(
+                runtime, object->readiness_event
+            );
+            object->readiness_event = NULL;
+            object->has_readiness_event = 0U;
+        }
+    }
     shadowspill_object_table_destroy(&runtime->objects);
 }
 
@@ -58,8 +66,8 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
         if (action->has_completion_event) {
-            (void)runtime->backend.destroy_event(
-                runtime->backend.context, action->completion_event
+            (void)shadowspill_event_lease_release(
+                runtime, action->completion_event
             );
         }
         if (action->destination_reserved) {
@@ -148,6 +156,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->minimum_alignment = config->minimum_alignment;
     runtime->next_allocation_id = 1U;
     runtime->next_generation = 1U;
+    runtime->next_event_generation = 1U;
     runtime->failure.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->failure.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->allocation_index_bucket_count = 65536U;

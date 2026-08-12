@@ -32,6 +32,15 @@
   teardown behavior yet.
 - The global runtime lock remains authoritative during this milestone. All
   focused runtime, allocator, overlap, OOM, and training canaries pass.
+- Added generation-tagged, atomically reference-counted event leases around
+  opaque backend events. Task fences, retirement records, transfer
+  completions, and object readiness now retain leases explicitly. The CUDA
+  backend's already sealed physical-event pool remains the underlying owner,
+  so steady-state driver event creation stays prohibited.
+- Fresh correctly linked ASan and UBSan builds pass all five neutral runtime
+  canaries. GCC ThreadSanitizer on this host aborts before user code with an
+  `unexpected memory mapping` runtime error; this toolchain limitation is
+  recorded and will be revisited before fine-grained locking is accepted.
 
 Last updated: 2026-08-11
 

@@ -13,9 +13,7 @@ static void destroy_retirement_events_locked(
     ShadowSpillEventRecord *event = allocation->retirement_events;
     while (event != NULL) {
         ShadowSpillEventRecord *next = event->next;
-        if (runtime->backend.destroy_event(
-                runtime->backend.context, event->event
-            ) != 0) {
+        if (shadowspill_event_lease_release(runtime, event->event) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -68,8 +66,8 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
         for (ShadowSpillEventRecord *event = allocation->retirement_events;
              complete && event != NULL; event = event->next) {
             int event_complete = 0;
-            if (runtime->backend.query_event(
-                    runtime->backend.context, event->event, &event_complete
+            if (shadowspill_event_lease_query(
+                    runtime, event->event, &event_complete
                 ) != 0) {
                 shadowspill_latch_failure_locked(
                     runtime,
@@ -124,8 +122,8 @@ static void complete_action_locked(
     }
     shadowspill_release_task_fence_locked(runtime, action->fence);
     if (action->has_completion_event) {
-        if (runtime->backend.destroy_event(
-                runtime->backend.context, action->completion_event
+        if (shadowspill_event_lease_release(
+                runtime, action->completion_event
             ) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
@@ -146,13 +144,11 @@ static void complete_action_locked(
 
 static int event_complete_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillBackendEvent event,
+    ShadowSpillEventLease *event,
     uint64_t object_id,
     int *complete
 ) {
-    if (runtime->backend.query_event(
-            runtime->backend.context, event, complete
-        ) != 0) {
+    if (shadowspill_event_lease_query(runtime, event, complete) != 0) {
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -276,13 +272,13 @@ static int dispatch_offload_locked(
     if (runtime->backend.wait_event(
             runtime->backend.context,
             runtime->d2h_stream,
-            action->fence->event
+            action->fence->event->event
         ) != 0) {
         goto backend_failure;
     }
-    if (runtime->backend.create_event(
-            runtime->backend.context, &action->completion_event
-        ) != 0) {
+    if (shadowspill_event_lease_create_locked(
+            runtime, &action->completion_event
+        ) != SHADOWSPILL_RUNTIME_OK) {
         goto backend_failure;
     }
     completion_created = 1;
@@ -295,7 +291,7 @@ static int dispatch_offload_locked(
             runtime->d2h_stream
         ) != 0 || runtime->backend.record_event(
             runtime->backend.context,
-            action->completion_event,
+            action->completion_event->event,
             runtime->d2h_stream
         ) != 0) {
         goto backend_failure;
@@ -319,9 +315,10 @@ static int dispatch_offload_locked(
 
 backend_failure:
     if (completion_created) {
-        (void)runtime->backend.destroy_event(
-            runtime->backend.context, action->completion_event
+        (void)shadowspill_event_lease_release(
+            runtime, action->completion_event
         );
+        action->completion_event = NULL;
     }
     if (host_range_created) {
         const uint64_t charged = object->size_bytes == 0U
@@ -382,13 +379,13 @@ static int dispatch_prefetch_locked(
     if (runtime->backend.wait_event(
             runtime->backend.context,
             runtime->h2d_stream,
-            action->fence->event
+            action->fence->event->event
         ) != 0) {
         goto backend_failure;
     }
-    if (runtime->backend.create_event(
-            runtime->backend.context, &action->completion_event
-        ) != 0) {
+    if (shadowspill_event_lease_create_locked(
+            runtime, &action->completion_event
+        ) != SHADOWSPILL_RUNTIME_OK) {
         goto backend_failure;
     }
     completion_created = 1;
@@ -401,7 +398,7 @@ static int dispatch_prefetch_locked(
             runtime->h2d_stream
         ) != 0 || runtime->backend.record_event(
             runtime->backend.context,
-            action->completion_event,
+            action->completion_event->event,
             runtime->h2d_stream
         ) != 0) {
         goto backend_failure;
@@ -412,6 +409,7 @@ static int dispatch_prefetch_locked(
     object->generation = allocation->generation;
     object->device_version = object->host_version;
     object->readiness_event = action->completion_event;
+    shadowspill_event_lease_retain(object->readiness_event);
     object->has_readiness_event = 1U;
     object->residency = SHADOWSPILL_OBJECT_PREFETCHING;
     ++runtime->transfers_to_device;
@@ -430,9 +428,10 @@ static int dispatch_prefetch_locked(
 
 backend_failure:
     if (completion_created) {
-        (void)runtime->backend.destroy_event(
-            runtime->backend.context, action->completion_event
+        (void)shadowspill_event_lease_release(
+            runtime, action->completion_event
         );
+        action->completion_event = NULL;
     }
     allocation->release_task_id = action->task_id;
     shadowspill_release_allocation_locked(runtime, allocation);
@@ -608,6 +607,10 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
                      * the device version back to the copied host version.
                      */
                     object->has_readiness_event = 0U;
+                    (void)shadowspill_event_lease_release(
+                        runtime, object->readiness_event
+                    );
+                    object->readiness_event = NULL;
                     if (!object->retain_host_backing) {
                         uint64_t charged = object->size_bytes == 0U
                             ? 1U
