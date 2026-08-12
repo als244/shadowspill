@@ -1600,3 +1600,16 @@ the ignored internal progress log before this tracked summary is updated.
   selection already proves that all old uses and the new allocation are on the
   same CUDA stream, whose ordering is itself the retirement dependency.
 - All native, CUDA, PyTorch, Python, lint, and type-check gates continue to pass.
+
+## 2026-08-12 — Object table gains explicit concurrent ownership
+
+- Added a read/write lock to the central object-ID hash table and an acquire
+  operation that retains a stable object reference before releasing the table
+  read lock. Insert and detach now use the write side, while final destruction
+  remains governed by the object's atomic reference count.
+- Preserved the per-object mutex introduced with stable records. The next
+  transition step can therefore hold table membership only long enough to
+  acquire an object and use the object's semantic lock for residency/version
+  state, rather than protecting the whole object population globally.
+- Hardened partial initialization so a failed table allocation never destroys
+  an uninitialized POSIX read/write lock. All validation gates remain green.

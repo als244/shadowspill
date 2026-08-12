@@ -1,6 +1,10 @@
 #ifndef SHADOWSPILL_RUNTIME_INTERNAL_H
 #define SHADOWSPILL_RUNTIME_INTERNAL_H
 
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <pthread.h>
 #include <stddef.h>
 #include <stdatomic.h>
@@ -132,6 +136,8 @@ typedef struct ShadowSpillObjectRecord {
 } ShadowSpillObjectRecord;
 
 typedef struct ShadowSpillObjectTable {
+    pthread_rwlock_t lock;
+    uint8_t lock_initialized;
     ShadowSpillObjectRecord *owned_head;
     ShadowSpillObjectRecord **by_id;
     uint64_t bucket_count;
@@ -301,6 +307,10 @@ int shadowspill_object_table_initialize(
 void shadowspill_object_table_destroy(ShadowSpillObjectTable *table);
 ShadowSpillObjectRecord *shadowspill_object_table_find(
     const ShadowSpillObjectTable *table,
+    uint64_t object_id
+);
+ShadowSpillObjectRecord *shadowspill_object_table_acquire(
+    ShadowSpillObjectTable *table,
     uint64_t object_id
 );
 int shadowspill_object_table_insert(
