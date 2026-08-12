@@ -47,6 +47,8 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
     }
     free(record->inputs);
     free(record->unique_inputs);
+    free(record->input_unique_indices);
+    free(record->unique_first_positions);
     free(record->updates);
     free(record->actions);
     free(record);
@@ -155,6 +157,12 @@ static ShadowSpillExecutionRecord *create_record(
         record->unique_inputs = calloc(
             record->input_count, sizeof(*record->unique_inputs)
         );
+        record->input_unique_indices = calloc(
+            record->input_count, sizeof(*record->input_unique_indices)
+        );
+        record->unique_first_positions = calloc(
+            record->input_count, sizeof(*record->unique_first_positions)
+        );
     }
     if (record->update_count != 0U) {
         record->updates = calloc(record->update_count, sizeof(*record->updates));
@@ -163,7 +171,9 @@ static ShadowSpillExecutionRecord *create_record(
         record->actions = calloc(record->action_count, sizeof(*record->actions));
     }
     if ((record->input_count != 0U &&
-         (record->inputs == NULL || record->unique_inputs == NULL)) ||
+         (record->inputs == NULL || record->unique_inputs == NULL ||
+          record->input_unique_indices == NULL ||
+          record->unique_first_positions == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
         (record->action_count != 0U && record->actions == NULL)) {
         destroy_record(record);
@@ -178,17 +188,20 @@ static ShadowSpillExecutionRecord *create_record(
             return NULL;
         }
         record->inputs[index] = object;
-        int duplicate = 0;
+        uint32_t unique_index = record->unique_input_count;
         for (uint32_t previous = 0U;
              previous < record->unique_input_count; ++previous) {
             if (record->unique_inputs[previous] == object) {
-                duplicate = 1;
+                unique_index = previous;
                 break;
             }
         }
-        if (!duplicate) {
-            record->unique_inputs[record->unique_input_count++] = object;
+        if (unique_index == record->unique_input_count) {
+            record->unique_inputs[unique_index] = object;
+            record->unique_first_positions[unique_index] = index;
+            ++record->unique_input_count;
         }
+        record->input_unique_indices[index] = unique_index;
     }
     for (uint32_t index = 0U; index < record->update_count; ++index) {
         ShadowSpillObjectRecord *object = shadowspill_object_table_acquire(
@@ -401,6 +414,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
             .authoritative_version = object->authoritative_version,
             .pointer = lease->pointer,
         };
+        bindings[record->unique_first_positions[index]] = snapshot;
         pthread_mutex_unlock(&object->lock);
         if (readiness_event != NULL) {
             if (runtime->backend.wait_event(
@@ -436,12 +450,14 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
             );
             (void)shadowspill_event_lease_release(runtime, readiness_event);
         }
-        for (uint32_t position = 0U; position < record->input_count;
-             ++position) {
-            if (record->inputs[position] == object) {
-                bindings[position] = snapshot;
-            }
-        }
+    }
+    for (uint32_t position = 0U;
+         status == SHADOWSPILL_RUNTIME_OK && position < record->input_count;
+         ++position) {
+        const uint32_t first_position = record->unique_first_positions[
+            record->input_unique_indices[position]
+        ];
+        bindings[position] = bindings[first_position];
     }
     if (status == SHADOWSPILL_RUNTIME_OK &&
         shadowspill_enter_task_scope(runtime, record->task_id) != 0) {

@@ -2086,3 +2086,28 @@ the ignored internal progress log before this tracked summary is updated.
   standard-allocator authority. Detailed tracing measures 296.652--297.291 ms;
   the roughly 4-ms difference is observer overhead from three timing events per
   task and detailed host/native telemetry, not production execution.
+
+## 2026-08-12 — Fused frontend/native task boundary checkpoint
+
+- Added private C++ adapter operations that combine current-stream resolution,
+  neutral-runtime acquisition, generation validation, and transactional storage
+  rebinding into one frontend crossing. The matching completion operation
+  combines planned-output adoption, dematerialization, and neutral-runtime
+  publication. Generic lifecycle and first-step fallback paths remain intact.
+- Admission now stores each input position's predecoded unique-object index and
+  each unique object's first position. The neutral runtime fills bindings in
+  two linear passes instead of rescanning every input position for every unique
+  object.
+- The exact frozen Qwen control is
+  `qualification/results/phase1/qwen35_fused_boundary_control.json`. Program
+  `65300023...d7e3`, schedule `e349ce5f...f3ed`, 129 tasks, and 1,415 actions
+  remain unchanged. Production selected spans are 290.669, 291.453, and
+  291.481 ms (291.453-ms median), versus the 292.141-ms standard-allocator
+  authority. Detailed tracing measures 294.541--298.909 ms.
+- In the detailed sample, median fused native-before cost is 26.8 us forward,
+  77.4 us backward, and 10.2 us optimizer. Median native-after cost is still
+  143.0 us forward, 93.4 us backward, and 18.2 us optimizer. Inspection shows
+  that `after_task` still performs action allocation/validation and repeated
+  allocation-population scans on the dispatcher. The next isolated change moves
+  causally deferrable action work to a non-blocking progress-worker submission
+  path while preserving exact action ordering and transfer triggers.

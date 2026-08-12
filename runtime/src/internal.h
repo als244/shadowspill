@@ -274,6 +274,8 @@ typedef struct ShadowSpillExecutionRecord {
     uint32_t input_count;
     ShadowSpillObjectRecord **unique_inputs;
     uint32_t unique_input_count;
+    uint32_t *input_unique_indices;
+    uint32_t *unique_first_positions;
     ShadowSpillExecutionUpdate *updates;
     uint32_t update_count;
     ShadowSpillExecutionAction *actions;

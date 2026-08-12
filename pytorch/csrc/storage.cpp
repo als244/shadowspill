@@ -2,6 +2,7 @@
 
 #include <ATen/ATen.h>
 #include <c10/core/Allocator.h>
+#include <c10/cuda/CUDAStream.h>
 #include <torch/library.h>
 
 #include <nvtx3/nvToolsExt.h>
@@ -196,6 +197,81 @@ void acquire_storages(
   }
 }
 
+std::vector<int64_t> before_execution_storages(
+    at::TensorList tensors,
+    int64_t execution_handle,
+    int64_t task_id,
+    int64_t device_ordinal
+) {
+  TORCH_CHECK(execution_handle > 0, "execution handle must be positive");
+  TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
+  TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  const size_t count = tensors.size();
+  for (const at::Tensor& tensor : tensors) {
+    TORCH_CHECK(tensor.is_cuda(), "task acquisition requires CUDA tensors");
+    TORCH_CHECK(
+        tensor.get_device() == device_ordinal,
+        "task acquisition tensor is on the wrong CUDA device");
+  }
+
+  std::vector<ShadowSpillObjectBinding> bindings(count);
+  const c10::cuda::CUDAStream stream =
+      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
+  const ShadowSpillRuntimeStatus status =
+      shadowspill_pytorch_before_execution_handle(
+          static_cast<uintptr_t>(execution_handle),
+          static_cast<uint64_t>(task_id),
+          reinterpret_cast<uintptr_t>(stream.stream()),
+          bindings.data(),
+          static_cast<uint32_t>(count));
+  TORCH_CHECK(
+      status == SHADOWSPILL_RUNTIME_OK,
+      "task acquisition failed: ",
+      shadowspill_runtime_status_string(status));
+
+  struct TaskScopeGuard {
+    bool active = true;
+    ~TaskScopeGuard() {
+      if (active) {
+        shadowspill_pytorch_abort_task_range();
+      }
+    }
+  } scope_guard;
+  std::vector<uint64_t> current_addresses;
+  std::vector<int64_t> generations;
+  current_addresses.reserve(count);
+  generations.reserve(count);
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    const ShadowSpillObjectBinding& binding = bindings[index];
+    const uint64_t target_address = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(binding.pointer));
+    TORCH_CHECK(target_address != 0U, "task acquired a null device address");
+    const uint64_t current_address = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
+    TORCH_CHECK(
+        current_address == 0U || current_address == target_address,
+        "storage does not name its acquired runtime generation");
+    current_addresses.push_back(current_address);
+    generations.push_back(static_cast<int64_t>(binding.generation));
+  }
+  for (const auto index : c10::irange(count)) {
+    const uint64_t target_address = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(bindings[index].pointer));
+    if (current_addresses[index] == target_address) {
+      continue;
+    }
+    const at::Tensor& tensor = tensors[index];
+    c10::Storage storage = tensor.storage();
+    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+        reinterpret_cast<void*>(static_cast<uintptr_t>(target_address)),
+        tensor.device()));
+    prior.clear();
+  }
+  scope_guard.active = false;
+  return generations;
+}
+
 void dematerialize_storages(at::TensorList tensors) {
   nvtxRangePushA("shadowspill.pytorch.storage_dematerialize_batch");
   struct RangeGuard {
@@ -288,6 +364,36 @@ std::vector<int64_t> adopt_storages(
   return generations;
 }
 
+std::vector<int64_t> after_execution_storages(
+    at::TensorList adopted_tensors,
+    at::IntArrayRef object_ids,
+    at::IntArrayRef sizes,
+    at::IntArrayRef registered,
+    at::TensorList dematerialized_tensors,
+    int64_t execution_handle,
+    int64_t task_id,
+    int64_t device_ordinal
+) {
+  TORCH_CHECK(execution_handle > 0, "execution handle must be positive");
+  TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
+  TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  std::vector<int64_t> generations = adopt_storages(
+      adopted_tensors, object_ids, sizes, registered);
+  dematerialize_storages(dematerialized_tensors);
+  const c10::cuda::CUDAStream stream =
+      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
+  const ShadowSpillRuntimeStatus status =
+      shadowspill_pytorch_after_execution_handle(
+          static_cast<uintptr_t>(execution_handle),
+          static_cast<uint64_t>(task_id),
+          reinterpret_cast<uintptr_t>(stream.stream()));
+  TORCH_CHECK(
+      status == SHADOWSPILL_RUNTIME_OK,
+      "task publication failed: ",
+      shadowspill_runtime_status_string(status));
+  return generations;
+}
+
 at::Tensor transfer_storage_to_caller(
     const at::Tensor& tensor,
     int64_t object_id,
@@ -351,10 +457,18 @@ TORCH_LIBRARY(shadowspill, library) {
       "int[] object_ids, int[] generations) -> ()");
   library.def(
       "_acquire_storages(Tensor(a!)[] tensors, int[] addresses) -> ()");
+  library.def(
+      "_before_execution_storages(Tensor(a!)[] tensors, int execution_handle, "
+      "int task_id, int device_ordinal) -> int[]");
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_adopt_storages(Tensor(a!)[] tensors, int[] object_ids, int[] sizes, "
       "int[] registered) -> int[]");
+  library.def(
+      "_after_execution_storages(Tensor(a!)[] adopted_tensors, int[] "
+      "object_ids, int[] sizes, int[] registered, Tensor(a!)[] "
+      "dematerialized_tensors, int execution_handle, int task_id, int "
+      "device_ordinal) -> int[]");
   library.def(
       "_transfer_storage_to_caller(Tensor(a!) tensor, int object_id, "
       "int generation, int allocation_id) -> Tensor(a!)");
@@ -365,8 +479,12 @@ TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
   library.impl("_rebind_storages", TORCH_FN(rebind_storages));
   library.impl("_acquire_storages", TORCH_FN(acquire_storages));
   library.impl(
+      "_before_execution_storages", TORCH_FN(before_execution_storages));
+  library.impl(
       "_dematerialize_storages", TORCH_FN(dematerialize_storages));
   library.impl("_adopt_storages", TORCH_FN(adopt_storages));
+  library.impl(
+      "_after_execution_storages", TORCH_FN(after_execution_storages));
   library.impl(
       "_transfer_storage_to_caller", TORCH_FN(transfer_storage_to_caller));
 }

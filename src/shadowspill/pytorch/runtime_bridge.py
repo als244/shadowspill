@@ -628,6 +628,51 @@ class RuntimeBridge:
             [binding.pointer for _, _, binding in items],
         )
 
+    def before_execution_and_acquire(
+        self,
+        execution_handle: int,
+        task_id: int,
+        device_ordinal: int,
+        tensors: Sequence[torch.Tensor],
+    ) -> tuple[int, ...]:
+        """Run the admitted neutral boundary and install acquired storages."""
+
+        generations = torch.ops.shadowspill._before_execution_storages(
+            list(tensors), execution_handle, task_id, device_ordinal
+        )
+        if len(generations) != len(tensors):
+            raise RuntimeExecutionError(
+                "task acquisition returned the wrong generation count"
+            )
+        return tuple(int(generation) for generation in generations)
+
+    def after_execution_and_update(
+        self,
+        execution_handle: int,
+        task_id: int,
+        device_ordinal: int,
+        adopted: Sequence[tuple[torch.Tensor, str]],
+        dematerialized: Sequence[torch.Tensor],
+    ) -> tuple[int, ...]:
+        """Publish storages and one admitted completion/action batch."""
+
+        generations = torch.ops.shadowspill._after_execution_storages(
+            [tensor for tensor, _ in adopted],
+            [_dense_id(alias_id, "alias_") for _, alias_id in adopted],
+            [self._size(alias_id) for _, alias_id in adopted],
+            [int(alias_id in self._registered) for _, alias_id in adopted],
+            list(dematerialized),
+            execution_handle,
+            task_id,
+            device_ordinal,
+        )
+        if len(generations) != len(adopted):
+            raise RuntimeExecutionError(
+                "task publication returned the wrong generation count"
+            )
+        self._registered.update(alias_id for _, alias_id in adopted)
+        return tuple(int(generation) for generation in generations)
+
     def dematerialize(
         self, tensor: torch.Tensor, alias_id: str, generation: int
     ) -> None:
