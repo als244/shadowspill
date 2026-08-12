@@ -70,8 +70,13 @@ def main() -> int:
             )
         if measured.measurements[0].runtime_ns <= 0:
             raise AssertionError("CUDA event timing was empty")
-        if measured.measurements[0].workspace_charged_bytes <= 0:
-            raise AssertionError("task allocation telemetry saw no workspace")
+        # These artifacts are already explicit no-grad tasks. A simple fused
+        # linear/relu stage may have zero anonymous workspace; compiling it as
+        # a second autograd graph used to create hidden saved-output storage
+        # and made this assertion pass for the wrong reason. Require the
+        # returned allocation timeline instead.
+        if not measured.measurements[0].allocation_trace:
+            raise AssertionError("task allocation telemetry saw no allocations")
         warm = profile_unique_artifacts(
             artifacts,
             environment=profile_environment(

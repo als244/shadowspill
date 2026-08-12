@@ -347,6 +347,23 @@ if(BUILD_TESTING)
       COMMAND shadowspill_runtime_${runtime_test}_canary
     )
   endforeach()
+  add_executable(
+    shadowspill_transfer_lane_canary
+    tests/runtime/transfer_lane_canary.c
+    runtime/src/transfer_lane.c
+  )
+  target_include_directories(
+    shadowspill_transfer_lane_canary
+    PRIVATE runtime/src runtime/include
+  )
+  target_link_libraries(
+    shadowspill_transfer_lane_canary
+    PRIVATE shadowspill_build_options Threads::Threads
+  )
+  add_test(
+    NAME shadowspill_transfer_lane_canary
+    COMMAND shadowspill_transfer_lane_canary
+  )
   set_tests_properties(
     shadowspill_runtime_completion_canary
     PROPERTIES TIMEOUT 10

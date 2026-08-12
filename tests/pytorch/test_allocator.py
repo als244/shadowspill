@@ -81,6 +81,7 @@ class _Library:
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_admit_execution = _Function()
+    shadowspill_pytorch_clear_execution_plan = _Function()
     shadowspill_pytorch_resolve_execution = _Function()
     shadowspill_pytorch_before_execution = _Function()
     shadowspill_pytorch_after_execution = _Function()
@@ -131,6 +132,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_check_physical_budget.argtypes == []
+    assert library.shadowspill_pytorch_clear_execution_plan.argtypes == []
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [
         ctypes.POINTER(AdapterConfig)
     ]

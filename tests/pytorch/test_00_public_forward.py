@@ -44,9 +44,16 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     )
     assert planned.plan_report.mode == "forward"
     assert planned.plan_report.predicted_makespan_ns > 0
+    admission = planned.plan_report.execution_plan.admission
+    assert planned.plan_report.execution_budget_bytes == admission.slab_bytes
+    assert planned.plan_report.predicted_device_peak_bytes == (
+        admission.context_bytes
+        + admission.provider_headroom_bytes
+        + admission.slab_bytes
+    )
     assert (
         planned.plan_report.predicted_device_peak_bytes
-        == planned.plan_report.execution_budget_bytes
+        == admission.device_budget_bytes
     )
     assert planned.plan_report.capture_identity
     actual = planned([inputs, 17])[0]

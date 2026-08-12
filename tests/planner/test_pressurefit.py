@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shadowspill.ir import (
     EntrypointSpec,
     MemoryActionKind,
@@ -45,6 +47,41 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     assert result.simulation.makespan_ns == 5_000
     assert result.simulation.device_peak("cuda_0").total_bytes == 122
     assert result.simulation.host_peak_bytes == 61
+
+
+def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:
+    program = exact_capacity_program()
+    program = replace(
+        program,
+        alias_groups=tuple(
+            replace(item, size_bytes=0)
+            if item.alias_group_id == "retained"
+            else item
+            for item in program.alias_groups
+        ),
+        objects=tuple(
+            replace(item, size_bytes=0)
+            if item.object_id == "retained_object"
+            else item
+            for item in program.objects
+        ),
+    )
+    result = pressurefit(
+        program,
+        initial_residency=(ResidencySpec("later", MemoryLocation.DEVICE),),
+        final_residency=(ResidencySpec("retained", MemoryLocation.DEVICE),),
+        config=config(122),
+        options=SMALL_PORTFOLIO,
+    )
+
+    assert all(
+        item.alias_group_id != "retained"
+        for item in (
+            *result.schedule.initial_residency,
+            *result.schedule.final_residency,
+            *result.schedule.actions,
+        )
+    )
 
 
 def test_dirty_mutation_requires_writeback_before_reuse() -> None:

@@ -19,6 +19,7 @@ from .compiled_layout import (
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
+from .inductor_adapter import ExecutableTaskManifest
 from .lowering import LoweredForwardProgram
 from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
@@ -43,6 +44,7 @@ def training_stage_inventory(
     lowered: LoweredTrainingProgram,
     execution_plan: ExecutionPlan,
     measurements: Mapping[str, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe task occurrences and all legal structural graph pairs."""
 
@@ -112,15 +114,21 @@ def training_stage_inventory(
             auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
             semantic_name = f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
         if isinstance(artifact, GraphArtifact):
+            executable_manifest = manifests[artifact.compatibility_digest]
+            executable_contract = executable_manifest.storage_contract
             contract_digest: str | None = (
                 artifact.storage_contract.compatibility_digest
             )
+            executable_contract_digest: str | None = (
+                executable_contract.compatibility_digest
+            )
             compiled_layout_digest: str | None = reconcile_compiled_task_layout(
-                artifact.storage_contract,
+                executable_contract,
                 measurements[artifact.compatibility_digest],
             ).compatibility_digest
         else:
             contract_digest = None
+            executable_contract_digest = None
             compiled_layout_digest = None
         ordinal = execution_ordinal.get(entrypoint.task_id)
         task_map.append(
@@ -137,6 +145,7 @@ def training_stage_inventory(
                 unique_stage_id=unique_stage_id,
                 structural_abi_key=structural_abi,
                 semantic_contract_digest=contract_digest,
+                executable_contract_digest=executable_contract_digest,
                 compiled_layout_digest=compiled_layout_digest,
                 graph_pair_variant=entrypoint.variant,
                 chosen_graph_pair_variant=chosen,
@@ -173,6 +182,7 @@ def training_stage_inventory(
                         task_by_id[forward_entrypoint.task_id],
                         program,
                         measurements[pair.forward.compatibility_digest],
+                        manifests[pair.forward.compatibility_digest],
                     ),
                     backward=_graph_profile(
                         pair.backward,
@@ -180,6 +190,7 @@ def training_stage_inventory(
                         task_by_id[backward_entrypoint.task_id],
                         program,
                         measurements[pair.backward.compatibility_digest],
+                        manifests[pair.backward.compatibility_digest],
                     ),
                 )
             )
@@ -203,6 +214,7 @@ def forward_stage_inventory(
     lowered: LoweredForwardProgram,
     execution_plan: ExecutionPlan,
     measurements: Mapping[str, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe deduplicated inference stages and task occurrences."""
 
@@ -234,8 +246,13 @@ def forward_stage_inventory(
             semantic_contract_digest=(
                 entrypoint.artifact.storage_contract.compatibility_digest
             ),
+            executable_contract_digest=manifests[
+                entrypoint.artifact.compatibility_digest
+            ].storage_contract.compatibility_digest,
             compiled_layout_digest=reconcile_compiled_task_layout(
-                entrypoint.artifact.storage_contract,
+                manifests[
+                    entrypoint.artifact.compatibility_digest
+                ].storage_contract,
                 measurements[entrypoint.artifact.compatibility_digest],
             ).compatibility_digest,
             graph_pair_variant="inference",
@@ -272,6 +289,7 @@ def forward_stage_inventory(
                             task_by_id[representative.task_id],
                             lowered.program,
                             measurements[key],
+                            manifests[key],
                         ),
                         backward=None,
                     ),
@@ -324,6 +342,7 @@ def _graph_profile(
     task: TaskSpec,
     program: Program,
     measurement: TaskMeasurement,
+    manifest: ExecutableTaskManifest,
 ) -> PlanGraphProfile:
     objects = {item.object_id: item for item in program.objects}
     aliases = {item.alias_group_id: item for item in program.alias_groups}
@@ -340,9 +359,8 @@ def _graph_profile(
     profile = next(
         item for item in program.profiles if item.profile_id == task.profile_id
     )
-    layout = reconcile_compiled_task_layout(
-        artifact.storage_contract, measurement
-    )
+    storage_contract = manifest.storage_contract
+    layout = reconcile_compiled_task_layout(storage_contract, measurement)
     return PlanGraphProfile(
         direction=direction,
         structural_abi_key=artifact.compatibility_digest,
@@ -385,6 +403,43 @@ def _graph_profile(
             )
             for item in artifact.storage_contract.mutations
         ),
+        executable_contract_digest=storage_contract.compatibility_digest,
+        executable_contract_capture_ns=manifest.contract_capture_ns,
+        executable_roots=tuple(
+            PlanStorageRoot(
+                root_id=item.root_id,
+                kind=item.kind.value,
+                source_input=item.source_input,
+                producer_node=item.producer_node,
+                producer_target=item.producer_target,
+                producer_result=item.producer_result,
+                minimum_span_bytes=item.minimum_span_bytes,
+            )
+            for item in storage_contract.roots
+        ),
+        executable_output_views=tuple(
+            PlanOutputView(
+                leaf_index=item.leaf_index,
+                root_id=item.root_id,
+                offset_bytes=item.offset_bytes,
+                span_bytes=item.span_bytes,
+                shape=item.shape,
+                stride=item.stride,
+                dtype=item.dtype,
+                layout=item.layout,
+            )
+            for item in storage_contract.output_views
+        ),
+        executable_mutations=tuple(
+            PlanMutationBinding(
+                input_position=item.input_position,
+                replacement_output_leaf=item.replacement_output_leaf,
+                producer_node=item.producer_node,
+                producer_target=item.producer_target,
+                argument_name=item.argument_name,
+            )
+            for item in storage_contract.mutations
+        ),
         compiled_layout_digest=layout.compatibility_digest,
         compiled_roots=tuple(
             PlanCompiledRoot(
@@ -421,7 +476,7 @@ def _graph_profile(
         workspace_requested_bytes=measurement.workspace_requested_bytes,
         workspace_charged_bytes=measurement.workspace_charged_bytes,
         replacement_transition_bytes=replacement_transition_bytes(
-            artifact.storage_contract, layout
+            storage_contract, layout
         ),
         task_workspace_bytes=profile.workspace_bytes,
         workspace_extent_bytes=measurement.workspace_extent_bytes,

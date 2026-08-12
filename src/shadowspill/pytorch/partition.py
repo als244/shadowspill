@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import operator
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
+from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule, Interpreter, Node
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
@@ -102,6 +104,58 @@ class PartitionedExport:
     stages: tuple[StageExample, ...]
     repeated_groups: tuple[str, ...]
     user_output_indices: tuple[int, ...]
+
+
+def training_parameter_stage_owners(
+    captures: tuple[PartitionedTrainingCapture, ...],
+    parameter_names: Collection[str],
+) -> dict[str, tuple[int, ...]]:
+    """Return the training stages whose backward passes contribute each parameter.
+
+    Export makes parameters explicit root inputs.  Stage partitioning preserves
+    that provenance in :class:`StageValueSource`, so optimizer grouping can use
+    the same semantic stage boundaries without inspecting module-name patterns
+    or runtime allocation behavior.
+    """
+
+    known = frozenset(parameter_names)
+    owners: dict[str, set[int]] = {}
+    expected_stage_count: int | None = None
+    for capture in captures:
+        if expected_stage_count is None:
+            expected_stage_count = len(capture.stages)
+        elif len(capture.stages) != expected_stage_count:
+            raise CaptureError(
+                "microbatch positions produced different training-stage counts"
+            )
+        input_specs = tuple(
+            capture.training.exported.exported_program.graph_signature.input_specs
+        )
+        for stage_index, stage in enumerate(capture.stages):
+            for source in stage.example.input_sources:
+                if source is None or source.root_input_index is None:
+                    continue
+                try:
+                    spec = input_specs[source.root_input_index]
+                except IndexError as exc:
+                    raise CaptureError(
+                        "stage parameter provenance refers outside the Export ABI"
+                    ) from exc
+                if spec.kind is not InputKind.PARAMETER:
+                    continue
+                target = spec.target
+                if not isinstance(target, str) or not target.startswith("model."):
+                    raise CaptureError(
+                        "objective Export parameter target is not rooted at model: "
+                        f"{target!r}"
+                    )
+                name = target.removeprefix("model.")
+                if name not in known:
+                    raise CaptureError(
+                        f"stage parameter {name!r} is absent from the optimizer model"
+                    )
+                owners.setdefault(name, set()).add(stage_index)
+    return {name: tuple(sorted(indices)) for name, indices in owners.items()}
 
 
 class _StageRecorder(Interpreter):

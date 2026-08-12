@@ -197,6 +197,11 @@ class MemorySchedule:
         object_alias = {item.object_id: item.alias_group_id for item in program.objects}
 
         alias_by_id = {group.alias_group_id: group for group in program.alias_groups}
+        zero_size_aliases = {
+            group.alias_group_id
+            for group in program.alias_groups
+            if group.size_bytes == 0
+        }
         device_resident: set[str] = set()
         host_resident = {
             group.alias_group_id
@@ -210,6 +215,8 @@ class MemorySchedule:
                 f"schedule.initial_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
             )
+            if residency.alias_group_id in zero_size_aliases:
+                continue
             if residency.location is MemoryLocation.DEVICE:
                 device_resident.add(residency.alias_group_id)
             else:
@@ -230,6 +237,11 @@ class MemorySchedule:
                 f"{path}.alias_group_id",
                 f"unknown alias group {action.alias_group_id!r}",
             )
+            require(
+                action.alias_group_id not in zero_size_aliases,
+                f"{path}.alias_group_id",
+                "zero-size alias groups cannot have physical memory actions",
+            )
             trigger = task_order[action.trigger_task_id]
             require(
                 trigger >= previous_trigger,
@@ -244,6 +256,8 @@ class MemorySchedule:
         for task in active_tasks:
             for object_id in task.inputs:
                 alias_id = object_alias[object_id]
+                if alias_id in zero_size_aliases:
+                    continue
                 require(
                     alias_id in device_resident,
                     f"schedule.task[{task.task_id}].inputs",
@@ -251,10 +265,14 @@ class MemorySchedule:
                 )
             for object_id in task.outputs:
                 alias_id = object_alias[object_id]
+                if alias_id in zero_size_aliases:
+                    continue
                 device_resident.add(alias_id)
                 host_current.discard(alias_id)
             for mutation in task.mutations:
-                host_current.discard(object_alias[mutation.object_id])
+                alias_id = object_alias[mutation.object_id]
+                if alias_id not in zero_size_aliases:
+                    host_current.discard(alias_id)
             for action_index, action in actions_by_task.get(task.task_id, []):
                 path = f"schedule.actions[{action_index}]"
                 alias_id = action.alias_group_id
@@ -299,6 +317,8 @@ class MemorySchedule:
                 f"schedule.final_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
             )
+            if residency.alias_group_id in zero_size_aliases:
+                continue
             if residency.location is MemoryLocation.DEVICE:
                 reached = residency.alias_group_id in device_resident
             else:

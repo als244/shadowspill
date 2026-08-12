@@ -12,8 +12,9 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import torch
 
@@ -101,6 +102,7 @@ def _case_identity(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    optimizer_ordering: str = "stage_interleaved",
     steps: int = 5,
 ) -> str:
     payload = {
@@ -112,6 +114,7 @@ def _case_identity(
         "data_geometry": data_geometry,
         "case_factory": case_factory,
         "case_options": case_options,
+        "optimizer_ordering": optimizer_ordering,
         "steps": steps,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -181,6 +184,7 @@ def _reference_worker(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    optimizer_ordering: str,
     steps: int,
 ) -> None:
     case = build_case(
@@ -297,6 +301,7 @@ def _reference_worker(
             data_geometry=data_geometry,
             case_factory=case_factory,
             case_options=case_options,
+            optimizer_ordering=optimizer_ordering,
             steps=steps,
         ),
         "losses": losses,
@@ -322,6 +327,7 @@ def _planned_worker(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    optimizer_ordering: Literal["stage_interleaved", "tail"],
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
@@ -334,6 +340,7 @@ def _planned_worker(
         data_geometry=data_geometry,
         case_factory=case_factory,
         case_options=case_options,
+        optimizer_ordering=optimizer_ordering,
         steps=steps,
     )
     case = build_case(
@@ -361,6 +368,7 @@ def _planned_worker(
             runtime=runtime,
             execution="execution",
             spill="spill",
+            optimizer_ordering=optimizer_ordering,
         )
         planning_seconds = time.perf_counter() - planning_started
         planning_phases = {
@@ -436,6 +444,10 @@ def _planned_worker(
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
+        plan_report_path = result_path.with_name(
+            f"{result_path.stem}_plan_report.pt"
+        )
+        torch.save(report, plan_report_path)
         pressurefit_fixtures = write_pressurefit_fixtures(
             results=report.pressurefit_results,
             directory=result_path.parent / f"{result_path.stem}_pressurefit",
@@ -505,6 +517,7 @@ def _planned_worker(
             "data_geometry": data_geometry,
             "case_factory": case_factory,
             "case_options": case_options,
+            "optimizer_ordering": optimizer_ordering,
         },
         "device_budget_bytes": device_budget,
         "tolerances": {
@@ -542,6 +555,9 @@ def _planned_worker(
             (item.sign_agreement for item in tensor_results.values()), default=1.0
         ),
         "metric_failure_keys": metric_failures,
+        "metric_failures": {
+            name: asdict(tensor_results[name]) for name in metric_failures
+        },
         "exact_failures": exact_failures,
         "checkpoint_replay_bitwise": (
             uninterrupted_digest == replay_digest and expected_replay == replay_losses
@@ -622,6 +638,11 @@ def _planned_worker(
         "recomputation_cache_misses": report.recomputation_cache_misses,
         "cold_cache_requested": os.environ.get("SHADOWSPILL_QUALIFICATION_COLD") == "1",
         "pressurefit_fixtures": pressurefit_fixtures,
+        "plan_report_artifact": {
+            "path": str(plan_report_path),
+            "size_bytes": plan_report_path.stat().st_size,
+            "sha256": hashlib.sha256(plan_report_path.read_bytes()).hexdigest(),
+        },
         "reference_state_digest": state_digest(
             {"model": reference["model"], "optimizer": reference["optimizer"]}
         ),
@@ -703,6 +724,7 @@ def _orchestrate(
     data_geometry_argument: str | None,
     case_factory: str | None,
     case_option_arguments: list[str],
+    optimizer_ordering: Literal["stage_interleaved", "tail"],
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
@@ -712,7 +734,14 @@ def _orchestrate(
     reference = result_directory / f"{prefix}_reference.pt"
     result = result_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
-    options = ["--seed", str(seed), "--model-config", model_config_argument]
+    options = [
+        "--seed",
+        str(seed),
+        "--model-config",
+        model_config_argument,
+        "--optimizer-ordering",
+        optimizer_ordering,
+    ]
     options.extend(("--steps", str(steps)))
     if not require_pressure:
         options.append("--allow-fully-resident")
@@ -770,6 +799,12 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument(
+        "--optimizer-ordering",
+        choices=("stage_interleaved", "tail"),
+        default="stage_interleaved",
+        help="place grouped optimizer stages as soon as their gradients are final",
+    )
     parser.add_argument("--checkpoint-step", type=int)
     parser.add_argument(
         "--allow-fully-resident",
@@ -843,6 +878,7 @@ def main() -> int:
             data_geometry_argument=arguments.data_geometry,
             case_factory=arguments.case_factory,
             case_option_arguments=arguments.case_option,
+            optimizer_ordering=arguments.optimizer_ordering,
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
@@ -859,6 +895,7 @@ def main() -> int:
             data_geometry=data_geometry_value,
             case_factory=arguments.case_factory,
             case_options=case_options_value,
+            optimizer_ordering=arguments.optimizer_ordering,
             steps=arguments.steps,
         )
     else:
@@ -875,6 +912,7 @@ def main() -> int:
             data_geometry=data_geometry_value,
             case_factory=arguments.case_factory,
             case_options=case_options_value,
+            optimizer_ordering=arguments.optimizer_ordering,
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,

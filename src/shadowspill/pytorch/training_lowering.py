@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -40,6 +40,7 @@ from .lowering import (
     ObjectCatalog,
     RegistrationBinding,
     TaskBindingResolver,
+    TaskStorageHandoff,
     TensorSlot,
     resolve_stage_input_slots,
 )
@@ -49,6 +50,7 @@ from .optimizer import (
     OptimizerTaskArtifact,
     OptimizerTensorRole,
 )
+from .output_contract import TaskStorageContract
 from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 
@@ -92,6 +94,7 @@ class TrainingTaskEntrypoint:
     optimizer_binding_names: tuple[str, ...] = ()
     stage_index: int | None = None
     replacement_output_leaves: tuple[int, ...] = ()
+    storage_handoffs: tuple[TaskStorageHandoff, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,10 +138,12 @@ class _PreparedStageVariant:
     forward_outputs: tuple[TensorSlot, ...]
     backward_inputs: tuple[TensorSlot, ...]
     contributions: tuple[TensorSlot, ...]
-    residual_aliases: tuple[str, ...]
+    residual_object_ids: tuple[str, ...]
     public_output_leaves: tuple[int, ...]
     mutation_object_ids: tuple[str, ...]
     replacement_output_leaves: tuple[int, ...]
+    forward_storage_handoffs: tuple[TaskStorageHandoff, ...]
+    backward_storage_handoffs: tuple[TaskStorageHandoff, ...]
 
 
 def lower_training_storage_layout(
@@ -174,8 +179,10 @@ def lower_partitioned_training_program(
     measurements: dict[str, TaskMeasurement],
     optimizer: OptimizerCapture,
     *,
+    storage_contracts: Mapping[str, TaskStorageContract] | None = None,
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
 ) -> LoweredTrainingProgram:
     """Compose stage-local graph pairs into one accumulated training program."""
 
@@ -185,6 +192,8 @@ def lower_partitioned_training_program(
         raise CaptureError("partitioned training requires a bounded optimizer task")
     if optimizer_phase not in {"initial", "recurrent"}:
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
+    if optimizer_ordering not in {"stage_interleaved", "tail"}:
+        raise CaptureError(f"unknown optimizer ordering {optimizer_ordering!r}")
     device_id = f"cuda_{device_ordinal}"
     inventory = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = _register_model(model, inventory)
@@ -198,6 +207,17 @@ def lower_partitioned_training_program(
 
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
+
+    def contract_for(artifact: GraphArtifact) -> TaskStorageContract:
+        if storage_contracts is None:
+            return artifact.storage_contract
+        try:
+            return storage_contracts[artifact.compatibility_digest]
+        except KeyError as exc:
+            raise CaptureError(
+                "compiled storage contract is missing for artifact "
+                f"{artifact.compatibility_digest}"
+            ) from exc
 
     def measurement_for(
         artifact: GraphArtifact | OptimizerTaskArtifact,
@@ -231,10 +251,9 @@ def lower_partitioned_training_program(
 
     def mutation_transition_bytes(artifact: GraphArtifact) -> int:
         measurement = measurement_for(artifact)
-        layout = reconcile_compiled_task_layout(
-            artifact.storage_contract, measurement
-        )
-        return replacement_transition_bytes(artifact.storage_contract, layout)
+        contract = contract_for(artifact)
+        layout = reconcile_compiled_task_layout(contract, measurement)
+        return replacement_transition_bytes(contract, layout)
 
     parameter_ids = set(parameter_objects.values())
     boundary_ids: list[list[tuple[str, ...]]] = []
@@ -261,9 +280,7 @@ def lower_partitioned_training_program(
                 else 0
             )
             if len(public_output_leaves) != expected_public_count:
-                raise CaptureError(
-                    "stage user outputs differ from objective schema"
-                )
+                raise CaptureError("stage user outputs differ from objective schema")
             save_pair = stage.save_pair
             boundary_count = (
                 save_pair.forward.output_count - save_pair.saved_value_count
@@ -286,9 +303,10 @@ def lower_partitioned_training_program(
                 save_pair.forward,
                 save_inputs,
                 reconcile_compiled_task_layout(
-                    save_pair.forward.storage_contract,
+                    contract_for(save_pair.forward),
                     measurement_for(save_pair.forward),
                 ),
+                storage_contract=contract_for(save_pair.forward),
             )
             ids: list[str] = []
             for index, (value, graph_value) in enumerate(
@@ -380,9 +398,10 @@ def lower_partitioned_training_program(
                 )
                 (
                     forward_outputs,
-                    residual_aliases,
+                    residual_object_ids,
                     mutation_object_ids,
                     replacement_output_leaves,
+                    forward_storage_handoffs,
                 ) = _stage_forward_outputs(
                     pair,
                     values.forward_outputs,
@@ -390,6 +409,12 @@ def lower_partitioned_training_program(
                     canonical_outputs,
                     inventory,
                     measurement_for(pair.forward),
+                    contract_for(pair.forward),
+                    context=(
+                        f"microbatch={position}, stage={stage_index}, "
+                        f"variant={variant}, "
+                        f"artifact={pair.forward.compatibility_digest}"
+                    ),
                 )
                 backward_inputs = _stage_backward_inputs(
                     position,
@@ -402,18 +427,29 @@ def lower_partitioned_training_program(
                     inventory,
                     terminal=terminal,
                 )
-                contributions = _stage_backward_contributions(
-                    position,
-                    pair,
-                    values.backward_outputs,
-                    forward_inputs,
-                    backward_inputs,
-                    parameter_ids,
-                    gradient_by_parameter,
-                    cotangent_by_activation,
-                    inventory,
-                    measurement_for(pair.backward),
-                )
+                try:
+                    contributions, backward_storage_handoffs = (
+                        _stage_backward_contributions(
+                            position,
+                            pair,
+                            values.backward_outputs,
+                            forward_inputs,
+                            backward_inputs,
+                            parameter_ids,
+                            gradient_by_parameter,
+                            cotangent_by_activation,
+                            inventory,
+                            measurement_for(pair.backward),
+                            contract_for(pair.backward),
+                        )
+                    )
+                except CaptureError as exc:
+                    raise CaptureError(
+                        "backward layout reconciliation failed for "
+                        f"microbatch={position}, stage={stage_index}, "
+                        f"variant={variant}, artifact="
+                        f"{pair.backward.compatibility_digest[:12]}: {exc}"
+                    ) from exc
                 variants[variant] = _PreparedStageVariant(
                     stage,
                     pair,
@@ -421,10 +457,12 @@ def lower_partitioned_training_program(
                     forward_outputs,
                     backward_inputs,
                     contributions,
-                    residual_aliases,
+                    residual_object_ids,
                     public_output_leaves,
                     mutation_object_ids,
                     replacement_output_leaves,
+                    forward_storage_handoffs,
+                    backward_storage_handoffs,
                 )
             position_variants.append(variants)
         prepared.append(position_variants)
@@ -435,9 +473,40 @@ def lower_partitioned_training_program(
     backward_ids: dict[tuple[int, int, str], str] = {}
     completion_ids: tuple[str, ...] = ()
     all_backward_ids: list[str] = []
+    optimizer_task_ids: list[str] = []
     initial_writers: dict[str, tuple[str, ...]] = {}
     latest_contributors: dict[str, tuple[str, ...]] = {}
     object_producers: dict[str, list[str]] = {}
+    has_lazy_optimizer_outputs = any(
+        item.created_on_first_step for item in optimizer_objects
+    )
+    interleave_optimizer = optimizer_ordering == "stage_interleaved" and not (
+        optimizer_phase == "initial" and has_lazy_optimizer_outputs
+    )
+    optimizer_by_stage: dict[int, tuple[OptimizerTask, ...]] = {
+        stage_index: tuple(
+            component
+            for component in optimizer.recurrent_tasks
+            if component.completion_stage_index == stage_index
+        )
+        for stage_index in range(len(prepared[0]))
+    }
+    unplaced_optimizer = tuple(
+        component
+        for component in optimizer.recurrent_tasks
+        if component.completion_stage_index is None
+    )
+    invalid_optimizer_stages = tuple(
+        component.completion_stage_index
+        for component in optimizer.recurrent_tasks
+        if component.completion_stage_index is not None
+        and not 0 <= component.completion_stage_index < len(prepared[0])
+    )
+    if invalid_optimizer_stages:
+        raise CaptureError(
+            "optimizer component refers to an unknown training stage: "
+            f"{invalid_optimizer_stages}"
+        )
 
     for position, position_variants in enumerate(prepared):
         previous_forward_ids = completion_ids
@@ -488,9 +557,8 @@ def lower_partitioned_training_program(
                         public_output_count=len(item.public_output_leaves),
                         public_output_leaves=item.public_output_leaves,
                         stage_index=stage_index,
-                        replacement_output_leaves=(
-                            item.replacement_output_leaves
-                        ),
+                        replacement_output_leaves=(item.replacement_output_leaves),
+                        storage_handoffs=item.forward_storage_handoffs,
                     )
                 )
                 current_ids.append(task_id)
@@ -575,6 +643,7 @@ def lower_partitioned_training_program(
                         (),
                         gradient_output_slots=item.contributions,
                         stage_index=stage_index,
+                        storage_handoffs=item.backward_storage_handoffs,
                     )
                 )
                 all_backward_ids.append(task_id)
@@ -587,6 +656,28 @@ def lower_partitioned_training_program(
                 initial_writers.setdefault(object_id, stage_task_ids)
                 latest_contributors[object_id] = stage_task_ids
             downstream_ids = stage_task_ids
+            if interleave_optimizer and position == len(prepared) - 1:
+                components = optimizer_by_stage.get(stage_index, ())
+                if components:
+                    optimizer_task_ids.extend(
+                        _append_optimizer_tasks(
+                            tasks,
+                            entrypoints,
+                            optimizer,
+                            optimizer_objects,
+                            gradients,
+                            optimizer_phase=optimizer_phase,
+                            dependencies=stage_task_ids,
+                            device_id=device_id,
+                            profile_id=profile_id,
+                            components=components,
+                            object_dependencies=_object_dependencies(
+                                object_producers,
+                                initial_writers,
+                                latest_contributors,
+                            ),
+                        )
+                    )
         completion_ids = downstream_ids
 
     groups = tuple(
@@ -599,7 +690,14 @@ def lower_partitioned_training_program(
                         forward_ids[(position, stage_index, variant)],
                         backward_ids[(position, stage_index, variant)],
                     ),
-                    prepared[position][stage_index][variant].residual_aliases,
+                    tuple(
+                        dict.fromkeys(
+                            inventory.alias_id(object_id)
+                            for object_id in prepared[position][stage_index][
+                                variant
+                            ].residual_object_ids
+                        )
+                    ),
                 )
                 for variant in ("save", "recompute")
             ),
@@ -608,17 +706,31 @@ def lower_partitioned_training_program(
         for stage_index in range(len(position_variants))
     )
 
-    optimizer_task_ids = _append_optimizer_tasks(
-        tasks,
-        entrypoints,
-        optimizer,
-        optimizer_objects,
-        gradients,
-        optimizer_phase=optimizer_phase,
-        dependencies=tuple(all_backward_ids),
-        device_id=device_id,
-        profile_id=profile_id,
+    tail_components = (
+        optimizer.recurrent_tasks if not interleave_optimizer else unplaced_optimizer
     )
+    if tail_components or (optimizer_phase == "initial" and has_lazy_optimizer_outputs):
+        optimizer_task_ids.extend(
+            _append_optimizer_tasks(
+                tasks,
+                entrypoints,
+                optimizer,
+                optimizer_objects,
+                gradients,
+                optimizer_phase=optimizer_phase,
+                dependencies=tuple(all_backward_ids),
+                device_id=device_id,
+                profile_id=profile_id,
+                components=tail_components,
+                object_dependencies=_object_dependencies(
+                    object_producers,
+                    initial_writers,
+                    latest_contributors,
+                ),
+            )
+        )
+    if not optimizer_task_ids:
+        raise CaptureError("optimizer has no executable task components")
 
     alias_groups = inventory.alias_groups()
     objects = inventory.objects()
@@ -678,7 +790,7 @@ def lower_partitioned_training_program(
         gradients,
         optimizer_objects,
         tuple(fixed_tensors.values()),
-        optimizer_task_ids,
+        tuple(optimizer_task_ids),
     )
 
 
@@ -688,6 +800,7 @@ def lower_training_program(
     measurements: dict[str, TaskMeasurement],
     optimizer: OptimizerCapture,
     *,
+    storage_contracts: Mapping[str, TaskStorageContract] | None = None,
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
 ) -> LoweredTrainingProgram:
@@ -711,6 +824,17 @@ def lower_training_program(
 
     profile_by_digest: dict[str, str] = {}
     profiles: list[TaskProfile] = []
+
+    def contract_for(artifact: GraphArtifact) -> TaskStorageContract:
+        if storage_contracts is None:
+            return artifact.storage_contract
+        try:
+            return storage_contracts[artifact.compatibility_digest]
+        except KeyError as exc:
+            raise CaptureError(
+                "compiled storage contract is missing for artifact "
+                f"{artifact.compatibility_digest}"
+            ) from exc
 
     def measurement_for(
         artifact: GraphArtifact | OptimizerTaskArtifact,
@@ -744,10 +868,9 @@ def lower_training_program(
 
     def mutation_transition_bytes(artifact: GraphArtifact) -> int:
         measurement = measurement_for(artifact)
-        layout = reconcile_compiled_task_layout(
-            artifact.storage_contract, measurement
-        )
-        return replacement_transition_bytes(artifact.storage_contract, layout)
+        contract = contract_for(artifact)
+        layout = reconcile_compiled_task_layout(contract, measurement)
+        return replacement_transition_bytes(contract, layout)
 
     tasks: list[TaskSpec] = []
     entrypoints: list[TrainingTaskEntrypoint] = []
@@ -767,7 +890,7 @@ def lower_training_program(
 
     for position, capture in enumerate(captures):
         option_task_ids: dict[str, tuple[str, str]] = {}
-        option_residual_aliases: dict[str, tuple[str, ...]] = {}
+        option_residual_objects: dict[str, tuple[str, ...]] = {}
         for variant, pair in (
             ("save", capture.save_pair),
             ("recompute", capture.recompute_pair),
@@ -779,9 +902,10 @@ def lower_training_program(
             (
                 forward_output_slots,
                 public_ids,
-                residual_aliases,
+                residual_object_ids,
                 mutation_object_ids,
                 replacement_output_leaves,
+                forward_storage_handoffs,
             ) = _forward_outputs(
                 position,
                 pair,
@@ -791,6 +915,7 @@ def lower_training_program(
                 inventory,
                 public_objects_by_position,
                 measurement_for(pair.forward),
+                contract_for(pair.forward),
             )
             backward_inputs, fixed = _backward_inputs(
                 pair,
@@ -801,7 +926,7 @@ def lower_training_program(
             )
             if fixed is not None:
                 fixed_tensors.setdefault(fixed.object_id, fixed)
-            gradient_slots = _gradient_outputs(
+            gradient_slots, backward_storage_handoffs = _gradient_outputs(
                 pair,
                 values.backward_outputs,
                 inventory,
@@ -809,6 +934,7 @@ def lower_training_program(
                 gradient_by_parameter,
                 backward_inputs,
                 measurement_for(pair.backward),
+                contract_for(pair.backward),
             )
             backward_inputs_objects = [slot.object_id for slot in backward_inputs]
             forward_input_aliases = {
@@ -846,8 +972,7 @@ def lower_training_program(
                             not in forward_input_aliases
                         ),
                         mutations=tuple(
-                            MutationSpec(object_id)
-                            for object_id in mutation_object_ids
+                            MutationSpec(object_id) for object_id in mutation_object_ids
                         ),
                         phase="forward",
                     ),
@@ -879,6 +1004,7 @@ def lower_training_program(
                         public_output_count=len(public_ids),
                         public_output_leaves=capture.exported.user_output_indices,
                         replacement_output_leaves=replacement_output_leaves,
+                        storage_handoffs=forward_storage_handoffs,
                     ),
                     TrainingTaskEntrypoint(
                         backward_id,
@@ -889,12 +1015,13 @@ def lower_training_program(
                         backward_inputs,
                         (),
                         gradient_output_slots=gradient_slots,
+                        storage_handoffs=backward_storage_handoffs,
                     ),
                 )
             )
             option_task_ids[variant] = (forward_id, backward_id)
             all_backward_ids.append(backward_id)
-            option_residual_aliases[variant] = residual_aliases
+            option_residual_objects[variant] = residual_object_ids
         groups.append(
             RecomputationGroup(
                 f"recompute_{position:04d}",
@@ -902,7 +1029,12 @@ def lower_training_program(
                     RecomputationOption(
                         variant,
                         option_task_ids[variant],
-                        option_residual_aliases[variant],
+                        tuple(
+                            dict.fromkeys(
+                                inventory.alias_id(object_id)
+                                for object_id in option_residual_objects[variant]
+                            )
+                        ),
                     )
                     for variant in ("save", "recompute")
                 ),
@@ -999,6 +1131,8 @@ def _append_optimizer_tasks(
     dependencies: tuple[str, ...],
     device_id: str,
     profile_id: Callable[..., str],
+    components: tuple[OptimizerTask, ...] | None = None,
+    object_dependencies: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[str, ...]:
     """Append dependency-closed optimizer components in semantic order."""
 
@@ -1014,7 +1148,7 @@ def _append_optimizer_tasks(
     }
     object_binding = {item.name: item for item in optimizer_objects}
     has_lazy_outputs = any(item.created_on_first_step for item in optimizer_objects)
-    components = (
+    selected_components = (
         (
             OptimizerTask(
                 optimizer.recurrent,
@@ -1024,13 +1158,16 @@ def _append_optimizer_tasks(
         )
         if optimizer_phase == "initial" and has_lazy_outputs
         else optimizer.recurrent_tasks
+        if components is None
+        else components
     )
-    if not components:
+    if not selected_components:
         raise CaptureError("optimizer has no executable task components")
 
     result: list[str] = []
     preceding = dependencies
-    for component in components:
+    producer_dependencies = object_dependencies or {}
+    for component in selected_components:
         task_id = f"task_{len(tasks):06d}"
         component_objects = tuple(
             object_by_name[name]
@@ -1049,12 +1186,22 @@ def _append_optimizer_tasks(
             for name in component.mutation_names
             if name in object_by_name and object_by_name[name] not in outputs
         )
+        task_dependencies = _unique(
+            (
+                *preceding,
+                *(
+                    dependency
+                    for object_id in component_objects
+                    for dependency in producer_dependencies.get(object_id, ())
+                ),
+            )
+        )
         tasks.append(
             TaskSpec(
                 task_id,
                 ResourceSpec(device_id, ResourceKind.COMPUTE),
                 profile_id(component.artifact),
-                dependencies=preceding,
+                dependencies=task_dependencies,
                 inputs=tuple(
                     object_id
                     for object_id in component_objects
@@ -1080,6 +1227,26 @@ def _append_optimizer_tasks(
         result.append(task_id)
         preceding = _unique((*dependencies, task_id))
     return tuple(result)
+
+
+def _object_dependencies(
+    object_producers: dict[str, list[str]],
+    initial_writers: dict[str, tuple[str, ...]],
+    latest_contributors: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    """Snapshot direct producer edges required by later state consumers."""
+
+    object_ids = set(object_producers) | set(initial_writers) | set(latest_contributors)
+    return {
+        object_id: _unique(
+            (
+                *object_producers.get(object_id, ()),
+                *initial_writers.get(object_id, ()),
+                *latest_contributors.get(object_id, ()),
+            )
+        )
+        for object_id in object_ids
+    }
 
 
 def _register_model(
@@ -1235,24 +1402,33 @@ def _stage_forward_outputs(
     canonical_outputs: tuple[str, ...],
     inventory: ObjectCatalog,
     measurement: TaskMeasurement,
+    storage_contract: TaskStorageContract,
+    *,
+    context: str,
 ) -> tuple[
     tuple[TensorSlot, ...],
     tuple[str, ...],
     tuple[str, ...],
     tuple[int, ...],
+    tuple[TaskStorageHandoff, ...],
 ]:
     public_count = pair.forward.output_count - pair.saved_value_count
     if public_count != len(canonical_outputs):
         raise CaptureError("stage boundary output count changed across AOT capture")
     slots: list[TensorSlot] = []
-    residual_aliases: list[str] = []
+    residual_object_ids: list[str] = []
+    try:
+        compiled_layout = reconcile_compiled_task_layout(
+            storage_contract, measurement
+        )
+    except CaptureError as exc:
+        raise CaptureError(f"{context}: {exc}") from exc
     resolver = TaskBindingResolver(
         inventory,
         pair.forward,
         forward_inputs,
-        reconcile_compiled_task_layout(
-            pair.forward.storage_contract, measurement
-        ),
+        compiled_layout,
+        storage_contract=storage_contract,
     )
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
@@ -1274,12 +1450,13 @@ def _stage_forward_outputs(
             )
         slots.append(TensorSlot(index, object_id))
         if index >= public_count:
-            residual_aliases.append(inventory.alias_id(object_id))
+            residual_object_ids.append(object_id)
     return (
         tuple(slots),
-        tuple(dict.fromkeys(residual_aliases)),
+        tuple(dict.fromkeys(residual_object_ids)),
         resolver.mutation_object_ids,
         resolver.replacement_output_leaves,
+        resolver.storage_handoffs,
     )
 
 
@@ -1350,15 +1527,15 @@ def _stage_backward_contributions(
     cotangent_by_activation: dict[tuple[int, str], str],
     inventory: ObjectCatalog,
     measurement: TaskMeasurement,
-) -> tuple[TensorSlot, ...]:
+    storage_contract: TaskStorageContract,
+) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
     resolver = TaskBindingResolver(
         inventory,
         pair.backward,
         backward_inputs,
-        reconcile_compiled_task_layout(
-            pair.backward.storage_contract, measurement
-        ),
+        reconcile_compiled_task_layout(storage_contract, measurement),
+        storage_contract=storage_contract,
     )
     results: list[TensorSlot] = []
     for output_index in pair.forward.tensor_argument_positions:
@@ -1383,7 +1560,7 @@ def _stage_backward_contributions(
             canonical_object_id=destination,
         )
         results.append(TensorSlot(output_index, bound))
-    return tuple(results)
+    return tuple(results), resolver.storage_handoffs
 
 
 def _tensor_slots(
@@ -1408,31 +1585,30 @@ def _forward_outputs(
     inventory: ObjectCatalog,
     public_by_position: dict[int, tuple[str, ...]],
     measurement: TaskMeasurement,
+    storage_contract: TaskStorageContract,
 ) -> tuple[
     tuple[TensorSlot, ...],
     tuple[str, ...],
     tuple[str, ...],
     tuple[str, ...],
     tuple[int, ...],
+    tuple[TaskStorageHandoff, ...],
 ]:
     public_leaves = capture.exported.user_output_indices
-    expected_public_count = 1 + len(
-        capture.objective_schema.tensor_metric_positions
-    )
+    expected_public_count = 1 + len(capture.objective_schema.tensor_metric_positions)
     if len(public_leaves) != expected_public_count:
         raise CaptureError("objective user outputs differ from its captured schema")
     original_output_count = pair.forward.output_count - pair.saved_value_count
     canonical_public = public_by_position.get(position)
     slots: list[TensorSlot] = []
     public_ids: list[str] = []
-    residual_aliases: list[str] = []
+    residual_object_ids: list[str] = []
     resolver = TaskBindingResolver(
         inventory,
         pair.forward,
         forward_inputs,
-        reconcile_compiled_task_layout(
-            pair.forward.storage_contract, measurement
-        ),
+        reconcile_compiled_task_layout(storage_contract, measurement),
+        storage_contract=storage_contract,
     )
     for index, value in enumerate(values):
         if not isinstance(value, torch.Tensor):
@@ -1461,7 +1637,7 @@ def _forward_outputs(
         if index in public_leaves:
             public_ids.append(object_id)
         elif index >= original_output_count:
-            residual_aliases.append(inventory.alias_id(object_id))
+            residual_object_ids.append(object_id)
     if pair.saved_value_count != len(values) - original_output_count:
         raise CaptureError("AOT residual count changed during training lowering")
     if canonical_public is None:
@@ -1469,9 +1645,10 @@ def _forward_outputs(
     return (
         tuple(slots),
         tuple(public_ids),
-        tuple(dict.fromkeys(residual_aliases)),
+        tuple(dict.fromkeys(residual_object_ids)),
         resolver.mutation_object_ids,
         resolver.replacement_output_leaves,
+        resolver.storage_handoffs,
     )
 
 
@@ -1514,7 +1691,8 @@ def _gradient_outputs(
     gradient_by_parameter: dict[str, str],
     backward_inputs: tuple[TensorSlot, ...],
     measurement: TaskMeasurement,
-) -> tuple[TensorSlot, ...]:
+    storage_contract: TaskStorageContract,
+) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
     tensor_primals = tuple(
         value
         for value in pair.forward.example_arguments
@@ -1530,9 +1708,8 @@ def _gradient_outputs(
         inventory,
         pair.backward,
         backward_inputs,
-        reconcile_compiled_task_layout(
-            pair.backward.storage_contract, measurement
-        ),
+        reconcile_compiled_task_layout(storage_contract, measurement),
+        storage_contract=storage_contract,
     )
     for index, primal in zip(positions, tensor_primals, strict=True):
         gradient = values[index]
@@ -1549,7 +1726,7 @@ def _gradient_outputs(
             canonical_object_id=gradient_by_parameter[parameter_id],
         )
         results.append(TensorSlot(index, gradient_id))
-    return tuple(results)
+    return tuple(results), resolver.storage_handoffs
 
 
 def _external_input_aliases(
@@ -1567,8 +1744,7 @@ def _external_input_aliases(
         alias_by_object[object_id]
         for task in tasks
         for object_id in task.inputs
-        if alias_by_object[object_id] not in produced_aliases
-        and alias_by_object[object_id] not in parameter_aliases
+        if alias_by_object[object_id] not in produced_aliases | parameter_aliases
     }
 
 

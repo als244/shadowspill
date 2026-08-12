@@ -259,7 +259,7 @@ def _initial_schedule(
 ) -> tuple[ResidencySpec, ...]:
     values: list[ResidencySpec] = []
     for alias, location in enumerate(facts.initial_locations):
-        if location is None:
+        if location is None or facts.alias_sizes[alias] == 0:
             continue
         selected = (
             MemoryLocation.DEVICE if plan.resident(alias, -1) else MemoryLocation.HOST
@@ -282,7 +282,7 @@ def emit_schedule(
     departures: list[Departure] = []
     reloads: list[Reload] = []
     for alias, spans in enumerate(plan.spans):
-        if not spans:
+        if not spans or facts.alias_sizes[alias] == 0:
             continue
         host_refreshed = (
             -1
@@ -400,7 +400,7 @@ def emit_schedule(
         final_residency=tuple(
             ResidencySpec(facts.alias_ids[alias], location)
             for alias, location in enumerate(facts.final_locations)
-            if location is not None
+            if location is not None and facts.alias_sizes[alias] != 0
         ),
     )
     schedule._validate_selected(facts.program, facts.tasks)

@@ -182,6 +182,12 @@ class _Simulator:
 
     def _initialize_memory(self) -> None:
         for state in self.alias_state.values():
+            if state.size_bytes == 0:
+                # A zero-length tensor has semantic identity and dependency
+                # edges, but no payload whose residency can be absent.
+                state.device_allocated = True
+                state.device_ready = True
+                continue
             if state.retain_spill_copy:
                 state.host_allocated = True
                 state.host_ready = True

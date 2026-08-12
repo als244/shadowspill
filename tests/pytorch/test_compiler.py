@@ -22,12 +22,18 @@ from shadowspill.pytorch.compiler import (
     profile_environment,
 )
 from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.inductor_adapter import ExecutableTaskManifest
 from shadowspill.pytorch.optimizer import capture_optimizer
 
 
 class _Add(nn.Module):
     def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
         return left + right
+
+
+class _MultiplyByOne(nn.Module):
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return value * torch.ones_like(value)
 
 
 def _artifact(kind: str = "inference") -> GraphArtifact:
@@ -39,12 +45,29 @@ def _artifact(kind: str = "inference") -> GraphArtifact:
     )
 
 
+def _manifest(artifact: GraphArtifact) -> ExecutableTaskManifest:
+    return ExecutableTaskManifest(
+        semantic_contract_digest=artifact.storage_contract.compatibility_digest,
+        storage_contract=artifact.storage_contract,
+        contract_capture_ns=0,
+        compatibility_digest="0" * 64,
+    )
+
+
+def _compiled_task(
+    artifact: GraphArtifact,
+    function: Any,
+    arguments: tuple[object, ...] = (),
+) -> CompiledTask:
+    return CompiledTask(artifact, function, arguments, _manifest(artifact))
+
+
 def test_compiled_task_disables_dispatcher_autograd() -> None:
     observed: list[bool] = []
-    executable = CompiledTask(
-        _artifact("forward"),
+    artifact = _artifact("forward")
+    executable = _compiled_task(
+        artifact,
         lambda: observed.append(torch.is_grad_enabled()),
-        (),
     )
 
     with torch.enable_grad():
@@ -75,6 +98,25 @@ def test_materialization_preserves_storage_alias_and_compiles() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_inductor_manifest_captures_post_grad_output_alias() -> None:
+    value = torch.randn(32)
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_MultiplyByOne()),
+        example_inputs=(value,),
+    )
+    assert artifact.storage_contract.roots[0].kind.value == "fresh"
+
+    executable = compile_artifact(artifact, device_ordinal=0)
+    compiled_contract = executable.manifest.storage_contract
+    assert compiled_contract.roots[0].kind.value == "input"
+    assert compiled_contract.roots[0].source_input == 0
+    output = executable()
+    assert isinstance(output, torch.Tensor)
+    assert output.data_ptr() == executable.example_arguments[0].data_ptr()  # type: ignore[union-attr]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
     model = nn.Sequential(nn.Linear(6, 10), nn.Linear(10, 3))
     optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
@@ -102,6 +144,7 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
         peak_charged_bytes=256,
         peak_extent_bytes=(256,),
         allocation_trace=(),
+        output_input_bindings=(),
         persistent_allocation_ids=(),
         persistent_extent_bytes=(),
     )
@@ -174,7 +217,8 @@ def test_workspace_boundary_always_stops_telemetry(
     profiler = CudaTaskProfiler(
         library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
-    executable = CompiledTask(_artifact(), lambda *args: torch.ones(1), ())
+    artifact = _artifact()
+    executable = _compiled_task(artifact, lambda *args: torch.ones(1))
     assert profiler._measure_workspace(executable, _Stream()) is sentinel  # type: ignore[arg-type]
     assert calls == ["start:65536", "stop"]
 
@@ -222,7 +266,8 @@ def test_workspace_releases_disposable_results_before_after_task(
     profiler = CudaTaskProfiler(
         Library(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
-    executable = CompiledTask(_artifact(), lambda: Result(), ())
+    artifact = _artifact()
+    executable = _compiled_task(artifact, lambda: Result())
     profiler._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
     assert calls == ["release-result", "after-task"]
 
@@ -246,9 +291,10 @@ def test_output_allocation_lookup_is_exact() -> None:
         _Lookup(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     tensor = torch.empty(4, device="cuda")
-    assert profiler._output_allocation_views((tensor, tensor.view(2, 2))) == {
-        91: ((0, 0), (1, 0))
-    }
+    assert profiler._output_allocation_views((tensor, tensor.view(2, 2))) == (
+        {91: ((0, 0), (1, 0))},
+        (),
+    )
 
     class _Missing:
         @staticmethod
@@ -335,7 +381,7 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
     with pytest.raises(TypeError, match="unsupported profiling artifact"):
         profiler.measure(artifact)
     with pytest.raises(TypeError, match="unsupported executable artifact"):
-        profiler.take_functions((artifact,))
+        profiler.take_compiled_tasks((artifact,))
 
 
 def test_compiler_function_transfer_deduplicates_structural_artifacts(
@@ -347,15 +393,16 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     def compile_once(value: GraphArtifact, *, device_ordinal: int) -> CompiledTask:
         calls.append(value.compatibility_digest)
         assert device_ordinal == 0
-        return CompiledTask(value, lambda *arguments: arguments, ())
+        return _compiled_task(value, lambda *arguments: arguments)
 
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
     library = _TaskLibrary()
     profiler = CudaTaskProfiler(
         library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
-    functions = profiler.take_functions((artifact, artifact))
-    assert tuple(functions) == (artifact.compatibility_digest,)
+    compiled = profiler.take_compiled_tasks((artifact, artifact))
+    assert tuple(compiled.functions) == (artifact.compatibility_digest,)
+    assert tuple(compiled.manifests) == (artifact.compatibility_digest,)
     assert calls == [artifact.compatibility_digest]
 
     profiler._compiled(artifact)
@@ -376,7 +423,11 @@ def test_measurement_releases_cuda_examples_between_structural_abis(
         value: GraphArtifact, *, device_ordinal: int
     ) -> CompiledTask:
         assert device_ordinal == 0
-        return CompiledTask(value, lambda *arguments: arguments, (examples[0],))
+        return _compiled_task(
+            value,
+            lambda *arguments: arguments,
+            (examples[0],),
+        )
 
     measurement = TaskMeasurement(1, 0, 0, (), (1,), "test")
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_with_large_example)

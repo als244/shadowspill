@@ -22,13 +22,14 @@ from .training_lowering import TrainingTaskEntrypoint
 
 
 class _SpatialEventKind(IntEnum):
-    REPLACE_ALIAS = 0
-    FREE_ALIAS = 1
-    FREE_TEMPORARY_OUTPUT = 2
-    ALLOCATE_PREFETCH = 3
-    TASK_ALLOCATION = 4
-    TASK_FREE = 5
-    TASK_REUSE = 6
+    HANDOFF_ALIAS = 0
+    REPLACE_ALIAS = 1
+    FREE_ALIAS = 2
+    FREE_TEMPORARY_OUTPUT = 3
+    ALLOCATE_PREFETCH = 4
+    TASK_ALLOCATION = 5
+    TASK_FREE = 6
+    TASK_REUSE = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class _SpatialEvent:
     planned: bool = False
     alias_output: bool = False
     source_identity: str | None = None
+    task_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,12 +52,15 @@ class TaskOutputBinding:
     leaf_index: int
     alias_group_id: str
     replacement: bool = False
+    source_alias_group_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.leaf_index < 0:
             raise ValueError("output leaf index must be non-negative")
         if not self.alias_group_id:
             raise ValueError("output alias group ID must be non-empty")
+        if self.source_alias_group_id == self.alias_group_id:
+            raise ValueError("storage handoff source and destination must differ")
 
 
 def replay_selected_schedule(
@@ -76,7 +81,10 @@ def replay_selected_schedule(
 
     program = selected.program
     alias_size = {
-        item.alias_group_id: max(1, item.size_bytes) for item in program.alias_groups
+        item.alias_group_id: item.size_bytes for item in program.alias_groups
+    }
+    zero_aliases = {
+        alias_id for alias_id, size_bytes in alias_size.items() if size_bytes == 0
     }
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
     object_size = {item.object_id: item.size_bytes for item in program.objects}
@@ -100,6 +108,7 @@ def replay_selected_schedule(
         planned: bool = False,
         alias_output: bool = False,
         source_identity: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         nonlocal sequence
         events.append(
@@ -112,11 +121,14 @@ def replay_selected_schedule(
                 planned,
                 alias_output,
                 source_identity,
+                task_id,
             )
         )
         sequence += 1
 
     for residency in selected.schedule.initial_residency:
+        if residency.alias_group_id in zero_aliases:
+            continue
         if residency.location is MemoryLocation.DEVICE:
             append(
                 0,
@@ -142,7 +154,7 @@ def replay_selected_schedule(
             dict.fromkeys(alias_by_object[object_id] for object_id in task.outputs)
         )
         for alias_id in output_aliases:
-            if alias_id in bound_output_aliases:
+            if alias_id in bound_output_aliases or alias_id in zero_aliases:
                 continue
             append(
                 interval.start_ns,
@@ -156,15 +168,21 @@ def replay_selected_schedule(
             measurement,
             task_bindings,
             alias_size,
+            zero_aliases,
         )
         for event in task_events:
             append(
-                interval.start_ns,
+                (
+                    interval.end_ns
+                    if event.kind is _SpatialEventKind.HANDOFF_ALIAS
+                    else interval.start_ns
+                ),
                 event.kind,
                 event.identity,
                 event.bytes,
                 alias_output=event.alias_output,
                 source_identity=event.source_identity,
+                task_id=task_id,
             )
         _validate_profile_workspace(
             task,
@@ -197,6 +215,8 @@ def replay_selected_schedule(
 
     transfer_keys: set[tuple[str, str, TransferDirection]] = set()
     for transfer in selected.simulation.transfer_intervals:
+        if transfer.alias_group_id in zero_aliases:
+            continue
         key = (
             transfer.trigger_task_id,
             transfer.alias_group_id,
@@ -221,9 +241,32 @@ def replay_selected_schedule(
                 alias_size[transfer.alias_group_id],
             )
 
+    handoff_releases = {
+        (task_id, binding.source_alias_group_id)
+        for task_id, bindings in bindings_by_task.items()
+        for binding in bindings
+        if binding.source_alias_group_id is not None
+        and binding.alias_group_id not in zero_aliases
+    }
+    scheduled_releases = {
+        (action.trigger_task_id, action.alias_group_id)
+        for action in selected.schedule.actions
+        if action.kind is MemoryActionKind.RELEASE
+    }
+    missing_handoff_releases = sorted(handoff_releases - scheduled_releases)
+    if missing_handoff_releases:
+        raise ValueError(
+            "task-local storage handoff lacks its causal same-task release: "
+            f"{missing_handoff_releases}"
+        )
+
     for action in selected.schedule.actions:
+        if action.alias_group_id in zero_aliases:
+            continue
         interval = interval_by_task[action.trigger_task_id]
         if action.kind is MemoryActionKind.RELEASE:
+            if (action.trigger_task_id, action.alias_group_id) in handoff_releases:
+                continue
             append(
                 interval.end_ns,
                 _SpatialEventKind.FREE_ALIAS,
@@ -247,6 +290,7 @@ def replay_selected_schedule(
         ),
     )
     live_aliases: dict[str, str] = {}
+    live_alias_origins: dict[str, _SpatialEvent] = {}
     generations: dict[str, int] = {}
     allocation_events: list[AllocationEvent] = []
     for position, item in enumerate(ordered):
@@ -257,6 +301,7 @@ def replay_selected_schedule(
             generations[item.identity] = generation + 1
             allocation_id = f"{item.identity}:{generation}"
             live_aliases[item.identity] = allocation_id
+            live_alias_origins[item.identity] = item
             allocation_events.append(
                 AllocationEvent(
                     position,
@@ -273,6 +318,7 @@ def replay_selected_schedule(
                     f"spatial admission frees nonresident alias {item.identity!r}"
                 )
             allocation_id = live_aliases.pop(item.identity)
+            live_alias_origins.pop(item.identity)
             allocation_events.append(
                 AllocationEvent(
                     position,
@@ -298,6 +344,26 @@ def replay_selected_schedule(
                 )
             )
             live_aliases[item.identity] = item.source_identity
+            live_alias_origins[item.identity] = item
+        elif item.kind is _SpatialEventKind.HANDOFF_ALIAS:
+            if item.source_identity is None:
+                raise AssertionError("storage handoff lacks a source alias")
+            if item.source_identity not in live_aliases:
+                raise ValueError(
+                    "storage handoff source is not resident: "
+                    f"task={item.task_id!r}, source={item.source_identity!r}, "
+                    f"destination={item.identity!r}"
+                )
+            if item.identity in live_aliases:
+                raise ValueError(
+                    "storage handoff destination is already resident: "
+                    f"task={item.task_id!r}, source={item.source_identity!r}, "
+                    f"destination={item.identity!r}"
+                )
+            allocation_id = live_aliases.pop(item.source_identity)
+            live_alias_origins.pop(item.source_identity)
+            live_aliases[item.identity] = allocation_id
+            live_alias_origins[item.identity] = item
         elif item.kind in {
             _SpatialEventKind.TASK_ALLOCATION,
             _SpatialEventKind.TASK_REUSE,
@@ -305,13 +371,22 @@ def replay_selected_schedule(
             identity = item.identity
             if item.alias_output:
                 if identity in live_aliases:
+                    origin = live_alias_origins[identity]
                     raise ValueError(
-                        f"task allocates resident output alias {identity!r}"
+                        "task allocates resident output alias "
+                        f"{identity!r}: task={item.task_id!r}, "
+                        f"time_ns={item.time_ns}, event={position}; "
+                        "prior allocation="
+                        f"{live_aliases[identity]!r}, "
+                        f"prior_task={origin.task_id!r}, "
+                        f"prior_time_ns={origin.time_ns}, "
+                        f"prior_kind={origin.kind.name}"
                     )
                 generation = generations.get(identity, 0)
                 generations[identity] = generation + 1
                 allocation_id = f"{identity}:{generation}"
                 live_aliases[identity] = allocation_id
+                live_alias_origins[identity] = item
             else:
                 allocation_id = identity
             if item.kind is _SpatialEventKind.TASK_REUSE:
@@ -366,9 +441,7 @@ def _validate_profile_workspace(
         raise ValueError("profile workspace extents exceed charged workspace")
     if not unclassified:
         return
-    replacement_leaves = {
-        item.leaf_index for item in bindings if item.replacement
-    }
+    replacement_leaves = {item.leaf_index for item in bindings if item.replacement}
     replacement_ordinals: set[int] = set()
     replacement_bytes = 0
     for event in measurement.allocation_trace:
@@ -406,21 +479,27 @@ def _task_allocation_events(
     measurement: TaskMeasurement,
     bindings: Sequence[TaskOutputBinding],
     alias_size: Mapping[str, int],
+    zero_aliases: set[str] | None = None,
 ) -> tuple[_TaskSpatialAllocation, ...]:
     """Bind a structural ABI trace to one task's concrete Program outputs."""
 
+    zero_aliases = zero_aliases or set()
     alias_by_leaf = {item.leaf_index: item.alias_group_id for item in bindings}
     replacement_by_leaf = {
-        item.leaf_index: item.alias_group_id
+        item.leaf_index: item.alias_group_id for item in bindings if item.replacement
+    }
+    handoff_by_leaf = {
+        item.leaf_index: item
         for item in bindings
-        if item.replacement
+        if item.source_alias_group_id is not None
     }
     if len(alias_by_leaf) != len(bindings):
         raise ValueError(f"task {task.task_id} binds an output leaf twice")
     local_identity: dict[int, str] = {}
     temporary_outputs: set[int] = set()
     result: list[_TaskSpatialAllocation] = []
-    bound_aliases: set[str] = set()
+    required_aliases = {item.alias_group_id for item in bindings}
+    bound_aliases = required_aliases.intersection(zero_aliases)
     reused_ordinals = {
         event.reuses_ordinal
         for event in measurement.allocation_trace
@@ -460,8 +539,7 @@ def _task_allocation_events(
                 bound_aliases.add(alias_identity)
                 if replacement_aliases:
                     identity = (
-                        f"replacement-output:{task.task_id}:"
-                        f"{event.allocation_ordinal}"
+                        f"replacement-output:{task.task_id}:{event.allocation_ordinal}"
                     )
                     replacement_alias = alias_identity
                 else:
@@ -513,11 +591,60 @@ def _task_allocation_events(
                 event.charged_bytes,
             )
         )
-    required_aliases = {item.alias_group_id for item in bindings}
+    donated_leaves = {
+        item.output_leaf_index for item in measurement.output_input_bindings
+    }
+    for leaf_index, binding in handoff_by_leaf.items():
+        if binding.alias_group_id in zero_aliases:
+            continue
+        if leaf_index not in donated_leaves:
+            raise ValueError(
+                f"task {task.task_id} handoff leaf {leaf_index} is not backed "
+                "by a compiled input allocation"
+            )
+        source_alias = binding.source_alias_group_id
+        if source_alias is None:
+            raise AssertionError("filtered handoff binding lacks a source")
+        if binding.alias_group_id in bound_aliases:
+            continue
+        result.append(
+            _TaskSpatialAllocation(
+                _SpatialEventKind.HANDOFF_ALIAS,
+                binding.alias_group_id,
+                alias_size[binding.alias_group_id],
+                alias_output=True,
+                source_identity=source_alias,
+            )
+        )
+        bound_aliases.add(binding.alias_group_id)
     if bound_aliases != required_aliases:
         missing = sorted(required_aliases - bound_aliases)
+        missing_bindings = [
+            {
+                "leaf_index": item.leaf_index,
+                "alias_group_id": item.alias_group_id,
+                "alias_bytes": alias_size[item.alias_group_id],
+                "replacement": item.replacement,
+                "source_alias_group_id": item.source_alias_group_id,
+            }
+            for item in bindings
+            if item.alias_group_id in missing
+        ]
+        observed_allocations = [
+            {
+                "ordinal": event.allocation_ordinal,
+                "bytes": event.charged_bytes,
+                "output_leaves": event.output_leaf_indices,
+            }
+            for event in measurement.allocation_trace
+            if event.operation is TaskAllocationOperation.ALLOCATE
+            and event.output_leaf_indices
+        ]
         raise ValueError(
-            f"task {task.task_id} profile does not allocate outputs {missing}"
+            f"task {task.task_id} profile does not allocate outputs {missing}; "
+            f"missing_bindings={missing_bindings!r}; "
+            f"observed_allocations={observed_allocations!r}; "
+            f"donated_leaves={sorted(donated_leaves)!r}"
         )
     live_ordinals = set(local_identity)
     live_ordinals.difference_update(
@@ -558,6 +685,9 @@ def output_bindings_for_entrypoints(
         )
         output_objects = set(task.outputs)
         replacement_leaves = set(entrypoint.replacement_output_leaves)
+        handoff_by_leaf = {
+            item.leaf_index: item for item in entrypoint.storage_handoffs
+        }
         seen_aliases: set[str] = set()
         bindings: list[TaskOutputBinding] = []
         for slot in slots:
@@ -568,7 +698,18 @@ def output_bindings_for_entrypoints(
             if alias_id in seen_aliases:
                 continue
             bindings.append(
-                TaskOutputBinding(slot.leaf_index, alias_id, replacement)
+                TaskOutputBinding(
+                    slot.leaf_index,
+                    alias_id,
+                    replacement,
+                    (
+                        alias_by_object[
+                            handoff_by_leaf[slot.leaf_index].source_object_id
+                        ]
+                        if slot.leaf_index in handoff_by_leaf
+                        else None
+                    ),
+                )
             )
             seen_aliases.add(alias_id)
         result[task.task_id] = tuple(bindings)

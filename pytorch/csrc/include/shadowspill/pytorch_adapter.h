@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 26U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 27U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -151,6 +151,10 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_admit_execution(
     const ShadowSpillExecutionDescription *description
 );
+
+/* Clear the completed plan's immutable execution records. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_clear_execution_plan(void);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_resolve_execution(

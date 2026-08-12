@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from bisect import bisect_right
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -494,12 +496,16 @@ def _build_contexts(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
+    *,
+    portfolio: tuple[tuple[RecomputationSelection, ...], ...],
+    progress: Callable[[str], None] | None,
 ) -> tuple[_SelectionContext, ...]:
     contexts: list[_SelectionContext] = []
     failures: list[PressureFitInfeasibleError] = []
     compiled_simulator_available = simulator_library_path() is not None
     compiled_planner_available = planner_library_path() is not None
-    for selections in _selection_portfolio(program):
+    started = time.perf_counter_ns()
+    for selection_index, selections in enumerate(portfolio, start=1):
         try:
             facts = build_facts(
                 program,
@@ -543,6 +549,13 @@ def _build_contexts(
                 ),
             )
         )
+        if progress is not None:
+            progress(
+                "PressureFit context "
+                f"{selection_index}/{len(portfolio)}: "
+                f"tasks={len(facts.tasks)}, aliases={len(facts.alias_ids)}, "
+                f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
+            )
     if contexts:
         return tuple(contexts)
     if failures:
@@ -610,6 +623,7 @@ def pressurefit(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Plan residency, movement, and recomputation for a validated program.
 
@@ -627,15 +641,62 @@ def pressurefit(
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
     selected_options = options or PressureFitOptions()
+    portfolio = _selection_portfolio(program)
+    if progress is not None:
+        progress(
+            "PressureFit portfolio: "
+            f"groups={len(program.recomputation_groups)}, "
+            f"selections={len(portfolio)}"
+        )
+    contexts_started = time.perf_counter_ns()
     contexts = _build_contexts(
         program,
         initial_residency,
         final_residency,
         config,
         selected_options,
+        portfolio=portfolio,
+        progress=progress,
     )
+    if progress is not None:
+        progress(
+            "PressureFit contexts ready: "
+            f"valid={len(contexts)}/{len(portfolio)}, "
+            f"elapsed={(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
+        )
     specs = _candidate_specs(contexts, selected_options)
-    outcomes = _run_candidates(specs, config, selected_options)
+    if progress is not None:
+        progress(
+            "PressureFit candidates: "
+            f"count={len(specs)}, per_context={len(specs) // len(contexts)}"
+        )
+    candidates_started = time.perf_counter_ns()
+    if selected_options.workers == 1 or len(specs) <= 1:
+        outcomes_list: list[_CandidateOutcome] = []
+        per_context = len(specs) // len(contexts)
+        for index, spec in enumerate(specs, start=1):
+            outcomes_list.append(_evaluate_candidate(spec, config, selected_options))
+            if progress is not None and (
+                index % per_context == 0 or index == len(specs)
+            ):
+                batch = outcomes_list[-per_context:]
+                progress(
+                    "PressureFit candidate context "
+                    f"{index // per_context}/{len(contexts)}: "
+                    f"valid={sum(item.schedule is not None for item in batch)}, "
+                    "repairs="
+                    f"{sum(item.diagnostic.repair_attempts for item in batch)}, "
+                    "elapsed="
+                    f"{(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
+                )
+        outcomes = tuple(outcomes_list)
+    else:
+        outcomes = _run_candidates(specs, config, selected_options)
+        if progress is not None:
+            progress(
+                "PressureFit parallel candidates finished: "
+                f"elapsed={(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
+            )
     valid = tuple(
         outcome
         for outcome in outcomes

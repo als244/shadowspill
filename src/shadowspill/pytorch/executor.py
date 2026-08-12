@@ -132,6 +132,11 @@ class _ExecutingStage(nn.Module):
         for _, alias_id, binding in rebound:
             self._state.generations[alias_id] = binding.generation
         dematerialized: list[tuple[torch.Tensor, str, int]] = []
+        handoff_sources = {
+            self._bridge.alias_for_object(item.source_object_id)
+            for item in self._entrypoint.storage_handoffs
+            if item.destination_object_id in self._task.outputs
+        }
         for action in self._actions:
             if action.kind not in {
                 MemoryActionKind.RELEASE,
@@ -139,6 +144,8 @@ class _ExecutingStage(nn.Module):
             }:
                 continue
             alias_id = action.alias_group_id
+            if alias_id in handoff_sources:
+                continue
             tensor = self._state.object_store.get(alias_id)
             generation = self._state.generations.get(alias_id)
             if tensor is None or generation is None:

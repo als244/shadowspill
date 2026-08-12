@@ -15,6 +15,12 @@ class TensorMetrics:
     relative_l2: float
     sign_agreement: float
     maximum_absolute_error: float
+    reference_norm: float = 0.0
+    actual_norm: float = 0.0
+    difference_norm: float = 0.0
+    reference_maximum_absolute: float = 0.0
+    actual_maximum_absolute: float = 0.0
+    numel: int = 0
 
 
 def state_digest(value: object) -> str:
@@ -120,6 +126,12 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         relative_l2=relative_l2,
         sign_agreement=sign_agreement,
         maximum_absolute_error=float(difference.abs().max()),
+        reference_norm=float(left_norm),
+        actual_norm=float(right_norm),
+        difference_norm=float(torch.linalg.vector_norm(difference)),
+        reference_maximum_absolute=float(left.abs().max()),
+        actual_maximum_absolute=float(right.abs().max()),
+        numel=left.numel(),
     )
 
 

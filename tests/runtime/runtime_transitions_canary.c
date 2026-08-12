@@ -612,6 +612,45 @@ static int immutable_execution_admission(void) {
     return failed ? -1 : 0;
 }
 
+static int execution_plan_lifecycle(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription object = {
+        .object_id = 92U,
+        .size_bytes = 32U,
+    };
+    const uint64_t input = object.object_id;
+    const ShadowSpillExecutionDescription first_plan = {
+        .task_id = 18U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    const ShadowSpillExecutionDescription second_plan = {
+        .task_id = first_plan.task_id,
+    };
+    const ShadowSpillExecutionHandle *handle = NULL;
+    int failed = shadowspill_register_object(fixture.runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &first_plan
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
+            fixture.runtime
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_unregister_object(
+            fixture.runtime, object.object_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
+            fixture.runtime
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_resolve_execution(
+            fixture.runtime, first_plan.task_id, &handle
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_admit_execution(
+            fixture.runtime, &second_plan
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
+            fixture.runtime
+        ) != SHADOWSPILL_RUNTIME_OK;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 static int functional_mutation_replaces_lease_without_copy(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -805,6 +844,7 @@ int main(void) {
             offload_window_is_enqueued_without_host_serialization() == 0 &&
             trigger_reservation_failure_is_a_plan_violation() == 0
             && immutable_execution_admission() == 0 &&
+            execution_plan_lifecycle() == 0 &&
             functional_mutation_replaces_lease_without_copy() == 0 &&
             functional_mutation_supersedes_inflight_prefetch() == 0
         ? EXIT_SUCCESS

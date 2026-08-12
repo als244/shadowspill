@@ -151,8 +151,14 @@ def reconcile_compiled_task_layout(
                 )
             physical_by_leaf[leaf_index] = (event, offset_bytes)
 
+    input_by_leaf = {
+        item.output_leaf_index: item for item in measurement.output_input_bindings
+    }
+
     semantic_views = {view.leaf_index: view for view in contract.output_views}
-    unexpected = sorted(set(physical_by_leaf) - set(semantic_views))
+    unexpected = sorted(
+        (set(physical_by_leaf) | set(input_by_leaf)) - set(semantic_views)
+    )
     if unexpected:
         raise CaptureError(
             f"compiled layout reports unknown output leaves {unexpected}"
@@ -174,13 +180,36 @@ def reconcile_compiled_task_layout(
                 raise CaptureError(
                     f"input root {root.root_id} unexpectedly allocated an output"
                 )
+            nonempty = tuple(view for view in views if view.span_bytes > 0)
+            missing = sorted(
+                view.leaf_index
+                for view in nonempty
+                if view.leaf_index not in input_by_leaf
+            )
+            if missing:
+                raise CaptureError(
+                    f"input root {root.root_id} has unobserved output leaves "
+                    f"{missing}"
+                )
+            if any(
+                input_by_leaf[view.leaf_index].input_position != root.source_input
+                for view in nonempty
+                if view.leaf_index in input_by_leaf
+            ):
+                raise CaptureError(
+                    f"input root {root.root_id} changed its compiled input storage"
+                )
             root_layouts.append(CompiledRootLayout(root.root_id, None, 0, 0))
             output_layouts.extend(
                 CompiledOutputView(
                     view.leaf_index,
                     root.root_id,
                     None,
-                    view.offset_bytes,
+                    (
+                        input_by_leaf[view.leaf_index].output_offset_bytes
+                        if view.leaf_index in input_by_leaf
+                        else view.offset_bytes
+                    ),
                 )
                 for view in views
             )
@@ -199,6 +228,20 @@ def reconcile_compiled_task_layout(
                 for view in views
             )
             continue
+        donated = tuple(
+            input_by_leaf[view.leaf_index]
+            for view in nonempty
+            if view.leaf_index in input_by_leaf
+        )
+        if bindings and donated:
+            raise CaptureError(
+                f"fresh root {root.root_id} mixes allocated and donated storage"
+            )
+        if donated:
+            raise CaptureError(
+                f"fresh executable root {root.root_id} unexpectedly aliases a "
+                "task input; the offline Inductor contract is incomplete"
+            )
         if len(bindings) != len(nonempty):
             missing = sorted(
                 view.leaf_index
@@ -210,9 +253,22 @@ def reconcile_compiled_task_layout(
             )
         ordinals = {event.allocation_ordinal for event, _offset in bindings}
         if len(ordinals) != 1:
+            leaf_bindings = [
+                {
+                    "leaf_index": view.leaf_index,
+                    "semantic_offset_bytes": view.offset_bytes,
+                    "span_bytes": view.span_bytes,
+                    "allocation_ordinal": event.allocation_ordinal,
+                    "allocation_requested_bytes": event.requested_bytes,
+                    "allocation_charged_bytes": event.charged_bytes,
+                    "physical_offset_bytes": offset,
+                }
+                for view, (event, offset) in zip(nonempty, bindings, strict=True)
+            ]
             raise CaptureError(
                 f"fresh root {root.root_id} spans compiled allocations "
-                f"{sorted(ordinals)}"
+                f"{sorted(ordinals)}; root={root.identity()!r}; "
+                f"leaf_bindings={leaf_bindings!r}"
             )
         ordinal = next(iter(ordinals))
         prior_root = claimed_allocations.setdefault(ordinal, root.root_id)
@@ -314,8 +370,12 @@ def replacement_transition_bytes(
             root = contract.roots[root_id]
         except (KeyError, IndexError) as exc:
             raise CaptureError("functional mutation has no output root") from exc
-        if root.kind is not StorageRootKind.FRESH:
-            raise CaptureError("functional mutation replacement must be fresh")
+        if root.kind is StorageRootKind.INPUT:
+            if root.source_input != mutation.input_position:
+                raise CaptureError(
+                    "functional mutation replacement aliases another task input"
+                )
+            continue
         replacement_roots.add(root_id)
     return sum(layout.root(root_id).charged_bytes for root_id in replacement_roots)
 

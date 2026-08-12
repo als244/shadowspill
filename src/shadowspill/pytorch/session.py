@@ -148,7 +148,7 @@ def build_forward(
             ),
         )
     with timer.measure("compilation"):
-        functions = profiler.take_functions(
+        compiled_tasks = profiler.take_compiled_tasks(
             artifacts,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
@@ -168,6 +168,7 @@ def build_forward(
             partitioned,
             artifacts,
             profiles.measurements,
+            storage_contracts=compiled_tasks.storage_contracts,
             device_ordinal=device_ordinal,
         )
         workspace_reserve = _workspace_reserve(profiles.measurements)
@@ -276,6 +277,7 @@ def build_forward(
                 lowered,
                 execution_plan,
                 measurements,
+                compiled_tasks.manifests,
             )
         with timer.measure("callable_construction"):
             executor = ForwardExecutor(
@@ -284,7 +286,7 @@ def build_forward(
                 execution_plan,
                 bridge,
                 state,
-                functions,
+                compiled_tasks.functions,
                 capture.user_output_indices,
                 output_tree_spec,
             )

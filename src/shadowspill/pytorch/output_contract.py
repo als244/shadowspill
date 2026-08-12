@@ -15,6 +15,7 @@ from torch.fx import GraphModule, Node
 from torch.utils._pytree import tree_flatten
 
 from ._live_storage import live_storage_bytes, live_storage_identity
+from ._schema_adapter import operator_alias_contract
 from .contracts import CaptureError
 
 
@@ -122,10 +123,12 @@ class MutationBinding:
     """One task operation that updates an ABI input storage.
 
     ``replacement_output_leaf`` distinguishes Export's functional mutation
-    form from a dispatcher-schema write.  In the functional form the named
-    output is a fresh physical allocation whose contents become the input
-    object's next authoritative generation.  A schema write has no
-    replacement output because the compiled operation writes in place.
+    form from a dispatcher-schema write.  The executable replacement normally
+    has fresh storage and becomes the input object's next authoritative
+    generation.  Inductor may prove a no-op update and return the target input
+    itself; that preserves the mutation ABI without requiring a generation
+    replacement.  A schema write has no replacement output because the
+    compiled operation writes in place.
     """
 
     input_position: int
@@ -383,10 +386,15 @@ def capture_task_storage_contract(
                 f"leaf={mutation.output_leaf_index}, target={mutation.target}"
             )
         semantic_root = root_by_id[view.root_id]
-        if semantic_root.kind is not StorageRootKind.FRESH:
+        if (
+            semantic_root.kind is StorageRootKind.INPUT
+            and semantic_root.source_input != source_position
+        ):
             raise CaptureError(
-                "functional mutation replacement must have fresh storage: "
-                f"leaf={mutation.output_leaf_index}, target={mutation.target}"
+                "functional mutation replacement aliases a different task input: "
+                f"leaf={mutation.output_leaf_index}, target={mutation.target}, "
+                f"expected_input={source_position}, "
+                f"actual_input={semantic_root.source_input}"
             )
         leaf = leaves[mutation.output_leaf_index]
         if not isinstance(leaf, Node):
@@ -529,24 +537,18 @@ def _schema_alias_source(node: Node, result_index: int) -> Node | None:
     schema = getattr(node.target, "_schema", None)
     if schema is None:
         return None
-    returns = tuple(schema.returns)
-    if len(returns) == 1:
-        result_index = 0
-    if result_index >= len(returns):
+    contract = operator_alias_contract(schema)
+    schema_result_index = 0 if len(contract.returns) == 1 else result_index
+    if schema_result_index >= len(contract.returns):
         raise CaptureError(
             f"node {node.name!r} result {result_index} exceeds operator schema"
         )
-    result_alias = returns[result_index].alias_info
-    if result_alias is None:
+    labels = contract.returns[schema_result_index].labels
+    if not labels:
         return None
-    labels = set(result_alias.before_set) | set(result_alias.after_set)
     matches: list[Node] = []
-    for index, argument in enumerate(schema.arguments):
-        alias = argument.alias_info
-        if alias is None:
-            continue
-        argument_labels = set(alias.before_set) | set(alias.after_set)
-        if not labels.intersection(argument_labels):
+    for index, argument in enumerate(contract.arguments):
+        if not labels.intersection(argument.labels):
             continue
         value = _schema_argument_value(node, index, argument.name)
         nodes, _ = tree_flatten(value)
@@ -574,9 +576,9 @@ def _capture_mutations(
         schema = getattr(node.target, "_schema", None)
         if schema is None:
             continue
-        for index, argument in enumerate(schema.arguments):
-            alias = argument.alias_info
-            if alias is None or not alias.is_write:
+        contract = operator_alias_contract(schema)
+        for index, argument in enumerate(contract.arguments):
+            if not argument.is_write:
                 continue
             value = _schema_argument_value(node, index, argument.name)
             candidates, _ = tree_flatten(value)

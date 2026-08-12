@@ -112,6 +112,7 @@ def _run_case(
     data_geometry: str | None,
     case_factory: str | None,
     case_options: list[str],
+    optimizer_ordering: str,
     cold: bool,
     cache_directory: Path | None,
 ) -> CaseResult:
@@ -119,7 +120,14 @@ def _run_case(
     reference = output_directory / f"{prefix}_reference.pt"
     artifact = output_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
-    options = ["--seed", str(seed), "--model-config", model_config]
+    options = [
+        "--seed",
+        str(seed),
+        "--model-config",
+        model_config,
+        "--optimizer-ordering",
+        optimizer_ordering,
+    ]
     if data_geometry is not None:
         options.extend(("--data-geometry", data_geometry))
     if case_factory is not None:
@@ -248,6 +256,15 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument(
+        "--optimizer-ordering",
+        choices=("stage_interleaved", "tail"),
+        default="stage_interleaved",
+        help=(
+            "group optimizer updates by stage and place them at their gradient "
+            "frontier"
+        ),
+    )
+    parser.add_argument(
         "--model-config",
         default="{}",
         metavar="JSON|@FILE",
@@ -313,8 +330,6 @@ def main() -> int:
             build_directory=arguments.build_dir,
             cache_directory=None if arguments.cold else arguments.cache_dir,
         )
-        if arguments.cold and arguments.reuse_reference:
-            raise RuntimeError("--cold cannot be combined with --reuse-reference")
     except (argparse.ArgumentTypeError, FileNotFoundError, RuntimeError) as exc:
         parser.error(str(exc))
 
@@ -340,6 +355,7 @@ def main() -> int:
                 data_geometry=arguments.data_geometry,
                 case_factory=arguments.case_factory,
                 case_options=arguments.case_option,
+                optimizer_ordering=arguments.optimizer_ordering,
                 cold=arguments.cold,
                 cache_directory=arguments.cache_dir,
             )

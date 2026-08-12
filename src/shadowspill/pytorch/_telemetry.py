@@ -9,7 +9,11 @@ from enum import IntEnum
 from typing import Any
 
 from ._abi import AllocationEvent as CAllocationEvent
-from .profiling import TaskAllocationEvent, TaskAllocationOperation
+from .profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskOutputInputBinding,
+)
 
 NO_ID = (1 << 64) - 1
 
@@ -62,6 +66,7 @@ class TaskWorkspaceProfile:
     output_allocation_ids: tuple[int, ...]
     events: tuple[CapturedAllocationEvent, ...]
     allocation_trace: tuple[TaskAllocationEvent, ...]
+    output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_allocation_ids: tuple[int, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
 
@@ -156,6 +161,7 @@ def summarize_task_workspace(
     *,
     task_id: int,
     output_allocation_views: Mapping[int, tuple[tuple[int, int], ...]] | None = None,
+    output_input_bindings: tuple[TaskOutputInputBinding, ...] = (),
 ) -> TaskWorkspaceProfile:
     """Replay task-local anonymous lifetimes; sequential buffers do not add."""
 
@@ -216,6 +222,7 @@ def summarize_task_workspace(
         output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
         allocation_trace=allocation_trace,
+        output_input_bindings=output_input_bindings,
         persistent_allocation_ids=persistent_ids,
         persistent_extent_bytes=persistent_extents,
     )

@@ -178,6 +178,7 @@ class Runtime:
             self._lock = threading.RLock()
             self._closed = False
             self._active_plans = 0
+            self._planning = False
             execution_pool = MemoryPool(
                 name=device_name,
                 pool_id=0,
@@ -251,9 +252,10 @@ class Runtime:
         with self._lock:
             if self._closed:
                 return
-            if self._active_plans != 0:
+            if self._active_plans != 0 or self._planning:
                 raise RuntimeConfigurationError(
-                    f"cannot close Runtime with {self._active_plans} active plan(s)"
+                    "cannot close Runtime while a planned callable or planning "
+                    "session owns it"
                 )
             status = int(
                 self._installed.library.shadowspill_pytorch_allocator_wait_idle()
@@ -283,6 +285,11 @@ class Runtime:
     ) -> PlanMemory:
         with self._lock:
             self._require_open()
+            if self._active_plans != 0 or self._planning:
+                raise RuntimeConfigurationError(
+                    "this Runtime already has an active callable or planning "
+                    "session; close it before creating another plan"
+                )
             if execution == spill:
                 raise RuntimeConfigurationError(
                     "execution and spill must select distinct pools"
@@ -317,7 +324,7 @@ class Runtime:
                 raise RuntimeConfigurationError(
                     f"route {execution!r} -> {spill!r} is not calibrated"
                 )
-            return PlanMemory(
+            memory = PlanMemory(
                 runtime=self,
                 installed=self._installed,
                 execution=execution_pool,
@@ -327,17 +334,43 @@ class Runtime:
                 execution_device=resolved_device,
                 transfers=transfers,
             )
+            self._planning = True
+            return memory
 
     def _adopt_plan(self) -> None:
         with self._lock:
             self._require_open()
-            self._active_plans += 1
+            if not self._planning or self._active_plans != 0:
+                raise RuntimeConfigurationError(
+                    "Runtime has no exclusive planning session to adopt"
+                )
+            self._planning = False
+            self._active_plans = 1
 
     def _release_plan(self) -> None:
         with self._lock:
-            if self._active_plans <= 0:
+            if self._active_plans != 1 or self._planning:
                 raise RuntimeError("Runtime plan ownership underflow")
-            self._active_plans -= 1
+            self._clear_execution_plan()
+            self._active_plans = 0
+
+    def _abort_plan(self) -> None:
+        """Release cold-path execution records after a failed planning session."""
+
+        with self._lock:
+            if not self._planning or self._active_plans != 0:
+                raise RuntimeError("Runtime planning ownership underflow")
+            self._clear_execution_plan()
+            self._planning = False
+
+    def _clear_execution_plan(self) -> None:
+        status = int(
+            self._installed.library.shadowspill_pytorch_clear_execution_plan()
+        )
+        if status != 0:
+            raise RuntimeConfigurationError(
+                f"execution-plan teardown failed with status {status}"
+            )
 
     def _calibrate(
         self,
@@ -351,9 +384,10 @@ class Runtime:
     ) -> TransferCapabilities:
         with self._lock:
             self._require_open()
-            if self._active_plans != 0:
+            if self._active_plans != 0 or self._planning:
                 raise RuntimeConfigurationError(
-                    "transfer calibration requires no active planned callables"
+                    "transfer calibration requires no active callable or "
+                    "planning session"
                 )
             keys: Any = None
             count = 0

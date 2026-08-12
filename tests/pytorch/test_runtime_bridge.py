@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import replace
 
 import pytest
+import torch
 
+from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
 from shadowspill.pytorch.runtime_bridge import RuntimeBridge, RuntimeExecutionError
 from tests.ir._examples import representative_program
 
@@ -94,3 +97,36 @@ def test_task_trace_labels_are_projected_by_dense_canonical_id() -> None:
         "",
         "execution_000001.backward.stage_0001",
     )
+
+
+def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
+    program = representative_program()
+    program = replace(
+        program,
+        alias_groups=(
+            *program.alias_groups,
+            AliasGroupSpec("alias_000099", "cuda_0", 0),
+        ),
+        objects=(
+            *program.objects,
+            ObjectSpec(
+                "object_000099",
+                "alias_000099",
+                0,
+                0,
+                ObjectRole.ACTIVATION,
+            ),
+        ),
+    )
+    bridge = RuntimeBridge(object(), program)
+    tensor = torch.empty(0)
+
+    bridge.register_placeholder("alias_000099")
+    binding = bridge.bind_registered_tensor("alias_000099", tensor)
+    generations = bridge.adopt_many(((tensor, "alias_000099"),))
+    bridge.rebind_many(((tensor, "alias_000099", binding),))
+
+    assert not bridge.requires_storage("alias_000099")
+    assert binding.pointer is None
+    assert binding.generation == 0
+    assert generations == (0,)

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 16U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 17U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -520,9 +520,20 @@ shadowspill_admit_execution(
 );
 
 /*
+ * Releases every immutable execution record admitted for the completed plan.
+ * The runtime must be idle, no task boundary may be active, and every logical
+ * plan object must already be unregistered. Ordinary caller-owned allocations
+ * are unaffected. This explicitly synchronizing lifecycle boundary permits a
+ * later plan to reuse the same dense task and object identities.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);
+
+/*
  * Resolves one stable, immutable execution handle on the cold path. The handle
- * is borrowed from runtime and remains valid until that runtime is destroyed.
- * It must only be passed back to the runtime that produced it.
+ * is borrowed from runtime and remains valid until its execution plan is
+ * cleared or that runtime is destroyed. It must only be passed back to the
+ * runtime that produced it.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_resolve_execution(

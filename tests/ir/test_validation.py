@@ -309,6 +309,43 @@ def test_schedule_checks_inputs_and_final_residency() -> None:
     )
 
 
+def test_zero_size_alias_requires_no_residency_but_rejects_memory_actions() -> None:
+    original = representative_program()
+    program = replace(
+        original,
+        alias_groups=tuple(
+            replace(item, size_bytes=0)
+            if item.alias_group_id == "weight_storage"
+            else item
+            for item in original.alias_groups
+        ),
+        objects=tuple(
+            replace(item, size_bytes=0)
+            if item.object_id == "weight"
+            else item
+            for item in original.objects
+        ),
+    )
+    schedule = replace(
+        representative_schedule(),
+        initial_residency=(representative_schedule().initial_residency[0],),
+    )
+
+    schedule.validate(program, SAVE_SELECTION)
+    invalid = replace(
+        schedule,
+        actions=(
+            MemoryAction(
+                "forward_save", "weight_storage", MemoryActionKind.RELEASE
+            ),
+        ),
+    )
+    assert_invalid(
+        "schedule.actions[0].alias_group_id",
+        lambda: invalid.validate(program, SAVE_SELECTION),
+    )
+
+
 @pytest.mark.parametrize(
     ("changes", "path"),
     [

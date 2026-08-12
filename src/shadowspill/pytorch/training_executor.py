@@ -43,6 +43,7 @@ class _ExecutionTaskRecord:
     forward_outputs: tuple[_ForwardOutputRecord, ...]
     gradient_outputs: tuple[_GradientOutputRecord, ...]
     optimizer_argument_object_ids: tuple[str | None, ...]
+    handoff_source_aliases: frozenset[str]
     dematerialize_aliases: tuple[str, ...]
     released_ephemeral: tuple[tuple[str, tuple[str, ...]], ...]
     native_handle: int = 0
@@ -522,7 +523,10 @@ class TrainingExecutor:
         self._recurrent = self._prepare(*recurrent)
         if self._initial is None:
             self._recurrent = self._admit_run(self._recurrent)
-        self._configure_task_trace_labels()
+        self._trace_label_run: _PlanRun | None = None
+        self._configure_task_trace_labels(
+            self._initial if self._initial is not None else self._recurrent
+        )
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
             for item in recurrent[0].gradients
@@ -655,6 +659,8 @@ class TrainingExecutor:
         )
         if run is None:
             raise AssertionError("initial optimizer plan is unavailable")
+        if run is not self._trace_label_run:
+            self._configure_task_trace_labels(run)
         self._state.refresh_inputs(inputs)
         started_ns = time.perf_counter_ns() if timing is not None else 0
         with self._profile_range("shadowspill.training.initial_actions"):
@@ -1421,6 +1427,7 @@ class TrainingExecutor:
                                 record.dense_task_id,
                                 self._state.device.index or 0,
                                 input_tensors,
+                                input_aliases,
                             )
                         else:
                             bindings = self._bridge.before_task(
@@ -1641,9 +1648,7 @@ class TrainingExecutor:
                 processed.adopted, generations, strict=True
             ):
                 if alias_id in processed.replacement_aliases:
-                    self._state.replace_alias_generation(
-                        alias_id, tensor, generation
-                    )
+                    self._state.replace_alias_generation(alias_id, tensor, generation)
                 else:
                     self._state.generations[alias_id] = generation
             if prepared.timing is not None:
@@ -1693,8 +1698,7 @@ class TrainingExecutor:
                     timing,
                 )
                 outputs = tuple(
-                    tensor_outputs[index]
-                    for index in entrypoint.public_output_leaves
+                    tensor_outputs[index] for index in entrypoint.public_output_leaves
                 )
             else:
                 adopted = self._accumulate_gradients(prepared.record, leaves, timing)
@@ -2054,6 +2058,11 @@ class TrainingExecutor:
                 for name in entrypoint.optimizer_binding_names
             )
             task_actions = actions.get(entrypoint.task_id, ())
+            handoff_source_aliases = frozenset(
+                self._bridge.alias_for_object(item.source_object_id)
+                for item in entrypoint.storage_handoffs
+                if item.destination_object_id in tasks[entrypoint.task_id].outputs
+            )
             dematerialize_aliases = tuple(
                 item.alias_group_id
                 for item in task_actions
@@ -2062,6 +2071,7 @@ class TrainingExecutor:
                     MemoryActionKind.RELEASE,
                     MemoryActionKind.OFFLOAD,
                 }
+                and item.alias_group_id not in handoff_source_aliases
             )
             released_ephemeral = tuple(
                 (item.alias_group_id, objects_by_alias[item.alias_group_id])
@@ -2084,6 +2094,7 @@ class TrainingExecutor:
                     forward_outputs=tuple(forward_outputs),
                     gradient_outputs=gradient_outputs,
                     optimizer_argument_object_ids=optimizer_argument_object_ids,
+                    handoff_source_aliases=handoff_source_aliases,
                     dematerialize_aliases=dematerialize_aliases,
                     released_ephemeral=released_ephemeral,
                 )
@@ -2104,21 +2115,14 @@ class TrainingExecutor:
             public_by_microbatch=self._public_outputs(entrypoints),
         )
 
-    def _configure_task_trace_labels(self) -> dict[str, str]:
-        """Register chronological semantic labels once, before execution."""
+    def _configure_task_trace_labels(self, run: _PlanRun) -> dict[str, str]:
+        """Register labels for the one execution program selected next."""
 
-        result: dict[str, str] = {}
-        for run in (self._initial, self._recurrent):
-            if run is None:
-                continue
-            for record in run.execution:
-                previous = result.setdefault(record.task.task_id, record.trace_label)
-                if previous != record.trace_label:
-                    raise RuntimeError(
-                        f"task {record.task.task_id} has conflicting trace labels "
-                        f"{previous!r} and {record.trace_label!r}"
-                    )
+        result = {
+            record.task.task_id: record.trace_label for record in run.execution
+        }
         self._bridge.configure_task_labels(result)
+        self._trace_label_run = run
         return result
 
     def _public_outputs(

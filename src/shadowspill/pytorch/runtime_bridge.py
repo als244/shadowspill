@@ -70,15 +70,16 @@ class RuntimeBridge:
 
     def __init__(self, library: Any, program: Program) -> None:
         self.library = library
-        self._alias_by_object = {
+        self._alias_by_object: dict[str, str] = {
             item.object_id: item.alias_group_id for item in program.objects
         }
-        self._size_by_alias = {
+        self._size_by_alias: dict[str, int] = {
             item.alias_group_id: item.size_bytes for item in program.alias_groups
         }
+        self._zero_generations: dict[str, int] = {}
         self._registered: set[str] = set()
         self._debug_task_timing_capacity = 0
-        self._admitted_tasks: dict[str, int] = {}
+        self._admitted_tasks: dict[str, tuple[str, ...]] = {}
 
     def profile_range_begin(self, name: str) -> int:
         """Open one optional provider-backed profiling range."""
@@ -114,21 +115,38 @@ class RuntimeBridge:
         if len(action_trace_labels) != len(actions):
             raise ValueError("action trace labels must align with ordered actions")
 
+        runtime_inputs = tuple(
+            alias_id for alias_id in input_alias_ids if self.requires_storage(alias_id)
+        )
+        mutation_values = tuple(
+            item
+            for item in task.mutations
+            if self.requires_storage(self.alias_for_object(item.object_id))
+        )
+        runtime_action_pairs = tuple(
+            (action, label)
+            for action, label in zip(
+                actions, action_trace_labels, strict=True
+            )
+            if self.requires_storage(action.alias_group_id)
+        )
         referenced_aliases = tuple(
             dict.fromkeys(
                 (
-                    *input_alias_ids,
-                    *(self.alias_for_object(item.object_id) for item in task.mutations),
-                    *(item.alias_group_id for item in actions),
+                    *runtime_inputs,
+                    *(
+                        self.alias_for_object(item.object_id)
+                        for item in mutation_values
+                    ),
+                    *(item.alias_group_id for item, _ in runtime_action_pairs),
                 )
             )
         )
         for alias_id in referenced_aliases:
             self.register_placeholder(alias_id)
-        identifiers = (ctypes.c_uint64 * len(input_alias_ids))(
-            *(_dense_id(value, "alias_") for value in input_alias_ids)
+        identifiers = (ctypes.c_uint64 * len(runtime_inputs))(
+            *(_dense_id(value, "alias_") for value in runtime_inputs)
         )
-        mutation_values = tuple(task.mutations)
         updates = (ObjectUpdate * len(mutation_values))(
             *(
                 ObjectUpdate(
@@ -138,11 +156,12 @@ class RuntimeBridge:
                 for item in mutation_values
             )
         )
+        runtime_actions_values = tuple(item for item, _ in runtime_action_pairs)
         encoded_action_labels = tuple(
             label.encode("utf-8") if label else None
-            for label in action_trace_labels
+            for _, label in runtime_action_pairs
         )
-        runtime_actions = (RuntimeAction * len(actions))(
+        runtime_actions = (RuntimeAction * len(runtime_actions_values))(
             *(
                 RuntimeAction(
                     _dense_id(item.alias_group_id, "alias_"),
@@ -150,24 +169,24 @@ class RuntimeBridge:
                     label,
                 )
                 for item, label in zip(
-                    actions, encoded_action_labels, strict=True
+                    runtime_actions_values, encoded_action_labels, strict=True
                 )
             )
         )
         description = ExecutionDescription(
             task_id=_dense_id(task.task_id, "task_"),
-            input_object_ids=identifiers if input_alias_ids else None,
-            input_count=len(input_alias_ids),
+            input_object_ids=identifiers if runtime_inputs else None,
+            input_count=len(runtime_inputs),
             updates=updates if mutation_values else None,
             update_count=len(mutation_values),
-            actions=runtime_actions if actions else None,
-            action_count=len(actions),
+            actions=runtime_actions if runtime_actions_values else None,
+            action_count=len(runtime_actions_values),
         )
         self._require(
             self.library.shadowspill_pytorch_admit_execution(ctypes.byref(description)),
             f"admit execution {task.task_id}",
         )
-        self._admitted_tasks[task.task_id] = len(input_alias_ids)
+        self._admitted_tasks[task.task_id] = runtime_inputs
         handle = ctypes.c_size_t()
         self._require(
             self.library.shadowspill_pytorch_resolve_execution(
@@ -329,6 +348,10 @@ class RuntimeBridge:
                 f"host payload for {alias_id!r} has {storage.nbytes()} bytes; "
                 f"the plan requires {expected}"
             )
+        if expected == 0:
+            self._registered.add(alias_id)
+            self._zero_generations.setdefault(alias_id, 0)
+            return
         self._require(
             self.library.shadowspill_pytorch_register_host_object(
                 _dense_id(alias_id, "alias_"),
@@ -344,6 +367,10 @@ class RuntimeBridge:
         """Register a logical alias bundle before its first production."""
 
         if alias_id in self._registered:
+            return
+        if not self.requires_storage(alias_id):
+            self._registered.add(alias_id)
+            self._zero_generations.setdefault(alias_id, 0)
             return
         self._require(
             self.library.shadowspill_pytorch_register_placeholder_object(
@@ -365,6 +392,8 @@ class RuntimeBridge:
                 f"runtime storage for {alias_id!r} has {storage.nbytes()} bytes; "
                 f"the plan requires {expected}"
             )
+        if expected == 0:
+            return
         self._require(
             self.library.shadowspill_pytorch_write_spill_object(
                 _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
@@ -382,6 +411,8 @@ class RuntimeBridge:
                 f"writeback storage for {alias_id!r} has {storage.nbytes()} bytes; "
                 f"the plan requires {expected}"
             )
+        if expected == 0:
+            return
         self._require(
             self.library.shadowspill_pytorch_read_spill_object(
                 _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
@@ -392,6 +423,10 @@ class RuntimeBridge:
     def unregister(self, alias_ids: Iterable[str]) -> None:
         for alias_id in dict.fromkeys(alias_ids):
             if alias_id not in self._registered:
+                continue
+            if not self.requires_storage(alias_id):
+                self._registered.remove(alias_id)
+                self._zero_generations.pop(alias_id, None)
                 continue
             self._require(
                 self.library.shadowspill_pytorch_unregister_object(
@@ -404,6 +439,9 @@ class RuntimeBridge:
     def bind_registered_tensor(
         self, alias_id: str, tensor: torch.Tensor
     ) -> ObjectBinding:
+        if not self.requires_storage(alias_id):
+            self._registered.add(alias_id)
+            return self._zero_binding(alias_id)
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
         self._require(
@@ -418,6 +456,9 @@ class RuntimeBridge:
         return binding
 
     def promote_output(self, alias_id: str, tensor: torch.Tensor) -> ObjectBinding:
+        if not self.requires_storage(alias_id):
+            self._registered.add(alias_id)
+            return self._zero_binding(alias_id)
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
         function = (
@@ -444,6 +485,11 @@ class RuntimeBridge:
             raise RuntimeExecutionError(
                 f"replacement object {alias_id!r} is not registered"
             )
+        if not self.requires_storage(alias_id):
+            self._zero_generations[alias_id] = (
+                self._zero_generations.get(alias_id, 0) + 1
+            )
+            return self._zero_binding(alias_id)
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
         self._require(
@@ -467,23 +513,45 @@ class RuntimeBridge:
 
         if not items:
             return ()
-        generations = torch.ops.shadowspill._adopt_storages(
-            [tensor for tensor, _ in items],
-            [_dense_id(alias_id, "alias_") for _, alias_id in items],
-            [self._size(alias_id) for _, alias_id in items],
-            [
-                2
-                if alias_id in replacement_aliases
-                else int(alias_id in self._registered)
-                for _, alias_id in items
-            ],
+        materialized = tuple(
+            (index, tensor, alias_id)
+            for index, (tensor, alias_id) in enumerate(items)
+            if self.requires_storage(alias_id)
         )
-        if len(generations) != len(items):
+        generations = (
+            torch.ops.shadowspill._adopt_storages(
+                [tensor for _, tensor, _ in materialized],
+                [_dense_id(alias_id, "alias_") for _, _, alias_id in materialized],
+                [self._size(alias_id) for _, _, alias_id in materialized],
+                [
+                    2
+                    if alias_id in replacement_aliases
+                    else int(alias_id in self._registered)
+                    for _, _, alias_id in materialized
+                ],
+            )
+            if materialized
+            else ()
+        )
+        if len(generations) != len(materialized):
             raise RuntimeExecutionError(
                 "storage adoption returned the wrong generation count"
             )
         self._registered.update(alias_id for _, alias_id in items)
-        return tuple(int(generation) for generation in generations)
+        result = [0] * len(items)
+        for (index, _tensor, _alias_id), generation in zip(
+            materialized, generations, strict=True
+        ):
+            result[index] = int(generation)
+        for index, (_tensor, alias_id) in enumerate(items):
+            if self.requires_storage(alias_id):
+                continue
+            if alias_id in replacement_aliases:
+                self._zero_generations[alias_id] = (
+                    self._zero_generations.get(alias_id, 0) + 1
+                )
+            result[index] = self._zero_generations.setdefault(alias_id, 0)
+        return tuple(result)
 
     def before_task(
         self,
@@ -491,38 +559,41 @@ class RuntimeBridge:
         stream: torch.cuda.Stream,
         input_alias_ids: tuple[str, ...],
     ) -> tuple[ObjectBinding, ...]:
-        bindings = (ObjectBinding * len(input_alias_ids))()
-        admitted_count = self._admitted_tasks.get(task_id)
-        if admitted_count is not None:
-            if admitted_count != len(input_alias_ids):
+        runtime_inputs = tuple(
+            alias_id for alias_id in input_alias_ids if self.requires_storage(alias_id)
+        )
+        bindings = (ObjectBinding * len(runtime_inputs))()
+        admitted_inputs = self._admitted_tasks.get(task_id)
+        if admitted_inputs is not None:
+            if admitted_inputs != runtime_inputs:
                 raise RuntimeExecutionError(
-                    f"admitted task {task_id} input count changed"
+                    f"admitted task {task_id} input storage contract changed"
                 )
             self._require(
                 self.library.shadowspill_pytorch_before_execution(
                     _dense_id(task_id, "task_"),
                     stream.cuda_stream,
-                    bindings if input_alias_ids else None,
-                    len(input_alias_ids),
+                    bindings if runtime_inputs else None,
+                    len(runtime_inputs),
                 ),
                 f"before admitted task {task_id}",
             )
-            return tuple(bindings)
-        identifiers = (ctypes.c_uint64 * len(input_alias_ids))(
-            *(_dense_id(value, "alias_") for value in input_alias_ids)
+            return self._expand_bindings(input_alias_ids, runtime_inputs, bindings)
+        identifiers = (ctypes.c_uint64 * len(runtime_inputs))(
+            *(_dense_id(value, "alias_") for value in runtime_inputs)
         )
         self._require(
             self.library.shadowspill_pytorch_before_task(
                 _dense_id(task_id, "task_"),
                 stream.cuda_stream,
-                identifiers if input_alias_ids else None,
-                len(input_alias_ids),
-                bindings if input_alias_ids else None,
-                len(input_alias_ids),
+                identifiers if runtime_inputs else None,
+                len(runtime_inputs),
+                bindings if runtime_inputs else None,
+                len(runtime_inputs),
             ),
             f"before task {task_id}",
         )
-        return tuple(bindings)
+        return self._expand_bindings(input_alias_ids, runtime_inputs, bindings)
 
     def acquire_for_caller(
         self,
@@ -535,27 +606,31 @@ class RuntimeBridge:
 
         if len(alias_ids) != len(tensors):
             raise RuntimeExecutionError("caller output binding count differs")
-        stream = torch.cuda.current_stream()
-        identifiers = (ctypes.c_uint64 * len(alias_ids))(
-            *(_dense_id(value, "alias_") for value in alias_ids)
+        runtime_aliases = tuple(
+            alias_id for alias_id in alias_ids if self.requires_storage(alias_id)
         )
-        bindings = (ObjectBinding * len(alias_ids))()
+        stream = torch.cuda.current_stream()
+        identifiers = (ctypes.c_uint64 * len(runtime_aliases))(
+            *(_dense_id(value, "alias_") for value in runtime_aliases)
+        )
+        bindings = (ObjectBinding * len(runtime_aliases))()
         task_open = False
         try:
             self._require(
                 self.library.shadowspill_pytorch_before_task(
                     task_number,
                     stream.cuda_stream,
-                    identifiers if alias_ids else None,
-                    len(alias_ids),
-                    bindings if alias_ids else None,
-                    len(alias_ids),
+                    identifiers if runtime_aliases else None,
+                    len(runtime_aliases),
+                    bindings if runtime_aliases else None,
+                    len(runtime_aliases),
                 ),
                 "acquire caller outputs",
             )
             task_open = True
+            expanded = self._expand_bindings(alias_ids, runtime_aliases, bindings)
             for alias_id, tensor, binding in zip(
-                alias_ids, tensors, bindings, strict=True
+                alias_ids, tensors, expanded, strict=True
             ):
                 self.rebind(tensor, alias_id, binding)
             self._require(
@@ -565,7 +640,7 @@ class RuntimeBridge:
                 "close caller output acquisition",
             )
             task_open = False
-            return tuple(bindings)
+            return expanded
         finally:
             if task_open:
                 self.abort_task()
@@ -585,8 +660,14 @@ class RuntimeBridge:
                 f"after admitted task {task_id}",
             )
             return
-        mutation_values = tuple(mutations)
-        action_values = tuple(actions)
+        mutation_values = tuple(
+            item
+            for item in mutations
+            if self.requires_storage(self.alias_for_object(item.object_id))
+        )
+        action_values = tuple(
+            item for item in actions if self.requires_storage(item.alias_group_id)
+        )
         updates = (ObjectUpdate * len(mutation_values))(
             *(
                 ObjectUpdate(
@@ -620,16 +701,19 @@ class RuntimeBridge:
     def submit_initial_actions(
         self, actions: tuple[MemoryAction, ...], *, task_number: int
     ) -> None:
-        if not actions:
+        runtime_actions_values = tuple(
+            item for item in actions if self.requires_storage(item.alias_group_id)
+        )
+        if not runtime_actions_values:
             return
         stream = torch.cuda.current_stream()
-        runtime_actions = (RuntimeAction * len(actions))(
+        runtime_actions = (RuntimeAction * len(runtime_actions_values))(
             *(
                 RuntimeAction(
                     _dense_id(item.alias_group_id, "alias_"),
                     _ACTION_KIND[item.kind],
                 )
-                for item in actions
+                for item in runtime_actions_values
             )
         )
         self._require(
@@ -639,7 +723,7 @@ class RuntimeBridge:
                 None,
                 0,
                 runtime_actions,
-                len(actions),
+                len(runtime_actions_values),
             ),
             "submit initial actions",
         )
@@ -656,6 +740,11 @@ class RuntimeBridge:
         for alias_id, tensor, binding in zip(alias_ids, tensors, bindings, strict=True):
             if alias_id in seen:
                 continue
+            if not self.requires_storage(alias_id):
+                self._registered.discard(alias_id)
+                self._zero_generations.pop(alias_id, None)
+                seen.add(alias_id)
+                continue
             torch.ops.shadowspill._transfer_storage_to_caller(
                 tensor,
                 _dense_id(alias_id, "alias_"),
@@ -668,6 +757,8 @@ class RuntimeBridge:
     def rebind(
         self, tensor: torch.Tensor, alias_id: str, binding: ObjectBinding
     ) -> None:
+        if not self.requires_storage(alias_id):
+            return
         torch.ops.shadowspill._rebind_storage(
             tensor,
             binding.pointer,
@@ -681,11 +772,14 @@ class RuntimeBridge:
     ) -> None:
         """Install bindings already validated by the runtime task boundary."""
 
-        if not items:
+        materialized = tuple(
+            item for item in items if self.requires_storage(item[1])
+        )
+        if not materialized:
             return
         torch.ops.shadowspill._acquire_storages(
-            [tensor for tensor, _, _ in items],
-            [binding.pointer for _, _, binding in items],
+            [tensor for tensor, _, _ in materialized],
+            [binding.pointer for _, _, binding in materialized],
         )
 
     def replace_many(
@@ -699,7 +793,7 @@ class RuntimeBridge:
     ) -> None:
         """Rebind all frontend views after a no-copy lease replacement."""
 
-        if not tensors:
+        if not tensors or not self.requires_storage(alias_id):
             return
         torch.ops.shadowspill._replace_storages(
             list(tensors),
@@ -715,17 +809,40 @@ class RuntimeBridge:
         task_id: int,
         device_ordinal: int,
         tensors: Sequence[torch.Tensor],
+        alias_ids: Sequence[str],
     ) -> tuple[int, ...]:
         """Run the admitted neutral boundary and install acquired storages."""
 
-        generations = torch.ops.shadowspill._before_execution_storages(
-            list(tensors), execution_handle, task_id, device_ordinal
+        if len(tensors) != len(alias_ids):
+            raise RuntimeExecutionError(
+                "task tensors and input aliases have different lengths"
+            )
+        materialized = tuple(
+            (index, tensor, alias_id)
+            for index, (tensor, alias_id) in enumerate(
+                zip(tensors, alias_ids, strict=True)
+            )
+            if self.requires_storage(alias_id)
         )
-        if len(generations) != len(tensors):
+        generations = torch.ops.shadowspill._before_execution_storages(
+            [tensor for _, tensor, _ in materialized],
+            execution_handle,
+            task_id,
+            device_ordinal,
+        )
+        if len(generations) != len(materialized):
             raise RuntimeExecutionError(
                 "task acquisition returned the wrong generation count"
             )
-        return tuple(int(generation) for generation in generations)
+        result = [0] * len(tensors)
+        for (index, _tensor, _alias_id), generation in zip(
+            materialized, generations, strict=True
+        ):
+            result[index] = int(generation)
+        for index, alias_id in enumerate(alias_ids):
+            if not self.requires_storage(alias_id):
+                result[index] = self._zero_generations.setdefault(alias_id, 0)
+        return tuple(result)
 
     def after_execution_and_update(
         self,
@@ -739,27 +856,45 @@ class RuntimeBridge:
     ) -> tuple[int, ...]:
         """Publish storages and one admitted completion/action batch."""
 
+        materialized = tuple(
+            (index, tensor, alias_id)
+            for index, (tensor, alias_id) in enumerate(adopted)
+            if self.requires_storage(alias_id)
+        )
         generations = torch.ops.shadowspill._after_execution_storages(
-            [tensor for tensor, _ in adopted],
-            [_dense_id(alias_id, "alias_") for _, alias_id in adopted],
-            [self._size(alias_id) for _, alias_id in adopted],
+            [tensor for _, tensor, _ in materialized],
+            [_dense_id(alias_id, "alias_") for _, _, alias_id in materialized],
+            [self._size(alias_id) for _, _, alias_id in materialized],
             [
                 2
                 if alias_id in replacement_aliases
                 else int(alias_id in self._registered)
-                for _, alias_id in adopted
+                for _, _, alias_id in materialized
             ],
             list(dematerialized),
             execution_handle,
             task_id,
             device_ordinal,
         )
-        if len(generations) != len(adopted):
+        if len(generations) != len(materialized):
             raise RuntimeExecutionError(
                 "task publication returned the wrong generation count"
             )
         self._registered.update(alias_id for _, alias_id in adopted)
-        return tuple(int(generation) for generation in generations)
+        result = [0] * len(adopted)
+        for (index, _tensor, _alias_id), generation in zip(
+            materialized, generations, strict=True
+        ):
+            result[index] = int(generation)
+        for index, (_tensor, alias_id) in enumerate(adopted):
+            if self.requires_storage(alias_id):
+                continue
+            if alias_id in replacement_aliases:
+                self._zero_generations[alias_id] = (
+                    self._zero_generations.get(alias_id, 0) + 1
+                )
+            result[index] = self._zero_generations.setdefault(alias_id, 0)
+        return tuple(result)
 
     def dematerialize(
         self, tensor: torch.Tensor, alias_id: str, generation: int
@@ -847,6 +982,46 @@ class RuntimeBridge:
         for alias_id in alias_ids:
             self._size(alias_id)
             self._registered.add(alias_id)
+            if not self.requires_storage(alias_id):
+                self._zero_generations.setdefault(alias_id, 0)
+
+    def requires_storage(self, alias_id: str) -> bool:
+        """Return whether an alias bundle owns any physical payload bytes."""
+
+        return self._size(alias_id) != 0
+
+    def _zero_binding(self, alias_id: str) -> ObjectBinding:
+        if self.requires_storage(alias_id):
+            raise AssertionError("zero binding requested for a materialized alias")
+        return ObjectBinding(
+            _dense_id(alias_id, "alias_"),
+            self._zero_generations.setdefault(alias_id, 0),
+            0,
+            0,
+            None,
+        )
+
+    def _expand_bindings(
+        self,
+        aliases: Sequence[str],
+        materialized_aliases: Sequence[str],
+        materialized_bindings: Sequence[ObjectBinding],
+    ) -> tuple[ObjectBinding, ...]:
+        if len(materialized_aliases) != len(materialized_bindings):
+            raise RuntimeExecutionError("runtime binding count differs")
+        iterator = iter(materialized_bindings)
+        result: list[ObjectBinding] = []
+        for alias_id in aliases:
+            result.append(
+                next(iterator)
+                if self.requires_storage(alias_id)
+                else self._zero_binding(alias_id)
+            )
+        try:
+            next(iterator)
+        except StopIteration:
+            return tuple(result)
+        raise RuntimeExecutionError("runtime returned excess object bindings")
 
     def _size(self, alias_id: str) -> int:
         try:

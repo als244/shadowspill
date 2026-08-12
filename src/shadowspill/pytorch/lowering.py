@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
@@ -32,7 +33,7 @@ from .compiled_layout import (
     replacement_transition_bytes,
 )
 from .contracts import CaptureError
-from .output_contract import StorageRoot, StorageRootKind
+from .output_contract import StorageRoot, StorageRootKind, TaskStorageContract
 from .partition import PartitionedExport, StageExample
 from .profiling import TaskMeasurement
 
@@ -55,6 +56,21 @@ class RegistrationBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskStorageHandoff:
+    """Transfer one task-input lease to a distinct returned logical object.
+
+    Inductor may return an input allocation for a logically distinct output.
+    The relationship is local to this invocation: it must not merge the two
+    objects' alias groups globally.  A handoff is legal only when the selected
+    schedule releases ``source_object_id`` at the same task boundary.
+    """
+
+    leaf_index: int
+    source_object_id: str
+    destination_object_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class TaskEntrypoint:
     """Framework-only executable binding for one canonical task."""
 
@@ -64,6 +80,7 @@ class TaskEntrypoint:
     input_slots: tuple[TensorSlot, ...]
     output_slots: tuple[TensorSlot, ...]
     replacement_output_leaves: tuple[int, ...] = ()
+    storage_handoffs: tuple[TaskStorageHandoff, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,25 +214,40 @@ class ObjectCatalog:
             index_by_tensor_key=False,
         )
 
-    def associate_output_view(
+    def validate_canonical_output_view(
         self,
         tensor: torch.Tensor,
         object_id: str,
         *,
         alias_id: str,
         offset_bytes: int,
-    ) -> str:
-        """Bind a canonical semantic object to an offline output contract."""
+    ) -> None:
+        """Validate a compiled output against an existing canonical object.
+
+        This deliberately never merges alias groups.  Compiled input reuse is
+        a task-local lease handoff, not proof that two cross-task objects share
+        one permanent residency bundle.
+        """
 
         self._tensor_keepalive.append(tensor)
         record = self._record(object_id)
         if record.alias_group_id != alias_id:
-            self._merge_alias_groups(record.alias_group_id, alias_id)
-            alias_id = record.alias_group_id
+            raise CaptureError("canonical output changed its alias group")
         if offset_bytes + _view_extent_bytes(tensor) > self._alias_sizes[alias_id]:
             raise CaptureError("canonical output exceeds its declared storage")
-        record.offset_bytes = offset_bytes
-        return alias_id
+        if record.offset_bytes != offset_bytes:
+            raise CaptureError(
+                "canonical output changed its storage offset: "
+                f"object={object_id}, expected={record.offset_bytes}, "
+                f"actual={offset_bytes}"
+            )
+        size_bytes = int(tensor.numel()) * tensor.element_size()
+        if record.size_bytes != size_bytes:
+            raise CaptureError(
+                "canonical output changed its logical byte size: "
+                f"object={object_id}, expected={record.size_bytes}, "
+                f"actual={size_bytes}"
+            )
 
     def _add(
         self,
@@ -253,24 +285,6 @@ class ObjectCatalog:
             role=role,
             persistence=persistence,
         )
-
-    def _merge_alias_groups(self, destination_alias: str, source_alias: str) -> None:
-        """Unify two names proven to represent one physical residency bundle."""
-
-        if destination_alias == source_alias:
-            return
-        if self._alias_sizes[destination_alias] != self._alias_sizes[source_alias]:
-            raise CaptureError("compiled aliases have incompatible byte extents")
-        for record in self._objects:
-            if record.alias_group_id == source_alias:
-                record.alias_group_id = destination_alias
-        for storage, alias_id in tuple(self._alias_by_storage.items()):
-            if alias_id == source_alias:
-                self._alias_by_storage[storage] = destination_alias
-        if source_alias in self._retain_host:
-            self._retain_host.add(destination_alias)
-            self._retain_host.remove(source_alias)
-        del self._alias_sizes[source_alias]
 
     def _new_alias(self, size_bytes: int) -> str:
         alias_id = f"alias_{self._next_alias_id:06d}"
@@ -336,34 +350,6 @@ class ObjectCatalog:
     def alias_id(self, object_id: str) -> str:
         return self._record(object_id).alias_group_id
 
-    def merge_object_aliases(self, destination_id: str, source_id: str) -> None:
-        """Record that a graph output is exactly one of the graph inputs."""
-
-        destination = self._record(destination_id)
-        source = self._record(source_id)
-        destination_alias = destination.alias_group_id
-        source_alias = source.alias_group_id
-        if destination_alias == source_alias:
-            return
-        if (
-            self._alias_sizes[destination_alias] != self._alias_sizes[source_alias]
-            or destination.offset_bytes != source.offset_bytes
-            or destination.size_bytes != source.size_bytes
-        ):
-            raise CaptureError(
-                "an aliased graph output has incompatible input geometry"
-            )
-        for record in self._objects:
-            if record.alias_group_id == destination_alias:
-                record.alias_group_id = source_alias
-        for storage, alias_id in tuple(self._alias_by_storage.items()):
-            if alias_id == destination_alias:
-                self._alias_by_storage[storage] = source_alias
-        if destination_alias in self._retain_host:
-            self._retain_host.add(source_alias)
-            self._retain_host.remove(destination_alias)
-        del self._alias_sizes[destination_alias]
-
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
         if record.role in {ObjectRole.OTHER, ObjectRole.ACTIVATION}:
@@ -407,17 +393,16 @@ class TaskBindingResolver:
         artifact: GraphArtifact,
         input_slots: tuple[TensorSlot, ...],
         layout: CompiledTaskLayout,
+        *,
+        storage_contract: TaskStorageContract | None = None,
     ) -> None:
         self._inventory = inventory
-        if layout.contract_digest != artifact.storage_contract.compatibility_digest:
+        contract = storage_contract or artifact.storage_contract
+        if layout.contract_digest != contract.compatibility_digest:
             raise CaptureError("compiled task layout belongs to another contract")
         self._layout = layout
-        self._views = {
-            item.leaf_index: item for item in artifact.storage_contract.output_views
-        }
-        self._roots = {
-            item.root_id: item for item in artifact.storage_contract.roots
-        }
+        self._views = {item.leaf_index: item for item in contract.output_views}
+        self._roots = {item.root_id: item for item in contract.roots}
         self._input_by_position = {
             item.leaf_index: item.object_id for item in input_slots
         }
@@ -427,18 +412,21 @@ class TaskBindingResolver:
             item.replacement_output_leaf: self._resolve_input_object(
                 item.input_position
             )
-            for item in artifact.storage_contract.mutations
+            for item in contract.mutations
             if item.replacement_output_leaf is not None
+            and self._root_for_leaf(item.replacement_output_leaf).kind
+            is StorageRootKind.FRESH
         }
         self._mutation_objects = tuple(
             dict.fromkeys(
                 self._resolve_input_object(item.input_position)
-                for item in artifact.storage_contract.mutations
+                for item in contract.mutations
             )
         )
         self._view_by_identity: dict[
             tuple[str, int, tuple[int, ...], tuple[int, ...], torch.dtype], str
         ] = {}
+        self._handoff_by_destination: dict[str, TaskStorageHandoff] = {}
 
     def bind(
         self,
@@ -458,6 +446,11 @@ class TaskBindingResolver:
             )
         root = self._roots[view.root_id]
         replacement_object = self._replacement_by_leaf.get(leaf_index)
+        source_object = (
+            self._resolve_input_object(root.source_input)
+            if root.kind is StorageRootKind.INPUT and root.source_input is not None
+            else None
+        )
         if replacement_object is not None:
             if (
                 canonical_object_id is not None
@@ -474,6 +467,40 @@ class TaskBindingResolver:
                     "functional mutation allocation is smaller than its target storage"
                 )
             self._alias_by_fresh_root[root.root_id] = alias_id
+        elif canonical_object_id is not None:
+            alias_id = self._inventory.alias_id(canonical_object_id)
+            if source_object is not None:
+                source_alias = self._inventory.alias_id(source_object)
+                if source_alias != alias_id:
+                    source_bytes = self._inventory.alias_size(source_alias)
+                    destination_bytes = self._inventory.alias_size(alias_id)
+                    if source_bytes != destination_bytes:
+                        raise CaptureError(
+                            "task-local storage handoff changes physical extent: "
+                            f"source={source_object} ({source_bytes}), "
+                            f"destination={canonical_object_id} "
+                            f"({destination_bytes})"
+                        )
+                    existing_handoff = self._handoff_by_destination.get(alias_id)
+                    handoff = TaskStorageHandoff(
+                        leaf_index, source_object, canonical_object_id
+                    )
+                    if (
+                        existing_handoff is not None
+                        and existing_handoff.source_object_id != source_object
+                    ):
+                        raise CaptureError(
+                            "one task output receives storage from multiple inputs"
+                        )
+                    self._handoff_by_destination.setdefault(alias_id, handoff)
+            elif root.kind is StorageRootKind.FRESH:
+                compiled_root = self._layout.root(root.root_id)
+                if compiled_root.charged_bytes != self._inventory.alias_size(alias_id):
+                    raise CaptureError(
+                        "compiled output allocation differs from its canonical "
+                        "physical extent"
+                    )
+                self._alias_by_fresh_root[root.root_id] = alias_id
         else:
             alias_id = self._resolve_alias(root)
         compiled_view = next(
@@ -495,15 +522,15 @@ class TaskBindingResolver:
         if canonical_object_id is not None:
             object_id = canonical_object_id
             if existing is not None and existing != object_id:
-                self._inventory.merge_object_aliases(object_id, existing)
-            alias_id = self._inventory.associate_output_view(
+                raise CaptureError(
+                    "one compiled output view maps to multiple canonical objects"
+                )
+            self._inventory.validate_canonical_output_view(
                 tensor,
                 object_id,
                 alias_id=alias_id,
                 offset_bytes=offset_bytes,
             )
-            if root.kind is StorageRootKind.FRESH:
-                self._alias_by_fresh_root[root.root_id] = alias_id
             view_identity = (
                 alias_id,
                 offset_bytes,
@@ -536,6 +563,17 @@ class TaskBindingResolver:
 
         return tuple(sorted(self._replacement_by_leaf))
 
+    @property
+    def storage_handoffs(self) -> tuple[TaskStorageHandoff, ...]:
+        """Task-local input-to-output lease transfers, ordered by leaf."""
+
+        return tuple(
+            sorted(
+                self._handoff_by_destination.values(),
+                key=lambda item: item.leaf_index,
+            )
+        )
+
     def _resolve_input_object(self, contract_position: int) -> str:
         if contract_position >= len(self._artifact_input_position):
             raise CaptureError("task mutation has an invalid input position")
@@ -546,6 +584,14 @@ class TaskBindingResolver:
             raise CaptureError(
                 "task mutation target is absent from its tensor input slots"
             ) from exc
+
+    def _root_for_leaf(self, leaf_index: int) -> StorageRoot:
+        view = self._views.get(leaf_index)
+        if view is None:
+            raise CaptureError(
+                f"functional mutation output leaf {leaf_index} has no storage root"
+            )
+        return self._roots[view.root_id]
 
     def _resolve_alias(self, root: StorageRoot) -> str:
         if root.kind is StorageRootKind.FRESH:
@@ -581,9 +627,7 @@ def resolve_stage_input_slots(
     if len(stage.input_sources) != len(input_leaves):
         raise CaptureError("stage input provenance arity changed")
     slots: list[TensorSlot] = []
-    for compact_index, stage_position in enumerate(
-        artifact.tensor_argument_positions
-    ):
+    for compact_index, stage_position in enumerate(artifact.tensor_argument_positions):
         if stage_position >= len(input_leaves) or not isinstance(
             input_leaves[stage_position], torch.Tensor
         ):
@@ -621,6 +665,7 @@ def lower_forward_program(
     artifacts: tuple[GraphArtifact, ...],
     measurements: tuple[TaskMeasurement, ...],
     *,
+    storage_contracts: Mapping[str, TaskStorageContract] | None = None,
     device_ordinal: int = 0,
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
@@ -672,16 +717,22 @@ def lower_forward_program(
     profiles: list[TaskProfile] = []
     profile_by_key: dict[tuple[object, ...], str] = {}
     profile_ids: list[str] = []
-    compiled_layouts = tuple(
-        reconcile_compiled_task_layout(artifact.storage_contract, measurement)
-        for artifact, measurement in zip(artifacts, measurements, strict=True)
-    )
-    for artifact, measurement, layout in zip(
-        artifacts, measurements, compiled_layouts, strict=True
-    ):
-        transition_bytes = replacement_transition_bytes(
-            artifact.storage_contract, layout
+    contracts = tuple(
+        (
+            artifact.storage_contract
+            if storage_contracts is None
+            else storage_contracts[artifact.compatibility_digest]
         )
+        for artifact in artifacts
+    )
+    compiled_layouts = tuple(
+        reconcile_compiled_task_layout(contract, measurement)
+        for contract, measurement in zip(contracts, measurements, strict=True)
+    )
+    for artifact, contract, measurement, layout in zip(
+        artifacts, contracts, measurements, compiled_layouts, strict=True
+    ):
+        transition_bytes = replacement_transition_bytes(contract, layout)
         key = (
             artifact.compatibility_digest,
             measurement.runtime_ns,
@@ -707,8 +758,8 @@ def lower_forward_program(
     produced_aliases: set[str] = set()
     last_output_objects: list[str] = []
     stage_output_objects: list[dict[int, str]] = []
-    for index, (stage, artifact, profile_id) in enumerate(
-        zip(partitioned.stages, artifacts, profile_ids, strict=True)
+    for index, (stage, artifact, contract, profile_id) in enumerate(
+        zip(partitioned.stages, artifacts, contracts, profile_ids, strict=True)
     ):
         input_slots = list(
             resolve_stage_input_slots(
@@ -725,7 +776,11 @@ def lower_forward_program(
         output_leaves, _ = tree_flatten(stage.output)
         layout = compiled_layouts[index]
         output_resolver = TaskBindingResolver(
-            inventory, artifact, tuple(input_slots), layout
+            inventory,
+            artifact,
+            tuple(input_slots),
+            layout,
+            storage_contract=contract,
         )
         output_slots: list[TensorSlot] = []
         output_objects: list[str] = []
@@ -778,6 +833,7 @@ def lower_forward_program(
                 tuple(input_slots),
                 tuple(output_slots),
                 output_resolver.replacement_output_leaves,
+                output_resolver.storage_handoffs,
             )
         )
 
@@ -835,6 +891,7 @@ __all__ = [
     "LoweredForwardProgram",
     "RegistrationBinding",
     "TaskEntrypoint",
+    "TaskStorageHandoff",
     "TensorSlot",
     "lower_forward_program",
 ]

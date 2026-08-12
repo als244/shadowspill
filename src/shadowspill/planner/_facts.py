@@ -77,6 +77,9 @@ def build_facts(
     aliases = program.alias_groups
     alias_ids = tuple(item.alias_group_id for item in aliases)
     alias_index = {value: index for index, value in enumerate(alias_ids)}
+    zero_aliases = {
+        index for index, item in enumerate(aliases) if item.size_bytes == 0
+    }
     initial = _residency_map(initial_residency, field="initial_residency")
     final = _residency_map(final_residency, field="final_residency")
     for field, values in (("initial_residency", initial), ("final_residency", final)):
@@ -105,16 +108,30 @@ def build_facts(
     produced_aliases: set[int] = set()
 
     for alias_id, location in initial.items():
-        if location is MemoryLocation.DEVICE:
-            anchor_sets[alias_index[alias_id]].add(-1)
+        alias_number = alias_index[alias_id]
+        if location is MemoryLocation.DEVICE and alias_number not in zero_aliases:
+            anchor_sets[alias_number].add(-1)
 
     ideal_time = 0
     ideal_end: list[int] = []
     for index, task in enumerate(tasks):
-        input_aliases = {object_alias[object_id] for object_id in task.inputs}
-        output_aliases = {object_alias[object_id] for object_id in task.outputs}
+        input_aliases = {
+            alias
+            for object_id in task.inputs
+            for alias in (object_alias[object_id],)
+            if alias not in zero_aliases
+        }
+        output_aliases = {
+            alias
+            for object_id in task.outputs
+            for alias in (object_alias[object_id],)
+            if alias not in zero_aliases
+        }
         mutation_aliases = {
-            object_alias[mutation.object_id] for mutation in task.mutations
+            alias
+            for mutation in task.mutations
+            for alias in (object_alias[mutation.object_id],)
+            if alias not in zero_aliases
         }
         for alias_number in input_aliases | mutation_aliases:
             anchor_sets[alias_number].add(index - 1)
@@ -140,12 +157,15 @@ def build_facts(
         ideal_end.append(ideal_time)
 
     for alias_id, location in final.items():
-        if location is MemoryLocation.DEVICE:
-            anchor_sets[alias_index[alias_id]].add(len(tasks) - 1)
+        alias_number = alias_index[alias_id]
+        if location is MemoryLocation.DEVICE and alias_number not in zero_aliases:
+            anchor_sets[alias_number].add(len(tasks) - 1)
 
     for task in tasks:
         for object_id in task.inputs:
             alias_number = object_alias[object_id]
+            if alias_number in zero_aliases:
+                continue
             if not anchor_sets[alias_number]:
                 continue
             first_anchor = min(anchor_sets[alias_number])

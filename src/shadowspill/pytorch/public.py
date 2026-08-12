@@ -7,7 +7,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -205,6 +205,11 @@ class PlanGraphProfile:
     semantic_roots: tuple[PlanStorageRoot, ...]
     semantic_output_views: tuple[PlanOutputView, ...]
     semantic_mutations: tuple[PlanMutationBinding, ...]
+    executable_contract_digest: str
+    executable_contract_capture_ns: int
+    executable_roots: tuple[PlanStorageRoot, ...]
+    executable_output_views: tuple[PlanOutputView, ...]
+    executable_mutations: tuple[PlanMutationBinding, ...]
     compiled_layout_digest: str
     compiled_roots: tuple[PlanCompiledRoot, ...]
     compiled_output_views: tuple[PlanCompiledOutputView, ...]
@@ -242,6 +247,17 @@ class PlanGraphProfile:
             ],
             "semantic_mutations": [
                 item.as_dict() for item in self.semantic_mutations
+            ],
+            "executable_contract_digest": self.executable_contract_digest,
+            "executable_contract_capture_ns": (
+                self.executable_contract_capture_ns
+            ),
+            "executable_roots": [item.as_dict() for item in self.executable_roots],
+            "executable_output_views": [
+                item.as_dict() for item in self.executable_output_views
+            ],
+            "executable_mutations": [
+                item.as_dict() for item in self.executable_mutations
             ],
             "compiled_layout_digest": self.compiled_layout_digest,
             "compiled_roots": [item.as_dict() for item in self.compiled_roots],
@@ -330,6 +346,7 @@ class PlanTaskStage:
     unique_stage_id: str
     structural_abi_key: str
     semantic_contract_digest: str | None
+    executable_contract_digest: str | None
     compiled_layout_digest: str | None
     graph_pair_variant: str | None
     chosen_graph_pair_variant: str | None
@@ -347,6 +364,7 @@ class PlanTaskStage:
             "unique_stage_id": self.unique_stage_id,
             "structural_abi_key": self.structural_abi_key,
             "semantic_contract_digest": self.semantic_contract_digest,
+            "executable_contract_digest": self.executable_contract_digest,
             "compiled_layout_digest": self.compiled_layout_digest,
             "graph_pair_variant": self.graph_pair_variant,
             "chosen_graph_pair_variant": self.chosen_graph_pair_variant,
@@ -467,6 +485,7 @@ class PlanReport:
     spill_budget_bytes: int
     execution_device: int
     transfer_capabilities: TransferCapabilities
+    optimizer_ordering: str | None = None
     initial_execution_plan: ExecutionPlan | None = None
     recomputation_cache_hits: int = 0
     recomputation_cache_misses: int = 0
@@ -802,19 +821,27 @@ def plan_forward(
 
     from .session import build_forward
 
-    return build_forward(
-        model,
-        example_inputs=example_inputs,
-        memory=runtime._resolve_plan(
-            execution=execution,
-            spill=spill,
-            execution_budget=execution_budget,
-            spill_budget=spill_budget,
-            execution_device=execution_device,
-        ),
-        partition=partition,
-        verbose=verbose,
+    memory = runtime._resolve_plan(
+        execution=execution,
+        spill=spill,
+        execution_budget=execution_budget,
+        spill_budget=spill_budget,
+        execution_device=execution_device,
     )
+    try:
+        return build_forward(
+            model,
+            example_inputs=example_inputs,
+            memory=memory,
+            partition=partition,
+            verbose=verbose,
+        )
+    except BaseException as error:
+        try:
+            runtime._abort_plan()
+        except BaseException as cleanup_error:
+            error.add_note(f"Runtime planning cleanup also failed: {cleanup_error}")
+        raise
 
 
 def plan_step(
@@ -830,6 +857,7 @@ def plan_step(
     spill_budget: int | None = None,
     execution_device: int | str | torch.device | None = None,
     partition: str = "auto",
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
@@ -841,21 +869,30 @@ def plan_step(
 
     from .training_session import build_training
 
-    return build_training(
-        model,
-        objective=objective,
-        opt=opt,
-        example_inputs=example_inputs,
-        memory=runtime._resolve_plan(
-            execution=execution,
-            spill=spill,
-            execution_budget=execution_budget,
-            spill_budget=spill_budget,
-            execution_device=execution_device,
-        ),
-        partition=partition,
-        verbose=verbose,
+    memory = runtime._resolve_plan(
+        execution=execution,
+        spill=spill,
+        execution_budget=execution_budget,
+        spill_budget=spill_budget,
+        execution_device=execution_device,
     )
+    try:
+        return build_training(
+            model,
+            objective=objective,
+            opt=opt,
+            example_inputs=example_inputs,
+            memory=memory,
+            partition=partition,
+            optimizer_ordering=optimizer_ordering,
+            verbose=verbose,
+        )
+    except BaseException as error:
+        try:
+            runtime._abort_plan()
+        except BaseException as cleanup_error:
+            error.add_note(f"Runtime planning cleanup also failed: {cleanup_error}")
+        raise
 
 
 __all__ = [

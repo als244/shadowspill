@@ -135,6 +135,27 @@ void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table) {
     *table = (ShadowSpillExecutionTable){0};
 }
 
+void shadowspill_execution_table_clear(ShadowSpillExecutionTable *table) {
+    if (table == NULL || !table->lock_initialized) {
+        return;
+    }
+    pthread_rwlock_wrlock(&table->lock);
+    ShadowSpillExecutionRecord *record = table->owned_head;
+    table->owned_head = NULL;
+    memset(
+        table->by_id,
+        0,
+        (size_t)table->bucket_count * sizeof(*table->by_id)
+    );
+    pthread_rwlock_unlock(&table->lock);
+
+    while (record != NULL) {
+        ShadowSpillExecutionRecord *next = record->ownership_next;
+        destroy_record(record);
+        record = next;
+    }
+}
+
 ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
     ShadowSpillExecutionTable *table,
     uint64_t task_id
@@ -349,6 +370,31 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
     created->ownership_next = table->owned_head;
     table->owned_head = created;
     pthread_rwlock_unlock(&table->lock);
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
+    ShadowSpillRuntime *runtime
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    if (atomic_load_explicit(
+            &runtime->registered_objects, memory_order_acquire
+        ) != 0U ||
+        atomic_load_explicit(
+            &runtime->actions.count, memory_order_acquire
+        ) != 0U ||
+        atomic_load_explicit(
+            &runtime->pending_retirements, memory_order_acquire
+        ) != 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    shadowspill_execution_table_clear(&runtime->execution);
     return SHADOWSPILL_RUNTIME_OK;
 }
 

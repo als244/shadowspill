@@ -19,6 +19,12 @@ forward/backward operation provider. Results and large eager checkpoints are
 written beneath the gitignored `qualification/results/` tree with a
 `pytorch_` or `mlops_` filename prefix.
 
+Optimizer updates are grouped by captured training stage and placed immediately
+after that stage's final-microbatch backward task by default. Pass
+`--optimizer-ordering tail` only for an explicit ordering comparison. Each run
+persists the immutable `<case>_plan_report.pt` object in addition to its JSON
+summary and direct PressureFit fixtures.
+
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint followed by bitwise replay,
 real EVICT/FETCH traffic, selected recomputation, numerical tolerances, and the

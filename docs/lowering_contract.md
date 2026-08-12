@@ -1,237 +1,318 @@
 # PyTorch lowering contract
 
-ShadowSpill lowers a compiled PyTorch task in two deliberately separate steps:
+ShadowSpill separates logical PyTorch semantics, the optimized executable ABI,
+and measured physical costs. None of these layers is allowed to impersonate
+another:
 
 ```text
-Export/AOT FX semantics
-    -> TaskStorageContract
-    -> compiled physical-layout profile
-    -> canonical Program objects
-    -> PressureFit / simulator / runtime
+Export / AOTAutograd FX
+    │ logical values, public outputs, saved values, mutations
+    ▼
+AOT semantic TaskStorageContract
+    │ the contract presented to Inductor
+    ▼
+Inductor optimized FX (captured before code generation)
+    │ value rewrites and candidate output provenance
+    ▼
+Inductor GraphLowering output manifest
+    │ final executable buffers, aliases, views, layouts, mutations
+    ▼
+ExecutableTaskManifest
+    │ validated by isolated execution; never inferred from it
+    ▼
+CompiledTaskLayout
+    │ extents, allocation lifetimes, workspace, provider growth, timing
+    ▼
+canonical Program → PressureFit → simulator → runtime
 ```
 
-Graph semantics are the sole authority for object identity, aliases, views,
-and mutations. Compilation and profiling describe how those objects are
-physically realized and how much time and memory the executable consumes. A
-physical observation may reject an inconsistent contract, but it must never
-create, merge, or split semantic objects.
+The central rule is that allocator telemetry measures physical realization; it
+never discovers object identity. Conversely, an AOT graph describes logical
+values but cannot be assumed to describe the output-storage ABI of the graph
+after Inductor optimization.
 
 ## Component contracts
 
-### PyTorch capture
+### 1. Export and AOTAutograd: logical program authority
 
-Strict Export and AOTAutograd provide normalized functional FX graphs with
-explicit task inputs and outputs. The capture boundary is responsible for:
+Strict Export and AOTAutograd provide normalized functional FX graphs. This
+layer owns:
 
-- tensor and static argument structure;
-- operator and output-node provenance;
-- output pytrees;
-- top-level state and user-input mutations;
-- forward/backward graph pairs and legal recomputation alternatives.
+- tensor and guarded static argument structure;
+- public output and saved-value positions;
+- forward/backward graph pairs and legal recomputation variants;
+- top-level state and user-input mutations from `ExportGraphSignature`;
+- logical dependencies between stages.
 
-Every opaque operation must provide the fake/meta, shape, alias, mutation, and
-autograd contracts required by PyTorch compilation. An operation that hides an
-alias or mutation from PyTorch cannot be repaired safely by ShadowSpill.
+Every opaque operation must provide correct fake/meta, alias, mutation, and
+autograd contracts to PyTorch. ShadowSpill fails closed when one of those
+contracts is absent or ambiguous.
 
-### Semantic lowering
+The AOT graph is not the final executable storage ABI. Inductor is allowed to
+rewrite it while preserving values. For example, post-gradient optimization
+turns `x * ones_like(x)` into `x`; a logically fresh AOT output is therefore an
+input alias in the compiled callable.
 
-Semantic lowering consumes only the functional graph, representative guarded
-geometry, and PyTorch operator contracts. It emits an immutable
-`TaskStorageContract` containing:
+### 2. AOT semantic contract: compiler-input diagnostics
 
-- dense storage roots that originate at an input or a fresh producer result;
+`GraphArtifact.storage_contract` records the storage semantics presented to
+Inductor. A `TaskStorageContract` contains:
+
+- dense roots originating at a task input or fresh producer/result;
 - output views with root, shape, stride, dtype, offset, and minimum span;
-- input and state mutations;
+- functional and dispatcher-schema mutations;
 - deterministic provenance and a compatibility digest.
 
-It performs no CUDA execution, allocator tracing, or performance profiling and
-does not import private Inductor implementation modules. Fresh FakeTensor/meta
-evaluation may be used to calculate geometry, but FakeTensor storage identity
-is never semantic evidence.
+It is extracted offline from FX provenance and operator schemas. A fresh
+FakeTensor/meta evaluation supplies geometry only. FakeTensor storage identity,
+CUDA execution, allocator tracing, and performance profiling are prohibited.
 
-If an alias cannot be proven, lowering fails before model mutation. It does not
-fall back to allocator telemetry or coincidental FakeTensor storage.
+This contract remains useful for proving what Inductor changed and for
+diagnostics. It is not used blindly for runtime bindings.
 
-Export functionalizes state updates as fresh replacement outputs. ShadowSpill
-keeps that functional result intact: the semantic contract records both its
-fresh root and the signature-declared input object that it replaces. No
-`aten.copy_` is inserted. At `after_task`, the runtime atomically installs the
-fresh allocation as the canonical object's next execution lease, retires the
-old lease behind the task-completion fence, and the frontend rebinds every
-registered view of that alias bundle. This preserves registered Tensor
-identity while avoiding an extra device-to-device copy and its bandwidth cost.
+### 3. Inductor compiler contract: task-boundary storage authority
 
-### Compiled physical layout and profiling
+ShadowSpill's narrow compiler adapter invokes the existing `compile_fx`
+boundary and captures two compiler-authored representations. The optimized FX
+graph records value-level rewrites such as input passthrough. Inductor's final
+`GraphLowering.graph_outputs` records the concrete buffers and layouts that its
+generated wrapper returns. ShadowSpill normalizes both offline and stores them
+in an immutable `ExecutableTaskManifest` beside the callable.
 
-The isolated compiled-task profile reconciles the already-established semantic
-roots with the executable. It records:
+This layer owns:
 
-- output allocation ordinals and actual output offsets;
-- requested and allocator-charged physical extents;
-- allocation lifetime and reuse information;
-- anonymous and opaque workspace high-water;
-- task duration and provider growth.
+- whether a compiled output is fresh or aliases an input;
+- whether disjoint pieces of one lazy FX value are materialized as independent
+  executable buffers;
+- which returned views share one final executable buffer;
+- executable output offsets, strides, and extents before physical execution;
+- the mutation ABI retained by the optimized graph.
 
-This layer validates that the compiler preserved the graph contract and
-provides the physical quantities required by PressureFit and slab admission.
-It cannot change root identity or alias relationships.
+The optimized FX contract is diagnostic provenance, not the final allocation
+authority. GraphLowering may independently realize disjoint views of one lazy
+FX root while scheduling or fusing kernels. Consequently, one optimized-FX
+root need not equal one wrapper-visible allocation. The GraphLowering contract
+is authoritative for final executable roots and physical-layout
+reconciliation.
 
-### Program construction and runtime
+The adapter executes no CUDA work and consults no allocator telemetry. It is
+the only module that imports PyTorch's private Inductor compilation entrypoint
+and compatibility helper. Those dependencies are explicitly version-checked
+and confined to the PyTorch frontend; the IR, simulator, planner, and runtime
+do not depend on Inductor.
 
-Program lowering resolves task-local roots against canonical cross-task
-objects, saved values, gradients, parameters, buffers, and optimizer state.
-PressureFit and the simulator operate only on that canonical Program. The
-runtime executes the selected actions and verifies the admitted physical
-layout; it does not rediscover graph semantics.
+PyTorch currently has no public API that returns the final GraphLowering
+storage manifest beside a compiled callable. A public custom backend sees the
+pre-Inductor FX graph, while the ordinary compiled callable discards the
+GraphLowering object after constructing `CompiledFxGraph`. The version-pinned
+adapter captures that already-existing object during compilation rather than
+copying Inductor's pipeline or reconstructing its result from pointers.
 
-## Existing approach versus the new contract
+The adapter validates that optimization preserves tensor output leaves,
+geometry, and explicit mutation targets. Alias changes are legal and recorded.
+An unsupported ABI rewrite fails during compilation with both contracts in the
+diagnostic.
 
-The old implementation conflates semantic tensor identity with observed
-physical allocation behavior. The replacement separates those concerns.
+### 4. Compiled physical layout: measurement authority
 
-| Question | Existing approach | New approach |
+Isolated structural profiling produces `CompiledTaskLayout` from allocator and
+provider observations:
+
+- output allocation ordinals and actual view offsets;
+- requested and charged physical extents;
+- allocation/free lifetime and reuse geometry;
+- anonymous or opaque workspace high-water;
+- bounded persistent provider growth;
+- CUDA-event task duration.
+
+Reconciliation uses the GraphLowering executable manifest, not either earlier
+FX contract.
+An input-root output must be observed at that input; a fresh root must have one
+compatible output allocation; distinct simultaneously-live roots cannot be
+merged. Any disagreement fails closed.
+
+Opaque custom-operation workspace is necessarily measured unless the provider
+declares it. Inductor can expose wrapper-visible temporary buffers, but it
+cannot see private allocations inside an opaque CUDA/Triton/library call.
+Telemetry therefore remains a physical validation and admission mechanism,
+not a semantic-lowering mechanism.
+
+### 5. Program lowering and runtime
+
+`ObjectCatalog` owns cross-task objects and alias bundles.
+`TaskBindingResolver` combines one executable storage contract, its compiled
+layout, and predecoded task inputs. Forward, backward, recomputation,
+inference, and optimizer tasks use this same path.
+
+Program lowering is responsible for saved values, stage boundaries, gradient
+contributions, parameters, buffers, optimizer state, and public outputs.
+PressureFit and the simulator consume only the resulting canonical `Program`.
+The runtime enforces that plan; it never rediscovers graph semantics.
+
+Residency is always alias-bundle based. Initial residency is also classified
+by alias bundle, not individual view object: if any view of an alias is
+produced by a task, another view cannot cause that same alias to be treated as
+an external input.
+
+## Mutation semantics without copies
+
+Export normally represents state mutation as a fresh returned replacement.
+ShadowSpill does not insert `aten.copy_`. The executable contract associates
+that leaf with the canonical state object. At `after_task`, the runtime swaps
+the new memory lease into the object, retires the old generation behind the
+task fence, and the frontend rebinds every registered view. The simultaneous
+old/new extent is charged explicitly as transition workspace.
+
+Inductor may prove a mutation is a no-op and return the target input itself.
+That is legal only when the replacement aliases the same canonical input. It
+requires no generation swap or transition extent. A replacement that aliases
+a different input fails closed because silently merging distinct user objects
+would be incorrect.
+
+## Existing approach versus this contract
+
+| Question | Fragile mixed-authority path | Current contract |
 |---|---|---|
-| Is an output newly created or an alias? | Infer from FakeTensor storage identity and allocator traces | Derive from FX provenance and operator alias schemas |
-| Does an output alias a task input? | Guess from matching captured tensor identity | Record an input root directly from the graph |
-| Do two output leaves share storage? | Match an observed allocation ordinal or FakeTensor storage | Give both leaves the same semantic root |
-| What is the semantic view offset? | Reuse incidental FakeTensor metadata | Evaluate fresh symbolic geometry relative to the proven root |
-| What is the compiled physical extent? | Treat it as semantic identity evidence | Record it only in the compiled physical layout |
-| How large is opaque workspace? | Allocator telemetry | Allocator telemetry, unchanged |
-| Who determines Program object identity? | A mixture of capture and profiling | Offline graph semantics only |
-| Who validates physical feasibility? | Profiling and admission | Profiling and admission, unchanged |
+| What value or state is represented? | AOT plus incidental tensor identity | Export/AOT semantic contract |
+| Is the compiled output fresh or an input alias? | Infer from allocator pointers | Optimized FX provenance plus final GraphLowering buffer |
+| Do returned leaves share storage? | FakeTensor `_cdata` or allocation ordinal | Final GraphLowering root |
+| What is the executable view offset? | Mix captured and observed offsets | GraphLowering layout, physically validated |
+| What is the charged extent? | Telemetry also influenced identity | Telemetry only after identity is fixed |
+| What is opaque workspace? | Allocator telemetry | Allocator telemetry or provider declaration |
+| Who creates Program objects? | Capture/profiling mixture | `ObjectCatalog` + `TaskBindingResolver` |
+| Can profiling merge roots? | Previously yes in edge cases | Never |
 
-## Why the existing approach fails
+The new path works where the old path fails because it observes both the
+compiler's value rewrites and its final wrapper-visible storage ABI before
+execution. Pointer equality is now evidence that the physical run honored an
+already-known alias or allocation, rather than a heuristic that retroactively
+changes graph meaning.
 
-The existing lowering has two competing sources of truth:
+## Root-caused failures
 
-1. FakeTensor storage identity such as `tensor.untyped_storage()._cdata`.
-2. Allocator telemetry such as allocation ordinal, charged bytes, and returned
-   output leaves.
+### Repeated Qwen outputs split into multiple objects
 
-That mixture has produced four concrete failures.
+An mlops Qwen stage returned the same FX nodes at leaves 1/11 and 2/12. Role-
+specific binding classified one occurrence as a stage output and another as a
+saved residual, producing separate objects for one value. One semantic root
+now binds both leaves regardless of frontend role.
 
-### One value split into two Program objects
+### Backward input passthrough invented an allocation
 
-In the first mlops Qwen forward stage, flattened output leaves 1 and 11 are the
-same FX node, while leaves 2 and 12 are another repeated FX node. The first
-pair occupies one 32-byte allocation.
+A Qwen backward task returned task input 16. No allocator callback correctly
+occurred, but the prior fallback invented a fresh output from separately
+captured FakeTensor storage. The executable contract now records an input root
+and physical reconciliation requires the observed input pointer.
 
-One occurrence was classified as a canonical stage output and the other as a
-saved residual. The former received identity from stage-boundary capture while
-the latter received identity from compiled allocation telemetry. They could
-therefore become separate alias bundles even though the graph returned the
-same value twice. The planner charged two objects while the executable created
-one allocation.
+### Synthetic sharing differed from compiled sharing
 
-Under the new contract both leaves reference one fresh storage root. Their
-frontend roles do not affect identity.
+Pure Qwen showed one 104,448-byte FakeTensor storage containing several
+26,112-byte values. Inductor allocated the simultaneously-live results
+separately. Producer/result provenance defines distinct roots; profiling then
+attaches one physical extent to each.
 
-### A returned input has no allocation event
+### Inductor compacted a returned view
 
-One Qwen backward task returns an existing task input as output leaf 16. This
-is a normal passthrough result, so no `malloc()` occurs. The old fallback
-consulted FakeTensor storage produced by a separately captured graph and could
-invent a new output object. Spatial admission then waited for an allocation
-that correctly never occurred.
+A captured 39,936-byte view began at byte 39,936 in a 79,872-byte synthetic
+storage. Inductor omitted the unreachable half and returned a compact
+39,936-byte allocation at offset zero. The executable contract/layout records
+the compact boundary while the AOT contract remains diagnostic evidence of the
+pre-optimization value.
 
-The new contract declares the output view against its input root. No output
-allocation is required or expected.
+### Stale metadata reported the wrong slice offset
 
-### FakeTensor sharing does not predict compiled sharing
+The first extractor read `node.meta["val"]`; `value[2:10]` was reported at
+offset zero instead of eight bytes. Re-executing the FX graph with fresh
+symbolic inputs produced the correct geometry. Node metadata is now provenance
+only.
 
-Pure Qwen exposed a 104,448-byte synthetic FakeTensor storage containing
-several 26,112-byte outputs. Inductor compiled those simultaneously-live
-outputs as separate allocations. FakeTensor described functional example
-geometry; it did not promise a compiled physical allocation group.
+### Post-gradient simplification changed a fresh root into an input root
 
-The new contract assigns distinct non-aliasing producers distinct roots even
-when their synthetic examples happen to share a storage. The compiled layout
-then attaches each root to its actual 26,112-byte allocation.
+The grouped mlops-Llama backward graph contained a 525,336,576-byte
+`getitem_11 * ones_like(loss)` output. AOT correctly classified it as fresh,
+but Inductor simplified the expression and its generated wrapper returned task
+input 35 without allocation. Treating this as runtime buffer donation caused
+mixed initial/produced residency and incorrect cotangent outputs.
 
-### Inductor may compact a returned view
+A minimal control established the exact boundary: direct Inductor and ordinary
+`torch.compile(..., backend="inductor")` returned the input storage, while
+`aot_eager` returned fresh storage. The `inner_compile` graph already contained
+the input passthrough. The executable manifest now captures that fact offline.
 
-Another Qwen value appeared in capture as a 39,936-byte view at byte offset
-39,936 inside a 79,872-byte synthetic storage. The unreturned half was not
-observable, and Inductor emitted one compact 39,936-byte output allocation at
-offset zero.
+### View-level initial residency violated alias ownership
 
-The semantic contract retains the returned view relationship and minimum
-span. The physical-layout profile records the compact compiled offset and
-extent. Neither representation is mistaken for the other.
+After introducing executable input roots, one produced stage-boundary alias
+also contained later view objects used as task inputs. Initial-residency logic
+checked produced object IDs rather than produced alias IDs and incorrectly
+declared the bundle external. Classification is now entirely alias-bundle
+based.
 
-### Fresh-symbolic geometry incident
+### One optimized FX root became three executable allocations
 
-The first draft of the replacement trusted `node.meta["val"]` for view
-geometry. A basic `value[2:10]` graph then reported byte offset zero instead of
-eight: the `make_fx` node metadata contained a canonicalized FakeTensor even
-though evaluating the graph produced the correct offset-two view. This is why
-the final extractor evaluates every contract with fresh FakeTensor/meta inputs
-and uses node metadata only as descriptive provenance.
+Pure Qwen produced a 2,048-byte optimized-FX root whose three returned views
+covered disjoint byte ranges `[0,512)`, `[512,1024)`, and `[1024,2048)`.
+Inductor's final wrapper returned three independently materialized buffers of
+512, 512, and 1,024 bytes. Treating the earlier FX root as one executable
+allocation made physical reconciliation report one semantic root across
+allocation ordinals 8, 10, and 17.
 
-## Why the replacement is generic
+This is legal compiler behavior: a lazy FX value is not an allocation
+manifest. `GraphLowering.graph_outputs` identifies the three final buffers, so
+the executable contract now preserves them as three roots. Allocator telemetry
+only confirms their extents and lifetimes.
 
-The lowering rules depend on graph structure and PyTorch contracts, not model
-or operation-provider names:
+### Zero-length outputs were assigned a fake physical lifecycle
 
-- exact node identity handles duplicate outputs;
-- placeholders handle input passthroughs;
-- dispatcher schemas handle aliases, views, and mutations;
-- producer/result identity distinguishes fresh values;
-- fresh symbolic execution supplies guarded geometry;
-- compiled profiling supplies provider-specific physical layout and workspace.
+An mlops Qwen stage returned two zero-length CUDA tensors. They have semantic
+identity and downstream dependency positions, but no allocation callback and
+a null `data_ptr()`. Slab admission first demanded nonexistent output extents;
+after that was corrected, runtime adoption rejected their null addresses.
 
-This applies equally to native ATen operations and registered custom
-operations. A decomposed custom operation exposes its internal graph. An
-opaque custom operation exposes declared inputs, outputs, aliases, mutations,
-and fake geometry while its private workspace remains a measured physical
-quantity.
+Zero-byte alias groups are now explicitly nonphysical throughout planning,
+simulation, spatial replay, and runtime bridging. They remain tensor values in
+the frontend, are always ready for dependency purposes, and never receive an
+initial residency, memory action, lease, transfer, rebind, or retirement.
 
-The supported claim is intentionally precise:
+## Genericity and limits
+
+The implementation contains no Llama, Qwen, OLMoE, or mlops-specific policy.
+The supported claim is:
 
 > Any fixed-shape graph accepted by ShadowSpill's strict
 > Export/AOTAutograd/Inductor capture and whose operations provide correct
 > fake/meta, alias, mutation, and autograd contracts is lowered without model-
 > or operator-specific policy.
 
-Graph breaks, unbounded data-dependent output geometry, or incorrect hidden
-custom-operation semantics fail explicitly rather than activating a heuristic
-fallback.
+A decomposed custom operation exposes its internal graph. An opaque custom
+operation exposes its declared output/alias/mutation ABI and fake geometry;
+its private workspace is measured. Graph breaks, unbounded data-dependent
+geometry, incorrect custom schemas, or unsupported compiler ABI rewrites are
+explicit capture errors rather than heuristic fallbacks.
 
-## PyTorch API boundary
+## Invariants
 
-PyTorch publicly documents a custom compiler backend that receives an FX
-`GraphModule` and representative inputs. `ExportedProgram.graph_signature`
-also publicly models lifted state and mutations. PyTorch does not expose a
-supported post-Inductor allocation manifest containing
-`GraphLowering.graph_outputs`, scheduler lifetimes, and generated
-allocation/free statements.
+1. AOT and executable contract extraction performs no CUDA execution or
+   allocator tracing.
+2. Only the narrow PyTorch compiler adapter imports private Inductor modules.
+3. Profiling cannot create, merge, split, or rename executable roots.
+4. Repeated leaves and input passthroughs never require duplicate allocations.
+5. Every nonempty GraphLowering root reconciles with exactly one physical
+   output allocation.
+6. Every input-root output physically aliases its declared input and fits its
+   storage.
+7. Functional mutation replacement is either fresh, or a proven no-op alias of
+   the same target input.
+8. Alias-bundle identity, residency, and transfer remain consistent across all
+   views.
+9. Unsupported contracts fail before the user model is mutated.
+10. Plan diagnostics retain semantic, optimized-FX, and GraphLowering contract
+    digests, roots, views, mutations, physical layout, and task/ABI mappings.
 
-ShadowSpill therefore does not introduce a version-pinned Inductor adapter for
-correctness. A future optional compiler-layout extractor may enrich physical
-profiling, but its absence cannot alter semantic lowering.
-
-References:
+## PyTorch boundary references
 
 - [PyTorch custom backends](https://docs.pytorch.org/docs/stable/user_guide/torch_compiler/torch.compiler_custom_backends.html)
 - [PyTorch Export graph signatures](https://docs.pytorch.org/docs/stable/user_guide/torch_compiler/export/api_reference.html)
 
-## Invariants
-
-The implementation and qualification suites enforce these invariants:
-
-1. Semantic capture performs no CUDA allocation, task profiling, or allocator
-   trace inspection.
-2. Physical profiling cannot change a semantic root or mutation.
-3. Distinct fresh roots remain distinct unless graph semantics prove aliasing.
-4. Repeated leaves and passthrough values never require duplicate allocations.
-5. Every physical output is reconciled with exactly one fresh root, except
-   explicit zero-byte and input-root outputs.
-6. All physical views fit the admitted allocation and all workspace is charged.
-7. Unsupported contracts fail before model mutation.
-8. Production lowering contains no Llama, Qwen, OLMoE, or mlops-specific
-   behavior.
-9. Every Export state replacement remains a fresh compiled result and is
-   installed as a new object generation without an inserted numerical copy.
-10. The old and replacement generations overlap until the task fence; that
-    exact compiled extent is charged as transition workspace in simulation and
-    spatial admission.
+PyTorch does not currently document a public post-Inductor output-storage
+manifest. ShadowSpill's adapter is consequently a small, isolated compatibility
+boundary rather than a dependency spread through lowering or runtime code.

@@ -662,6 +662,18 @@ static int handle_action(
                 return dispatched;
             }
     } else {
+            ShadowSpillTransferLane *lane =
+                shadowspill_transfer_lane_for_action(runtime, action);
+            /*
+             * The backend may have completed a whole FIFO prefix while an earlier
+             * action's object lock is briefly unavailable.  Commit that
+             * prefix strictly from the lane head: skipping a busy predecessor
+             * must never let a later transfer publish residency first.
+             */
+            if (!shadowspill_transfer_lane_is_inflight_head(lane, action)) {
+                pthread_mutex_unlock(&object->lock);
+                return 0;
+            }
             int complete = 0;
             if (event_complete_locked(
                     runtime, action->completion_event,
@@ -795,8 +807,6 @@ static int handle_action(
                     );
                     return -1;
                 }
-                ShadowSpillTransferLane *lane =
-                    shadowspill_transfer_lane_for_action(runtime, action);
                 if (shadowspill_transfer_lane_complete(lane, action) != 0) {
                     shadowspill_latch_failure_locked(
                         runtime,

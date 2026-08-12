@@ -13,10 +13,16 @@ from shadowspill.pytorch.output_contract import (
 
 _custom_definitions = torch.library.Library("shadowspill_contract_test", "DEF")
 _custom_definitions.define("alias(Tensor(a) value) -> Tensor(a)")
+_custom_definitions.define("alias_list(Tensor(a) value) -> Tensor(a)[]")
 _custom_definitions.define("mutate(Tensor(a!) value) -> Tensor(a!)")
 _custom_implementations = torch.library.Library("shadowspill_contract_test", "IMPL")
 _custom_implementations.impl(
     "alias", lambda value: value[1:], "CompositeExplicitAutograd"
+)
+_custom_implementations.impl(
+    "alias_list",
+    lambda value: [value[:4], value[4:]],
+    "CompositeExplicitAutograd",
 )
 _custom_implementations.impl(
     "mutate", lambda value: value.add_(1), "CompositeExplicitAutograd"
@@ -224,6 +230,33 @@ def test_registered_custom_alias_schema_controls_semantic_root() -> None:
 
     assert contract.roots[0].kind is StorageRootKind.INPUT
     assert contract.output_views[0].offset_bytes == value.element_size()
+
+
+def test_list_valued_alias_schema_controls_every_element_root() -> None:
+    def function(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        pieces = torch.ops.shadowspill_contract_test.alias_list(value)
+        return pieces[0], pieces[1]
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+
+    assert len(contract.roots) == 1
+    assert contract.roots[0].kind is StorageRootKind.INPUT
+    assert tuple(view.root_id for view in contract.output_views) == (0, 0)
+    assert tuple(view.offset_bytes for view in contract.output_views) == (0, 16)
+
+
+def test_native_split_elements_alias_the_input_root() -> None:
+    def function(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        left, right = torch.split(value, 4)
+        return left, right
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+
+    assert len(contract.roots) == 1
+    assert contract.roots[0].kind is StorageRootKind.INPUT
+    assert tuple(view.offset_bytes for view in contract.output_views) == (0, 16)
 
 
 def test_registered_custom_mutation_schema_controls_semantic_write() -> None:

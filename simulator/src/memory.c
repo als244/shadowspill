@@ -105,6 +105,12 @@ int shadowspill_initialize_memory(
         ShadowSpillAliasState *state = &work->aliases[alias];
         state->device_version = program->alias_initial_version[alias];
         state->host_version = program->alias_initial_version[alias];
+        if (program->alias_size_bytes[alias] == 0U) {
+            /* Zero-length values carry dependencies but require no residency. */
+            state->device_allocated = 1U;
+            state->device_ready = 1U;
+            continue;
+        }
         if (program->alias_retain_spill_copy[alias] != 0U) {
             state->host_allocated = 1U;
             state->host_ready = 1U;

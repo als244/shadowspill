@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
@@ -19,13 +19,18 @@ from shadowspill.simulator import SimulationConfig
 
 from ._plan_diagnostics import training_stage_inventory
 from .aot import capture_training_objective
+from .capture import GraphArtifact
 from .compiler import CudaTaskProfiler, profile_environment
 from .contracts import ObjectiveResult, PlanningError
 from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
 from .materialization import representative_cpu_inputs
 from .optimizer import OptimizerTaskArtifact, capture_optimizer
-from .partition import _TrainingGraphPairCache, partition_training_capture
+from .partition import (
+    _TrainingGraphPairCache,
+    partition_training_capture,
+    training_parameter_stage_owners,
+)
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import (
     PlanDiagnostics,
@@ -65,6 +70,7 @@ def build_training(
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
     partition: str,
+    optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
 ) -> PlannedTrainStep:
     """Construct one fixed accumulated training program."""
@@ -140,7 +146,12 @@ def build_training(
                 if parameter.requires_grad:
                     parameter.grad = torch.zeros_like(parameter)
             optimizer_capture = capture_optimizer(
-                dict(model.named_parameters()), optimizer
+                dict(model.named_parameters()),
+                optimizer,
+                parameter_stage_owners=training_parameter_stage_owners(
+                    partitioned_captures,
+                    dict(model.named_parameters()),
+                ),
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
@@ -169,6 +180,17 @@ def build_training(
                 optimizer_capture.recurrent
             )
         artifacts = tuple(artifact_by_digest.values())
+        optimizer_artifact_count = sum(
+            not isinstance(item, GraphArtifact) or item.kind == "optimizer"
+            for item in artifacts
+        )
+        timer.progress(
+            "structural artifact inventory: "
+            f"graph={len(artifacts) - optimizer_artifact_count}, "
+            f"optimizer={optimizer_artifact_count}, "
+            f"unique={len(artifacts)}, "
+            f"optimizer_tasks={len(optimizer_capture.recurrent_tasks)}"
+        )
         profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
         with timer.measure("structural_profiling"):
             profiles = profile_unique_artifacts(
@@ -184,7 +206,7 @@ def build_training(
                 ),
             )
         with timer.measure("compilation"):
-            functions = profiler.take_functions(
+            compiled_tasks = profiler.take_compiled_tasks(
                 artifacts,
                 progress=lambda index, total, state, digest: timer.progress(
                     f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
@@ -204,17 +226,35 @@ def build_training(
                 partitioned_captures,
                 measurements,
                 optimizer_capture,
+                storage_contracts=compiled_tasks.storage_contracts,
                 optimizer_phase="initial",
+                optimizer_ordering=optimizer_ordering,
             )
             recurrent_lowered = lower_partitioned_training_program(
                 fake_model,
                 partitioned_captures,
                 measurements,
                 optimizer_capture,
+                storage_contracts=compiled_tasks.storage_contracts,
                 optimizer_phase="recurrent",
+                optimizer_ordering=optimizer_ordering,
             )
             _verify_provisional_layout(layout, recurrent_lowered)
             _verify_optimizer_phase_identity(initial_lowered, recurrent_lowered)
+            largest_profile = max(
+                recurrent_lowered.program.profiles,
+                key=lambda item: item.workspace_bytes,
+            )
+            timer.progress(
+                "recurrent Program inventory: "
+                f"tasks={len(recurrent_lowered.program.tasks)}, "
+                f"objects={len(recurrent_lowered.program.objects)}, "
+                f"aliases={len(recurrent_lowered.program.alias_groups)}, "
+                "recomputation_groups="
+                f"{len(recurrent_lowered.program.recomputation_groups)}, "
+                f"largest_workspace={largest_profile.workspace_bytes} "
+                f"({largest_profile.profile_id})"
+            )
             workspace_reserve = _workspace_reserve(profiles.measurements)
             simulation_config = SimulationConfig.single_device(
                 "cuda_0",
@@ -245,6 +285,7 @@ def build_training(
                 initial_residency=recurrent_lowered.initial_residency,
                 final_residency=recurrent_lowered.final_residency,
                 config=simulation_config,
+                progress=timer.progress,
             )
             recurrent_selected = recurrent_cached.result
             needs_initial_plan = any(
@@ -256,6 +297,7 @@ def build_training(
                     initial_residency=initial_lowered.initial_residency,
                     final_residency=initial_lowered.final_residency,
                     config=simulation_config,
+                    progress=timer.progress,
                 )
                 if needs_initial_plan
                 else None
@@ -361,6 +403,7 @@ def build_training(
                 recurrent_lowered,
                 recurrent_plan,
                 measurements,
+                compiled_tasks.manifests,
             )
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
@@ -368,7 +411,7 @@ def build_training(
                 (recurrent_lowered, recurrent_plan),
                 final_bridge,
                 state,
-                functions,
+                compiled_tasks.functions,
                 optimizer,
                 optimizer_state_preinitialized=(
                     optimizer_capture.initialized_state_dict is not None
@@ -402,6 +445,7 @@ def build_training(
             ),
             task_stage_map=task_stage_map,
             unique_stages=unique_stages,
+            optimizer_ordering=optimizer_ordering,
             memory=memory,
         )
         return PlannedTrainStep(
@@ -511,12 +555,14 @@ def _training_report(
     pressurefit_results: tuple[Any, ...] = (),
     task_stage_map: tuple[PlanTaskStage, ...] = (),
     unique_stages: tuple[PlanUniqueStage, ...] = (),
+    optimizer_ordering: str,
     memory: PlanMemory,
 ) -> PlanReport:
     identity = {
         "mode": "training",
         "signatures": signature_digests,
         "artifacts": [item.abi_digest for item in execution_plan.entrypoints],
+        "optimizer_ordering": optimizer_ordering,
     }
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
@@ -580,6 +626,7 @@ def _training_report(
         spill_budget_bytes=report.spill_budget_bytes,
         execution_device=report.execution_device,
         transfer_capabilities=report.transfer_capabilities,
+        optimizer_ordering=optimizer_ordering,
     )
 
 

@@ -13,10 +13,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-# v9 records each returned view's byte offset inside its compiled allocation.
-# Semantic storage identity remains part of GraphArtifact; this observation is
-# used only for physical layout, workspace replay, and admission.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v9"
+# v10 records when a compiled output is physically served by a task input.
+# The optimized Inductor storage contract must already describe that alias;
+# profiling validates the contract and measures layout, workspace, and timing.
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v10"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -98,6 +98,45 @@ class TaskAllocationEvent:
             raise ValueError("cached allocation event has an invalid schema") from exc
 
 
+@dataclass(frozen=True, slots=True)
+class TaskOutputInputBinding:
+    """Physical evidence that one output is served by a task input."""
+
+    output_leaf_index: int
+    input_position: int
+    output_offset_bytes: int
+
+    def __post_init__(self) -> None:
+        if min(
+            self.output_leaf_index,
+            self.input_position,
+            self.output_offset_bytes,
+        ) < 0:
+            raise ValueError("task output/input binding fields must be non-negative")
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "output_leaf_index": self.output_leaf_index,
+            "input_position": self.input_position,
+            "output_offset_bytes": self.output_offset_bytes,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> TaskOutputInputBinding:
+        if not isinstance(value, dict):
+            raise ValueError("cached output/input binding must be an object")
+        try:
+            return cls(
+                output_leaf_index=int(value["output_leaf_index"]),
+                input_position=int(value["input_position"]),
+                output_offset_bytes=int(value["output_offset_bytes"]),
+            )
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                "cached output/input binding has an invalid schema"
+            ) from exc
+
+
 class ProfilableArtifact(Protocol):
     """Minimal identity shared by compiled graphs and bounded eager tasks."""
 
@@ -143,6 +182,7 @@ class TaskMeasurement:
     samples_ns: tuple[int, ...]
     provenance: str
     allocation_trace: tuple[TaskAllocationEvent, ...] = ()
+    output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
     profiling_wall_time_ns: int = 0
 
@@ -202,6 +242,13 @@ class TaskMeasurement:
                     "task allocation trace changes allocation size on free"
                 )
             retired[event.allocation_ordinal] = sizes
+        donated_leaves = [
+            item.output_leaf_index for item in self.output_input_bindings
+        ]
+        if len(set(donated_leaves)) != len(donated_leaves):
+            raise ValueError("task output/input binding names one leaf twice")
+        if output_leaves.intersection(donated_leaves):
+            raise ValueError("task output has both allocated and donated storage")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -212,6 +259,9 @@ class TaskMeasurement:
             "samples_ns": list(self.samples_ns),
             "provenance": self.provenance,
             "allocation_trace": [event.to_dict() for event in self.allocation_trace],
+            "output_input_bindings": [
+                item.to_dict() for item in self.output_input_bindings
+            ],
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
             "profiling_wall_time_ns": self.profiling_wall_time_ns,
         }
@@ -233,6 +283,10 @@ class TaskMeasurement:
                 allocation_trace=tuple(
                     TaskAllocationEvent.from_dict(item)
                     for item in value["allocation_trace"]
+                ),
+                output_input_bindings=tuple(
+                    TaskOutputInputBinding.from_dict(item)
+                    for item in value["output_input_bindings"]
                 ),
                 persistent_extent_bytes=tuple(
                     int(item) for item in value["persistent_extent_bytes"]

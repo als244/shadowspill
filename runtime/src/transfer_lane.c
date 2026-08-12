@@ -105,6 +105,20 @@ void shadowspill_transfer_lane_publish_inflight(
     pthread_mutex_unlock(&lane->lock);
 }
 
+int shadowspill_transfer_lane_is_inflight_head(
+    ShadowSpillTransferLane *lane,
+    const ShadowSpillQueuedAction *action
+) {
+    if (lane == NULL || action == NULL) {
+        return 0;
+    }
+    pthread_mutex_lock(&lane->lock);
+    const int is_head = lane->inflight_head == action &&
+        action->lane_state == SHADOWSPILL_LANE_INFLIGHT;
+    pthread_mutex_unlock(&lane->lock);
+    return is_head;
+}
+
 int shadowspill_transfer_lane_complete(
     ShadowSpillTransferLane *lane,
     ShadowSpillQueuedAction *action

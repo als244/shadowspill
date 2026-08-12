@@ -1037,6 +1037,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_admit_execution(
         : shadowspill_admit_execution(runtime, description);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_clear_execution_plan(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_clear_execution_plan(runtime);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_resolve_execution(
     uint64_t task_id,
     uintptr_t *execution_handle

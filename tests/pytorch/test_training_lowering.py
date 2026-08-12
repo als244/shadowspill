@@ -19,6 +19,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
+    TaskOutputInputBinding,
 )
 from shadowspill.pytorch.training_lowering import (
     LoweredTrainingProgram,
@@ -121,14 +122,27 @@ def _stateful_objective(
 
 def _measurement(artifact: object) -> TaskMeasurement:
     events: list[TaskAllocationEvent] = []
+    input_bindings: list[TaskOutputInputBinding] = []
     if isinstance(artifact, GraphArtifact):
         contract = artifact.storage_contract
         for root in contract.roots:
-            if root.kind.value != "fresh" or root.minimum_span_bytes == 0:
-                continue
             views = tuple(
                 view for view in contract.output_views if view.root_id == root.root_id
             )
+            if root.kind.value == "input":
+                assert root.source_input is not None
+                input_bindings.extend(
+                    TaskOutputInputBinding(
+                        view.leaf_index,
+                        root.source_input,
+                        view.offset_bytes,
+                    )
+                    for view in views
+                    if view.span_bytes > 0
+                )
+                continue
+            if root.minimum_span_bytes == 0:
+                continue
             events.append(
                 TaskAllocationEvent(
                     len(events),
@@ -147,6 +161,7 @@ def _measurement(artifact: object) -> TaskMeasurement:
         (100,),
         "unit-test",
         tuple(events),
+        tuple(input_bindings),
     )
 
 
@@ -181,8 +196,7 @@ def _lowered() -> LoweredTrainingProgram:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: _measurement(artifact)
-        for artifact in artifacts
+        artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
     return lower_training_program(model, captures, measurements, optimizer_capture)
 
@@ -266,8 +280,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: _measurement(artifact)
-        for artifact in artifacts
+        artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
     lowered = lower_training_program(model, captures, measurements, optimizer_capture)
     parameter_aliases = {
@@ -322,8 +335,7 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: _measurement(artifact)
-        for artifact in artifacts
+        artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
     initial = lower_training_program(
         model,
@@ -392,8 +404,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
         *(task.artifact for task in optimizer_capture.recurrent_tasks),
     )
     measurements = {
-        artifact.compatibility_digest: _measurement(artifact)
-        for artifact in artifacts
+        artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
     lowered = lower_partitioned_training_program(
         model, (capture,), measurements, optimizer_capture
@@ -493,7 +504,7 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
             producers.setdefault(object_id, []).append(task.task_id)
 
 
-def test_partitioned_backward_preserves_identity_cotangent_alias() -> None:
+def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
     real_model = _AuxiliaryPassThroughModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
     for parameter in real_model.parameters():
@@ -535,18 +546,20 @@ def test_partitioned_backward_preserves_identity_cotangent_alias() -> None:
     alias_by_object = {
         item.object_id: item.alias_group_id for item in lowered.program.objects
     }
-    identity_aliases: set[str] = set()
+    handoffs = []
     for entrypoint in lowered.entrypoints:
         if entrypoint.phase != "backward":
             continue
         task = task_by_id[entrypoint.task_id]
-        input_aliases = {alias_by_object[item] for item in task.inputs}
-        for slot in entrypoint.gradient_output_slots:
-            alias_id = alias_by_object[slot.object_id]
-            if alias_id in input_aliases:
-                identity_aliases.add(alias_id)
-                assert slot.object_id not in task.outputs
-    assert identity_aliases
+        for handoff in entrypoint.storage_handoffs:
+            assert handoff.source_object_id in task.inputs
+            assert handoff.destination_object_id in task.outputs
+            assert (
+                alias_by_object[handoff.source_object_id]
+                != alias_by_object[handoff.destination_object_id]
+            )
+            handoffs.append(handoff)
+    assert handoffs
 
 
 def test_functional_buffer_mutation_does_not_displace_objective_output() -> None:
@@ -564,9 +577,7 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
             capture_training(
                 model,
                 _stateful_objective,
-                fake_cuda_inputs(
-                    [torch.randn(2, 8), torch.randn(2, 8)], mode
-                ),
+                fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode),
             )
         )
     artifacts = (
@@ -595,9 +606,7 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
     assert forward_entries
     assert all(entrypoint.public_output_count == 1 for entrypoint in forward_entries)
     assert all(entrypoint.public_output_leaves for entrypoint in forward_entries)
-    assert any(
-        entrypoint.replacement_output_leaves for entrypoint in forward_entries
-    )
+    assert any(entrypoint.replacement_output_leaves for entrypoint in forward_entries)
     assert all(
         set(entrypoint.public_output_leaves).isdisjoint(
             entrypoint.replacement_output_leaves

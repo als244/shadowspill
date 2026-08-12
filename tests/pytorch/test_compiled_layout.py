@@ -11,12 +11,14 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
+    TaskOutputInputBinding,
 )
 
 
 def _measurement(
     *events: TaskAllocationEvent,
     workspace: int = 0,
+    output_input_bindings: tuple[TaskOutputInputBinding, ...] = (),
 ) -> TaskMeasurement:
     return TaskMeasurement(
         runtime_ns=100,
@@ -26,6 +28,7 @@ def _measurement(
         samples_ns=(100,),
         provenance="unit-test",
         allocation_trace=events,
+        output_input_bindings=output_input_bindings,
     )
 
 
@@ -62,7 +65,12 @@ def test_input_passthrough_requires_no_output_allocation() -> None:
 
     value = torch.randn(8)
     contract = capture_task_storage_contract(make_fx(function)(value), (value,))
-    layout = reconcile_compiled_task_layout(contract, _measurement())
+    layout = reconcile_compiled_task_layout(
+        contract,
+        _measurement(
+            output_input_bindings=(TaskOutputInputBinding(0, 0, 8),),
+        ),
+    )
 
     assert layout.roots[0].allocation_ordinal is None
     assert layout.output_views[0].offset_bytes == 8
@@ -98,6 +106,22 @@ def test_distinct_fresh_roots_reconcile_to_split_allocations() -> None:
 
     assert tuple(root.requested_bytes for root in layout.roots) == (26_112, 26_112)
     assert tuple(root.allocation_ordinal for root in layout.roots) == (0, 1)
+
+
+def test_fresh_executable_root_cannot_alias_a_compiled_input_allocation() -> None:
+    def function(value: torch.Tensor) -> torch.Tensor:
+        return torch.sin(value)
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+    assert contract.roots[0].kind.value == "fresh"
+    with pytest.raises(CaptureError, match="offline Inductor contract is incomplete"):
+        reconcile_compiled_task_layout(
+            contract,
+            _measurement(
+                output_input_bindings=(TaskOutputInputBinding(0, 0, 0),),
+            ),
+        )
 
 
 def test_compact_compiled_view_may_be_smaller_than_unseen_intermediate() -> None:

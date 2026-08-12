@@ -313,7 +313,16 @@ std::vector<int64_t> adopt_storages(
         "storage adoption mode must be promote, bind, or replace");
     const uint64_t address = static_cast<uint64_t>(
         reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
-    TORCH_CHECK(address != 0U, "adopted storage is dematerialized");
+    TORCH_CHECK(
+        address != 0U,
+        "adopted storage is dematerialized: batch index ",
+        index,
+        ", object ",
+        object_ids[index],
+        ", declared bytes ",
+        sizes[index],
+        ", tensor numel ",
+        tensor.numel());
     addresses.push_back(address);
   }
 

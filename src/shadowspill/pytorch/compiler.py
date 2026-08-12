@@ -11,7 +11,6 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
-from torch._inductor.compile_fx import compile_fx
 from torch.utils._pytree import tree_flatten
 
 from ._abi import AdapterStatistics, Allocation
@@ -24,8 +23,15 @@ from ._telemetry import (
 )
 from .capture import GraphArtifact
 from .contracts import CaptureError
+from .inductor_adapter import ExecutableTaskManifest, compile_inductor_task
 from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
-from .profiling import ProfilableArtifact, ProfileEnvironment, TaskMeasurement
+from .output_contract import TaskStorageContract
+from .profiling import (
+    ProfilableArtifact,
+    ProfileEnvironment,
+    TaskMeasurement,
+    TaskOutputInputBinding,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +41,7 @@ class CompiledTask:
     artifact: GraphArtifact
     function: Callable[..., object]
     example_arguments: tuple[object, ...]
+    manifest: ExecutableTaskManifest
     execution_provider: str = "torch-inductor"
     graph_node_count: int = 0
 
@@ -44,6 +51,21 @@ class CompiledTask:
         # here would create a second, hidden saved-tensor lifetime.
         with torch.no_grad():
             return self.function(*self.example_arguments)
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledTaskSet:
+    """Warmed entrypoints and the storage contracts they implement."""
+
+    functions: dict[str, Callable[..., object]]
+    manifests: dict[str, ExecutableTaskManifest]
+
+    @property
+    def storage_contracts(self) -> dict[str, TaskStorageContract]:
+        return {
+            digest: manifest.storage_contract
+            for digest, manifest in self.manifests.items()
+        }
 
 
 def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvironment:
@@ -115,26 +137,27 @@ def compile_artifact(
         else representative_arguments,
         device_ordinal=device_ordinal,
     )
-    if artifact.kind == "optimizer":
-        # Optimizer updates are intrinsically no-grad mutations.  Preserving a
-        # Parameter example's requires-grad bit makes compile_fx introduce an
-        # AOTAutograd mutation epilogue that is neither part of the optimizer
-        # ABI nor valid for heterogeneous parameter shapes.
-        examples = tuple(
-            value.detach() if isinstance(value, torch.Tensor) else value
-            for value in examples
-        )
+    # Every GraphArtifact is already an explicit inference, AOT forward, AOT
+    # backward, or optimizer program and CompiledTask always runs under
+    # no_grad. Preserving requires-grad on examples would make compile_fx run a
+    # second AOTAutograd pass and expose compiler-private saved outputs instead
+    # of this task's ABI.
+    examples = tuple(
+        value.detach() if isinstance(value, torch.Tensor) else value
+        for value in examples
+    )
     graph_module = copy.deepcopy(artifact.graph_module)
     node_count = len(tuple(graph_module.graph.nodes))
-    try:
-        compiler: Any = compile_fx
-        compiled: Callable[..., object] = compiler(graph_module, list(examples))
-    except BaseException as exc:
-        raise CaptureError(f"Inductor task compilation failed: {exc}") from exc
+    compilation = compile_inductor_task(
+        graph_module,
+        examples,
+        semantic_contract=artifact.storage_contract,
+    )
     return CompiledTask(
         artifact,
-        compiled,
+        compilation.function,
         examples,
+        compilation.manifest,
         "torch-inductor",
         node_count,
     )
@@ -208,6 +231,7 @@ class CudaTaskProfiler:
                 artifact,
                 executable.function,
                 (),
+                executable.manifest,
                 executable.execution_provider,
                 executable.graph_node_count,
             )
@@ -285,6 +309,7 @@ class CudaTaskProfiler:
                 + ("+bounded-retention-audit" if fixed_extents else "")
             ),
             allocation_trace=workspace.allocation_trace,
+            output_input_bindings=workspace.output_input_bindings,
             persistent_extent_bytes=fixed_extents,
         )
 
@@ -404,15 +429,16 @@ class CudaTaskProfiler:
         del optimizer
         return measurement
 
-    def take_functions(
+    def take_compiled_tasks(
         self,
         artifacts: Sequence[ProfilableArtifact],
         *,
         progress: Callable[[int, int, str, str], None] | None = None,
-    ) -> dict[str, Callable[..., object]]:
-        """Transfer warmed unique entrypoints while releasing examples."""
+    ) -> CompiledTaskSet:
+        """Transfer warmed entrypoints and their optimized storage contracts."""
 
         result: dict[str, Callable[..., object]] = {}
+        manifests: dict[str, ExecutableTaskManifest] = {}
         stream: torch.cuda.Stream | None = None
         unique_count = len(
             {
@@ -461,7 +487,8 @@ class CudaTaskProfiler:
                     context=f"compiled entrypoint {digest}",
                 )
             result[digest] = executable.function
-        return result
+            manifests[digest] = executable.manifest
+        return CompiledTaskSet(result, manifests)
 
     def _compiled(self, artifact: GraphArtifact) -> CompiledTask:
         digest = artifact.compatibility_digest
@@ -489,7 +516,16 @@ class CudaTaskProfiler:
                 raise CaptureError(f"profiling before_task failed with status {status}")
             task_open = True
             output = executable()
-            output_allocations = self._output_allocation_views(output)
+            output_allocations, output_input_bindings = (
+                self._output_allocation_views(
+                    output,
+                    inputs=(
+                        executable.example_arguments
+                        if isinstance(executable, CompiledTask)
+                        else ()
+                    ),
+                )
+            )
             # Profiling does not retain task results. Release them while the
             # task range is still active so output-dependent temporary frees
             # remain attributable to this ABI. The allocator retires their
@@ -516,13 +552,32 @@ class CudaTaskProfiler:
             events,
             task_id=task_id,
             output_allocation_views=output_allocations,
+            output_input_bindings=output_input_bindings,
         )
 
     def _output_allocation_views(
-        self, output: object
-    ) -> dict[int, tuple[tuple[int, int], ...]]:
+        self,
+        output: object,
+        *,
+        inputs: Sequence[object] = (),
+    ) -> tuple[
+        dict[int, tuple[tuple[int, int], ...]],
+        tuple[TaskOutputInputBinding, ...],
+    ]:
 
         views_by_allocation: dict[int, list[tuple[int, int]]] = {}
+        input_by_allocation: dict[int, int] = {}
+        for input_position, value in enumerate(inputs):
+            if not isinstance(value, torch.Tensor) or not value.is_cuda:
+                continue
+            address = value.untyped_storage().data_ptr()
+            if address == 0:
+                continue
+            allocation = self._allocation_for_pointer(address)
+            input_by_allocation.setdefault(
+                int(allocation.allocation_id), input_position
+            )
+        input_bindings: list[TaskOutputInputBinding] = []
         leaves, _ = tree_flatten(output)
         for leaf_index, leaf in enumerate(leaves):
             if not isinstance(leaf, torch.Tensor) or not leaf.is_cuda:
@@ -530,16 +585,7 @@ class CudaTaskProfiler:
             address = leaf.untyped_storage().data_ptr()
             if address == 0:
                 continue
-            allocation = Allocation()
-            status = int(
-                self._library.shadowspill_pytorch_allocation_for_pointer(
-                    address, ctypes.byref(allocation)
-                )
-            )
-            if status != 0:
-                raise CaptureError(
-                    "compiled task returned storage outside the ShadowSpill slab"
-                )
+            allocation = self._allocation_for_pointer(address)
             allocation_pointer = int(allocation.pointer or 0)
             view_pointer = int(leaf.data_ptr())
             offset_bytes = view_pointer - allocation_pointer
@@ -547,10 +593,38 @@ class CudaTaskProfiler:
                 raise CaptureError(
                     "compiled output view lies outside its allocator record"
                 )
-            views_by_allocation.setdefault(allocation.allocation_id, []).append(
-                (leaf_index, offset_bytes)
+            donated_input_position = input_by_allocation.get(
+                int(allocation.allocation_id)
             )
-        return {
-            allocation_id: tuple(views)
-            for allocation_id, views in views_by_allocation.items()
-        }
+            if donated_input_position is not None:
+                input_bindings.append(
+                    TaskOutputInputBinding(
+                        leaf_index,
+                        donated_input_position,
+                        offset_bytes,
+                    )
+                )
+            else:
+                views_by_allocation.setdefault(allocation.allocation_id, []).append(
+                    (leaf_index, offset_bytes)
+                )
+        return (
+            {
+                allocation_id: tuple(views)
+                for allocation_id, views in views_by_allocation.items()
+            },
+            tuple(input_bindings),
+        )
+
+    def _allocation_for_pointer(self, address: int) -> Allocation:
+        allocation = Allocation()
+        status = int(
+            self._library.shadowspill_pytorch_allocation_for_pointer(
+                address, ctypes.byref(allocation)
+            )
+        )
+        if status != 0:
+            raise CaptureError(
+                "compiled task returned storage outside the ShadowSpill slab"
+            )
+        return allocation

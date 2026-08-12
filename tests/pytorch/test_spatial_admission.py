@@ -8,6 +8,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
+    TaskOutputInputBinding,
 )
 from shadowspill.pytorch.spatial_admission import (
     TaskOutputBinding,
@@ -182,3 +183,54 @@ def test_task_allocation_replay_preserves_cached_extent_identity() -> None:
         ("TASK_REUSE", "activation_alias"),
     ]
     assert events[1].source_identity == "workspace:forward:0"
+
+
+def test_task_allocation_replay_models_input_lease_handoff_without_allocation() -> None:
+    task = TaskSpec(
+        "backward",
+        ResourceSpec("cuda_0", ResourceKind.COMPUTE),
+        "backward_profile",
+        inputs=("residual",),
+        outputs=("gradient",),
+    )
+    measurement = TaskMeasurement(
+        10,
+        0,
+        0,
+        (),
+        (10,),
+        "unit-test",
+        output_input_bindings=(TaskOutputInputBinding(3, 0, 0),),
+    )
+
+    events = _task_allocation_events(
+        task,
+        measurement,
+        (TaskOutputBinding(3, "gradient_alias", False, "residual_alias"),),
+        {"gradient_alias": 64, "residual_alias": 64},
+    )
+
+    assert [(event.kind.name, event.identity) for event in events] == [
+        ("HANDOFF_ALIAS", "gradient_alias")
+    ]
+    assert events[0].source_identity == "residual_alias"
+
+
+def test_task_allocation_replay_skips_zero_size_output_extent() -> None:
+    task = TaskSpec(
+        "forward",
+        ResourceSpec("cuda_0", ResourceKind.COMPUTE),
+        "forward_profile",
+        outputs=("empty",),
+    )
+    measurement = TaskMeasurement(10, 0, 0, (), (10,), "unit-test")
+
+    events = _task_allocation_events(
+        task,
+        measurement,
+        (TaskOutputBinding(2, "empty_alias"),),
+        {"empty_alias": 0},
+        {"empty_alias"},
+    )
+
+    assert events == ()

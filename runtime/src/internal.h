@@ -661,6 +661,7 @@ int shadowspill_execution_table_initialize(
     uint64_t bucket_count
 );
 void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table);
+void shadowspill_execution_table_clear(ShadowSpillExecutionTable *table);
 ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
     ShadowSpillExecutionTable *table,
     uint64_t task_id
@@ -692,6 +693,10 @@ int shadowspill_transfer_lane_claim(
 void shadowspill_transfer_lane_publish_inflight(
     ShadowSpillTransferLane *lane,
     ShadowSpillQueuedAction *action
+);
+int shadowspill_transfer_lane_is_inflight_head(
+    ShadowSpillTransferLane *lane,
+    const ShadowSpillQueuedAction *action
 );
 int shadowspill_transfer_lane_complete(
     ShadowSpillTransferLane *lane,

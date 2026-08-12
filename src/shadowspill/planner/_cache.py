@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -57,6 +58,7 @@ class PressureFitCache:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated cached selection or run unmodified PressureFit."""
 
@@ -84,6 +86,7 @@ class PressureFitCache:
             final_residency=final_residency,
             config=config,
             options=selected_options,
+            progress=progress,
         )
         self._write(key, result)
         return CachedPressureFitResult(result, False)

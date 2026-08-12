@@ -128,11 +128,14 @@ class OptimizerTask:
     artifact: OptimizerTaskArtifact
     binding_names: tuple[str, ...]
     mutation_names: tuple[str, ...]
+    completion_stage_index: int | None = None
 
 
 def capture_optimizer(
     named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
+    *,
+    parameter_stage_owners: Mapping[str, tuple[int, ...]] | None = None,
 ) -> OptimizerCapture:
     """Capture a recurrent tensor update without mutating the caller's state.
 
@@ -372,7 +375,11 @@ def capture_optimizer(
     finally:
         torch.set_grad_enabled(grad_enabled)
     mutations = tuple(binding.name for binding in bindings if binding.mutable)
-    recurrent_tasks = _partition_optimizer_graph(artifact, bindings)
+    recurrent_tasks = _partition_optimizer_graph(
+        artifact,
+        bindings,
+        parameter_stage_owners=parameter_stage_owners,
+    )
     return OptimizerCapture(
         optimizer_type=optimizer_type,
         first_step_is_opaque=first_step_is_opaque,
@@ -848,8 +855,18 @@ def _lift_optimizer_tensors(
 def _partition_optimizer_graph(
     artifact: GraphArtifact,
     bindings: tuple[OptimizerTensorBinding, ...],
+    *,
+    parameter_stage_owners: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[OptimizerTask, ...]:
-    """Split independent tensor updates without using optimizer semantics."""
+    """Group dependency-closed updates by their training-stage frontier.
+
+    The FX graph determines independent update components.  When stage
+    provenance is available, components are combined by the earliest stage
+    whose backward completion makes every involved parameter gradient final.
+    Because backward executes in reverse stage order, that frontier is the
+    minimum contributing stage index.  No optimizer- or model-specific naming
+    policy participates in the grouping.
+    """
 
     graph_module = artifact.graph_module
     placeholders = tuple(
@@ -868,6 +885,7 @@ def _partition_optimizer_graph(
                 artifact,
                 tuple(binding.name for binding in bindings),
                 tuple(binding.name for binding in bindings if binding.mutable),
+                _completion_stage(bindings, parameter_stage_owners),
             ),
         )
 
@@ -928,10 +946,11 @@ def _partition_optimizer_graph(
                 artifact,
                 tuple(binding.name for binding in bindings),
                 tuple(binding.name for binding in bindings if binding.mutable),
+                _completion_stage(bindings, parameter_stage_owners),
             ),
         )
 
-    tasks: list[OptimizerTask] = []
+    component_positions: list[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]]] = []
     for component in ordered_components:
         required_placeholders = {
             dependency
@@ -944,15 +963,68 @@ def _partition_optimizer_graph(
             for index, placeholder in enumerate(placeholders)
             if placeholder in required_placeholders
         )
+        component_positions.append((component, positions))
+
+    grouped_members: tuple[
+        tuple[
+            int | None,
+            tuple[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]], ...],
+        ],
+        ...,
+    ]
+    if parameter_stage_owners is None:
+        grouped_members = tuple(
+            (None, ((component, positions),))
+            for component, positions in component_positions
+        )
+    else:
+        grouped: dict[
+            int | None, list[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]]]
+        ] = {}
+        for component, positions in component_positions:
+            completion_stage = _completion_stage(
+                tuple(bindings[position] for position in positions),
+                parameter_stage_owners,
+            )
+            grouped.setdefault(completion_stage, []).append((component, positions))
+        grouped_members = tuple(
+            (completion_stage, tuple(members))
+            for completion_stage, members in sorted(
+                grouped.items(),
+                key=lambda item: (
+                    item[0] is None,
+                    -(item[0] if item[0] is not None else -1),
+                ),
+            )
+        )
+
+    tasks: list[OptimizerTask] = []
+    for completion_stage, members in grouped_members:
+        component_nodes = {
+            node for component, _positions in members for node in component
+        }
+        positions = tuple(
+            sorted({position for _component, values in members for position in values})
+        )
         component_graph = torch.fx.Graph()
         environment: dict[torch.fx.Node, torch.fx.Node] = {}
-        for position in positions:
+        for local_index, position in enumerate(positions):
             original = placeholders[position]
-            environment[original] = component_graph.placeholder(str(original.target))
-        for operation in component:
-            environment[operation] = component_graph.node_copy(
-                operation, environment.__getitem__
+            environment[original] = component_graph.placeholder(
+                f"optimizer_tensor_{local_index:04d}"
             )
+        for operation in operations:
+            if operation not in component_nodes:
+                continue
+            copied = component_graph.create_node(
+                operation.op,
+                operation.target,
+                torch.fx.map_arg(operation.args, environment.__getitem__),
+                torch.fx.map_arg(operation.kwargs, environment.__getitem__),
+                type_expr=operation.type,
+            )
+            copied.meta = copy.copy(operation.meta)
+            environment[operation] = copied
         mutable_positions = tuple(
             position for position in positions if bindings[position].mutable
         )
@@ -972,9 +1044,27 @@ def _partition_optimizer_graph(
                 component_artifact,
                 tuple(bindings[position].name for position in positions),
                 tuple(bindings[position].name for position in mutable_positions),
+                completion_stage,
             )
         )
     return tuple(tasks)
+
+
+def _completion_stage(
+    bindings: tuple[OptimizerTensorBinding, ...],
+    parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
+) -> int | None:
+    """Return the backward frontier after which all bound gradients are final."""
+
+    if parameter_stage_owners is None:
+        return None
+    stages = {
+        stage
+        for binding in bindings
+        if binding.role is OptimizerTensorRole.PARAMETER
+        for stage in parameter_stage_owners.get(binding.name, ())
+    }
+    return min(stages) if stages else None
 
 
 def _restore_binding_values(
