@@ -1854,3 +1854,23 @@ the ignored internal progress log before this tracked summary is updated.
   tensor view maps to distinct compiled allocations”; the dedicated fresh-
   process public training canary passes. That lowering issue is tracked
   separately and is not combined with this synchronization correction.
+
+## 2026-08-12 — Post-fix Qwen NSYS artifact captured
+
+- Captured the exact 30-GiB Qwen control after fix commit `ad2f4ef` at
+  `qualification/results/phase1/qwen35_idle_wakeup_fixed.nsys-rep`; its SQLite
+  export and semantic summary use the matching basename. These generated
+  qualification artifacts remain intentionally ignored by Git.
+- The capture retained the frozen Program and schedule digests, 129 semantic
+  execution ranges, 97 optimizer tasks, and 1,415 memory actions. The semantic
+  extractor rejected no duplicate task ranges, and NSYS records the pure-C
+  progress thread as `shadowspill.wkr` rather than `python`.
+- NSYS perturbed the selected-task span to 460.325 ms and the summed CUDA task
+  intervals to 433.488 ms; these are diagnostic capture measurements, not the
+  performance gate. The immediately preceding non-NSYS `trace=True` control is
+  authoritative at 304.287--304.859 ms.
+- The extracted trace reports a 460.310-ms compute-stream span, 74.064 ms of
+  kernel-union time, and 386.246 ms between kernel intervals. It contains 394
+  H2D and 388 D2H copies, matching the plan's startup/terminal action shape.
+  The trace is now available for the planned completion-frontier and allocator
+  lock analysis before any polling-policy change.
