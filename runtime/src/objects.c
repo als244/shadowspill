@@ -8,13 +8,7 @@ ShadowSpillObjectRecord *shadowspill_find_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id
 ) {
-    for (ShadowSpillObjectRecord *record = runtime->objects; record != NULL;
-         record = record->next) {
-        if (record->object_id == object_id) {
-            return record;
-        }
-    }
-    return NULL;
+    return shadowspill_object_table_find(&runtime->objects, object_id);
 }
 
 ShadowSpillRuntimeStatus shadowspill_register_object(
@@ -62,8 +56,19 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         created->host_current = 1U;
         created->host_version = description->initial_version;
     }
-    created->next = runtime->objects;
-    runtime->objects = created;
+    if (shadowspill_object_table_insert(&runtime->objects, created) != 0) {
+        if (created->has_host_range) {
+            uint64_t charged = created->size_bytes == 0U
+                ? 1U
+                : created->size_bytes;
+            (void)shadowspill_range_free(
+                &runtime->host_ranges, created->host_offset, charged
+            );
+        }
+        free(created);
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
     ++runtime->registered_objects;
 
 done:
@@ -80,12 +85,7 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
     }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    ShadowSpillObjectRecord *previous = NULL;
-    ShadowSpillObjectRecord *object = runtime->objects;
-    while (object != NULL && object->object_id != object_id) {
-        previous = object;
-        object = object->next;
-    }
+    ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
@@ -111,10 +111,9 @@ ShadowSpillRuntimeStatus shadowspill_unregister_object(
             goto done;
         }
     }
-    if (previous == NULL) {
-        runtime->objects = object->next;
-    } else {
-        previous->next = object->next;
+    if (shadowspill_object_table_remove(&runtime->objects, object) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
     }
     --runtime->registered_objects;
     free(object);
@@ -220,8 +219,8 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         goto done;
     }
     ShadowSpillObjectRecord *previous_owner = NULL;
-    for (ShadowSpillObjectRecord *candidate = runtime->objects;
-         candidate != NULL; candidate = candidate->next) {
+    for (ShadowSpillObjectRecord *candidate = runtime->objects.owned_head;
+         candidate != NULL; candidate = candidate->ownership_next) {
         if (candidate != object &&
             candidate->allocation_id == allocation_id) {
             if (previous_owner != NULL) {
@@ -277,12 +276,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    ShadowSpillObjectRecord *previous = NULL;
-    ShadowSpillObjectRecord *object = runtime->objects;
-    while (object != NULL && object->object_id != object_id) {
-        previous = object;
-        object = object->next;
-    }
+    ShadowSpillObjectRecord *object = shadowspill_find_object(runtime, object_id);
     ShadowSpillAllocationRecord *record = object == NULL
         ? NULL
         : shadowspill_find_allocation(runtime, object->allocation_id);
@@ -311,10 +305,9 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
             goto done;
         }
     }
-    if (previous == NULL) {
-        runtime->objects = object->next;
-    } else {
-        previous->next = object->next;
+    if (shadowspill_object_table_remove(&runtime->objects, object) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
     }
     --runtime->registered_objects;
     record->framework_free_seen = 0;

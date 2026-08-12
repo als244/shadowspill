@@ -1335,3 +1335,18 @@ the ignored internal progress log before this tracked summary is updated.
   authority. The next isolated cause under test is the linear object-table
   lookup used repeatedly during input acquisition and storage validation;
   the same trace attributes 73.885 ms to rebinding/validation.
+
+## 2026-08-11 — Lifecycle-safe object lookup index
+
+- Replaced linear object-ID lookup with an internal `ShadowSpillObjectTable`
+  that owns records in one intrusive lifetime list and indexes them in hash
+  buckets. Insert and removal update both structures under the existing
+  runtime lock; no synchronization or state-transition behavior changed.
+- Centralized removal for both explicit unregister and caller-output handoff.
+  Regression coverage removes and re-registers the same ID through both paths,
+  rejects duplicates, and proves that no stale hash entry survives object
+  destruction. This specifically covers the lifecycle omission that caused an
+  earlier experimental hash index to dereference a freed record.
+- All 16 native and CUDA canaries pass with warnings treated as errors. Lock
+  decomposition remains a separate milestone after the unchanged-lock lookup
+  result is measured.

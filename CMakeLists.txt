@@ -104,6 +104,7 @@ add_library(
   shadowspill_runtime
   SHARED
   runtime/src/allocations.c
+  runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/progress.c
   runtime/src/ranges.c

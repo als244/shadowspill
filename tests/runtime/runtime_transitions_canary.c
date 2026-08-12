@@ -486,7 +486,18 @@ static int valid_transition_paths(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
             fixture.runtime, retained.object_id, &snapshot
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_register_object(fixture.runtime, &retained) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(fixture.runtime, &retained) !=
+            SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_object_snapshot(
+            fixture.runtime, retained.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
+        shadowspill_unregister_object(
+            fixture.runtime, retained.object_id
+        ) != SHADOWSPILL_RUNTIME_OK) {
         result = -1;
         goto done;
     }
@@ -527,6 +538,15 @@ static int valid_transition_paths(void) {
         shadowspill_object_snapshot(
             fixture.runtime, device_created.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_register_object(fixture.runtime, &device_created) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            fixture.runtime, device_created.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+        shadowspill_unregister_object(
+            fixture.runtime, device_created.object_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_free(
             fixture.runtime, caller.allocation_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK) {

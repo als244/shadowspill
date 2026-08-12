@@ -77,8 +77,16 @@ typedef struct ShadowSpillObjectRecord {
     uint8_t has_readiness_event;
     uint64_t retired_generation;
     void *retired_device_pointer;
-    struct ShadowSpillObjectRecord *next;
+    struct ShadowSpillObjectRecord *ownership_next;
+    struct ShadowSpillObjectRecord **ownership_previous_link;
+    struct ShadowSpillObjectRecord *id_index_next;
 } ShadowSpillObjectRecord;
+
+typedef struct ShadowSpillObjectTable {
+    ShadowSpillObjectRecord *owned_head;
+    ShadowSpillObjectRecord **by_id;
+    uint64_t bucket_count;
+} ShadowSpillObjectTable;
 
 struct ShadowSpillTaskFence {
     ShadowSpillBackendEvent event;
@@ -135,7 +143,7 @@ struct ShadowSpillRuntime {
     ShadowSpillAllocationRecord **reusable_by_size;
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
-    ShadowSpillObjectRecord *objects;
+    ShadowSpillObjectTable objects;
     ShadowSpillQueuedAction *action_head;
     ShadowSpillQueuedAction *action_tail;
 
@@ -225,6 +233,23 @@ ShadowSpillAllocationRecord *shadowspill_find_allocation_by_pointer(
 ShadowSpillObjectRecord *shadowspill_find_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id
+);
+int shadowspill_object_table_initialize(
+    ShadowSpillObjectTable *table,
+    uint64_t bucket_count
+);
+void shadowspill_object_table_destroy(ShadowSpillObjectTable *table);
+ShadowSpillObjectRecord *shadowspill_object_table_find(
+    const ShadowSpillObjectTable *table,
+    uint64_t object_id
+);
+int shadowspill_object_table_insert(
+    ShadowSpillObjectTable *table,
+    ShadowSpillObjectRecord *object
+);
+int shadowspill_object_table_remove(
+    ShadowSpillObjectTable *table,
+    ShadowSpillObjectRecord *object
 );
 ShadowSpillRuntimeStatus shadowspill_allocate_locked(
     ShadowSpillRuntime *runtime,
