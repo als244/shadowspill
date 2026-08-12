@@ -64,3 +64,33 @@ def test_failed_task_preserves_original_error_without_allocator_failure() -> Non
     bridge.abort_task_after_failure("execute task task_000007", original)
 
     assert library.aborted
+
+
+class _LabelLibrary:
+    def __init__(self) -> None:
+        self.labels: tuple[str, ...] = ()
+
+    def shadowspill_pytorch_task_labels_configure(
+        self, values: object, count: int
+    ) -> int:
+        labels = ctypes.cast(values, ctypes.POINTER(ctypes.c_char_p))
+        self.labels = tuple(labels[index].decode() for index in range(count))
+        return 0
+
+
+def test_task_trace_labels_are_projected_by_dense_canonical_id() -> None:
+    library = _LabelLibrary()
+    bridge = RuntimeBridge(library, representative_program())
+
+    bridge.configure_task_labels(
+        {
+            "task_000002": "execution_000001.backward.stage_0001",
+            "task_000000": "execution_000000.forward.stage_0000",
+        }
+    )
+
+    assert library.labels == (
+        "execution_000000.forward.stage_0000",
+        "",
+        "execution_000001.backward.stage_0001",
+    )

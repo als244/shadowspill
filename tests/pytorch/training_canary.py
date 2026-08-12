@@ -155,8 +155,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
         active = planned.plan_report.execution_plan.program.selected_tasks(
             planned.plan_report.execution_plan.selections
         )
-        for task in active:
-            task_diagnostic = plan_diagnostics.task(task.task_id)
+        for execution_ordinal, task in enumerate(active):
+            execution_task_id = f"execution_{execution_ordinal:06d}"
+            task_diagnostic = plan_diagnostics.task(execution_task_id)
+            if task_diagnostic.task_id != task.task_id:
+                return 1
             if not task_diagnostic.selected:
                 raise AssertionError("selected task is not marked selected")
             if task.phase != "optimizer" and (
@@ -164,6 +167,13 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 != task_diagnostic.chosen_graph_pair_variant
             ):
                 raise AssertionError("selected task has the wrong graph-pair choice")
+            if (
+                task_diagnostic.execution_ordinal != execution_ordinal
+                or task_diagnostic.execution_task_id
+                != f"execution_{execution_ordinal:06d}"
+                or not task_diagnostic.semantic_name
+            ):
+                raise AssertionError("selected task has no chronological identity")
         if tuple(task.phase for task in active) != (
             "forward",
             "backward",
@@ -210,6 +220,15 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     "action_queued",
                 }.issubset(native_kinds):
                     raise AssertionError("native runtime trace omitted core events")
+                if diagnostics.runtime.materialized_allocation_requests != (
+                    diagnostics.runtime.allocation_requests
+                    - diagnostics.runtime.zero_byte_allocation_requests
+                ):
+                    raise AssertionError("zero-byte allocation accounting is invalid")
+                if diagnostics.allocator.live_allocations_before < 0 or (
+                    diagnostics.allocator.live_allocations_after < 0
+                ):
+                    raise AssertionError("live-allocation accounting is invalid")
                 if execution_timing.compute_seconds <= 0.0:
                     raise AssertionError(
                         "compute-only qualification timing is not positive"
@@ -221,7 +240,31 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     raise AssertionError("execution timing omitted a task phase")
                 if len(execution_timing.tasks) != len(active):
                     raise AssertionError("execution timing omitted a selected task")
-                for task_timing in execution_timing.tasks:
+                for execution_ordinal, task_timing in enumerate(
+                    execution_timing.tasks.values()
+                ):
+                    execution_task_id = f"execution_{execution_ordinal:06d}"
+                    if (
+                        task_timing.execution_ordinal != execution_ordinal
+                        or task_timing.execution_task_id
+                        != execution_task_id
+                        or not task_timing.semantic_name
+                    ):
+                        raise AssertionError(
+                            "step trace has no chronological task identity"
+                        )
+                    if diagnostics.tasks[execution_task_id] is not task_timing:
+                        raise AssertionError("step task lookup is not canonical")
+                    planned_task = plan_diagnostics.task(execution_task_id)
+                    if (
+                        planned_task.task_id != task_timing.task_id
+                        or planned_task.execution_ordinal
+                        != task_timing.execution_ordinal
+                        or planned_task.semantic_name != task_timing.semantic_name
+                    ):
+                        raise AssertionError(
+                            "plan and step task identities do not agree"
+                        )
                     if task_timing.expected_profile_seconds <= 0.0:
                         raise AssertionError("task omitted expected profile time")
                     if any(

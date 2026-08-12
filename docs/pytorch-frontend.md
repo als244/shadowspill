@@ -94,17 +94,29 @@ evidence, and exactly seven `CLOCK_MONOTONIC` boundary timestamps:
 6. compute-stream `before_task_compute`;
 7. compute-stream `after_task_compute`.
 
-The three stream-ordered timestamps use minimal `cuLaunchHostFunc` callbacks.
-They are a debug facility and can perturb fine-grained schedules, so the trace
-also retains CUDA-event measurements and must report its overhead against an
-untraced control during performance qualification.
+Every plan and task trace retains the stable canonical `task_id` used by the
+schedule and caches. Selected tasks additionally expose a dense
+`execution_ordinal`, an `execution_XXXXXX` identifier, and a semantic name such
+as `microbatch_0000.stage_0007.backward.recompute`. These execution identities
+follow actual chronological order; unselected save/recompute alternatives
+have no execution ordinal.
+
+The three stream-ordered timestamps use preallocated reusable CUDA events.
+They are resolved only by the explicitly synchronizing diagnostics handle;
+ordinary execution launches no timing events. An earlier host-callback
+implementation was rejected because callbacks serialized fine-grained stream
+work and materially perturbed the measured schedule.
 
 `StepDiagnostics` is organized into `timing`, `tasks`, `allocator`,
 `transfers`, `runtime`, and `simulator_comparison`. The runtime section carries
 the complete ordered neutral-C event stream and overflow/capacity summary. The
 transfer section provides the schedule actions, completed byte/count deltas,
 and a filtered queue/reservation/dispatch/completion view. Allocation records
-remain a separate lifetime ledger. Resolving diagnostics drains the progress
+remain a separate lifetime ledger. Allocator requests are split into total,
+zero-byte, and materialized requests; zero-byte requests return `nullptr` and
+are not expected to receive a free callback. The allocator section reports
+live-allocation and allocated-byte state before and after the call, which are
+the authoritative leak indicators. Resolving diagnostics drains the progress
 service so terminal transfers are included; this synchronization happens only
 because the caller explicitly requested and resolved a trace.
 

@@ -6,6 +6,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import torch
@@ -145,6 +146,7 @@ class PlanGraphPair:
     variant: str
     recomputation: bool
     saved_value_count: int
+    specialized_unit_tangent_count: int
     forward: PlanGraphProfile
     backward: PlanGraphProfile | None
 
@@ -153,6 +155,7 @@ class PlanGraphPair:
             "variant": self.variant,
             "recomputation": self.recomputation,
             "saved_value_count": self.saved_value_count,
+            "specialized_unit_tangent_count": self.specialized_unit_tangent_count,
             "forward": self.forward.as_dict(),
             "backward": None if self.backward is None else self.backward.as_dict(),
         }
@@ -183,6 +186,9 @@ class PlanTaskStage:
     """Direct task-to-stage and selected-variant lookup record."""
 
     task_id: str
+    execution_ordinal: int | None
+    execution_task_id: str | None
+    semantic_name: str
     phase: str
     microbatch: int | None
     stage_occurrence_id: str | None
@@ -195,6 +201,9 @@ class PlanTaskStage:
     def as_dict(self) -> dict[str, object]:
         return {
             "task_id": self.task_id,
+            "execution_ordinal": self.execution_ordinal,
+            "execution_task_id": self.execution_task_id,
+            "semantic_name": self.semantic_name,
             "phase": self.phase,
             "microbatch": self.microbatch,
             "stage_occurrence_id": self.stage_occurrence_id,
@@ -235,6 +244,7 @@ class PlanDiagnostics:
         return sum(item.duration_ns for item in self.phases)
 
     def as_dict(self) -> dict[str, object]:
+        selected_tasks = self.tasks
         return {
             "schema": "shadowspill.plan_diagnostics/v1",
             "phases": [item.as_dict() for item in self.phases],
@@ -256,12 +266,38 @@ class PlanDiagnostics:
                 "cache_hits": self.recomputation_cache_hits,
                 "cache_misses": self.recomputation_cache_misses,
             },
-            "task_stage_map": [item.as_dict() for item in self.task_stage_map],
+            "tasks": {
+                execution_task_id: item.as_dict()
+                for execution_task_id, item in selected_tasks.items()
+            },
+            "task_variants_by_ir_id": {
+                item.task_id: item.as_dict() for item in self.task_stage_map
+            },
             "unique_stages": [item.as_dict() for item in self.unique_stages],
         }
 
-    def task(self, task_id: str) -> PlanTaskStage:
-        """Return direct selected-variant information for ``task_id``."""
+    @property
+    def tasks(self) -> Mapping[str, PlanTaskStage]:
+        """Selected tasks keyed by dense chronological execution identity."""
+
+        return MappingProxyType(
+            {
+                item.execution_task_id: item
+                for item in self.task_stage_map
+                if item.selected and item.execution_task_id is not None
+            }
+        )
+
+    def task(self, execution_task_id: str) -> PlanTaskStage:
+        """Return selected-task information for ``execution_task_id``."""
+
+        try:
+            return self.tasks[execution_task_id]
+        except KeyError:
+            raise KeyError(execution_task_id) from None
+
+    def task_by_ir_id(self, task_id: str) -> PlanTaskStage:
+        """Return variant information by stable canonical IR task identity."""
 
         for item in self.task_stage_map:
             if item.task_id == task_id:

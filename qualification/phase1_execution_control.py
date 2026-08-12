@@ -1,0 +1,114 @@
+"""Capture one unchanged ShadowSpill execution with internal and NSYS traces."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import time
+from pathlib import Path
+
+import torch
+
+from qualification.numerical.cases import build_case
+from shadowspill.pytorch import plan
+
+
+def _event_bracket(
+    training: object, microbatches: list[list[object]]
+) -> dict[str, float]:
+    stream = torch.cuda.current_stream()
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    wall_start = time.perf_counter()
+    start.record(stream)
+    training(microbatches, trace=False)  # type: ignore[operator]
+    end.record(stream)
+    end.synchronize()
+    return {
+        "compute_seconds": float(start.elapsed_time(end)) / 1e3,
+        "host_and_compute_seconds": time.perf_counter() - wall_start,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--family", default="qwen35")
+    parser.add_argument("--device-budget", type=int, default=30 << 30)
+    arguments = parser.parse_args()
+
+    case = build_case(
+        arguments.family,
+        model_implementation="pytorch",
+        seed=20_260_811,
+        model_config={},
+        data_geometry=None,
+        case_factory=None,
+        case_options={},
+    )
+    with case.implementations():
+        planning_start = time.perf_counter()
+        training = plan(
+            case.model,
+            objective=case.objective,
+            opt=case.optimizer,
+            example_inputs=case.microbatches,
+            device_budget=arguments.device_budget,
+            host_budget=64 << 30,
+        )
+        planning_seconds = time.perf_counter() - planning_start
+
+        # Warm the recurrent execution and the lazy trace resources outside NSYS.
+        training(case.microbatches, trace=False)
+        torch.cuda.synchronize()
+        untraced = [_event_bracket(training, case.microbatches) for _ in range(3)]
+        warm_trace = training(case.microbatches, trace=True)
+        assert warm_trace.diagnostics is not None
+        warm_trace.diagnostics.result()
+
+        torch.cuda.cudart().cudaProfilerStart()
+        torch.cuda.nvtx.range_push("shadowspill.qualification.phase1_capture")
+        traced_wall_start = time.perf_counter()
+        traced = training(case.microbatches, trace=True)
+        assert traced.diagnostics is not None
+        diagnostics = traced.diagnostics.result()
+        traced_wall_seconds = time.perf_counter() - traced_wall_start
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.cudart().cudaProfilerStop()
+
+        report = training.plan_report
+        training.close()
+
+    result = {
+        "schema": "shadowspill.phase1_execution_control/v1",
+        "family": arguments.family,
+        "device_budget_bytes": arguments.device_budget,
+        "planning_seconds": planning_seconds,
+        "untraced_steps": untraced,
+        "untraced_compute_median_seconds": statistics.median(
+            item["compute_seconds"] for item in untraced
+        ),
+        "traced_wall_seconds": traced_wall_seconds,
+        "trace": diagnostics.as_dict(),
+        "plan": {
+            "program_digest": report.execution_plan.program.digest,
+            "schedule_digest": report.execution_plan.schedule.digest,
+            "predicted_makespan_seconds": report.predicted_makespan_ns / 1e9,
+            "predicted_device_peak_bytes": report.predicted_device_peak_bytes,
+            "task_count": len(
+                report.execution_plan.program.selected_tasks(
+                    report.execution_plan.selections
+                )
+            ),
+            "action_count": len(report.transfer_actions),
+        },
+    }
+    arguments.output.parent.mkdir(parents=True, exist_ok=True)
+    arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    print(json.dumps({key: value for key, value in result.items() if key != "trace"}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

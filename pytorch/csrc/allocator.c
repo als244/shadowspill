@@ -33,8 +33,8 @@ typedef struct ShadowSpillPytorchAdapterState {
     ShadowSpillDebugTaskRecord *debug_task_records;
     uint32_t debug_task_capacity;
     _Atomic uint8_t debug_task_timing_enabled;
-    _Atomic uint64_t debug_callbacks_in_flight;
-    _Atomic uint64_t debug_callback_sequence;
+    char **task_labels;
+    uint32_t task_label_count;
     ShadowSpillPytorchPhysicalAdmission admission;
     ShadowSpillPytorchAdapterFailure failure;
 } ShadowSpillPytorchAdapterState;
@@ -44,29 +44,64 @@ static ShadowSpillPytorchAdapterState adapter = {
     .device_ordinal = -1,
 };
 
-typedef struct ShadowSpillDebugCallbackContext {
-    ShadowSpillDebugTaskRecord *record;
-    uint8_t boundary;
-} ShadowSpillDebugCallbackContext;
-
 struct ShadowSpillDebugTaskRecord {
     uint64_t task_id;
-    _Atomic uint64_t before_readiness_waits_timestamp_ns;
-    _Atomic uint64_t before_task_compute_timestamp_ns;
-    _Atomic uint64_t after_task_compute_timestamp_ns;
-    _Atomic uint64_t before_readiness_waits_sequence;
-    _Atomic uint64_t before_task_compute_sequence;
-    _Atomic uint64_t after_task_compute_sequence;
     _Atomic uint64_t before_task_enter_timestamp_ns;
     _Atomic uint64_t before_task_exit_timestamp_ns;
     _Atomic uint64_t after_task_enter_timestamp_ns;
     _Atomic uint64_t after_task_exit_timestamp_ns;
-    ShadowSpillDebugCallbackContext stream_before_wait_callback;
-    ShadowSpillDebugCallbackContext ready_callback;
-    ShadowSpillDebugCallbackContext complete_callback;
 };
 
 static _Thread_local int task_range_active;
+static _Thread_local nvtxRangeId_t task_range_id;
+
+static void end_task_range(void) {
+    if (task_range_active) {
+        nvtxRangeEnd(task_range_id);
+        task_range_active = 0;
+        task_range_id = 0;
+    }
+}
+
+static void free_task_labels(char **labels, uint32_t count) {
+    if (labels == NULL) {
+        return;
+    }
+    for (uint32_t index = 0U; index < count; ++index) {
+        free(labels[index]);
+    }
+    free(labels);
+}
+
+static void format_task_range_name(
+    char *destination,
+    size_t destination_bytes,
+    const char *operation,
+    uint64_t task_id
+) {
+    pthread_mutex_lock(&adapter.mutex);
+    const char *label = task_id < adapter.task_label_count
+        ? adapter.task_labels[task_id]
+        : NULL;
+    if (label != NULL && label[0] != '\0') {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.%s.%s",
+            operation,
+            label
+        );
+    } else {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.%s.canonical_%llu",
+            operation,
+            (unsigned long long)task_id
+        );
+    }
+    pthread_mutex_unlock(&adapter.mutex);
+}
 
 static uint64_t monotonic_nanoseconds(void) {
     struct timespec value = {0};
@@ -74,87 +109,6 @@ static uint64_t monotonic_nanoseconds(void) {
         return 0U;
     }
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
-}
-
-static void CUDA_CB debug_task_timestamp(void *user_data) {
-    ShadowSpillDebugCallbackContext *context =
-        (ShadowSpillDebugCallbackContext *)user_data;
-    const uint64_t timestamp = monotonic_nanoseconds();
-    const uint64_t sequence = atomic_fetch_add_explicit(
-        &adapter.debug_callback_sequence, 1U, memory_order_relaxed
-    ) + 1U;
-    if (context->boundary == 2U) {
-        atomic_store_explicit(
-            &context->record->after_task_compute_timestamp_ns,
-            timestamp,
-            memory_order_release
-        );
-        atomic_store_explicit(
-            &context->record->after_task_compute_sequence,
-            sequence,
-            memory_order_release
-        );
-    } else if (context->boundary == 1U) {
-        atomic_store_explicit(
-            &context->record->before_task_compute_timestamp_ns,
-            timestamp,
-            memory_order_release
-        );
-        atomic_store_explicit(
-            &context->record->before_task_compute_sequence,
-            sequence,
-            memory_order_release
-        );
-    } else {
-        atomic_store_explicit(
-            &context->record->before_readiness_waits_timestamp_ns,
-            timestamp,
-            memory_order_release
-        );
-        atomic_store_explicit(
-            &context->record->before_readiness_waits_sequence,
-            sequence,
-            memory_order_release
-        );
-    }
-    (void)atomic_fetch_sub_explicit(
-        &adapter.debug_callbacks_in_flight, 1U, memory_order_release
-    );
-}
-
-static ShadowSpillRuntimeStatus enqueue_debug_task_timestamp(
-    uint64_t task_id,
-    uintptr_t compute_stream_address,
-    uint8_t boundary
-) {
-    if (!atomic_load_explicit(
-            &adapter.debug_task_timing_enabled, memory_order_acquire
-        )) {
-        return SHADOWSPILL_RUNTIME_OK;
-    }
-    if (task_id >= adapter.debug_task_capacity ||
-        adapter.debug_task_records == NULL) {
-        return SHADOWSPILL_RUNTIME_OK;
-    }
-    ShadowSpillDebugTaskRecord *record = &adapter.debug_task_records[task_id];
-    ShadowSpillDebugCallbackContext *context = boundary == 2U
-        ? &record->complete_callback
-        : boundary == 1U
-            ? &record->ready_callback
-            : &record->stream_before_wait_callback;
-    (void)atomic_fetch_add_explicit(
-        &adapter.debug_callbacks_in_flight, 1U, memory_order_acq_rel
-    );
-    const CUresult result = cuLaunchHostFunc(
-        (CUstream)compute_stream_address, debug_task_timestamp, context
-    );
-    if (result != CUDA_SUCCESS) {
-        (void)atomic_fetch_sub_explicit(
-            &adapter.debug_callbacks_in_flight, 1U, memory_order_release
-        );
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-    }
-    return SHADOWSPILL_RUNTIME_OK;
 }
 
 static void record_debug_host_boundary(
@@ -904,51 +858,31 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task(
         record_debug_host_boundary(task_id, 1U);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    char range_name[96];
-    (void)snprintf(
-        range_name,
-        sizeof(range_name),
-        "shadowspill.pytorch.task.%llu",
-        (unsigned long long)task_id
-    );
-    (void)nvtxRangePushA(range_name);
+    char range_name[384];
+    format_task_range_name(range_name, sizeof(range_name), "task", task_id);
+    task_range_id = nvtxRangeStartA(range_name);
     task_range_active = 1;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        (void)nvtxRangePop();
-        task_range_active = 0;
+        end_task_range();
         record_debug_host_boundary(task_id, 1U);
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    ShadowSpillRuntimeStatus status = enqueue_debug_task_timestamp(
-        task_id, compute_stream_address, 0U
+    ShadowSpillRuntimeStatus status = shadowspill_before_task(
+        runtime,
+        task_id,
+        shadowspill_cuda_wrap_stream(compute_stream_address),
+        input_object_ids,
+        input_count,
+        bindings,
+        binding_capacity
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = shadowspill_before_task(
-            runtime,
-            task_id,
-            shadowspill_cuda_wrap_stream(compute_stream_address),
-            input_object_ids,
-            input_count,
-            bindings,
-            binding_capacity
-        );
-    }
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        (void)nvtxRangePop();
-        task_range_active = 0;
+        end_task_range();
         record_debug_host_boundary(task_id, 1U);
         return status;
-    }
-    status = enqueue_debug_task_timestamp(
-        task_id, compute_stream_address, 1U
-    );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        shadowspill_abort_task(runtime);
-        (void)nvtxRangePop();
-        task_range_active = 0;
     }
     record_debug_host_boundary(task_id, 1U);
     return status;
@@ -964,27 +898,21 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
 ) {
     record_debug_host_boundary(task_id, 2U);
     if (!task_range_active) {
-        char range_name[96];
-        (void)snprintf(
-            range_name,
-            sizeof(range_name),
-            "shadowspill.pytorch.after_task.%llu",
-            (unsigned long long)task_id
+        char range_name[384];
+        format_task_range_name(
+            range_name, sizeof(range_name), "after_task", task_id
         );
-        (void)nvtxRangePushA(range_name);
+        task_range_id = nvtxRangeStartA(range_name);
+        task_range_active = 1;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        (void)nvtxRangePop();
-        task_range_active = 0;
+        end_task_range();
         record_debug_host_boundary(task_id, 3U);
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    ShadowSpillRuntimeStatus debug_status = enqueue_debug_task_timestamp(
-        task_id, compute_stream_address, 2U
-    );
     ShadowSpillRuntimeStatus status = shadowspill_after_task(
         runtime,
         task_id,
@@ -994,12 +922,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
         actions,
         action_count
     );
-    if (status == SHADOWSPILL_RUNTIME_OK &&
-        debug_status != SHADOWSPILL_RUNTIME_OK) {
-        status = debug_status;
-    }
-    (void)nvtxRangePop();
-    task_range_active = 0;
+    end_task_range();
     record_debug_host_boundary(task_id, 3U);
     return status;
 }
@@ -1017,12 +940,44 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
     return shadowspill_object_snapshot(runtime, object_id, snapshot);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_task_labels_configure(
+    const char *const *task_labels,
+    uint32_t task_label_count
+) {
+    if ((task_labels == NULL) != (task_label_count == 0U)) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    char **labels = NULL;
+    if (task_label_count != 0U) {
+        labels = calloc(task_label_count, sizeof(*labels));
+        if (labels == NULL) {
+            return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+        }
+        for (uint32_t index = 0U; index < task_label_count; ++index) {
+            if (task_labels[index] == NULL) {
+                continue;
+            }
+            labels[index] = strdup(task_labels[index]);
+            if (labels[index] == NULL) {
+                free_task_labels(labels, task_label_count);
+                return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+            }
+        }
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    char **previous = adapter.task_labels;
+    uint32_t previous_count = adapter.task_label_count;
+    adapter.task_labels = labels;
+    adapter.task_label_count = task_label_count;
+    pthread_mutex_unlock(&adapter.mutex);
+    free_task_labels(previous, previous_count);
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
     uint32_t task_capacity
 ) {
-    if (task_capacity == 0U || atomic_load_explicit(
-            &adapter.debug_callbacks_in_flight, memory_order_acquire
-        ) != 0U) {
+    if (task_capacity == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
@@ -1042,28 +997,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
     for (uint32_t index = 0U; index < task_capacity; ++index) {
         ShadowSpillDebugTaskRecord *record = &records[index];
         record->task_id = index;
-        atomic_init(&record->before_readiness_waits_timestamp_ns, 0U);
-        atomic_init(&record->before_task_compute_timestamp_ns, 0U);
-        atomic_init(&record->after_task_compute_timestamp_ns, 0U);
-        atomic_init(&record->before_readiness_waits_sequence, 0U);
-        atomic_init(&record->before_task_compute_sequence, 0U);
-        atomic_init(&record->after_task_compute_sequence, 0U);
         atomic_init(&record->before_task_enter_timestamp_ns, 0U);
         atomic_init(&record->before_task_exit_timestamp_ns, 0U);
         atomic_init(&record->after_task_enter_timestamp_ns, 0U);
         atomic_init(&record->after_task_exit_timestamp_ns, 0U);
-        record->stream_before_wait_callback = (ShadowSpillDebugCallbackContext){
-            .record = record,
-            .boundary = 0U,
-        };
-        record->ready_callback = (ShadowSpillDebugCallbackContext){
-            .record = record,
-            .boundary = 1U,
-        };
-        record->complete_callback = (ShadowSpillDebugCallbackContext){
-            .record = record,
-            .boundary = 2U,
-        };
     }
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillDebugTaskRecord *previous = records != adapter.debug_task_records
@@ -1071,9 +1008,6 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
         : NULL;
     adapter.debug_task_records = records;
     adapter.debug_task_capacity = task_capacity;
-    atomic_store_explicit(
-        &adapter.debug_callback_sequence, 0U, memory_order_release
-    );
     atomic_store_explicit(
         &adapter.debug_task_timing_enabled, 1U, memory_order_release
     );
@@ -1087,42 +1021,30 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
     uint32_t record_capacity,
     uint32_t *record_count
 ) {
-    if (record_count == NULL || atomic_load_explicit(
-            &adapter.debug_callbacks_in_flight, memory_order_acquire
-        ) != 0U) {
+    if (record_count == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     uint32_t required = 0U;
     for (uint32_t index = 0U; index < adapter.debug_task_capacity; ++index) {
         ShadowSpillDebugTaskRecord *record = &adapter.debug_task_records[index];
-        const uint64_t ready = atomic_load_explicit(
-            &record->before_task_compute_timestamp_ns, memory_order_acquire
+        const uint64_t before_enter = atomic_load_explicit(
+            &record->before_task_enter_timestamp_ns, memory_order_acquire
         );
-        const uint64_t complete = atomic_load_explicit(
-            &record->after_task_compute_timestamp_ns, memory_order_acquire
+        const uint64_t after_exit = atomic_load_explicit(
+            &record->after_task_exit_timestamp_ns, memory_order_acquire
         );
-        if (ready == 0U && complete == 0U) {
+        if (before_enter == 0U && after_exit == 0U) {
             continue;
         }
         if (records != NULL && required < record_capacity) {
             records[required] = (ShadowSpillPytorchTaskHostTiming){
                 .task_id = record->task_id,
-                .before_readiness_waits_timestamp_ns = atomic_load_explicit(
-                    &record->before_readiness_waits_timestamp_ns,
-                    memory_order_acquire
-                ),
-                .before_task_compute_timestamp_ns = ready,
-                .after_task_compute_timestamp_ns = complete,
-                .before_readiness_waits_sequence = atomic_load_explicit(
-                    &record->before_readiness_waits_sequence,
-                    memory_order_acquire
-                ),
-                .before_task_compute_sequence = atomic_load_explicit(
-                    &record->before_task_compute_sequence, memory_order_acquire
-                ),
-                .after_task_compute_sequence = atomic_load_explicit(
-                    &record->after_task_compute_sequence, memory_order_acquire
-                ),
+                .before_readiness_waits_timestamp_ns = 0U,
+                .before_task_compute_timestamp_ns = 0U,
+                .after_task_compute_timestamp_ns = 0U,
+                .before_readiness_waits_sequence = 0U,
+                .before_task_compute_sequence = 0U,
+                .after_task_compute_sequence = 0U,
                 .before_task_enter_timestamp_ns = atomic_load_explicit(
                     &record->before_task_enter_timestamp_ns,
                     memory_order_acquire
@@ -1151,11 +1073,6 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_disable(void) {
-    if (atomic_load_explicit(
-            &adapter.debug_callbacks_in_flight, memory_order_acquire
-        ) != 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
     atomic_store_explicit(
         &adapter.debug_task_timing_enabled, 0U, memory_order_release
     );
@@ -1169,10 +1086,7 @@ void shadowspill_pytorch_abort_task_range(void) {
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     shadowspill_abort_task(runtime);
-    if (task_range_active) {
-        (void)nvtxRangePop();
-        task_range_active = 0;
-    }
+    end_task_range();
 }
 
 void *shadowspill_pytorch_cuda_malloc(

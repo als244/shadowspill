@@ -1350,3 +1350,85 @@ the ignored internal progress log before this tracked summary is updated.
 - All 16 native and CUDA canaries pass with warnings treated as errors. Lock
   decomposition remains a separate milestone after the unchanged-lock lookup
   result is measured.
+
+## 2026-08-12 — Warm Qwen runtime discrepancy fully reconciled
+
+- Captured a fresh warm standard-allocator NSYS control and a warm
+  `trace=False` ShadowSpill control. Both execute essentially identical
+  numerical work: 40,681 versus 40,528 kernels and 76.420 versus 77.220 ms of
+  summed kernel-active time. Five prior warm iterations precede capture, so
+  the long dispatch intervals are not JIT compilation.
+- The pure-PyTorch delta-rule reference is the source of the kernel storm. Its
+  explicit recurrence launches 728 kernels for a 64-token forward component,
+  1,080 for a 96-token component, and approximately 28 kernels per token in
+  backward. ShadowSpill does not introduce these operations.
+- Reconciled the non-cyclic steady cycle: approximately 38.881 ms of residual
+  prior-step D2H, 59.538 ms of startup readiness, and 384.361 ms from first
+  task compute to final optimizer compute yield 482.780 ms, consistent with
+  the 476.734-ms untraced median. The 384.361-ms compute span contains
+  299.281 ms of task CUDA intervals and 85.079 ms of inter-task idle. Standard
+  compiled PyTorch is 292.141 ms, so numerical task work differs by only
+  7.140 ms.
+- Found three generic causes of the inter-task/runtime regression. First,
+  startup and terminal transfer queues cause CUDA launch backpressure: warm
+  NSYS observes 25.245-ms and 52.004-ms individual launch calls, while the
+  standard control's largest launch is 0.076 ms. Second, all 37,563 allocator
+  callbacks contend with the progress service's 223,208 `cuEventQuery` calls
+  under one global mutex; slow mutex acquisitions total approximately 54 ms.
+  Third, each of 97 optimizer components rebuilds the complete model and
+  optimizer binding inventory, accounting for 56.765 ms of the 61.686-ms
+  input/rebind bucket. Actual C++ storage-rebind ranges total only 8.086 ms.
+- The current three-host-callback task trace is materially invasive. One
+  `cuLaunchHostFunc` submission blocked for 50.961 ms, and traced wall time was
+  593.992 ms versus a 476.734-ms untraced median. Decision: retain four host
+  timestamps but replace the three stream callbacks with preallocated CUDA
+  events resolved by the explicitly synchronizing diagnostics handle.
+- Audited all execution work outside the currently named native boundaries.
+  Logical `before_task` will include static input selection, acquire/waits,
+  rebinding, argument assembly, and the compute-start marker. Logical
+  `after_task` will include the compute-end marker, output/gradient handling,
+  dematerialization, native action submission, released-object cleanup, and
+  terminal optimizer cleanup. Input guards/staging, prior cooldown, initial
+  placement, caller-output ownership, result construction, and asynchronous
+  progress remain explicit step/component ledgers rather than hidden task
+  time.
+- Expanded `docs/runtime_overheads.md` into a standalone end-to-end account
+  with exact ledgers, standard-versus-ShadowSpill controls, allocator and lock
+  distributions, optimizer fragmentation, trace observer effect, boundary
+  definitions, and the ordered corrections. Baseline reports are
+  `qualification/results/phase1/qwen35_standard_allocator.nsys-rep` and
+  `qualification/results/phase1/qwen35_untraced_current.nsys-rep`.
+
+## 2026-08-12 — Completion-query contention and runtime ownership design
+
+- Correlated the user-visible NSYS mutex bands with
+  `execution_000004.microbatch_0000.stage_0004.forward.recompute` (canonical
+  `task_000009`). During its 16.733-ms profiled host range, 794 allocator
+  callbacks accumulated 4.850 ms, 64 slow mutex waits accumulated 7.067 ms,
+  and the progress worker issued 17,557 event queries. Across the step the
+  worker issued 223,208 `cuEventQuery` calls while sharing the allocator's
+  global runtime mutex.
+- Confirmed that completion events are required for H2D readiness, D2H
+  authority/range release, annotated task-fence actions, and `record_stream`
+  retirement. The defect is full-population repeated polling under the global
+  lock, not event synchronization itself. The selected correction is
+  per-stream FIFO completion frontiers, head-only `cuEventQuery` outside state
+  locks, shared-fence deduplication, a precreated event pool, and adaptive
+  backoff/pressure wakeups. `cuEventSynchronize` and stream host callbacks are
+  explicitly excluded from the dispatch-thread progress path.
+- Verified the current thread topology from initialization: one ShadowSpill C
+  progress thread, one H2D CUDA stream, and one D2H CUDA stream per device
+  runtime, in addition to the caller/PyTorch dispatcher. CUDA streams are not
+  CPU threads. One worker remains the intended default because the problem is
+  lock scope/query complexity rather than insufficient worker parallelism.
+- Documented the proposed central ownership model in
+  `docs/runtime_overheads.md`: an object hash table for membership/lifetime;
+  per-alias-bundle object records and locks; an allocation pool/condition;
+  immutable execution records with direct retained object pointers; separate
+  H2D/D2H lanes; per-stream completion queues; event pool; atomic trace; and
+  separate failure/lifecycle state. Hot transitions use retain,
+  snapshot-and-commit and normally hold at most one mutex.
+- Bumped the private PyTorch adapter ABI to v15 and added cold-path task-label
+  registration. C and Python NVTX task ranges now use dense chronological
+  `execution_XXXXXX` identities plus semantic stage names; canonical IR task
+  IDs remain fallback/correlation metadata.

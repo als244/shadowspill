@@ -678,16 +678,23 @@ void *shadowspill_progress_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     pthread_mutex_lock(&runtime->mutex);
     while (!runtime->worker_stop) {
-        int changed = progress_retirements_locked(runtime);
-        changed |= progress_actions_locked(runtime);
+        (void)progress_retirements_locked(runtime);
+        (void)progress_actions_locked(runtime);
         if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
             pthread_cond_broadcast(&runtime->condition);
         }
-        if (!changed && !runtime->worker_stop) {
+        if (!runtime->worker_stop) {
             if (runtime->queued_actions == 0U &&
                 !has_actionable_retirement_locked(runtime)) {
                 pthread_cond_wait(&runtime->condition, &runtime->mutex);
             } else {
+                /*
+                 * Always release the runtime lock between progress passes.
+                 * A FIFO transfer window can complete one item per pass for
+                 * many consecutive passes.  Immediately rescanning after
+                 * each completion otherwise starves framework malloc/free
+                 * callbacks that need the same state lock.
+                 */
                 timed_wait_locked(runtime);
             }
         }

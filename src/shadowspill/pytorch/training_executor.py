@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
 
 import torch
@@ -36,6 +37,7 @@ class _PlanRun:
     public_by_microbatch: tuple[tuple[str, ...], ...]
     ephemeral_aliases: frozenset[str]
     objects_by_alias: Mapping[str, tuple[str, ...]]
+    input_aliases_by_task: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,9 @@ class TaskExecutionTiming:
     """Qualification timing for one selected task invocation."""
 
     task_id: str
+    execution_ordinal: int
+    execution_task_id: str
+    semantic_name: str
     phase: str
     microbatch: int | None
     expected_profile_seconds: float
@@ -77,22 +82,28 @@ class TaskExecutionTiming:
     native_after_task_enter_seconds: float | None
     native_after_task_exit_seconds: float | None
     host_before_task_seconds: float
+    host_native_before_task_seconds: float
     host_rebind_seconds: float
     host_dispatch_seconds: float
     host_postprocess_seconds: float
+    host_native_after_task_seconds: float
+    host_cleanup_seconds: float
     host_after_task_seconds: float
     host_total_seconds: float
 
     def as_dict(self) -> dict[str, object]:
         return {
             "task_id": self.task_id,
+            "execution_ordinal": self.execution_ordinal,
+            "execution_task_id": self.execution_task_id,
+            "semantic_name": self.semantic_name,
             "phase": self.phase,
             "microbatch": self.microbatch,
             "expected_profile_seconds": self.expected_profile_seconds,
             "boundary_timestamps": {
-                "clock": "CLOCK_MONOTONIC",
                 "unit": "nanoseconds",
                 "host": {
+                    "clock": "CLOCK_MONOTONIC",
                     "before_task": {
                         "enter": self.before_task_enter_timestamp_ns,
                         "exit": self.before_task_exit_timestamp_ns,
@@ -103,6 +114,7 @@ class TaskExecutionTiming:
                     },
                 },
                 "compute_stream": {
+                    "clock": "cuda_event_elapsed_from_step_origin",
                     "before_readiness_waits": (
                         self.before_readiness_waits_timestamp_ns
                     ),
@@ -126,9 +138,14 @@ class TaskExecutionTiming:
             "native_after_task_enter_seconds": self.native_after_task_enter_seconds,
             "native_after_task_exit_seconds": self.native_after_task_exit_seconds,
             "host_before_task_seconds": self.host_before_task_seconds,
+            "host_native_before_task_seconds": (
+                self.host_native_before_task_seconds
+            ),
             "host_rebind_seconds": self.host_rebind_seconds,
             "host_dispatch_seconds": self.host_dispatch_seconds,
             "host_postprocess_seconds": self.host_postprocess_seconds,
+            "host_native_after_task_seconds": self.host_native_after_task_seconds,
+            "host_cleanup_seconds": self.host_cleanup_seconds,
             "host_after_task_seconds": self.host_after_task_seconds,
             "host_total_seconds": self.host_total_seconds,
         }
@@ -145,7 +162,7 @@ class ExecutionTiming:
     host_initial_actions_seconds: float
     trace_setup_seconds: float
     phase_gpu_seconds: tuple[tuple[str, float], ...]
-    tasks: tuple[TaskExecutionTiming, ...]
+    tasks: Mapping[str, TaskExecutionTiming]
 
     def as_dict(self, *, include_tasks: bool = True) -> dict[str, object]:
         result: dict[str, object] = {
@@ -158,7 +175,10 @@ class ExecutionTiming:
             "phase_gpu_seconds": dict(self.phase_gpu_seconds),
         }
         if include_tasks:
-            result["tasks"] = [item.as_dict() for item in self.tasks]
+            result["tasks"] = {
+                execution_task_id: item.as_dict()
+                for execution_task_id, item in self.tasks.items()
+            }
         return result
 
 
@@ -167,6 +187,8 @@ class AllocatorTrace:
     """Ordered allocator lifetimes and before/after slab state."""
 
     events: tuple[CapturedAllocationEvent, ...]
+    live_allocations_before: int
+    live_allocations_after: int
     allocated_bytes_before: int
     allocated_bytes_after: int
     peak_allocated_bytes: int
@@ -192,6 +214,8 @@ class AllocatorTrace:
                 }
                 for item in self.events
             ],
+            "live_allocations_before": self.live_allocations_before,
+            "live_allocations_after": self.live_allocations_after,
             "allocated_bytes_before": self.allocated_bytes_before,
             "allocated_bytes_after": self.allocated_bytes_after,
             "peak_allocated_bytes": self.peak_allocated_bytes,
@@ -232,8 +256,10 @@ class RuntimeTrace:
     """Runtime counter changes and terminal queue state for the traced call."""
 
     wait_events_inserted: int
-    allocation_callbacks: int
-    free_callbacks: int
+    allocation_requests: int
+    zero_byte_allocation_requests: int
+    materialized_allocation_requests: int
+    free_requests: int
     record_stream_callbacks: int
     queued_actions_after: int
     pending_retirements_after: int
@@ -250,8 +276,10 @@ class RuntimeTrace:
     def as_dict(self) -> dict[str, object]:
         return {
             "wait_events_inserted": self.wait_events_inserted,
-            "allocation_callbacks": self.allocation_callbacks,
-            "free_callbacks": self.free_callbacks,
+            "allocation_requests": self.allocation_requests,
+            "zero_byte_allocation_requests": self.zero_byte_allocation_requests,
+            "materialized_allocation_requests": self.materialized_allocation_requests,
+            "free_requests": self.free_requests,
             "record_stream_callbacks": self.record_stream_callbacks,
             "queued_actions_after": self.queued_actions_after,
             "pending_retirements_after": self.pending_retirements_after,
@@ -269,6 +297,7 @@ class RuntimeTrace:
 
 @dataclass(frozen=True, slots=True)
 class SimulatorTaskComparison:
+    execution_task_id: str
     task_id: str
     expected_profile_seconds: float
     observed_gpu_seconds: float
@@ -276,6 +305,7 @@ class SimulatorTaskComparison:
 
     def as_dict(self) -> dict[str, object]:
         return {
+            "execution_task_id": self.execution_task_id,
             "task_id": self.task_id,
             "expected_profile_seconds": self.expected_profile_seconds,
             "observed_gpu_seconds": self.observed_gpu_seconds,
@@ -293,23 +323,27 @@ class StepDiagnostics:
     """
 
     timing: ExecutionTiming
-    tasks: tuple[TaskExecutionTiming, ...]
+    tasks: Mapping[str, TaskExecutionTiming]
     allocator: AllocatorTrace
     transfers: TransferTrace
     runtime: RuntimeTrace
-    simulator_comparison: tuple[SimulatorTaskComparison, ...]
+    simulator_comparison: Mapping[str, SimulatorTaskComparison]
 
     def as_dict(self) -> dict[str, object]:
         return {
             "schema": "shadowspill.step_diagnostics/v1",
             "timing": self.timing.as_dict(include_tasks=False),
-            "tasks": [item.as_dict() for item in self.tasks],
+            "tasks": {
+                execution_task_id: item.as_dict()
+                for execution_task_id, item in self.tasks.items()
+            },
             "allocator": self.allocator.as_dict(),
             "transfers": self.transfers.as_dict(),
             "runtime": self.runtime.as_dict(),
-            "simulator_comparison": [
-                item.as_dict() for item in self.simulator_comparison
-            ],
+            "simulator_comparison": {
+                execution_task_id: item.as_dict()
+                for execution_task_id, item in self.simulator_comparison.items()
+            },
         }
 
 
@@ -317,19 +351,26 @@ class StepDiagnostics:
 class _ArmedTaskTiming:
     entrypoint: TrainingTaskEntrypoint
     expected_profile_seconds: float
+    execution_ordinal: int
+    semantic_name: str
+    readiness_event: torch.cuda.Event
     start_event: torch.cuda.Event
     end_event: torch.cuda.Event
     host_started_ns: int = 0
     host_finished_ns: int = 0
-    host_before_task_ns: int = 0
+    host_before_finished_ns: int = 0
+    host_after_started_ns: int = 0
+    host_native_before_task_ns: int = 0
     host_rebind_ns: int = 0
     host_dispatch_ns: int = 0
     host_postprocess_ns: int = 0
-    host_after_task_ns: int = 0
+    host_native_after_task_ns: int = 0
+    host_cleanup_ns: int = 0
 
 
 @dataclass(slots=True)
 class _ArmedExecutionTiming:
+    origin_event: torch.cuda.Event
     start_event: torch.cuda.Event
     end_event: torch.cuda.Event
     tasks: dict[str, _ArmedTaskTiming]
@@ -367,6 +408,7 @@ class TrainingExecutor:
         self.optimizer = optimizer
         self._initial = None if initial is None else self._prepare(*initial)
         self._recurrent = self._prepare(*recurrent)
+        self._task_trace_labels = self._configure_task_trace_labels()
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
             for item in recurrent[0].gradients
@@ -377,6 +419,7 @@ class TrainingExecutor:
         self._optimizer_state_available = (
             optimizer_state_preinitialized or not optimizer_state_was_lazy
         )
+        self._optimizer_binding_cache: dict[str, Any] | None = None
         self._optimizer_size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in self._recurrent.plan.program.alias_groups
@@ -393,8 +436,9 @@ class TrainingExecutor:
         )
         self._trace_start_event: torch.cuda.Event | None = None
         self._trace_end_event: torch.cuda.Event | None = None
+        self._trace_origin_event: torch.cuda.Event | None = None
         self._trace_task_events: dict[
-            str, tuple[torch.cuda.Event, torch.cuda.Event]
+            str, tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]
         ] = {}
 
     def prepare_execution_tracing(self) -> None:
@@ -415,10 +459,12 @@ class TrainingExecutor:
                 entrypoint.task_id for run in runs for entrypoint in run.entrypoints
             )
         )
+        self._trace_origin_event = event_factory(enable_timing=True)
         self._trace_start_event = event_factory(enable_timing=True)
         self._trace_end_event = event_factory(enable_timing=True)
         self._trace_task_events = {
             task_id: (
+                event_factory(enable_timing=True),
                 event_factory(enable_timing=True),
                 event_factory(enable_timing=True),
             )
@@ -427,9 +473,11 @@ class TrainingExecutor:
         # PyTorch creates CUDA event handles lazily on first record. Force that
         # one-time setup before the real trace begins, then reuse every event.
         stream = torch.cuda.current_stream()
+        self._trace_origin_event.record(stream)
         self._trace_start_event.record(stream)
         self._trace_end_event.record(stream)
-        for start_event, end_event in self._trace_task_events.values():
+        for readiness_event, start_event, end_event in self._trace_task_events.values():
+            readiness_event.record(stream)
             start_event.record(stream)
             end_event.record(stream)
         stream.synchronize()
@@ -440,6 +488,7 @@ class TrainingExecutor:
         timing = self._armed_execution_timing
         if timing is not None:
             timing.host_call_started_ns = time.perf_counter_ns()
+            timing.origin_event.record(torch.cuda.current_stream())
         if self._invocations:
             # V1 plans have a fresh terminal state. Preserve asynchronous
             # StepResult construction, but do not accidentally overlap the
@@ -469,11 +518,10 @@ class TrainingExecutor:
             timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
         public_tensors: dict[int, tuple[torch.Tensor, ...]] = {}
         for entrypoint in run.entrypoints:
-            task = run.tasks[entrypoint.task_id]
             if entrypoint.phase == "optimizer":
-                self._execute_optimizer(run, entrypoint, task)
+                self._execute_optimizer(run, entrypoint)
                 continue
-            outputs = self._execute_graph(run, entrypoint, task)
+            outputs = self._execute_graph(run, entrypoint)
             if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
                 public_tensors[entrypoint.microbatch] = outputs[
                     : entrypoint.public_output_count
@@ -524,21 +572,30 @@ class TrainingExecutor:
         )
         if run is None:
             raise AssertionError("timing cannot select an execution plan")
-        if self._trace_start_event is None or self._trace_end_event is None:
+        if (
+            self._trace_origin_event is None
+            or self._trace_start_event is None
+            or self._trace_end_event is None
+        ):
             self.prepare_execution_tracing()
+        origin_event = self._trace_origin_event
         start_event = self._trace_start_event
         end_event = self._trace_end_event
-        if start_event is None or end_event is None:
+        if origin_event is None or start_event is None or end_event is None:
             raise AssertionError("trace event preparation did not complete")
+        identities = _selected_entrypoint_identities(run.entrypoints)
         tasks = {
             entrypoint.task_id: _ArmedTaskTiming(
                 entrypoint,
                 run.expected_task_seconds[entrypoint.task_id],
+                identities[entrypoint.task_id][0],
+                identities[entrypoint.task_id][1],
                 *self._trace_task_events[entrypoint.task_id],
             )
             for entrypoint in run.entrypoints
         }
         armed = _ArmedExecutionTiming(
+            origin_event,
             start_event,
             end_event,
             tasks,
@@ -623,18 +680,25 @@ class TrainingExecutor:
                     else None
                 )
 
-            before_readiness_waits_ns = (
-                callback.before_readiness_waits_ns if callback is not None else 0
-            )
-            before_task_compute_ns = (
-                callback.before_task_compute_ns if callback is not None else 0
-            )
-            after_task_compute_ns = (
-                callback.after_task_compute_ns if callback is not None else 0
-            )
+            before_readiness_waits_seconds = float(
+                timing.origin_event.elapsed_time(task.readiness_event)
+            ) / 1_000.0
+            before_task_compute_seconds = float(
+                timing.origin_event.elapsed_time(task.start_event)
+            ) / 1_000.0
+            after_task_compute_seconds = float(
+                timing.origin_event.elapsed_time(task.end_event)
+            ) / 1_000.0
+            before_readiness_waits_ns = int(before_readiness_waits_seconds * 1e9)
+            before_task_compute_ns = int(before_task_compute_seconds * 1e9)
+            after_task_compute_ns = int(after_task_compute_seconds * 1e9)
+            sequence_base = task.execution_ordinal * 3
             task_results.append(
                 TaskExecutionTiming(
                     task_id=task_id,
+                    execution_ordinal=task.execution_ordinal,
+                    execution_task_id=f"execution_{task.execution_ordinal:06d}",
+                    semantic_name=task.semantic_name,
                     phase=task.entrypoint.phase,
                     microbatch=task.entrypoint.microbatch,
                     expected_profile_seconds=task.expected_profile_seconds,
@@ -656,34 +720,21 @@ class TrainingExecutor:
                     gpu_start_seconds=gpu_start,
                     gpu_end_seconds=gpu_end,
                     gpu_duration_seconds=gpu_duration,
-                    before_readiness_waits_seconds=relative(before_readiness_waits_ns),
-                    before_task_compute_seconds=relative(before_task_compute_ns),
-                    after_task_compute_seconds=relative(after_task_compute_ns),
+                    before_readiness_waits_seconds=before_readiness_waits_seconds,
+                    before_task_compute_seconds=before_task_compute_seconds,
+                    after_task_compute_seconds=after_task_compute_seconds,
                     readiness_wait_seconds=(
-                        (before_task_compute_ns - before_readiness_waits_ns) / 1e9
-                        if before_readiness_waits_ns and before_task_compute_ns
-                        else None
+                        float(
+                            task.readiness_event.elapsed_time(task.start_event)
+                        )
+                        / 1_000.0
                     ),
                     task_compute_seconds=(
-                        (after_task_compute_ns - before_task_compute_ns) / 1e9
-                        if before_task_compute_ns and after_task_compute_ns
-                        else None
+                        float(task.start_event.elapsed_time(task.end_event)) / 1_000.0
                     ),
-                    before_readiness_waits_sequence=(
-                        callback.before_readiness_waits_sequence
-                        if callback is not None
-                        else 0
-                    ),
-                    before_task_compute_sequence=(
-                        callback.before_task_compute_sequence
-                        if callback is not None
-                        else 0
-                    ),
-                    after_task_compute_sequence=(
-                        callback.after_task_compute_sequence
-                        if callback is not None
-                        else 0
-                    ),
+                    before_readiness_waits_sequence=sequence_base + 1,
+                    before_task_compute_sequence=sequence_base + 2,
+                    after_task_compute_sequence=sequence_base + 3,
                     native_before_task_enter_seconds=relative(
                         callback.before_task_enter_ns if callback is not None else 0
                     ),
@@ -696,11 +747,24 @@ class TrainingExecutor:
                     native_after_task_exit_seconds=relative(
                         callback.after_task_exit_ns if callback is not None else 0
                     ),
-                    host_before_task_seconds=task.host_before_task_ns / 1e9,
+                    host_before_task_seconds=(
+                        task.host_before_finished_ns - task.host_started_ns
+                    )
+                    / 1e9,
+                    host_native_before_task_seconds=(
+                        task.host_native_before_task_ns / 1e9
+                    ),
                     host_rebind_seconds=task.host_rebind_ns / 1e9,
                     host_dispatch_seconds=task.host_dispatch_ns / 1e9,
                     host_postprocess_seconds=task.host_postprocess_ns / 1e9,
-                    host_after_task_seconds=task.host_after_task_ns / 1e9,
+                    host_native_after_task_seconds=(
+                        task.host_native_after_task_ns / 1e9
+                    ),
+                    host_cleanup_seconds=task.host_cleanup_ns / 1e9,
+                    host_after_task_seconds=(
+                        task.host_finished_ns - task.host_after_started_ns
+                    )
+                    / 1e9,
                     host_total_seconds=(task.host_finished_ns - task.host_started_ns)
                     / 1e9,
                 )
@@ -711,6 +775,9 @@ class TrainingExecutor:
             - min(item.gpu_start_seconds for item in optimizer)
             if optimizer
             else 0.0
+        )
+        task_results_by_execution_id = MappingProxyType(
+            {item.execution_task_id: item for item in task_results}
         )
         execution_timing = ExecutionTiming(
             compute_seconds=float(timing.start_event.elapsed_time(timing.end_event))
@@ -724,10 +791,12 @@ class TrainingExecutor:
             host_initial_actions_seconds=timing.host_initial_actions_ns / 1e9,
             trace_setup_seconds=timing.trace_setup_ns / 1e9,
             phase_gpu_seconds=tuple(sorted(phase_seconds.items())),
-            tasks=tuple(task_results),
+            tasks=task_results_by_execution_id,
         )
         allocator = AllocatorTrace(
             events=allocation_events,
+            live_allocations_before=int(statistics_before.runtime.live_allocations),
+            live_allocations_after=int(statistics_after.runtime.live_allocations),
             allocated_bytes_before=int(statistics_before.runtime.allocated_bytes),
             allocated_bytes_after=int(statistics_after.runtime.allocated_bytes),
             peak_allocated_bytes=int(statistics_after.runtime.peak_allocated_bytes),
@@ -771,16 +840,25 @@ class TrainingExecutor:
                 }
             ),
         )
+        allocation_requests = int(
+            statistics_after.allocation_callbacks
+            - statistics_before.allocation_callbacks
+        )
+        zero_byte_allocation_requests = int(
+            statistics_after.zero_size_allocation_callbacks
+            - statistics_before.zero_size_allocation_callbacks
+        )
         runtime = RuntimeTrace(
             wait_events_inserted=int(
                 statistics_after.runtime.wait_events_inserted
                 - statistics_before.runtime.wait_events_inserted
             ),
-            allocation_callbacks=int(
-                statistics_after.allocation_callbacks
-                - statistics_before.allocation_callbacks
+            allocation_requests=allocation_requests,
+            zero_byte_allocation_requests=zero_byte_allocation_requests,
+            materialized_allocation_requests=(
+                allocation_requests - zero_byte_allocation_requests
             ),
-            free_callbacks=int(
+            free_requests=int(
                 statistics_after.free_callbacks - statistics_before.free_callbacks
             ),
             record_stream_callbacks=int(
@@ -799,21 +877,24 @@ class TrainingExecutor:
             allocation_event_overflow=native_trace.allocation_event_overflow,
             events=native_trace.events,
         )
-        comparisons = tuple(
-            SimulatorTaskComparison(
-                task_id=item.task_id,
-                expected_profile_seconds=item.expected_profile_seconds,
-                observed_gpu_seconds=item.gpu_duration_seconds,
-                delta_seconds=(
-                    item.gpu_duration_seconds - item.expected_profile_seconds
-                ),
-            )
-            for item in task_results
+        comparisons = MappingProxyType(
+            {
+                item.execution_task_id: SimulatorTaskComparison(
+                    execution_task_id=item.execution_task_id,
+                    task_id=item.task_id,
+                    expected_profile_seconds=item.expected_profile_seconds,
+                    observed_gpu_seconds=item.gpu_duration_seconds,
+                    delta_seconds=(
+                        item.gpu_duration_seconds - item.expected_profile_seconds
+                    ),
+                )
+                for item in task_results
+            }
         )
         self._armed_execution_timing = None
         return StepDiagnostics(
             timing=execution_timing,
-            tasks=tuple(task_results),
+            tasks=task_results_by_execution_id,
             allocator=allocator,
             transfers=transfers,
             runtime=runtime,
@@ -859,16 +940,26 @@ class TrainingExecutor:
         task = timing.tasks[entrypoint.task_id]
         task.host_started_ns = time.perf_counter_ns()
         nvtx: Any = torch.cuda.nvtx
-        nvtx.range_push(f"shadowspill.task.{entrypoint.phase}.{entrypoint.task_id}")
+        nvtx.range_push(
+            f"shadowspill.pytorch.task.execution_{task.execution_ordinal:06d}."
+            f"{task.semantic_name}"
+        )
         return task
 
     @staticmethod
     def _finish_task_timing(task: _ArmedTaskTiming | None) -> None:
         if task is None:
             return
-        task.host_finished_ns = time.perf_counter_ns()
         nvtx: Any = torch.cuda.nvtx
         nvtx.range_pop()
+        task.host_finished_ns = time.perf_counter_ns()
+
+    @staticmethod
+    def _record_task_readiness(
+        task: _ArmedTaskTiming | None, stream: torch.cuda.Stream
+    ) -> None:
+        if task is not None:
+            task.readiness_event.record(stream)
 
     @staticmethod
     def _record_task_start(
@@ -876,6 +967,7 @@ class TrainingExecutor:
     ) -> None:
         if task is not None:
             task.start_event.record(stream)
+            task.host_before_finished_ns = time.perf_counter_ns()
 
     @staticmethod
     def _record_task_end(
@@ -883,6 +975,7 @@ class TrainingExecutor:
     ) -> None:
         if task is not None:
             task.end_event.record(stream)
+            task.host_after_started_ns = time.perf_counter_ns()
 
     @contextmanager
     def _nvtx(self, name: str) -> Iterator[None]:
@@ -903,6 +996,7 @@ class TrainingExecutor:
     def set_optimizer_state_initialized(self, value: bool) -> None:
         """Select the recurrent plan after a checkpoint restores lazy state."""
 
+        self._optimizer_binding_cache = None
         if value and self._initial is None:
             self._optimizer_state_initialized = True
             self._optimizer_state_available = True
@@ -941,6 +1035,7 @@ class TrainingExecutor:
         """Load ordinary optimizer state, then adopt spillable CUDA tensors."""
 
         self._bridge.wait_idle()
+        self._optimizer_binding_cache = None
         self.optimizer.load_state_dict(copy.deepcopy(dict(value)))
         current = self._current_optimizer_bindings()
         planned = self._recurrent.lowered.optimizer_objects
@@ -1017,24 +1112,22 @@ class TrainingExecutor:
         self,
         run: _PlanRun,
         entrypoint: TrainingTaskEntrypoint,
-        task: TaskSpec,
     ) -> tuple[torch.Tensor, ...]:
+        task_timing = self._begin_task_timing(entrypoint)
+        task = run.tasks[entrypoint.task_id]
         artifact = entrypoint.artifact
         if not isinstance(artifact, GraphArtifact):
             raise RuntimeError("graph task has no captured artifact")
         function = self._functions[artifact.compatibility_digest]
         stream = torch.cuda.current_stream()
-        input_aliases = tuple(
-            dict.fromkeys(
-                self._bridge.alias_for_object(object_id) for object_id in task.inputs
-            )
-        )
-        task_timing = self._begin_task_timing(entrypoint)
+        input_aliases = run.input_aliases_by_task[task.task_id]
+        trace_label = self._task_trace_labels[task.task_id]
         task_open = False
         try:
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
+            self._record_task_readiness(task_timing, stream)
             try:
-                with self._nvtx(f"shadowspill.before_task.{task.task_id}"):
+                with self._nvtx(f"shadowspill.before_task.{trace_label}"):
                     bindings = self._bridge.before_task(
                         task.task_id, stream, input_aliases
                     )
@@ -1043,10 +1136,12 @@ class TrainingExecutor:
                 detail = "; ".join(states) if states else "all snapshots device-ready"
                 raise RuntimeError(f"{error}; input_states=[{detail}]") from error
             if task_timing is not None:
-                task_timing.host_before_task_ns = time.perf_counter_ns() - started_ns
+                task_timing.host_native_before_task_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
             task_open = True
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.storage_rebind.{task.task_id}"):
+            with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
                 binding_by_alias = dict(zip(input_aliases, bindings, strict=True))
                 for alias_id, binding in binding_by_alias.items():
                     tensor = self._state.object_store.get(alias_id)
@@ -1070,7 +1165,7 @@ class TrainingExecutor:
             self._record_task_start(task_timing, stream)
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
             with (
-                self._nvtx(f"shadowspill.compiled_call.{task.task_id}"),
+                self._nvtx(f"shadowspill.compiled_call.{trace_label}"),
                 torch.no_grad(),
             ):
                 raw = function(*arguments)
@@ -1104,7 +1199,7 @@ class TrainingExecutor:
             if task_timing is not None:
                 task_timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.after_task.{task.task_id}"):
+            with self._nvtx(f"shadowspill.after_task.{trace_label}"):
                 self._bridge.after_task(
                     task.task_id,
                     stream,
@@ -1112,9 +1207,14 @@ class TrainingExecutor:
                     run.actions.get(task.task_id, ()),
                 )
             if task_timing is not None:
-                task_timing.host_after_task_ns = time.perf_counter_ns() - started_ns
+                task_timing.host_native_after_task_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
             task_open = False
+            started_ns = time.perf_counter_ns() if task_timing is not None else 0
             self._forget_released_objects(run, task.task_id)
+            if task_timing is not None:
+                task_timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
             return outputs
         except BaseException as error:
             if task_open:
@@ -1186,30 +1286,30 @@ class TrainingExecutor:
         self,
         run: _PlanRun,
         entrypoint: TrainingTaskEntrypoint,
-        task: TaskSpec,
     ) -> None:
-        stream = torch.cuda.current_stream()
-        aliases = tuple(
-            dict.fromkeys(
-                self._bridge.alias_for_object(object_id) for object_id in task.inputs
-            )
-        )
         task_timing = self._begin_task_timing(entrypoint)
+        task = run.tasks[entrypoint.task_id]
+        stream = torch.cuda.current_stream()
+        aliases = run.input_aliases_by_task[task.task_id]
+        trace_label = self._task_trace_labels[task.task_id]
         task_open = False
         try:
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
+            self._record_task_readiness(task_timing, stream)
             try:
-                with self._nvtx(f"shadowspill.before_task.{task.task_id}"):
+                with self._nvtx(f"shadowspill.before_task.{trace_label}"):
                     bindings = self._bridge.before_task(task.task_id, stream, aliases)
             except RuntimeError as error:
                 states = self._bridge.input_failure_states(aliases)
                 detail = "; ".join(states) if states else "all snapshots device-ready"
                 raise RuntimeError(f"{error}; input_states=[{detail}]") from error
             if task_timing is not None:
-                task_timing.host_before_task_ns = time.perf_counter_ns() - started_ns
+                task_timing.host_native_before_task_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
             task_open = True
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.storage_rebind.{task.task_id}"):
+            with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
                 for alias_id, binding in zip(aliases, bindings, strict=True):
                     tensor = self._state.object_store.get(alias_id)
                     if tensor is None:
@@ -1225,7 +1325,7 @@ class TrainingExecutor:
                 if not eager:
                     if not isinstance(artifact, GraphArtifact):
                         raise RuntimeError("optimizer task has no executable artifact")
-                    current = self._current_optimizer_bindings()
+                    current = self._optimizer_bindings()
                     try:
                         arguments = tuple(
                             current[name].tensor
@@ -1242,7 +1342,7 @@ class TrainingExecutor:
             self._record_task_start(task_timing, stream)
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
             with (
-                self._nvtx(f"shadowspill.compiled_call.{task.task_id}"),
+                self._nvtx(f"shadowspill.compiled_call.{trace_label}"),
                 torch.no_grad(),
             ):
                 if eager:
@@ -1264,7 +1364,7 @@ class TrainingExecutor:
             if task_timing is not None:
                 task_timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.after_task.{task.task_id}"):
+            with self._nvtx(f"shadowspill.after_task.{trace_label}"):
                 self._bridge.after_task(
                     task.task_id,
                     stream,
@@ -1272,8 +1372,11 @@ class TrainingExecutor:
                     run.actions.get(task.task_id, ()),
                 )
             if task_timing is not None:
-                task_timing.host_after_task_ns = time.perf_counter_ns() - started_ns
+                task_timing.host_native_after_task_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
             task_open = False
+            started_ns = time.perf_counter_ns() if task_timing is not None else 0
             self._forget_released_objects(run, task.task_id)
             if task.task_id == run.lowered.optimizer_task_id:
                 self._optimizer_state_initialized = True
@@ -1286,6 +1389,9 @@ class TrainingExecutor:
                     self._state.object_tensors.pop(
                         gradient_binding.gradient_object_id, None
                     )
+                self._optimizer_binding_cache = None
+            if task_timing is not None:
+                task_timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
         except BaseException as error:
             if task_open:
                 self._bridge.abort_task_after_failure(
@@ -1343,6 +1449,18 @@ class TrainingExecutor:
                 dict(self._state.model.named_parameters()), self.optimizer
             )
         }
+
+    def _optimizer_bindings(self) -> dict[str, Any]:
+        """Return one capture-stable optimizer inventory for this step.
+
+        Gradients are replaced between steps, so the cache is cleared after
+        the terminal optimizer component. Parameters and optimizer-state
+        tensor identities remain stable across all components within a step.
+        """
+
+        if self._optimizer_binding_cache is None:
+            self._optimizer_binding_cache = self._current_optimizer_bindings()
+        return self._optimizer_binding_cache
 
     def _expose_optimizer_state_cpu(
         self,
@@ -1494,7 +1612,35 @@ class TrainingExecutor:
                     item.alias_group_id for item in plan.program.alias_groups
                 )
             },
+            input_aliases_by_task={
+                task_id: tuple(
+                    dict.fromkeys(
+                        self._bridge.alias_for_object(object_id)
+                        for object_id in task.inputs
+                    )
+                )
+                for task_id, task in tasks.items()
+            },
         )
+
+    def _configure_task_trace_labels(self) -> dict[str, str]:
+        """Register chronological semantic labels once, before execution."""
+
+        result: dict[str, str] = {}
+        for run in (self._initial, self._recurrent):
+            if run is None:
+                continue
+            identities = _selected_entrypoint_identities(run.entrypoints)
+            for task_id, (execution_ordinal, semantic_name) in identities.items():
+                label = f"execution_{execution_ordinal:06d}.{semantic_name}"
+                previous = result.setdefault(task_id, label)
+                if previous != label:
+                    raise RuntimeError(
+                        f"task {task_id} has conflicting trace labels "
+                        f"{previous!r} and {label!r}"
+                    )
+        self._bridge.configure_task_labels(result)
+        return result
 
     def _public_outputs(
         self, entrypoints: tuple[TrainingTaskEntrypoint, ...]
@@ -1520,6 +1666,30 @@ def _same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:
         and left.stride() == right.stride()
         and left.dtype == right.dtype
     )
+
+
+def _selected_entrypoint_identities(
+    entrypoints: tuple[TrainingTaskEntrypoint, ...],
+) -> dict[str, tuple[int, str]]:
+    """Assign dense execution ordinals and readable semantic task names."""
+
+    result: dict[str, tuple[int, str]] = {}
+    phase_ordinals: dict[str, int] = {}
+    for execution_ordinal, entrypoint in enumerate(entrypoints):
+        if entrypoint.microbatch is not None and entrypoint.stage_index is not None:
+            semantic_name = (
+                f"microbatch_{entrypoint.microbatch:04d}."
+                f"stage_{entrypoint.stage_index:04d}."
+                f"{entrypoint.phase}.{entrypoint.variant}"
+            )
+        else:
+            phase_ordinal = phase_ordinals.get(entrypoint.phase, 0)
+            phase_ordinals[entrypoint.phase] = phase_ordinal + 1
+            semantic_name = (
+                f"{entrypoint.phase}.component_{phase_ordinal:04d}"
+            )
+        result[entrypoint.task_id] = (execution_ordinal, semantic_name)
+    return result
 
 
 __all__ = ["ExecutionTiming", "TaskExecutionTiming", "TrainingExecutor"]

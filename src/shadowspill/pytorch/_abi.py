@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 14
+ADAPTER_ABI_VERSION: Final = 15
 RUNTIME_ABI_VERSION: Final = 8
 TRACE_ABI_VERSION: Final = 1
 
@@ -321,6 +321,11 @@ def configure_adapter_library(library: Any) -> None:
     library.shadowspill_pytorch_debug_task_timing_read.restype = ctypes.c_uint32
     library.shadowspill_pytorch_debug_task_timing_disable.argtypes = []
     library.shadowspill_pytorch_debug_task_timing_disable.restype = ctypes.c_uint32
+    library.shadowspill_pytorch_task_labels_configure.argtypes = [
+        ctypes.POINTER(ctypes.c_char_p),
+        ctypes.c_uint32,
+    ]
+    library.shadowspill_pytorch_task_labels_configure.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocation_telemetry_start.argtypes = [ctypes.c_uint64]
     library.shadowspill_pytorch_allocation_telemetry_start.restype = ctypes.c_uint32
     library.shadowspill_pytorch_allocation_telemetry_stop.argtypes = []

@@ -44,9 +44,10 @@ def training_stage_inventory(
         for item in lowered.entrypoints
         if item.stage_index is not None and item.variant is not None
     }
-    selected_ids = {
-        item.task_id
-        for item in execution_plan.program.selected_tasks(execution_plan.selections)
+    selected_tasks = execution_plan.program.selected_tasks(execution_plan.selections)
+    selected_ids = {item.task_id for item in selected_tasks}
+    execution_ordinal = {
+        item.task_id: index for index, item in enumerate(selected_tasks)
     }
     occurrence_keys: dict[tuple[int, int], str] = {}
     stage_by_key: dict[str, list[tuple[int, int, TrainingStage]]] = {}
@@ -76,6 +77,7 @@ def training_stage_inventory(
         )
 
     task_map: list[PlanTaskStage] = []
+    auxiliary_ordinals: dict[str, int] = {}
     for entrypoint in lowered.entrypoints:
         artifact = entrypoint.artifact
         structural_abi = (
@@ -90,13 +92,28 @@ def training_stage_inventory(
             )
             unique_stage_id = unique_id_by_key[structural_key]
             chosen = chosen_by_occurrence.get(occurrence)
+            semantic_name = (
+                f"{stage_occurrence_id}.{entrypoint.phase}."
+                f"{entrypoint.variant}"
+            )
         else:
             stage_occurrence_id = None
             unique_stage_id = f"auxiliary_abi_{structural_abi[:16]}"
             chosen = None
+            auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
+            auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
+            semantic_name = (
+                f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
+            )
+        ordinal = execution_ordinal.get(entrypoint.task_id)
         task_map.append(
             PlanTaskStage(
                 task_id=entrypoint.task_id,
+                execution_ordinal=ordinal,
+                execution_task_id=(
+                    None if ordinal is None else f"execution_{ordinal:06d}"
+                ),
+                semantic_name=semantic_name,
                 phase=entrypoint.phase,
                 microbatch=entrypoint.microbatch,
                 stage_occurrence_id=stage_occurrence_id,
@@ -128,6 +145,9 @@ def training_stage_inventory(
                     variant=variant,
                     recomputation=pair.recomputation,
                     saved_value_count=pair.saved_value_count,
+                    specialized_unit_tangent_count=(
+                        pair.specialized_unit_tangent_count
+                    ),
                     forward=_graph_profile(
                         pair.forward,
                         "forward",
@@ -168,9 +188,10 @@ def forward_stage_inventory(
     """Describe deduplicated inference stages and task occurrences."""
 
     task_by_id = {item.task_id: item for item in lowered.program.tasks}
-    selected_ids = {
-        item.task_id
-        for item in execution_plan.program.selected_tasks(execution_plan.selections)
+    selected_tasks = execution_plan.program.selected_tasks(execution_plan.selections)
+    selected_ids = {item.task_id for item in selected_tasks}
+    execution_ordinal = {
+        item.task_id: index for index, item in enumerate(selected_tasks)
     }
     keys = sorted({item.artifact.compatibility_digest for item in lowered.entrypoints})
     unique_id_by_key = {
@@ -179,6 +200,13 @@ def forward_stage_inventory(
     task_map = tuple(
         PlanTaskStage(
             task_id=entrypoint.task_id,
+            execution_ordinal=execution_ordinal.get(entrypoint.task_id),
+            execution_task_id=(
+                f"execution_{execution_ordinal[entrypoint.task_id]:06d}"
+                if entrypoint.task_id in execution_ordinal
+                else None
+            ),
+            semantic_name=f"stage_{index:04d}.forward.inference",
             phase="forward",
             microbatch=None,
             stage_occurrence_id=f"stage_{index:04d}",
@@ -211,6 +239,7 @@ def forward_stage_inventory(
                         variant="inference",
                         recomputation=False,
                         saved_value_count=0,
+                        specialized_unit_tangent_count=0,
                         forward=_graph_profile(
                             representative.artifact,
                             "forward",
@@ -242,6 +271,7 @@ def _pair_key(pair: AotGraphPair) -> dict[str, object]:
         "backward": pair.backward.compatibility_digest,
         "recomputation": pair.recomputation,
         "saved_value_count": pair.saved_value_count,
+        "specialized_unit_tangent_count": pair.specialized_unit_tangent_count,
     }
 
 

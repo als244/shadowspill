@@ -43,12 +43,6 @@ _ACTION_KIND = {
 
 @dataclass(frozen=True, slots=True)
 class TaskHostTimestamps:
-    before_readiness_waits_ns: int
-    before_task_compute_ns: int
-    after_task_compute_ns: int
-    before_readiness_waits_sequence: int
-    before_task_compute_sequence: int
-    after_task_compute_sequence: int
     before_task_enter_ns: int
     before_task_exit_ns: int
     after_task_enter_ns: int
@@ -109,14 +103,6 @@ class RuntimeBridge:
         )
         return {
             f"task_{int(item.task_id):06d}": TaskHostTimestamps(
-                before_readiness_waits_ns=int(item.before_readiness_waits_timestamp_ns),
-                before_task_compute_ns=int(item.before_task_compute_timestamp_ns),
-                after_task_compute_ns=int(item.after_task_compute_timestamp_ns),
-                before_readiness_waits_sequence=int(
-                    item.before_readiness_waits_sequence
-                ),
-                before_task_compute_sequence=int(item.before_task_compute_sequence),
-                after_task_compute_sequence=int(item.after_task_compute_sequence),
                 before_task_enter_ns=int(item.before_task_enter_timestamp_ns),
                 before_task_exit_ns=int(item.before_task_exit_timestamp_ns),
                 after_task_enter_ns=int(item.after_task_enter_timestamp_ns),
@@ -133,6 +119,27 @@ class RuntimeBridge:
             "disable debug task timing",
         )
         self._debug_task_timing_capacity = 0
+
+    def configure_task_labels(self, labels_by_task: Mapping[str, str]) -> None:
+        """Install cold-path semantic NVTX labels for dense task identities."""
+
+        dense_labels = {
+            _dense_id(task_id, "task_"): label
+            for task_id, label in labels_by_task.items()
+        }
+        capacity = max(dense_labels, default=-1) + 1
+        if capacity == 0:
+            self._require(
+                self.library.shadowspill_pytorch_task_labels_configure(None, 0),
+                "clear task trace labels",
+            )
+            return
+        encoded = [dense_labels.get(index, "").encode() for index in range(capacity)]
+        values = (ctypes.c_char_p * capacity)(*encoded)
+        self._require(
+            self.library.shadowspill_pytorch_task_labels_configure(values, capacity),
+            "configure task trace labels",
+        )
 
     def prepare_runtime_trace(
         self, *, event_capacity: int, allocation_event_capacity: int

@@ -132,6 +132,14 @@ class ForwardExecutor:
         self._output_tree_spec = output_tree_spec
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
+        trace_labels = {
+            entrypoint.task_id: (
+                f"execution_{execution_ordinal:06d}.forward."
+                f"stage_{execution_ordinal:04d}.{entrypoint.module_target}"
+            )
+            for execution_ordinal, entrypoint in enumerate(lowered.entrypoints)
+        }
+        bridge.configure_task_labels(trace_labels)
         for entrypoint in lowered.entrypoints:
             function = functions[entrypoint.artifact.compatibility_digest]
             wrapper = _ExecutingStage(

@@ -31,10 +31,48 @@ the runtime records one `readiness_wait` event for every corresponding
 `cuStreamWaitEvent`. If every input is already device-ready, the two stream
 markers are placed back-to-back and no readiness event is recorded.
 
-The stream timestamps are implemented with debug-only `cuLaunchHostFunc`
-callbacks. Consequently, a small positive interval can be callback scheduling
-overhead. A residency stall is established only when the neutral runtime
+The first diagnostic implementation used debug-only `cuLaunchHostFunc`
+callbacks. That historical trace is useful for the root-cause evidence below,
+but the callbacks proved invasive. Current tracing retains the four native
+host timestamps and records the three stream boundaries with preallocated
+CUDA events. A residency stall is established only when the neutral runtime
 ledger also contains a `readiness_wait` event for that task.
+
+## Process threads and CUDA streams
+
+For each initialized device runtime, the application currently has these
+relevant execution agents:
+
+| Agent | Created by | Count per device | Responsibility |
+|---|---|---:|---|
+| PyTorch dispatcher | user/PyTorch | normally one calling thread | executes the returned callable, calls synchronous allocator and task-boundary APIs, and launches numerical CUDA work |
+| ShadowSpill progress worker | ShadowSpill | one POSIX C thread | dispatches H2D/D2H actions, observes transfer/task/retirement completion, publishes residency, releases slab ranges, and wakes blocked allocators |
+| H2D CUDA stream | ShadowSpill | one | serializes host-to-device copies and their completion events |
+| D2H CUDA stream | ShadowSpill | one | waits on producer task fences, then serializes device-to-host copies and their completion events |
+| compute CUDA stream(s) | PyTorch/user | one or more | executes numerical kernels and waits on input readiness events |
+
+CUDA streams are GPU command queues, not additional CPU threads. CUDA may
+have private driver threads, but ShadowSpill does not create or control them.
+ShadowSpill currently spawns no separate allocator, H2D, D2H, binding, or
+diagnostics thread.
+
+One progress worker remains the sensible default. Its CPU work should be
+small state transitions around asynchronous CUDA operations; adding workers
+would not make either FIFO copy stream transfer two objects concurrently and
+would make plan action order and failure propagation harder to reason about.
+The measured failure is not insufficient worker parallelism. It is that this
+one worker performs an unbounded full-state scan while holding a lock needed
+by the dispatcher. After queue ownership and completion tracking are fixed,
+we should add a second worker only if traces show CPU submission on one
+direction delaying an independently ready opposite-direction transfer. No
+current evidence shows that.
+
+The progress worker sleeps on a condition variable when no completion can be
+pending. With in-flight work it polls completion after a timed backoff. A new
+action, logical free, close, failure, or allocation-pressure transition wakes
+it. The PyTorch dispatcher must never poll for transfer readiness: it inserts
+`cuStreamWaitEvent` into its compute stream and continues dispatching until a
+real allocation-capacity dependency requires it to block.
 
 ## Original observation
 
@@ -197,26 +235,594 @@ Exact post-correction boundaries were:
 The 0.285-ms readiness-marker interval contains no runtime readiness event and
 is callback scheduling overhead, not an H2D stall.
 
-## Residual execution time
+## Corrected end-to-end ledger
 
-The transfer-window and cotangent corrections explain two independent
-readiness stalls but do not yet explain the full standard-to-ShadowSpill
-difference. The terminal-cotangent trace spans 439.745 ms from the first
-`before_task_compute` to the final `after_task_compute`. Its noisy per-task
-CUDA-event sum is 312.561 ms, leaving roughly 127.2 ms between numerical task
-intervals. The trace attributes 73.885 ms of host time to storage
-rebinding/validation, whose runtime object lookup is currently a linear scan.
-Host categories overlap GPU execution and cannot simply be added to the gap;
-the lookup implementation must be corrected and the identical diagnostic
-repeated before attributing that time.
+After the transfer-window, terminal-cotangent, object-index, and progress-lock
+fairness corrections, one traced recurrent invocation has the following
+causal ledger. Times use the native monotonic trace, not NSYS timestamps.
 
-The next controls preserve identical numerical graphs and separately measure:
+| Interval | Time |
+|---|---:|
+| residual terminal D2H paid by the following invocation | 38.881 ms |
+| first task's readiness marker to its compute marker | 59.538 ms |
+| first task compute marker to final optimizer completion | 384.361 ms |
+| sum of all 129 per-task CUDA-event intervals | 299.281 ms |
+| idle between those task intervals | 85.079 ms |
 
-1. the selected staged program on the standard allocator;
-2. the same program on a fully resident ShadowSpill allocator with memory
-   actions disabled;
-3. the complete ShadowSpill schedule without debug callbacks;
-4. the complete schedule with internal tracing and an agreeing NSYS trace.
+The resulting non-cyclic steady cycle is approximately
+`38.881 + 59.538 + 384.361 = 482.780 ms`. The independently measured untraced
+median is 476.734 ms. The small difference is expected because the callback
+trace perturbs the very stream it observes.
+
+The compiled standard-allocator authority takes 292.141 ms. The sum of real
+ShadowSpill task intervals is only 7.140 ms larger. The arithmetic kernels are
+therefore not the source of the approximately 185-ms steady-cycle regression:
+it is the deferred non-cyclic cooldown, next-step startup, and inter-task host
+work.
+
+The transfer ledger makes the boundaries concrete:
+
+| Direction | Objects | Bytes | First dispatch/completion event | Last completion |
+|---|---:|---:|---:|---:|
+| startup H2D | 394 | 6,041,784,936 | 2.902 ms | 163.830 ms |
+| terminal D2H | 388 | 6,041,733,704 | 365.004 ms | 485.856 ms |
+
+Terminal D2H begins before the optimizer completes, so most writeback overlaps
+the end of the numerical program; 38.881 ms remains after the final optimizer
+compute marker. The next non-cyclic invocation waits for that remainder before
+restoring its initial set.
+
+## The Qwen kernel storm is not created by ShadowSpill
+
+A warm NSYS control used the same pure-PyTorch Qwen model, data, optimizer, and
+five prior warm steps under the standard allocator. Neither capture contained
+JIT compilation.
+
+| Warm NSYS capture | Standard allocator | ShadowSpill |
+|---|---:|---:|
+| kernels | 40,681 | 40,528 |
+| summed kernel-active time | 76.420 ms | 77.220 ms |
+| ordinary kernel-launch calls | 38,745 | 38,652 |
+| device-to-device copies | 2,952 | 2,952 |
+
+The pure reference's registered delta-rule operator intentionally contains an
+explicit token recurrence. Each token performs many ordinary tensor
+operations. A 64-token forward component launches
+`24 + 64 * 11 = 728` kernels, while its 96-token counterpart launches 1,080.
+The explicit backward recurrence launches approximately 28 kernels per token,
+producing 1,864 or 2,761 launches for the two microbatch geometries. The outer
+compiled graph treats the registered operation as opaque and therefore cannot
+fuse across its Python implementation. Optimized `mlops` kernels avoid this
+reference-model storm, but core runtime correctness cannot depend on them.
+
+Most 12--19-ms backward dispatch intervals are consequently not compilation
+or pure overhead: their host thread and GPU stream through thousands of small
+operations together, and the corresponding task CUDA interval is also about
+12--19 ms. This makes synchronous allocator and boundary costs
+performance-critical, because there is little task-level run-ahead available
+to hide them.
+
+## Why identical numerical kernels take longer under ShadowSpill
+
+The warm NSYS controls expose three independent costs.
+
+### Transfer-induced CUDA launch backpressure
+
+Standard PyTorch begins consuming kernels immediately. ShadowSpill first puts
+the compute stream behind startup H2D dependencies while the Python thread
+continues issuing the recurrent operation's hundreds of launches. The pending
+CUDA queue eventually fills and an otherwise asynchronous launch call blocks
+the dispatch thread until the device consumes prior work. Terminal D2H and the
+fragmented optimizer create the same condition late in the step.
+
+| Launch API observation | Standard | ShadowSpill |
+|---|---:|---:|
+| ordinary launch API total | 74.419 ms | 102.626 ms |
+| largest ordinary launch | 0.076 ms | 25.245 ms |
+| `cuLaunchKernelEx` total | 0.391 ms | 53.069 ms |
+| largest `cuLaunchKernelEx` | 0.011 ms | 52.004 ms |
+
+The exact outlier durations are profiler-perturbed, but their causal placement
+is unambiguous: the early outlier overlaps startup H2D and the late outlier
+overlaps terminal D2H. No corresponding launch block appears in the standard
+control.
+
+### One global runtime lock
+
+All 37,563 allocator callbacks occur synchronously on the PyTorch dispatch
+thread. Of these, 120 are zero-byte requests and 37,443 lease real ranges;
+all 37,443 materialized allocations receive matching logical frees.
+
+| Allocator callback statistic | Time |
+|---|---:|
+| median | 0.430 us |
+| p90 | 1.215 us |
+| p95 | 1.477 us |
+| p99 | 6.622 us |
+| mean | 1.429 us |
+| maximum | 206.782 us |
+| aggregate | 53.693 ms |
+
+The aggregate is nested inside compiled dispatch and must not be added to it.
+NSYS separately observes approximately 54 ms of slow `pthread_mutex_lock`
+acquisitions on the dispatch thread. At the same time the progress thread
+issues 223,208 `cuEventQuery` calls, consuming 70.643 ms of driver API time,
+while walking transfers and retirements under that same global mutex. This is
+the concrete concurrency reason that a cheap median allocator callback still
+becomes a material critical-path cost.
+
+The task visible in the accompanying NSYS investigation is a representative
+example:
+
+| Field | Value |
+|---|---:|
+| execution identity | `execution_000004` |
+| semantic identity | `microbatch_0000.stage_0004.forward.recompute` |
+| canonical IR identity | `task_000009` |
+| host task range under NSYS | 16.733 ms |
+| allocator callbacks | 794 |
+| allocator NVTX aggregate | 4.850 ms |
+| reportable mutex waits | 64 |
+| mutex-wait aggregate | 7.067 ms |
+| mean / maximum mutex wait | 110.4 / 139.4 us |
+| kernel launches | 728 |
+| host time in launch APIs | 1.603 ms |
+| worker event queries overlapping this task | 17,557 |
+| worker event-query API time | 5.715 ms |
+
+The dispatch sequence is therefore repeatedly interrupted inside one
+numerical task:
+
+```text
+launch recurrence kernels
+    -> request next temporary allocation
+    -> block on global runtime mutex
+    -> worker scans and queries transfer/task events
+    -> allocator obtains mutex and leases a range
+    -> launch more recurrence kernels
+    -> repeat
+```
+
+NSYS magnifies this small-kernel workload: the isolated profile predicts
+4.781 ms, non-callback CUDA-event tracing observes 6.997 ms, and NSYS projects
+15.107 ms. The absolute NSYS interval is therefore not a production timing,
+but the 64 waits and 17,557 overlapping queries identify a real runtime defect.
+
+#### Why completion is queried, and why the current query algorithm is wrong
+
+The runtime must eventually learn that asynchronous work completed. A
+completion has semantic consequences that a stream wait alone cannot publish:
+
+- an H2D completion makes an object device-ready and allows its event lease to
+  be recycled;
+- a D2H completion makes the copied host version authoritative, releases the
+  old device lease, and wakes capacity waiters;
+- a task-fence completion permits an annotated release or offload to advance;
+- a `record_stream` retirement completion makes a logically freed anonymous
+  slab range safe to reuse.
+
+These completions are already represented by CUDA events. `cuEventQuery` is
+the driver's nonblocking test for such an event; it does not wait for the
+device or synchronize a stream. The problem is neither the existence of
+events nor one occasional query. The current worker repeatedly walks the
+entire active-allocation list and the entire action list, queries events from
+inside that traversal, and retains the global runtime mutex across the driver
+calls. A single fence can also be encountered through many dependent actions.
+This produced 223,208 queries in one step and made the unrelated synchronous
+allocator wait for the scan.
+
+Replacing every query with `cuEventSynchronize` would be worse: it would turn
+a nonblocking progress check into a blocking wait, and with one worker it
+could prevent dispatch/progress on the opposite transfer lane. Stream host
+functions are also unsuitable: they serialize later commands on that stream,
+cannot safely call CUDA APIs, and already produced a measured 50.961-ms trace
+observer stall.
+
+The corrected design still uses CUDA events, but organizes completion by the
+stream that recorded each event:
+
+1. Maintain a FIFO completion queue per H2D, D2H, and participating compute
+   stream.
+2. Snapshot and retain only the head record under that queue's lock.
+3. Call `cuEventQuery` after releasing all ShadowSpill state locks.
+4. If the head is incomplete, do not inspect successors: CUDA stream order
+   proves they cannot be complete.
+5. If it is complete, commit its transition and drain immediately completed
+   successors. Query a shared task fence once even if several actions retain
+   it.
+6. Use condition-variable wakeups plus adaptive polling/backoff; temporarily
+   increase polling frequency only when allocator pressure makes completion
+   latency critical.
+
+Thus queries remain asynchronous and cheap, while query count scales with
+stream-frontier progress rather than `objects x polling passes`. Most
+importantly, no driver call occurs while the slab allocator, object table, or
+object record is locked.
+
+### Optimizer task fragmentation and repeated global binding scans
+
+The recurrent optimizer graph is dependency-partitioned into 97 components so
+PressureFit can independently schedule each parameter, gradient, and state.
+That planning ability is valid, but the executor performs an unnecessary
+global operation at every component: `_current_optimizer_bindings()` walks the
+complete model parameter and optimizer-state inventory, constructs a complete
+name-to-tensor dictionary, and only then selects the few bindings needed by
+that component.
+
+| Traced host category | Forward | Backward | Optimizer | Total |
+|---|---:|---:|---:|---:|
+| native `before_task` | 1.507 ms | 0.798 ms | 3.787 ms | 6.093 ms |
+| lookup, rebind, argument assembly | 1.168 ms | 3.753 ms | 56.765 ms | 61.686 ms |
+| compiled dispatch | 133.323 ms | 198.718 ms | 13.122 ms | 345.163 ms |
+| output/gradient postprocessing | 13.383 ms | 4.489 ms | 3.064 ms | 20.935 ms |
+| native `after_task` | 0.625 ms | 1.421 ms | 2.768 ms | 4.814 ms |
+
+The C++ storage-rebind ranges themselves total only 8.086 ms across 4,328
+calls. Most of the 56.765-ms optimizer bucket is therefore repeated Python
+inventory construction, not pointer replacement. Captured optimizer tensor
+identities are stable between state transitions; the executor should maintain
+one direct binding table and refresh it only after lazy-state creation or
+checkpoint restore.
+
+## Diagnostic observer effect
+
+The original seven-timestamp implementation used three `cuLaunchHostFunc`
+callbacks per task. In one trace, a callback submission itself blocked for
+50.961 ms. The traced wall was 593.992 ms versus a 476.734-ms untraced median.
+The callbacks are useful for the causal discovery above but fail the intended
+less-than-one-percent tracing-overhead contract.
+
+The replacement retains the four native host timestamps and uses three
+preallocated CUDA events for `before_readiness_waits`,
+`before_task_compute`, and `after_task_compute`. Event-relative stream times
+can be resolved only when `DiagnosticsHandle.result()` explicitly
+synchronizes. This preserves all seven logical timestamps without executing
+host code on the compute stream. That replacement is now implemented; the
+historical callback trace is retained only as root-cause evidence.
+
+## Work outside the current measured task boundaries
+
+The current names describe only calls into the neutral runtime. They do not
+describe the complete logical task boundary. The following per-task work is
+currently outside the corresponding host timing buckets:
+
+- before native `before_task`: task/function lookup, current-stream lookup,
+  object-to-alias translation, and alias deduplication;
+- between native `before_task` and compiled dispatch: storage rebinding and
+  graph-argument assembly;
+- between compiled dispatch and native `after_task`: output flattening,
+  output promotion/binding, gradient accumulation, raw-reference release, and
+  storage dematerialization;
+- after native `after_task`: released-object dictionary cleanup, terminal
+  gradient cleanup, optimizer-state flags, and timing/NVTX finalization.
+
+The logical diagnostic definitions will therefore be:
+
+```text
+before_task = static input selection + native acquire/waits
+            + storage rebind + argument assembly + compute-start marker
+
+task_compute = compiled numerical callable and nested allocator callbacks
+
+after_task = compute-end marker + output/gradient processing
+           + dematerialization + native action submission + object cleanup
+```
+
+Step-level work remains separate rather than being hidden in a task: public
+input guards, prior-step cooldown, CPU/input staging, initial placement,
+caller-output ownership transfer, objective/metric reconstruction, and result
+construction. Background transfer dispatch, completion, retirement, and
+allocator-pressure wakeups remain asynchronous component ledgers associated
+with their trigger execution task.
+
+## Required corrections
+
+The evidence supports the following order without changing PressureFit
+directives, recomputation, or task order:
+
+1. Replace callback timestamps with preallocated CUDA events.
+2. Make diagnostics measure complete logical `before_task` and `after_task`
+   work while retaining their detailed subcomponents.
+3. Precompute static task alias/action ABI records and cache optimizer tensor
+   bindings across components.
+4. Replace the global mutex with locks owned by semantically independent
+   tables and queues. Define and test a strict lock order and object lifetime
+   protocol.
+5. Stop polling every transfer/fence under an allocator-visible lock. Exploit
+   FIFO stream ordering and event pooling while retaining exact causal action
+   semantics.
 
 No PressureFit directive, recomputation choice, task order, or in-step
-prefetch location is changed by this investigation.
+prefetch location is changed by these corrections.
+
+## Proposed runtime data model and concurrency
+
+The runtime should be organized around central ownership structures. Locks
+belong to those structures rather than to an undifferentiated runtime object.
+
+### `ShadowSpillObjectTable`
+
+The object table owns the hash index from stable object ID to object record and
+is responsible only for membership and lifetime.
+
+```c
+typedef struct ShadowSpillObjectTable {
+    pthread_rwlock_t membership_lock;
+    ShadowSpillObject **buckets;
+    uint64_t bucket_count;
+} ShadowSpillObjectTable;
+```
+
+Lookup takes the read lock only long enough to find the object and increment
+its reference count. Registration/removal takes the write lock. A queued
+action, admitted task, or diagnostic snapshot holds an object reference, so
+removing an ID cannot free a record still used by the worker.
+
+### `ShadowSpillObject`
+
+One object represents an alias bundle, not an individual tensor view. Its lock
+protects only that object's residency and version state.
+
+```c
+typedef struct ShadowSpillObject {
+    uint64_t object_id;
+    uint64_t size_bytes;
+    _Atomic uint32_t references;
+    _Atomic uint8_t detached;
+    pthread_mutex_t lock;
+
+    ShadowSpillResidency residency;
+    uint64_t generation;
+    uint64_t authoritative_version;
+    uint64_t device_version;
+    uint64_t host_version;
+
+    ShadowSpillAllocationLease *device_lease;
+    ShadowSpillHostLease *host_lease;
+    ShadowSpillEventLease *readiness_event;
+    uint64_t readiness_generation;
+    ShadowSpillTransfer *inflight_transfer;
+    uint64_t latest_writer_task;
+
+    void *retired_device_pointer;
+    uint64_t retired_generation;
+    uint8_t retain_host_backing;
+} ShadowSpillObject;
+```
+
+The device pointer and slab offset live in the referenced allocation lease;
+they are not duplicated as independently mutable object fields. A readiness
+event is tagged with the generation it makes ready, preventing an old
+completion from publishing state for a relocated object.
+
+`residency` is the explicit state machine (`host_only`, `prefetching`,
+`device_ready`, `offloading`, `release_pending`, or `released`). The transfer
+pointer is retained only while one state transition owns the object. Immutable
+tensor view geometry is frontend metadata; the neutral object represents the
+shared alias bundle/storage and therefore does not contain PyTorch tensor
+objects.
+
+The normal lookup protocol is `table read lock -> increment object reference
+-> release table lock -> object lock`. Removal detaches the hash entry and
+drops the table's reference; destruction occurs only when the final queued
+action/task reference is released.
+
+### `ShadowSpillAllocationPool`
+
+This structure owns slab ranges, allocation-ID and pointer hashes, allocation
+leases, stream-use retirement, physical accounting, and the condition on which
+a genuinely capacity-blocked allocator waits.
+
+```c
+typedef struct ShadowSpillAllocationPool {
+    pthread_mutex_t lock;
+    pthread_cond_t capacity_changed;
+    ShadowSpillRangeAllocator ranges;
+    ShadowSpillAllocation **by_id;
+    ShadowSpillAllocation **by_pointer;
+    ShadowSpillRetirementQueue retirements;
+    ShadowSpillAllocationStatistics statistics;
+} ShadowSpillAllocationPool;
+```
+
+`malloc` and logical `free` touch this lock, not transfer queues or unrelated
+object state. No CUDA query, event creation, copy dispatch, or stream wait is
+performed while it is held. Offload/release detaches an allocation lease from
+its object first and returns the range to this pool in a separate commit.
+
+### `ShadowSpillExecutionTable`
+
+The admitted execution plan is immutable and needs no hot-path lock. Each task
+record stores direct retained object pointers, predecoded mutations/actions,
+the dense execution ID, and its semantic trace name.
+
+```c
+typedef struct ShadowSpillTask {
+    uint64_t execution_ordinal;
+    uint64_t canonical_task_id;
+    const char *semantic_name;
+    ShadowSpillObject **inputs;
+    uint32_t input_count;
+    ShadowSpillMutationTemplate *mutations;
+    uint32_t mutation_count;
+    ShadowSpillActionTemplate *actions;
+    uint32_t action_count;
+} ShadowSpillTask;
+```
+
+This removes repeated dense-ID parsing, object hashing, alias deduplication,
+and ctypes array construction from each invocation. NSYS ranges use
+`execution_XXXXXX` plus the semantic name; the canonical task ID remains
+secondary correlation metadata.
+
+### `ShadowSpillTransferLane`
+
+Each H2D or D2H stream has one queue lock and two FIFOs: pending dispatch and
+in-flight completion. Actions retain their object, destination lease, trigger
+fence, and completion event.
+
+```c
+typedef struct ShadowSpillTransferLane {
+    pthread_mutex_t lock;
+    ShadowSpillBackendStream stream;
+    ShadowSpillTransfer *pending_head;
+    ShadowSpillTransfer *pending_tail;
+    ShadowSpillTransfer *inflight_head;
+    ShadowSpillTransfer *inflight_tail;
+} ShadowSpillTransferLane;
+```
+
+The worker removes queue work under the lane lock, releases it, submits CUDA
+operations, then reacquires only the affected lane/object lock to publish the
+result. It never holds an allocator lock across a driver call.
+
+### `ShadowSpillCompletionTracker` and event pool
+
+Completion queues are FIFO per CUDA stream. The worker queries only each
+stream's head event; an incomplete head proves every successor on that stream
+is also incomplete. A completed head is removed and immediately completed
+successors are drained. Shared task fences are tested once regardless of how
+many actions or retirements reference them.
+
+General progress uses nonblocking `cuEventQuery` outside all state locks, with
+adaptive timed backoff. `before_task` does not poll a prefetch: it inserts
+`cuStreamWaitEvent`. D2H dispatch does not host-wait for compute: the D2H stream
+waits on the task fence. A targeted blocking `cuEventSynchronize` is permitted
+only on a dedicated background waiter or allocator-pressure slow path; it
+never executes on the PyTorch thread.
+
+The fixed event pool owns creation and reuse behind its own short lock. No
+steady-state event creation/destruction is required. Stream host callbacks are
+not used for progress because they serialize subsequent stream work and may
+not invoke CUDA.
+
+### Central runtime ownership
+
+The top-level runtime is deliberately a collection of central owners, not a
+central lock:
+
+```c
+typedef struct ShadowSpillRuntime {
+    ShadowSpillObjectTable objects;
+    ShadowSpillAllocationPool allocations;
+    ShadowSpillExecutionTable execution;
+    ShadowSpillTransferLane h2d;
+    ShadowSpillTransferLane d2h;
+    ShadowSpillCompletionTracker completions;
+    ShadowSpillEventPool events;
+    ShadowSpillTraceBuffer trace;
+    ShadowSpillFailureState failure;
+    ShadowSpillLifecycle lifecycle;
+} ShadowSpillRuntime;
+```
+
+This makes ownership auditable: object residency belongs to an object;
+physical ranges and capacity belong to the allocation pool; queue order
+belongs to a transfer lane; completion order belongs to the tracker; immutable
+task topology belongs to the execution table. A mutex is attached to the
+owner whose invariant it protects rather than to the runtime as a whole.
+
+| Owner | Synchronization | Protects | Must never contain |
+|---|---|---|---|
+| object table | read/write membership lock | ID-to-object membership and table-owned references | CUDA calls, residency transitions, slab allocation |
+| individual object | object mutex | residency, generations, versions, current leases and transfer | hash scans, unrelated objects, CUDA calls |
+| allocation pool | mutex + capacity condition | slab ranges, allocation indices, retirement admission, byte accounting | object-table scans, event queries, copies |
+| H2D or D2H lane | one mutex per lane | pending/in-flight FIFO links and lane-local counters | allocator waits, object-table scans, CUDA completion waits |
+| completion stream | short queue lock | ordered event frontier and retained completion records | `cuEventQuery` itself |
+| event pool | short mutex | free/in-use event leases | event synchronization or action processing |
+| trace buffer | atomic reservation index | append slots and overflow flag | any runtime-state lock |
+| failure/lifecycle | atomic first status plus cold-path mutex | first-cause payload, open/closing/closed transition | ordinary allocation or task dispatch |
+
+The main hot paths then have narrow behavior:
+
+```text
+malloc:
+    allocation-pool lock -> lease/reuse range -> unlock
+
+before_task:
+    immutable task record -> each object lock -> snapshot lease/event -> unlock
+    -> cuStreamWaitEvent for unfinished snapshots -> batch storage rebind
+
+progress:
+    completion-frontier lock -> retain head -> unlock
+    -> cuEventQuery -> object transition -> optional allocation-pool release
+
+free:
+    allocation-pool lock -> mark logical free / enqueue retirement -> unlock
+    -> signal progress worker
+```
+
+The immutable execution table is important here: once a plan is admitted,
+`before_task` receives a direct task record whose input array already contains
+retained `ShadowSpillObject *` values. The hash table remains the authoritative
+public ID lookup and lifecycle owner, but it is not on the repeated task path.
+
+### Trace and failure state
+
+The default-off trace uses preallocated arrays with an atomic slot counter, so
+recording does not take an object, allocation, or transfer lock. The first
+runtime failure uses an atomic compare-and-swap to latch status and a small
+lock for its diagnostic payload; it then wakes capacity and worker conditions.
+Lifecycle/bootstrap/close uses a separate cold-path lock.
+
+### Hot-path locking rule
+
+Steady-state code should normally hold at most one mutex. Cross-structure
+transitions use snapshot-and-commit:
+
+1. retain the relevant record and snapshot its generation under its owner;
+2. release that lock;
+3. perform range or CUDA work under no unrelated lock;
+4. reacquire the record owner and commit only if identity/generation still
+   match;
+5. release retained references.
+
+This is simpler and safer than relying on a large global lock order. The few
+unavoidable nested cold-path operations have an asserted order documented in
+the private header and exercised under ThreadSanitizer.
+
+## Issue ledger
+
+### Resolved and measured
+
+- Removed the one-transfer-in-flight software window that host-blocked
+  `before_task`; readiness is represented with stream-event waits.
+- Specialized only terminal scalar unit cotangents, removing the misplaced
+  four-byte startup transfer without changing arbitrary objective semantics.
+- Added lifecycle-safe hash indices for objects and allocations.
+- Prevented the progress thread from immediately retaining the global lock
+  across consecutive completion passes.
+- Replaced three per-task `cuLaunchHostFunc` timestamps with preallocated CUDA
+  events. The stream trace no longer executes host code on the compute stream.
+- Cached the complete optimizer binding inventory once per step rather than
+  rebuilding it for every one of 97 components. On the unchanged Qwen plan:
+
+  | Measurement | Before | After |
+  |---|---:|---:|
+  | first-to-last task compute span | 384.361 ms | 325.128 ms |
+  | summed task CUDA intervals | 299.281 ms | 297.512 ms |
+  | inter-task idle | 85.079 ms | 27.616 ms |
+  | optimizer lookup/rebind bucket | 56.765 ms | 2.344 ms |
+  | optimizer host task total | 80.581 ms | 21.192 ms |
+
+  Program digest, schedule digest, 129 tasks, 1,415 actions, predicted peak,
+  and predicted makespan are byte-for-byte unchanged. The steady non-cyclic
+  wall remains near 480 ms because the faster optimizer exposes more terminal
+  D2H tail; cross-step cyclic optimization is intentionally outside the
+  current agenda.
+
+### Current corrections
+
+- Register semantic execution labels in the immutable task table and use them
+  for C/NVTX ranges. Ranges are keyed by `execution_XXXXXX` and semantic stage
+  name; canonical IR task IDs remain secondary correlation metadata.
+- Replace the global runtime mutex with the central ownership structures above.
+- Replace full-population event rescans with head-only FIFO completion and
+  adaptive polling outside locks.
+- Predecode native task input, mutation, and action ABI data so task boundaries
+  do not rebuild arrays or repeat identity translation.
+- Batch storage binding/dematerialization calls while retaining one object
+  state transition per alias bundle.
+- Re-run the identical Qwen control after each isolated change; acceptance is
+  unchanged arithmetic/schedule plus a first-to-last span approaching the
+  approximately 297.5-ms task sum.

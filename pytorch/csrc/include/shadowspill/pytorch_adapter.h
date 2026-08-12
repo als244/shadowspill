@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 14U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 15U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -53,10 +53,10 @@ typedef struct ShadowSpillPytorchAdapterCapabilities {
 } ShadowSpillPytorchAdapterCapabilities;
 
 /*
- * Optional debug timestamps written by cuLaunchHostFunc callbacks on the
- * PyTorch compute stream. Timestamps use CLOCK_MONOTONIC and callbacks perform
- * no CUDA calls, allocation, locking, or Python interaction. Enabling this
- * facility can perturb stream execution and is for qualification only.
+ * Optional task-boundary host timestamps. The four host fields use
+ * CLOCK_MONOTONIC. The six legacy compute-stream fields are reserved and zero;
+ * the PyTorch frontend records non-invasive preallocated CUDA events for those
+ * boundaries instead of executing host callbacks on the compute stream.
  */
 typedef struct ShadowSpillPytorchTaskHostTiming {
     uint64_t task_id;
@@ -300,6 +300,18 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
+);
+
+/*
+ * Copies one optional human-readable label per dense canonical task ID.
+ * Configure labels only while no task is executing. Task NVTX ranges use the
+ * label (normally execution_XXXXXX plus its semantic stage name) and retain
+ * the canonical task ID only as fallback correlation metadata.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_task_labels_configure(
+    const char *const *task_labels,
+    uint32_t task_label_count
 );
 
 /* Allocate/reset pre-sized callback records before a measured invocation. */

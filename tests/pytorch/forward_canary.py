@@ -67,6 +67,13 @@ def main() -> int:
             != plan_diagnostics.total_wall_time_ns
         ):
             raise AssertionError("plan diagnostic wall time does not reconcile")
+        selected_task_diagnostics = tuple(
+            item for item in plan_diagnostics.task_stage_map if item.selected
+        )
+        if tuple(
+            item.execution_ordinal for item in selected_task_diagnostics
+        ) != tuple(range(len(selected_task_diagnostics))):
+            raise AssertionError("forward diagnostics are not chronologically dense")
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("planning replaced a Parameter object")
         if (
