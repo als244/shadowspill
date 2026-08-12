@@ -1777,3 +1777,79 @@ the ignored internal progress log before this tracked summary is updated.
   bracket. A pre-polling NSYS capture is being collected first; the isolated
   lost-wakeup fix and later low-latency polling policy will be separate commits
   and evidence entries.
+
+## 2026-08-12 — Broad wakeup experiment rejected; final correction unresolved
+
+- A first candidate introduced one wakeup epoch used by both
+  `runtime_wait_idle` and the progress worker, then notified it on completion
+  submissions and several queue transitions. It eliminated the quiescence
+  deadlock, but it did not preserve warmed Qwen execution behavior and is not
+  an acceptable fix.
+- The exact frozen Qwen Program and schedule were unchanged, yet three initial
+  traced selected-task spans were 410.746, 412.342, and 418.478 ms versus the
+  312.102-ms pre-change control. Two further samples were 411.401 and
+  436.268 ms. Summed CUDA task intervals increased from 294.635 ms to
+  393.750--418.501 ms, and summed synchronous compiled-call host time increased
+  from 332.899 ms to 460.346 ms.
+- PyTorch allocator callback counts did not grow: both paths reported 37,563
+  nonzero allocations, 37,443 logical frees, and 120 separately classified
+  zero-byte requests. Physical retirement completions did change from 3,208 to
+  3,677. Transfer timing did not explain the earlier forward/backward slowdown:
+  the old H2D completion window was 26.854--168.953 ms and the broad-wakeup
+  window was 26.225--166.479 ms.
+- The current causal hypothesis is allocator-side dispatch inflation. A
+  task-local allocation freed on its sole compute stream is deliberately left
+  as a reusable pending record, allowing a later compatible `malloc()` to reuse
+  it without an event query. Excess worker wakeups can both contend with the
+  synchronous PyTorch dispatcher for the device-pool lock and retire such
+  records before the cheap reuse path claims them. The aggregate evidence is
+  consistent with this mechanism, but it does not yet split lock-wait latency
+  from reuse loss at individual callbacks. This hypothesis is therefore not
+  recorded as resolved.
+- Existing standard-allocator evidence covers the whole compiled step, not the
+  identical selected staged executable. It shows comparable aggregate numerical
+  kernel work (40,681 kernels and 76.420 ms kernel-active with the standard
+  allocator versus 40,528 kernels and 77.220 ms in the historical ShadowSpill
+  capture), but cannot by itself measure per-stage dispatcher overhead. A fresh
+  same-stage standard-allocator control remains required.
+- The replacement candidate gives `runtime_wait_idle` a dedicated predicate
+  epoch and notifies it only after the final action or retirement counter has
+  actually transitioned to zero. The progress worker retains its prior
+  condition, cadence, and notifications. This candidate has passed 5,120
+  focused serialized final-retirement/wait-idle race boundaries and all 17
+  native/CUDA canaries. It remains explicitly unaccepted until the repeated
+  full Qwen control reproduces the prior timing and exact plan identity.
+
+## 2026-08-12 — Narrow idle-wakeup correction passes the Qwen gate
+
+- The accepted correction separates quiescence notification from progress
+  scheduling. `runtime_wait_idle()` waits on a dedicated epoch/condition.
+  `complete_action`, physical retirement, and pending-allocation reuse first
+  decrement their counters and notify the idle waiter only when the previous
+  value was one. Failure and close transitions also notify it. The progress
+  worker continues to use its original condition and timed-poll cadence.
+- This ordering closes the demonstrated race mechanically: the waiter holds the
+  idle-wakeup mutex while testing the counters and entering `cond_wait`, while
+  the final counter transition acquires the same mutex before advancing the
+  epoch and signaling. The signal therefore cannot occur between the predicate
+  check and sleep. Unlike the rejected broad correction, this mechanism never
+  wakes the worker or changes retirement timing.
+- The repeated 30-GiB Qwen control produced selected-task spans of 304.287,
+  304.859, and 304.511 ms and summed task CUDA intervals of 287.851, 289.017,
+  and 288.979 ms. These improve on the pre-change 312.102-ms span and
+  294.635-ms task sum and satisfy the 312.4-ms gate. The Program digest remains
+  `65300023e849c757c4d5d663ce7161c6fe7edb9b1b95170ebec3a7aa112cd7e3` and
+  the schedule digest remains
+  `e349ce5f7c2a7132cec4a8f24b082ffb1124b0691df210ce6a0914083ffff3ed`:
+  129 execution tasks and 1,415 actions are unchanged.
+- Planning completed in 71.381 seconds. Allocation behavior remained stable at
+  37,563 nonzero requests, 37,443 materialized requests/frees, 120 separately
+  classified zero-byte requests, 26 inserted readiness waits, and no terminal
+  pending retirement or queued action.
+- All 17 warnings-as-errors native/CUDA canaries pass, including 5,120 focused
+  final-retirement/wait-idle race boundaries. The default Python suite, Ruff,
+  and strict mypy pass. An additional cold, individually invoked public SGD
+  pytest exposed the pre-existing/nondeterministic lowering assertion “one fake
+  tensor view maps to distinct compiled allocations”; the dedicated fresh-
+  process public training canary passes. That lowering issue is tracked
+  separately and is not combined with this synchronization correction.

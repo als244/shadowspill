@@ -113,6 +113,7 @@ add_library(
   runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/progress.c
+  runtime/src/idle_wakeup.c
   runtime/src/ranges.c
   runtime/src/runtime.c
   runtime/src/status.c
@@ -343,6 +344,10 @@ if(BUILD_TESTING)
       COMMAND shadowspill_runtime_${runtime_test}_canary
     )
   endforeach()
+  set_tests_properties(
+    shadowspill_runtime_completion_canary
+    PROPERTIES TIMEOUT 10
+  )
 
   if(TARGET shadowspill_backend_cuda)
     add_executable(

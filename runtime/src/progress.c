@@ -89,8 +89,10 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
             allocation->charged_bytes
         );
         shadowspill_release_allocation_locked(runtime, allocation);
-        if (runtime->pending_retirements != 0U) {
-            --runtime->pending_retirements;
+        if (atomic_fetch_sub_explicit(
+                &runtime->pending_retirements, 1U, memory_order_release
+            ) == 1U) {
+            shadowspill_idle_notify(runtime);
         }
         changed = 1;
         allocation = next;
@@ -146,10 +148,13 @@ static void complete_action(
     }
     shadowspill_object_release(action->object);
     free(action);
-    (void)atomic_fetch_sub_explicit(
+    const uint64_t previous_actions = atomic_fetch_sub_explicit(
         &runtime->actions.count, 1U, memory_order_release
     );
     pthread_cond_broadcast(&runtime->condition);
+    if (previous_actions == 1U) {
+        shadowspill_idle_notify(runtime);
+    }
 }
 
 static void release_action_claim(
@@ -908,8 +913,7 @@ void *shadowspill_progress_main(void *pointer) {
             pthread_mutex_lock(&runtime->mutex);
             if (atomic_load_explicit(
                     &runtime->actions.count, memory_order_acquire
-                ) == 0U &&
-                !has_actionable_retirement(runtime)) {
+                ) == 0U && !has_actionable_retirement(runtime)) {
                 pthread_cond_wait(&runtime->condition, &runtime->mutex);
             } else {
                 /*

@@ -255,6 +255,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
+    if (shadowspill_idle_wakeup_initialize(
+            &runtime->idle_wakeup
+        ) != 0) {
+        pthread_cond_destroy(&runtime->condition);
+        pthread_mutex_destroy(&runtime->mutex);
+        pthread_mutex_destroy(&runtime->failure_lock);
+        pthread_mutex_destroy(&runtime->actions.lock);
+        runtime->actions.lock_initialized = 0U;
+        release_resources(runtime);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     if (shadowspill_transfer_lane_initialize(&runtime->h2d_lane) != 0) {
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -349,6 +361,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
 
 fail:
     release_resources(runtime);
+    shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);
@@ -366,17 +379,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillIdleWakeup *wakeup = &runtime->idle_wakeup;
+    pthread_mutex_lock(&wakeup->lock);
     while (atomic_load_explicit(&runtime->closed, memory_order_acquire) == 0U &&
            shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
            (atomic_load_explicit(
                 &runtime->actions.count, memory_order_acquire
             ) != 0U ||
             runtime->pending_retirements != 0U)) {
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+        pthread_cond_wait(&wakeup->condition, &wakeup->lock);
     }
     ShadowSpillRuntimeStatus status = shadowspill_failure_status(runtime);
-    pthread_mutex_unlock(&runtime->mutex);
+    pthread_mutex_unlock(&wakeup->lock);
     return status;
 }
 
@@ -460,14 +474,17 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
         return SHADOWSPILL_RUNTIME_OK;
     }
     atomic_store_explicit(&runtime->closing, 1U, memory_order_release);
+    pthread_mutex_unlock(&runtime->mutex);
+    ShadowSpillIdleWakeup *wakeup = &runtime->idle_wakeup;
+    pthread_mutex_lock(&wakeup->lock);
     while (shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK &&
            (atomic_load_explicit(
                 &runtime->actions.count, memory_order_acquire
             ) != 0U ||
             runtime->pending_retirements != 0U)) {
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+        pthread_cond_wait(&wakeup->condition, &wakeup->lock);
     }
-    pthread_mutex_unlock(&runtime->mutex);
+    pthread_mutex_unlock(&wakeup->lock);
 
     int synchronization_failed = 0;
     if (runtime->h2d_stream_created && runtime->backend.synchronize_stream(
@@ -493,6 +510,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     atomic_store_explicit(&runtime->worker_stop, 1U, memory_order_release);
     pthread_cond_broadcast(&runtime->condition);
     pthread_mutex_unlock(&runtime->mutex);
+    shadowspill_idle_notify(runtime);
     if (runtime->progress_started) {
         (void)pthread_join(runtime->progress_thread, NULL);
         runtime->progress_started = 0;
@@ -501,6 +519,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     ShadowSpillRuntimeStatus status = shadowspill_failure_status(runtime);
     atomic_store_explicit(&runtime->closed, 1U, memory_order_release);
     pthread_mutex_unlock(&runtime->mutex);
+    shadowspill_idle_notify(runtime);
     release_resources(runtime);
     return status;
 }
@@ -510,6 +529,7 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
         return;
     }
     (void)shadowspill_runtime_close_legacy(runtime);
+    shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);

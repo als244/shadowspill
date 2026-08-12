@@ -7,6 +7,7 @@
 
 enum {
     COMPLETION_COUNT = 64,
+    WAIT_IDLE_ROUNDS = 256,
     ALLOCATION_BYTES = 16,
 };
 
@@ -60,21 +61,50 @@ int main(void) {
     if (shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
+    ShadowSpillMockBackendStatistics batch_statistics = {0};
+    shadowspill_mock_backend_statistics(mock, &batch_statistics);
+    if (batch_statistics.event_queries > 4U * COMPLETION_COUNT) {
+        return EXIT_FAILURE;
+    }
+
+    /*
+     * Exercise the exact final-retirement notification boundary repeatedly.
+     * Each wait begins while one event-backed retirement is pending and must
+     * return even when the worker clears it immediately.
+     */
+    for (uint64_t round = 0U; round < WAIT_IDLE_ROUNDS; ++round) {
+        ShadowSpillAllocation allocation = {0};
+        if (shadowspill_allocate(
+                runtime,
+                ALLOCATION_BYTES,
+                1U,
+                compute,
+                &allocation
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_free(
+                runtime, allocation.allocation_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+                runtime
+            ) != SHADOWSPILL_RUNTIME_OK) {
+            return EXIT_FAILURE;
+        }
+    }
 
     ShadowSpillMockBackendStatistics backend_statistics = {0};
     ShadowSpillRuntimeStatistics runtime_statistics = {0};
     shadowspill_mock_backend_statistics(mock, &backend_statistics);
     (void)printf(
         "completion_count=%u event_queries=%llu queries_per_completion=%.3f\n",
-        COMPLETION_COUNT,
+        COMPLETION_COUNT + WAIT_IDLE_ROUNDS,
         (unsigned long long)backend_statistics.event_queries,
-        (double)backend_statistics.event_queries / (double)COMPLETION_COUNT
+        (double)backend_statistics.event_queries /
+            (double)(COMPLETION_COUNT + WAIT_IDLE_ROUNDS)
     );
     if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        backend_statistics.events_created != COMPLETION_COUNT ||
-        backend_statistics.events_destroyed != COMPLETION_COUNT ||
-        backend_statistics.event_queries > 4U * COMPLETION_COUNT ||
+        backend_statistics.events_created !=
+            COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
+        backend_statistics.events_destroyed !=
+            COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
         runtime_statistics.pending_retirements != 0U ||
         runtime_statistics.live_allocations != 0U ||
         runtime_statistics.free_bytes !=

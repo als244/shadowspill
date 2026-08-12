@@ -566,8 +566,10 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         free(event);
         event = next;
     }
-    if (runtime->pending_retirements != 0U) {
-        --runtime->pending_retirements;
+    if (atomic_fetch_sub_explicit(
+            &runtime->pending_retirements, 1U, memory_order_release
+        ) == 1U) {
+        shadowspill_idle_notify(runtime);
     }
     if (selected->retirement_fence != NULL) {
         shadowspill_release_task_fence_locked(

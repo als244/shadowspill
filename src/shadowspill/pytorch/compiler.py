@@ -5,10 +5,8 @@ from __future__ import annotations
 import copy
 import ctypes
 import statistics
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from functools import partial
 from typing import Any
 
 import torch
@@ -27,16 +25,6 @@ from .capture import GraphArtifact
 from .contracts import CaptureError
 from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
 from .profiling import ProfilableArtifact, ProfileEnvironment, TaskMeasurement
-
-
-def _report_idle_progress(
-    progress: Callable[[int, int, str, str], None],
-    index: int,
-    total: int,
-    digest: str,
-    state: str,
-) -> None:
-    progress(index, total, state, digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,45 +357,26 @@ class CudaTaskProfiler:
         self,
         *,
         context: str,
-        progress: Callable[[str], None] | None,
-        timeout_seconds: float = 30.0,
     ) -> None:
-        """Observe planning quiescence without hiding a retirement deadlock."""
+        """Block on the runtime's progress-safe quiescence boundary."""
 
-        if not hasattr(
-            self._library, "shadowspill_pytorch_allocator_statistics"
-        ):
-            status = int(self._library.shadowspill_pytorch_allocator_wait_idle())
-            if status != 0:
-                raise AllocationTelemetryError(
-                    f"allocator failed to become idle during {context}: "
-                    f"status={status}"
-                )
+        status = int(self._library.shadowspill_pytorch_allocator_wait_idle())
+        if status == 0:
             return
-
-        started = time.perf_counter()
-        next_report = started
-        while True:
+        detail = f"status={status}"
+        if hasattr(self._library, "shadowspill_pytorch_allocator_statistics"):
             statistics = self._allocator_statistics().runtime
-            if statistics.pending_retirements == 0 and statistics.queued_actions == 0:
-                return
-            state = (
-                f"pending={statistics.pending_retirements} "
+            detail = (
+                f"{detail} pending={statistics.pending_retirements} "
                 f"fenced={statistics.retirement_records_fenced} "
                 f"evented={statistics.retirement_records_evented} "
                 f"preparing={statistics.retirement_records_preparing} "
                 f"unfenced={statistics.retirement_records_unfenced} "
                 f"actions={statistics.queued_actions}"
             )
-            now = time.perf_counter()
-            if progress is not None and now >= next_report:
-                progress(f"waiting-idle {state}")
-                next_report = now + 1.0
-            if now - started >= timeout_seconds:
-                raise AllocationTelemetryError(
-                    f"allocator failed to become idle during {context}: {state}"
-                )
-            time.sleep(0.001)
+        raise AllocationTelemetryError(
+            f"allocator failed to become idle during {context}: {detail}"
+        )
 
     def _measure_opaque_optimizer(
         self, artifact: OpaqueOptimizerArtifact
@@ -482,19 +451,8 @@ class CudaTaskProfiler:
                         self._library.shadowspill_pytorch_abort_task_range()
                         raise
                 stream.synchronize()
-                report_idle: Callable[[str], None] | None = None
-                if progress is not None:
-                    report_idle = partial(
-                        _report_idle_progress,
-                        progress,
-                        completed,
-                        unique_count,
-                        digest,
-                    )
-
                 self._diagnose_allocator_idle(
                     context=f"compiled entrypoint {digest}",
-                    progress=report_idle,
                 )
             result[digest] = executable.function
         return result

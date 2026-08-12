@@ -36,7 +36,10 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--family", default="qwen35")
     parser.add_argument("--device-budget", type=int, default=30 << 30)
+    parser.add_argument("--trace-repetitions", type=int, default=1)
     arguments = parser.parse_args()
+    if arguments.trace_repetitions < 1:
+        parser.error("--trace-repetitions must be positive")
 
     case = build_case(
         arguments.family,
@@ -69,10 +72,26 @@ def main() -> int:
 
         torch.cuda.cudart().cudaProfilerStart()
         torch.cuda.nvtx.range_push("shadowspill.qualification.phase1_capture")
+        traced_samples: list[dict[str, float]] = []
         traced_wall_start = time.perf_counter()
-        traced = training(case.microbatches, trace=True)
-        assert traced.diagnostics is not None
-        diagnostics = traced.diagnostics.result()
+        diagnostics = None
+        for _ in range(arguments.trace_repetitions):
+            sample_wall_start = time.perf_counter()
+            traced = training(case.microbatches, trace=True)
+            assert traced.diagnostics is not None
+            diagnostics = traced.diagnostics.result()
+            traced_samples.append(
+                {
+                    "selected_task_seconds": diagnostics.timing.compute_seconds,
+                    "task_interval_sum_seconds": sum(
+                        value
+                        for _, value in diagnostics.timing.phase_gpu_seconds
+                    ),
+                    "host_call_seconds": diagnostics.timing.host_call_seconds,
+                    "wall_seconds": time.perf_counter() - sample_wall_start,
+                }
+            )
+        assert diagnostics is not None
         traced_wall_seconds = time.perf_counter() - traced_wall_start
         torch.cuda.nvtx.range_pop()
         torch.cuda.cudart().cudaProfilerStop()
@@ -90,6 +109,7 @@ def main() -> int:
             item["compute_seconds"] for item in untraced
         ),
         "traced_wall_seconds": traced_wall_seconds,
+        "traced_samples": traced_samples,
         "trace": diagnostics.as_dict(),
         "plan": {
             "program_digest": report.execution_plan.program.digest,

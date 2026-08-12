@@ -43,6 +43,7 @@ void shadowspill_latch_failure_locked(
         runtime->failure.free_bytes
     );
     pthread_cond_broadcast(&runtime->condition);
+    shadowspill_idle_notify(runtime);
     if (runtime->device_pool.initialized) {
         pthread_cond_broadcast(&runtime->device_pool.capacity_changed);
     }

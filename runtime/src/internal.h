@@ -212,6 +212,19 @@ typedef struct ShadowSpillTransferLane {
     uint8_t lock_initialized;
 } ShadowSpillTransferLane;
 
+/*
+ * Owns only the quiescence notification consumed by runtime_wait_idle. The
+ * final action and retirement transitions advance this epoch after their
+ * counters reach zero. It deliberately does not drive the progress worker or
+ * alter transfer/retirement dispatch cadence.
+ */
+typedef struct ShadowSpillIdleWakeup {
+    pthread_mutex_t lock;
+    pthread_cond_t condition;
+    uint64_t epoch;
+    uint8_t initialized;
+} ShadowSpillIdleWakeup;
+
 typedef struct ShadowSpillExecutionUpdate {
     ShadowSpillObjectRecord *object;
     uint64_t version_delta;
@@ -249,6 +262,7 @@ struct ShadowSpillRuntime {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
     pthread_mutex_t failure_lock;
+    ShadowSpillIdleWakeup idle_wakeup;
     pthread_t progress_thread;
     int progress_started;
     _Atomic uint8_t closing;
@@ -317,6 +331,12 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t trace_event_overflow;
     ShadowSpillRuntimeFailure failure;
 };
+
+int shadowspill_idle_wakeup_initialize(
+    ShadowSpillIdleWakeup *wakeup
+);
+void shadowspill_idle_wakeup_destroy(ShadowSpillIdleWakeup *wakeup);
+void shadowspill_idle_notify(ShadowSpillRuntime *runtime);
 
 int shadowspill_range_initialize(
     ShadowSpillRangeAllocator *allocator,
