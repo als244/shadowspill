@@ -100,6 +100,7 @@ def _case_identity(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    steps: int,
 ) -> str:
     payload = {
         "reference_execution": _REFERENCE_EXECUTION,
@@ -110,6 +111,7 @@ def _case_identity(
         "data_geometry": data_geometry,
         "case_factory": case_factory,
         "case_options": case_options,
+        "steps": steps,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
@@ -178,6 +180,7 @@ def _reference_worker(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    steps: int,
 ) -> None:
     case = build_case(
         family,
@@ -205,7 +208,7 @@ def _reference_worker(
     compute_timings: list[float] = []
     execution_timings: list[dict[str, object]] = []
     with case.implementations():
-        for step in range(5):
+        for step in range(steps):
             optimizer.zero_grad(set_to_none=True)
             event_factory: Any = torch.cuda.Event
             compute_start = event_factory(enable_timing=True)
@@ -277,7 +280,7 @@ def _reference_worker(
             losses.append(step_losses)
             print(
                 f"reference {model_implementation}/{family} "
-                f"step {step + 1}/5: {elapsed:.3f}s",
+                f"step {step + 1}/{steps}: {elapsed:.3f}s",
                 flush=True,
             )
     artifact = {
@@ -293,6 +296,7 @@ def _reference_worker(
             data_geometry=data_geometry,
             case_factory=case_factory,
             case_options=case_options,
+            steps=steps,
         ),
         "losses": losses,
         "step_seconds": timings,
@@ -317,6 +321,9 @@ def _planned_worker(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
+    steps: int,
+    checkpoint_step: int,
+    require_pressure: bool,
 ) -> None:
     identity = _case_identity(
         model_name=family,
@@ -326,6 +333,7 @@ def _planned_worker(
         data_geometry=data_geometry,
         case_factory=case_factory,
         case_options=case_options,
+        steps=steps,
     )
     case = build_case(
         family,
@@ -369,7 +377,7 @@ def _planned_worker(
         step_diagnostics: list[dict[str, object]] = []
         checkpoint: object | None = None
         expected_replay: list[list[float]] = []
-        for step in range(5):
+        for step in range(steps):
             started = time.perf_counter()
             step_result = training(case.microbatches, trace=True)
             if step_result.diagnostics is None:
@@ -385,20 +393,23 @@ def _planned_worker(
             losses.append(values)
             print(
                 f"shadowspill {model_implementation}/{family} "
-                f"step {step + 1}/5: {timings[-1]:.3f}s",
+                f"step {step + 1}/{steps}: {timings[-1]:.3f}s",
                 flush=True,
             )
-            if step == 2:
+            if step + 1 == checkpoint_step:
                 checkpoint = copy.deepcopy(training.state_dict())
-            elif step > 2:
+            elif step + 1 > checkpoint_step:
                 expected_replay.append(values)
         uninterrupted_state = training.state_dict()
         uninterrupted_digest = state_digest(uninterrupted_state)
         if checkpoint is None:
-            raise AssertionError("step-three checkpoint was not captured")
+            raise AssertionError(
+                f"step-{checkpoint_step} checkpoint was not captured"
+            )
         training.load_state_dict(checkpoint)
         replay_losses: list[list[float]] = []
-        for replay_step in range(2):
+        replay_steps = steps - checkpoint_step
+        for replay_step in range(replay_steps):
             replay_started = time.perf_counter()
             step_result = training(case.microbatches, trace=True)
             if step_result.diagnostics is None:
@@ -408,7 +419,7 @@ def _planned_worker(
             replay_losses.append([float(item) for item in step_result.objectives])
             print(
                 f"shadowspill {model_implementation}/{family} replay "
-                f"{replay_step + 1}/2: "
+                f"{replay_step + 1}/{replay_steps}: "
                 f"{time.perf_counter() - replay_started:.3f}s",
                 flush=True,
             )
@@ -472,6 +483,9 @@ def _planned_worker(
         "family": family,
         "model_implementation": model_implementation,
         "case_identity": identity,
+        "steps": steps,
+        "checkpoint_step": checkpoint_step,
+        "require_pressure": require_pressure,
         "case_request": {
             "model_name": family,
             "model_implementation": model_implementation,
@@ -615,14 +629,21 @@ def _planned_worker(
             and qualification_result["recomputation_cache_hits"] == 0
         )
     )
+    pressure_passed = bool(
+        not require_pressure
+        or (
+            report.transfer_bytes_to_host > 0
+            and report.transfer_bytes_to_device > 0
+            and qualification_result["selected_recomputation"]
+        )
+    )
+    qualification_result["pressure_gate_passed"] = pressure_passed
     qualification_result["passed"] = bool(
         not loss_failures
         and not metric_failures
         and not exact_failures
         and qualification_result["checkpoint_replay_bitwise"]
-        and report.transfer_bytes_to_host > 0
-        and report.transfer_bytes_to_device > 0
-        and qualification_result["selected_recomputation"]
+        and pressure_passed
         and report.predicted_device_peak_bytes <= device_budget
         and not any(physical_statuses)
         and qualification_result["physical_budget_sealed"]
@@ -650,7 +671,13 @@ def _planned_worker(
     if not qualification_result["passed"]:
         raise AssertionError(
             f"{model_implementation} {family} numerical qualification failed: "
-            f"{qualification_result}"
+            f"loss_failures={len(loss_failures)}, "
+            f"metric_failures={len(metric_failures)}, "
+            f"exact_failures={len(exact_failures)}, "
+            "checkpoint_replay_bitwise="
+            f"{qualification_result['checkpoint_replay_bitwise']}, "
+            f"pressure_gate_passed={pressure_passed}, "
+            f"physical_statuses={physical_statuses}, artifact={result_path}"
         )
 
 
@@ -665,6 +692,9 @@ def _orchestrate(
     data_geometry_argument: str | None,
     case_factory: str | None,
     case_option_arguments: list[str],
+    steps: int,
+    checkpoint_step: int,
+    require_pressure: bool,
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
@@ -672,6 +702,9 @@ def _orchestrate(
     result = result_directory / f"{prefix}.json"
     base = [sys.executable, "-m", "qualification.numerical.run"]
     options = ["--seed", str(seed), "--model-config", model_config_argument]
+    options.extend(("--steps", str(steps)))
+    if not require_pressure:
+        options.append("--allow-fully-resident")
     if data_geometry_argument is not None:
         options.extend(("--data-geometry", data_geometry_argument))
     if case_factory is not None:
@@ -703,6 +736,8 @@ def _orchestrate(
             "--model-implementation",
             model_implementation,
             *options,
+            "--checkpoint-step",
+            str(checkpoint_step),
         ],
         check=True,
         env=environment,
@@ -723,6 +758,13 @@ def main() -> int:
         help="pure PyTorch is the formal numerical authority",
     )
     parser.add_argument("--seed", type=int, default=20_260_811)
+    parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--checkpoint-step", type=int)
+    parser.add_argument(
+        "--allow-fully-resident",
+        action="store_true",
+        help="do not require real H2D/D2H activity and recomputation",
+    )
     parser.add_argument(
         "--model-config",
         default="{}",
@@ -750,6 +792,11 @@ def main() -> int:
     family = str(arguments.family)
     model_implementation = arguments.model_implementation
     try:
+        if arguments.steps < 2:
+            raise ValueError("steps must be at least two")
+        checkpoint_step = arguments.checkpoint_step or max(1, arguments.steps - 2)
+        if checkpoint_step < 1 or checkpoint_step >= arguments.steps:
+            raise ValueError("checkpoint step must be between one and steps - 1")
         model_config_value = _json_argument(
             arguments.model_config, description="model config"
         )
@@ -785,6 +832,9 @@ def main() -> int:
             data_geometry_argument=arguments.data_geometry,
             case_factory=arguments.case_factory,
             case_option_arguments=arguments.case_option,
+            steps=arguments.steps,
+            checkpoint_step=checkpoint_step,
+            require_pressure=not arguments.allow_fully_resident,
         )
     elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
@@ -798,6 +848,7 @@ def main() -> int:
             data_geometry=data_geometry_value,
             case_factory=arguments.case_factory,
             case_options=case_options_value,
+            steps=arguments.steps,
         )
     else:
         if len(arguments.paths) != 3:
@@ -813,6 +864,9 @@ def main() -> int:
             data_geometry=data_geometry_value,
             case_factory=arguments.case_factory,
             case_options=case_options_value,
+            steps=arguments.steps,
+            checkpoint_step=checkpoint_step,
+            require_pressure=not arguments.allow_fully_resident,
         )
     return 0
 
