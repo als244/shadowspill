@@ -792,6 +792,168 @@ This is simpler and safer than relying on a large global lock order. The few
 unavoidable nested cold-path operations have an asserted order documented in
 the private header and exercised under ThreadSanitizer.
 
+## Post-`ad2f4ef` NSYS accounting
+
+The post-fix trace is
+`qualification/results/phase1/qwen35_idle_wakeup_fixed.nsys-rep`. It preserves
+the frozen 129-task/1,415-action plan. NSYS perturbs the selected-task span to
+460.325 ms, so the unprofiled StepDiagnostics measurements
+(304.287--304.859 ms) remain the performance authority. The trace is still the
+right evidence for call nesting, lock ownership, and the causes of individual
+outliers.
+
+### Current allocator outliers
+
+The allocator distribution is normally small even under NSYS:
+
+| Metric | Value |
+|---|---:|
+| nonzero allocation callbacks | 37,563 |
+| median | 0.349 us |
+| p95 | 1.892 us |
+| p99 | 2.805 us |
+| aggregate allocator range time | 23.438 ms |
+| callbacks above 50 us | 7 |
+| callbacks above 100 us | 4 |
+
+Every callback above 50 us has one of two concrete causes: five are dominated
+by `device_pool.lock` contention and two are explicit NSYS profiler overhead.
+There is no unexplained intrinsic allocator callback above 50 us.
+
+The screenshot at 112.485 ms is a real lock-contention example:
+
+| Event | NSYS interval |
+|---|---:|
+| progress worker's timed wait returns | 112.464495 ms |
+| worker `cuEventQuery` | 112.478378--112.483440 ms |
+| dispatcher allocator callback | 112.484972--112.508680 ms |
+| nested dispatcher `pthread_mutex_lock` | 112.485306--112.507733 ms |
+
+The worker unconditionally entered `progress_retirements_locked()` after the
+query and walked approximately 766 active allocation records while holding
+`device_pool.lock`. No record completed in that pass. The allocator did only
+1.281 us of work after obtaining the lock; 22.427 of its 23.708 us was waiting
+for an unrelated full-population scan.
+
+The two largest real examples show the same ownership defect when work is
+ready:
+
+| Allocator callback | Mutex wait | Worker work under the pool lock |
+|---:|---:|---|
+| 178.482 us | 173.663 us | release/coalesce 197 records totaling 1,590,282,752 bytes |
+| 116.210 us | 114.042 us | release/coalesce 30 records totaling 872,021,504 bytes |
+
+The two other callbacks above 100 us are observer effects: one 125.806-us
+range contains 124.493 us explicitly attributed to `PROFILER_OVERHEAD`, and
+one 112.843-us range contains 112.412 us of profiler overhead.
+
+FIFO completion tracking has already reduced worker queries from 223,208 to
+1,317 in this trace. The remaining problem is downstream: after polling the
+completion frontier, the worker still scans the complete active-allocation
+linked list under the same mutex needed by synchronous PyTorch `malloc/free`.
+The required correction is a retirement/completion queue of stable allocation
+references. A completed frontier should directly identify records to retire;
+the worker must not rediscover them by scanning every live allocation.
+
+### Current inter-task gap
+
+The Python executor now has real `_before_task()`, `_run_compiled_task()`, and
+`_after_task()` orchestration functions. The refactor is nevertheless
+incomplete in two important ways:
+
+1. The NVTX ranges named `before_task` and `after_task` currently enclose only
+   `RuntimeBridge.before_task()` and `RuntimeBridge.after_task()`, not their
+   complete frontend orchestration functions.
+2. Input and output storage operations remain individual Python calls to the
+   C++ custom operator. Batch rebinding/dematerialization has not landed.
+
+For the screenshot's transition from
+`execution_000014` (`microbatch_0000.stage_0001.backward.recompute`) to
+`execution_000015` (`microbatch_0000.stage_0000.backward.recompute`), the
+859.586-us compiled-call gap is exactly accounted for:
+
+| Host interval | Time |
+|---|---:|
+| current output/gradient processing and dematerialization | 326.335 us |
+| current narrow native `after_task` range | 33.252 us |
+| Python/NVTX transition before next boundary | 76.930 us |
+| next narrow native `before_task` range | 73.726 us |
+| transition into rebinding | 2.137 us |
+| next storage rebind and argument assembly | 333.443 us |
+| transition into compiled call | 13.763 us |
+| **total** | **859.586 us** |
+
+That next task performs 73 individual storage-rebind custom-op calls; the
+individual C++ ranges total 153.927 us. The remainder is Python iteration,
+dictionary access, validation, and graph-argument construction. The preceding
+postprocessing walks and publishes backward outputs, promotes first gradient
+allocations, updates frontend object maps, and dematerializes selected aliases.
+
+Across all 128 task transitions in the NSYS capture:
+
+| Component | Aggregate |
+|---|---:|
+| output/gradient postprocessing before narrow `after_task` | 16.649 ms |
+| narrow native `after_task` | 1.962 ms |
+| between-boundary Python work | 3.396 ms |
+| narrow native `before_task` | 3.501 ms |
+| pre-rebind transition | 0.198 ms |
+| rebind and argument assembly | 9.607 ms |
+| compiled-call transition | 0.967 ms |
+| **compiled-call gap total** | **36.279 ms** |
+
+NSYS expands these small Python/custom-op intervals. In the unprofiled trace,
+the directly measured component totals are 12.678 ms of postprocessing,
+1.751 ms of native after-task work, 0.808 ms of cleanup, 2.293 ms of native
+before-task work, and 8.266 ms of rebind/argument assembly. Some host work runs
+ahead of already queued GPU work, so only about 15.5 ms appears between the
+summed task-event intervals and the 304.5-ms selected-task span.
+
+A correlation check found all 40,528 dispatcher-launched kernels inside one of
+the selected compiled-call ranges and zero kernels launched from the
+inter-task windows. Thus this recurrent plan does not hide gradient
+accumulation or other numerical CUDA work in `_after_task`; the gap components
+above are host-side state, binding, validation, and dispatch work.
+
+The next frontend milestone must make the outer `before_task`/`after_task`
+ranges cover their complete functions while retaining nested component ranges,
+then batch the storage operations and use predecoded argument slots. This is
+separate from changing worker polling or condition-variable policy.
+
+### Why the worker appears to call only `cuEventQuery`
+
+It does not. The C worker's complete API ledger is:
+
+| Driver API | Calls |
+|---|---:|
+| `cuEventQuery` | 1,317 |
+| `cuStreamWaitEvent` | 782 |
+| `cuEventRecord` | 782 |
+| `cuMemcpyHtoDAsync_v2` | 394 |
+| `cuMemcpyDtoHAsync_v2` | 388 |
+
+The backend deliberately uses the CUDA driver API, hence `cuMemcpy...` rather
+than runtime-API `cudaMemcpyAsync` names. All 394 startup H2D calls were
+submitted between 29.440 and 31.222 ms. All 388 terminal D2H calls were
+submitted between 524.786 and 542.685 ms. At the screenshots' 112-ms and
+215-ms positions, those H2D operations were already enqueued and the D2Hs had
+not yet been submitted, so completion queries are the only expected worker
+CUDA calls visible in those local windows. GPU copies execute asynchronously
+after their host enqueue call and remain visible on the H2D/D2H stream rows.
+
+### Why the dispatcher calls `cudaStreamIsCapturing`
+
+The trace contains exactly 390 `cudaStreamIsCapturing` calls followed one for
+one by 390 `cudaEventRecordWithFlags` calls. They come from the optional
+`trace=True` StepDiagnostics events: three stream timestamps for each of 129
+tasks, plus the three step-level origin/start/end records. PyTorch checks stream
+capture state before recording its event so that event semantics remain valid
+inside CUDA graph capture. This is intended debug-only behavior, costs
+0.110 ms in aggregate for the capture checks (0.953 ms for their paired event
+records), and is absent from ordinary `trace=False` execution. Neutral-runtime
+readiness, transfer, fence, and retirement events are separate precreated
+timing-disabled driver events.
+
 ## Issue ledger
 
 ### Resolved and measured
@@ -821,19 +983,31 @@ the private header and exercised under ThreadSanitizer.
   wall remains near 480 ms because the faster optimizer exposes more terminal
   D2H tail; cross-step cyclic optimization is intentionally outside the
   current agenda.
+- Added semantic execution labels and immutable admitted input/action records;
+  the repeated admitted boundary no longer parses task IDs or hashes input
+  object IDs.
+- Added FIFO CUDA completion frontiers and event leases, reducing the Qwen
+  worker from 223,208 event queries to 1,317. This does not yet remove the
+  allocation-retirement population scan described above.
+- Split device/host memory pools and H2D/D2H transfer-lane ownership and named
+  the pure-C worker `shadowspill.wkr`.
+- Fixed the idle-barrier lost-notification race in `ad2f4ef` without changing
+  worker progress cadence. The repeated unprofiled selected span is
+  304.287--304.859 ms with exact plan identity.
 
 ### Current corrections
 
-- Register semantic execution labels in the immutable task table and use them
-  for C/NVTX ranges. Ranges are keyed by `execution_XXXXXX` and semantic stage
-  name; canonical IR task IDs remain secondary correlation metadata.
-- Replace the global runtime mutex with the central ownership structures above.
-- Replace full-population event rescans with head-only FIFO completion and
-  adaptive polling outside locks.
-- Predecode native task input, mutation, and action ABI data so task boundaries
-  do not rebuild arrays or repeat identity translation.
+- Replace the remaining active-allocation retirement scan with direct stable
+  retirement/completion records; no worker scan may hold `device_pool.lock`
+  against PyTorch allocator callbacks.
+- Finish replacing residual global/cross-owner locking with the central
+  ownership structures above.
+- Make full frontend `_before_task()` and `_after_task()` ranges enclose all
+  their work while retaining nested native/rebind/postprocess diagnostics.
 - Batch storage binding/dematerialization calls while retaining one object
   state transition per alias bundle.
+- Finish predecoded argument/output processing so repeated task paths do not
+  rebuild Python dictionaries or perform avoidable validation.
 - Re-run the identical Qwen control after each isolated change; acceptance is
   unchanged arithmetic/schedule plus a first-to-last span approaching the
   approximately 297.5-ms task sum.

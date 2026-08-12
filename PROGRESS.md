@@ -1874,3 +1874,41 @@ the ignored internal progress log before this tracked summary is updated.
   H2D and 388 D2H copies, matching the plan's startup/terminal action shape.
   The trace is now available for the planned completion-frontier and allocator
   lock analysis before any polling-policy change.
+
+## 2026-08-12 — Post-fix allocator and task-gap root cause
+
+- The apparent allocator anomalies have two measured causes. Of 37,563
+  callbacks, only seven exceed 50 us: five are dominated by device-pool mutex
+  contention and two are explicit NSYS profiler overhead. The four callbacks
+  above 100 us divide evenly between those causes; no intrinsic allocator work
+  above 50 us remains unexplained.
+- The screenshot's 23.708-us allocation waited 22.427 us for the progress
+  worker. Its timed poll had expired, it queried one event, then walked roughly
+  766 active allocation records under `device_pool.lock`; no record completed.
+  Larger examples waited 173.663 us while 197 records/1.590 GB were retired and
+  114.042 us while 30 records/872.0 MB were retired. FIFO event polling is
+  already effective (1,317 queries versus 223,208 historically), but completed
+  allocations are still rediscovered by a full active-list scan under the
+  allocator-visible lock.
+- The unified executor skeleton exists, but its diagnostic scopes and batching
+  milestone are incomplete. The ranges called `before_task`/`after_task` wrap
+  only native bridge calls; output processing and per-object storage operations
+  remain outside. The displayed execution-14-to-15 gap is fully accounted:
+  326.335 us postprocessing, 33.252 us native after-task, 76.930 us transition,
+  73.726 us native before-task, 2.137 us transition, 333.443 us rebind/argument
+  assembly, and 13.763 us dispatch transition = 859.586 us.
+- The worker does issue copies: 394 `cuMemcpyHtoDAsync_v2` calls were enqueued
+  at 29.440--31.222 ms and 388 `cuMemcpyDtoHAsync_v2` calls at
+  524.786--542.685 ms, along with 782 stream waits and 782 event records. Local
+  mid-compute windows show only event queries because copies were already
+  enqueued asynchronously.
+- The dispatcher's 390 `cudaStreamIsCapturing` calls pair one-for-one with 390
+  diagnostic event records: three task timestamps for 129 tasks plus three
+  step-level timestamps. They are expected only for `trace=True`, cost 0.110 ms
+  in aggregate, and are unrelated to the timing-disabled C runtime event pool.
+- All 40,528 dispatcher-launched kernels correlate to compiled-call ranges;
+  none occur in the inter-task windows. The measured gap is host-side work,
+  not omitted gradient-accumulation CUDA execution.
+- Detailed standalone evidence and the remaining corrective order are in
+  `docs/runtime_overheads.md`. No polling/condition semantics have been changed
+  during this investigation.
