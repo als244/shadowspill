@@ -17,6 +17,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
     for (uint32_t index = 0U; index < record->update_count; ++index) {
         const ShadowSpillExecutionUpdate *update = &record->updates[index];
         ShadowSpillObjectRecord *object = update->object;
+        pthread_mutex_lock(&object->lock);
         if (update->version_delta == 0U ||
             (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
@@ -24,6 +25,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
                 UINT64_MAX - object->authoritative_version) {
             *failure_object_id = object->object_id;
             *failure_allocation_id = object->allocation_id;
+            pthread_mutex_unlock(&object->lock);
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_INVALID_STATE,
@@ -36,6 +38,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
         object->authoritative_version += update->version_delta;
         object->device_version = object->authoritative_version;
         object->host_current = 0U;
+        pthread_mutex_unlock(&object->lock);
     }
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -145,6 +148,12 @@ static void discard_action_batch_locked(
     ShadowSpillQueuedAction *action = batch->head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
+        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            pthread_mutex_lock(&action->object->lock);
+            action->object->prefetch_pending = 0U;
+            pthread_cond_broadcast(&action->object->state_changed);
+            pthread_mutex_unlock(&action->object->lock);
+        }
         shadowspill_release_task_fence_locked(runtime, action->fence);
         shadowspill_object_release(action->object);
         free(action);
@@ -163,13 +172,16 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         const ShadowSpillExecutionAction *action = &record->actions[index];
         ShadowSpillObjectRecord *object = action->object;
+        pthread_mutex_lock(&object->lock);
         *failure_object_id = object->object_id;
         *failure_allocation_id = object->allocation_id;
         if (action->kind > SHADOWSPILL_RUNTIME_PREFETCH) {
+            pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
         }
         for (uint32_t previous = 0U; previous < index; ++previous) {
             if (record->actions[previous].object == object) {
+                pthread_mutex_unlock(&object->lock);
                 return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             }
         }
@@ -177,14 +189,17 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             if (object->residency != SHADOWSPILL_OBJECT_HOST_ONLY ||
                 !object->host_current ||
                 object->host_version != object->authoritative_version) {
+                pthread_mutex_unlock(&object->lock);
                 return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             }
         } else if (object->residency != SHADOWSPILL_OBJECT_DEVICE_READY &&
                    object->residency != SHADOWSPILL_OBJECT_PREFETCHING) {
+            pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         }
         ShadowSpillQueuedAction *queued = calloc(1U, sizeof(*queued));
         if (queued == NULL) {
+            pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
         queued->task_id = record->task_id;
@@ -193,6 +208,10 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         shadowspill_object_retain(object);
         queued->fence = fence;
         shadowspill_retain_task_fence(fence);
+        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            object->prefetch_pending = 1U;
+        }
+        pthread_mutex_unlock(&object->lock);
         if (batch->tail == NULL) {
             batch->head = queued;
         } else {
@@ -249,13 +268,17 @@ static void publish_action_batch_locked(
                 &runtime->pending_capacity_actions, 1U, memory_order_release
             );
         }
+        pthread_mutex_lock(&queued->object->lock);
+        const uint64_t allocation_id = queued->object->allocation_id;
+        const uint64_t size_bytes = queued->object->size_bytes;
+        pthread_mutex_unlock(&queued->object->lock);
         shadowspill_append_trace_event_locked(
             runtime,
             SHADOWSPILL_TRACE_ACTION_QUEUED,
             record->task_id,
             queued->object->object_id,
-            queued->object->allocation_id,
-            queued->object->size_bytes,
+            allocation_id,
+            size_bytes,
             queued->kind,
             atomic_load_explicit(
                 &runtime->actions.count, memory_order_acquire
@@ -274,7 +297,6 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     const ShadowSpillExecutionRecord *record,
     ShadowSpillBackendStream compute_stream
 ) {
-    pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     ShadowSpillTaskFence *fence = NULL;
     ShadowSpillActionBatch batch = {0};
@@ -341,7 +363,6 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         (uint64_t)status,
         record->action_count
     );
-    pthread_mutex_unlock(&runtime->mutex);
     shadowspill_leave_task_scope(runtime);
     return status;
 }

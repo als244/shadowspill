@@ -474,6 +474,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
         ShadowSpillObjectRecord *object = action->object;
+        pthread_mutex_lock(&object->lock);
         if (action->state == SHADOWSPILL_ACTION_QUEUED) {
             if (action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
                 int complete = 0;
@@ -487,6 +488,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                         object->allocation_id,
                         0U
                     );
+                    pthread_mutex_unlock(&object->lock);
                     return changed;
                 }
                 if (complete) {
@@ -504,6 +506,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                             object->allocation_id,
                             0U
                         );
+                        pthread_mutex_unlock(&object->lock);
                         return changed;
                     }
                     if (allocation->handoff_from_object_id ==
@@ -526,6 +529,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                                 allocation->allocation_id,
                                 allocation->requested_bytes
                             );
+                            pthread_mutex_unlock(&object->lock);
                             return changed;
                         }
                         object->retired_generation = object->generation;
@@ -542,6 +546,8 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                         allocation->handoff_task_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
                         pthread_mutex_unlock(&runtime->allocation_pool.lock);
+                        pthread_cond_broadcast(&object->state_changed);
+                        pthread_mutex_unlock(&object->lock);
                         complete_action_locked(runtime, previous, action);
                         changed = 1;
                         action = next;
@@ -557,6 +563,8 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                     object->residency = object->host_current
                         ? SHADOWSPILL_OBJECT_HOST_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
+                    pthread_cond_broadcast(&object->state_changed);
+                    pthread_mutex_unlock(&object->lock);
                     complete_action_locked(runtime, previous, action);
                     changed = 1;
                     action = next;
@@ -565,9 +573,15 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
             } else {
                 int reserved = reserve_destination_locked(runtime, action);
                 if (reserved < 0) {
+                    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                        object->prefetch_pending = 0U;
+                        pthread_cond_broadcast(&object->state_changed);
+                    }
+                    pthread_mutex_unlock(&object->lock);
                     return changed;
                 }
                 if (reserved == 0) {
+                    pthread_mutex_unlock(&object->lock);
                     previous = action;
                     action = next;
                     continue;
@@ -576,11 +590,17 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                     ? dispatch_offload_locked(runtime, action)
                     : dispatch_prefetch_locked(runtime, action);
                 if (dispatched < 0) {
+                    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                        object->prefetch_pending = 0U;
+                        pthread_cond_broadcast(&object->state_changed);
+                    }
+                    pthread_mutex_unlock(&object->lock);
                     return changed;
                 }
                 changed |= dispatched;
                 if (dispatched != 0) {
                     pthread_cond_broadcast(&runtime->condition);
+                    pthread_cond_broadcast(&object->state_changed);
                 }
             }
         } else {
@@ -589,6 +609,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                     runtime, action->completion_event,
                     object->object_id, &complete
                 ) != 0) {
+                pthread_mutex_unlock(&object->lock);
                 return changed;
             }
             if (complete) {
@@ -621,6 +642,7 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                             object->allocation_id,
                             0U
                         );
+                        pthread_mutex_unlock(&object->lock);
                         return changed;
                     }
                     object->retired_generation = object->generation;
@@ -664,18 +686,23 @@ static int progress_actions_queue_locked(ShadowSpillRuntime *runtime) {
                                 object->allocation_id,
                                 charged
                             );
+                            pthread_mutex_unlock(&object->lock);
                             return changed;
                         }
                         object->has_host_range = 0U;
                         object->host_current = 0U;
                     }
                 }
+                object->prefetch_pending = 0U;
+                pthread_cond_broadcast(&object->state_changed);
+                pthread_mutex_unlock(&object->lock);
                 complete_action_locked(runtime, previous, action);
                 changed = 1;
                 action = next;
                 continue;
             }
         }
+        pthread_mutex_unlock(&object->lock);
         previous = action;
         action = next;
     }

@@ -35,7 +35,14 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     }
     atomic_init(&created->references, 1U);
     atomic_init(&created->detached, 0U);
+    atomic_init(&created->prefetch_pending, 0U);
     if (pthread_mutex_init(&created->lock, NULL) != 0) {
+        free(created);
+        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        goto done;
+    }
+    if (pthread_cond_init(&created->state_changed, NULL) != 0) {
+        pthread_mutex_destroy(&created->lock);
         free(created);
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
@@ -53,8 +60,9 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             ? 1U
             : description->size_bytes;
         if (shadowspill_range_allocate(
-                &runtime->host_ranges, charged, 1U, &created->host_offset
+            &runtime->host_ranges, charged, 1U, &created->host_offset
             ) != 0) {
+            pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created);
             status = SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
@@ -73,6 +81,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
                 &runtime->host_ranges, created->host_offset, charged
             );
         }
+        pthread_cond_destroy(&created->state_changed);
         pthread_mutex_destroy(&created->lock);
         free(created);
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -542,6 +551,11 @@ static void discard_actions_locked(
 ) {
     while (head != NULL) {
         ShadowSpillQueuedAction *next = head->next;
+        if (head->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            atomic_store_explicit(
+                &head->object->prefetch_pending, 0U, memory_order_release
+            );
+        }
         shadowspill_release_task_fence_locked(runtime, head->fence);
         shadowspill_object_release(head->object);
         free(head);
@@ -709,6 +723,11 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         shadowspill_object_retain(object);
         created->fence = fence;
         shadowspill_retain_task_fence(fence);
+        if (created->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            atomic_store_explicit(
+                &object->prefetch_pending, 1U, memory_order_release
+            );
+        }
         if (tail == NULL) {
             head = created;
         } else {

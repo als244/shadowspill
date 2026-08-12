@@ -1702,3 +1702,22 @@ the ignored internal progress log before this tracked summary is updated.
   failure attribution and ownership cleanup local to the phase that can fail.
   The global transition lock is still intentionally retained at this checkpoint
   so this lookup refactor cannot change worker/dispatcher ordering.
+
+## 2026-08-12 — Hot task boundaries adopt object-local readiness ownership
+
+- Admitted before/after boundaries no longer acquire the legacy runtime mutex.
+  Residency, generation, version, current lease, and readiness state are read
+  or mutated under each alias-bundle object's mutex; backend compute-stream
+  waits occur after retaining the event and releasing that lock.
+- Added an object-local condition variable and explicit `prefetch_pending`
+  invariant. A consumer can wait for queued transfer dispatch without scanning
+  the global action population, and dispatch publication wakes only consumers
+  of the affected object.
+- The first forward canary exposed that initial placement uses the generic,
+  non-admitted action boundary. Pending-prefetch publication was therefore
+  centralized as a runtime action invariant shared by both boundaries rather
+  than patched into the forward executor.
+- Transfer/statistics counters accessed by the worker and dispatcher are now
+  atomic. Focused forward, recurrent training, overlap, transition, and failure
+  gates pass. Worker transfer submission still holds the action/object locks
+  and is the next snapshot/commit conversion.

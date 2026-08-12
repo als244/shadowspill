@@ -173,6 +173,12 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     atomic_init(&runtime->failure_status, SHADOWSPILL_RUNTIME_OK);
     atomic_init(&runtime->pending_retirements, 0U);
     atomic_init(&runtime->pending_capacity_actions, 0U);
+    atomic_init(&runtime->registered_objects, 0U);
+    atomic_init(&runtime->transfers_to_device, 0U);
+    atomic_init(&runtime->transfers_to_host, 0U);
+    atomic_init(&runtime->bytes_to_device, 0U);
+    atomic_init(&runtime->bytes_to_host, 0U);
+    atomic_init(&runtime->wait_events_inserted, 0U);
     atomic_init(&runtime->actions.count, 0U);
     atomic_init(&runtime->device_free_bytes_snapshot, 0U);
     atomic_init(&runtime->device_largest_free_snapshot, 0U);
@@ -527,15 +533,27 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .live_allocations = runtime->live_allocations,
         .blocked_allocators = runtime->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
-        .registered_objects = runtime->registered_objects,
+        .registered_objects = atomic_load_explicit(
+            &runtime->registered_objects, memory_order_acquire
+        ),
         .queued_actions = atomic_load_explicit(
             &runtime->actions.count, memory_order_acquire
         ),
-        .transfers_to_device = runtime->transfers_to_device,
-        .transfers_to_host = runtime->transfers_to_host,
-        .bytes_to_device = runtime->bytes_to_device,
-        .bytes_to_host = runtime->bytes_to_host,
-        .wait_events_inserted = runtime->wait_events_inserted,
+        .transfers_to_device = atomic_load_explicit(
+            &runtime->transfers_to_device, memory_order_acquire
+        ),
+        .transfers_to_host = atomic_load_explicit(
+            &runtime->transfers_to_host, memory_order_acquire
+        ),
+        .bytes_to_device = atomic_load_explicit(
+            &runtime->bytes_to_device, memory_order_acquire
+        ),
+        .bytes_to_host = atomic_load_explicit(
+            &runtime->bytes_to_host, memory_order_acquire
+        ),
+        .wait_events_inserted = atomic_load_explicit(
+            &runtime->wait_events_inserted, memory_order_acquire
+        ),
         .allocation_events = runtime->allocation_event_count,
         .allocation_event_capacity = runtime->allocation_event_capacity,
         .allocation_event_overflow =

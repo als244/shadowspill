@@ -116,6 +116,7 @@ typedef struct ShadowSpillObjectRecord {
     _Atomic uint32_t references;
     _Atomic uint8_t detached;
     pthread_mutex_t lock;
+    pthread_cond_t state_changed;
     uint64_t generation;
     uint64_t authoritative_version;
     uint64_t device_version;
@@ -127,6 +128,7 @@ typedef struct ShadowSpillObjectRecord {
     uint8_t host_current;
     uint8_t has_host_range;
     uint8_t residency;
+    _Atomic uint8_t prefetch_pending;
     ShadowSpillEventLease *readiness_event;
     uint8_t has_readiness_event;
     uint64_t retired_generation;
@@ -261,12 +263,12 @@ struct ShadowSpillRuntime {
     uint64_t blocked_allocators;
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
-    uint64_t registered_objects;
-    uint64_t transfers_to_device;
-    uint64_t transfers_to_host;
-    uint64_t bytes_to_device;
-    uint64_t bytes_to_host;
-    uint64_t wait_events_inserted;
+    _Atomic uint64_t registered_objects;
+    _Atomic uint64_t transfers_to_device;
+    _Atomic uint64_t transfers_to_host;
+    _Atomic uint64_t bytes_to_device;
+    _Atomic uint64_t bytes_to_host;
+    _Atomic uint64_t wait_events_inserted;
     uint64_t event_query_epoch;
     ShadowSpillAllocationEvent *allocation_events;
     _Atomic uint64_t allocation_event_count;

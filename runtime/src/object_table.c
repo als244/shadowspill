@@ -180,6 +180,7 @@ void shadowspill_object_release(ShadowSpillObjectRecord *object) {
         ) != 1U) {
         return;
     }
+    pthread_cond_destroy(&object->state_changed);
     pthread_mutex_destroy(&object->lock);
     free(object);
 }
