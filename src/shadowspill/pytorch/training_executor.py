@@ -387,6 +387,21 @@ class _ArmedExecutionTiming:
     trace_setup_ns: int = 0
 
 
+@dataclass(slots=True)
+class _PreparedTask:
+    run: _PlanRun
+    entrypoint: TrainingTaskEntrypoint
+    task: TaskSpec
+    stream: torch.cuda.Stream
+    input_aliases: tuple[str, ...]
+    trace_label: str
+    arguments: Sequence[object]
+    function: Callable[..., object] | None
+    eager_optimizer: bool
+    timing: _ArmedTaskTiming | None
+    runtime_scope_open: bool = True
+
+
 class TrainingExecutor:
     """Execute selected forward/backward variants and one optimizer update."""
 
@@ -518,10 +533,7 @@ class TrainingExecutor:
             timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
         public_tensors: dict[int, tuple[torch.Tensor, ...]] = {}
         for entrypoint in run.entrypoints:
-            if entrypoint.phase == "optimizer":
-                self._execute_optimizer(run, entrypoint)
-                continue
-            outputs = self._execute_graph(run, entrypoint)
+            outputs = self._execute_task(run, entrypoint)
             if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
                 public_tensors[entrypoint.microbatch] = outputs[
                     : entrypoint.public_output_count
@@ -1101,21 +1113,34 @@ class TrainingExecutor:
 
         self._expose_optimizer_state_cpu()
 
-    def _execute_graph(
+    def _execute_task(
         self,
         run: _PlanRun,
         entrypoint: TrainingTaskEntrypoint,
     ) -> tuple[torch.Tensor, ...]:
+        prepared = self._before_task(run, entrypoint)
+        try:
+            raw_outputs = self._run_compiled_task(prepared)
+            return self._after_task(prepared, raw_outputs)
+        except BaseException as error:
+            self._abort_task(prepared, error)
+            raise
+        finally:
+            self._finish_task_timing(prepared.timing)
+
+    def _before_task(
+        self,
+        run: _PlanRun,
+        entrypoint: TrainingTaskEntrypoint,
+    ) -> _PreparedTask:
+        """Acquire, rebind, and assemble one complete frontend task boundary."""
+
         task_timing = self._begin_task_timing(entrypoint)
         task = run.tasks[entrypoint.task_id]
-        artifact = entrypoint.artifact
-        if not isinstance(artifact, GraphArtifact):
-            raise RuntimeError("graph task has no captured artifact")
-        function = self._functions[artifact.compatibility_digest]
         stream = torch.cuda.current_stream()
         input_aliases = run.input_aliases_by_task[task.task_id]
         trace_label = self._task_trace_labels[task.task_id]
-        task_open = False
+        runtime_scope_open = False
         try:
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
             self._record_task_readiness(task_timing, stream)
@@ -1132,7 +1157,7 @@ class TrainingExecutor:
                 task_timing.host_native_before_task_ns = (
                     time.perf_counter_ns() - started_ns
                 )
-            task_open = True
+            runtime_scope_open = True
             started_ns = time.perf_counter_ns() if task_timing is not None else 0
             with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
                 binding_by_alias = dict(zip(input_aliases, bindings, strict=True))
@@ -1144,79 +1169,163 @@ class TrainingExecutor:
                         )
                     self._bridge.rebind(tensor, alias_id, binding)
                     self._state.generations[alias_id] = binding.generation
-
-                arguments = list(artifact.example_arguments)
-                for slot in entrypoint.input_slots:
-                    arguments[slot.leaf_index] = self._state.object_tensors[
-                        slot.object_id
-                    ]
+                artifact = entrypoint.artifact
+                eager_optimizer = entrypoint.phase == "optimizer" and (
+                    isinstance(artifact, OpaqueOptimizerArtifact)
+                    or not self._optimizer_state_available
+                )
+                function: Callable[..., object] | None = None
+                if entrypoint.phase == "optimizer":
+                    arguments: Sequence[object] = ()
+                    if not eager_optimizer:
+                        if not isinstance(artifact, GraphArtifact):
+                            raise RuntimeError(
+                                "optimizer task has no executable artifact"
+                            )
+                        current = self._optimizer_bindings()
+                        try:
+                            arguments = tuple(
+                                current[name].tensor
+                                for name in entrypoint.optimizer_binding_names
+                            )
+                        except KeyError as exc:
+                            raise RuntimeError(
+                                f"optimizer tensor {exc.args[0]!r} is unbound"
+                            ) from exc
+                        function = self._functions[artifact.compatibility_digest]
+                else:
+                    eager_optimizer = False
+                    if not isinstance(artifact, GraphArtifact):
+                        raise RuntimeError("graph task has no captured artifact")
+                    graph_arguments = list(artifact.example_arguments)
+                    for slot in entrypoint.input_slots:
+                        graph_arguments[slot.leaf_index] = self._state.object_tensors[
+                            slot.object_id
+                        ]
+                    arguments = graph_arguments
+                    function = self._functions[artifact.compatibility_digest]
             if task_timing is not None:
                 task_timing.host_rebind_ns = time.perf_counter_ns() - started_ns
-            # AOTAutograd already produced the explicit derivative program.
-            # Dispatcher autograd here would duplicate custom-op saved state.
             self._record_compute_start(stream)
             self._record_task_start(task_timing, stream)
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with (
-                self._nvtx(f"shadowspill.compiled_call.{trace_label}"),
-                torch.no_grad(),
-            ):
-                raw = function(*arguments)
-            if task_timing is not None:
-                task_timing.host_dispatch_ns = time.perf_counter_ns() - started_ns
-            self._record_task_end(task_timing, stream)
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            leaves, _ = tree_flatten(raw)
-            if entrypoint.phase == "forward":
+            return _PreparedTask(
+                run=run,
+                entrypoint=entrypoint,
+                task=task,
+                stream=stream,
+                input_aliases=input_aliases,
+                trace_label=trace_label,
+                arguments=arguments,
+                function=function,
+                eager_optimizer=eager_optimizer,
+                timing=task_timing,
+            )
+        except BaseException as error:
+            if runtime_scope_open:
+                self._bridge.abort_task_after_failure(
+                    f"prepare task {task.task_id}", error
+                )
+            self._finish_task_timing(task_timing)
+            raise
+
+    def _run_compiled_task(self, prepared: _PreparedTask) -> object:
+        """Dispatch only the numerical task represented by ``prepared``."""
+
+        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        with (
+            self._nvtx(f"shadowspill.compiled_call.{prepared.trace_label}"),
+            torch.no_grad(),
+        ):
+            if prepared.eager_optimizer:
+                raw_outputs: object = self.optimizer.step()
+            else:
+                if prepared.function is None:
+                    raise AssertionError("compiled task function is unavailable")
+                raw_outputs = prepared.function(*prepared.arguments)
+        if prepared.timing is not None:
+            prepared.timing.host_dispatch_ns = time.perf_counter_ns() - started_ns
+        self._record_task_end(prepared.timing, prepared.stream)
+        if prepared.task.task_id == prepared.run.lowered.optimizer_task_id:
+            self._record_compute_end(prepared.stream)
+        return raw_outputs
+
+    def _after_task(
+        self,
+        prepared: _PreparedTask,
+        raw_outputs: object,
+    ) -> tuple[torch.Tensor, ...]:
+        """Publish outputs, actions, and cleanup for one frontend task."""
+
+        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        outputs: tuple[torch.Tensor, ...] = ()
+        if prepared.entrypoint.phase == "optimizer":
+            if prepared.eager_optimizer and not self._optimizer_state_available:
+                self._bind_created_optimizer_state(prepared.run.lowered)
+                self._optimizer_state_available = True
+        else:
+            leaves, _ = tree_flatten(raw_outputs)
+            if prepared.entrypoint.phase == "forward":
                 tensor_outputs = tuple(
                     value for value in leaves if isinstance(value, torch.Tensor)
                 )
                 if len(tensor_outputs) != len(leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
-                self._bind_forward_outputs(entrypoint, tensor_outputs, input_aliases)
-                outputs = tensor_outputs[: entrypoint.public_output_count]
-                del tensor_outputs
+                self._bind_forward_outputs(
+                    prepared.entrypoint,
+                    tensor_outputs,
+                    prepared.input_aliases,
+                )
+                outputs = tensor_outputs[: prepared.entrypoint.public_output_count]
             else:
-                self._accumulate_gradients(entrypoint, leaves)
-                outputs = ()
-
-            # Only declared object bindings and public results may cross the
-            # task boundary. AOT graphs can return additional derivative
-            # leaves that are useful only inside this task. Drop those raw
-            # references before after_task allows the worker to consume the
-            # annotated memory actions.
+                self._accumulate_gradients(prepared.entrypoint, leaves)
             del leaves
-            del raw
+        del raw_outputs
+        self._dematerialize_actions(prepared.run, prepared.task.task_id)
+        if prepared.timing is not None:
+            prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
 
-            self._dematerialize_actions(run, task.task_id)
-            if task_timing is not None:
-                task_timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.after_task.{trace_label}"):
-                self._bridge.after_task(
-                    task.task_id,
-                    stream,
-                    task.mutations,
-                    run.actions.get(task.task_id, ()),
+        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        with self._nvtx(f"shadowspill.after_task.{prepared.trace_label}"):
+            self._bridge.after_task(
+                prepared.task.task_id,
+                prepared.stream,
+                prepared.task.mutations,
+                prepared.run.actions.get(prepared.task.task_id, ()),
+            )
+        prepared.runtime_scope_open = False
+        if prepared.timing is not None:
+            prepared.timing.host_native_after_task_ns = (
+                time.perf_counter_ns() - started_ns
+            )
+
+        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        self._forget_released_objects(prepared.run, prepared.task.task_id)
+        if prepared.task.task_id == prepared.run.lowered.optimizer_task_id:
+            self._optimizer_state_initialized = True
+            for parameter in self._gradients.values():
+                parameter.grad = None
+            for alias_id in self._gradients:
+                self._state.object_store.pop(alias_id, None)
+                self._state.generations.pop(alias_id, None)
+            for gradient_binding in prepared.run.lowered.gradients:
+                self._state.object_tensors.pop(
+                    gradient_binding.gradient_object_id, None
                 )
-            if task_timing is not None:
-                task_timing.host_native_after_task_ns = (
-                    time.perf_counter_ns() - started_ns
-                )
-            task_open = False
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            self._forget_released_objects(run, task.task_id)
-            if task_timing is not None:
-                task_timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
-            return outputs
-        except BaseException as error:
-            if task_open:
-                self._bridge.abort_task_after_failure(
-                    f"execute task {task.task_id}", error
-                )
-            raise
-        finally:
-            self._finish_task_timing(task_timing)
+            self._optimizer_binding_cache = None
+        if prepared.timing is not None:
+            prepared.timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
+        return outputs
+
+    def _abort_task(
+        self,
+        prepared: _PreparedTask,
+        error: BaseException,
+    ) -> None:
+        if prepared.runtime_scope_open:
+            prepared.runtime_scope_open = False
+            self._bridge.abort_task_after_failure(
+                f"execute task {prepared.task.task_id}", error
+            )
 
     def _bind_forward_outputs(
         self,
@@ -1274,125 +1383,6 @@ class TrainingExecutor:
                 parameter.grad = contribution
         if destinations:
             torch._foreach_add_(destinations, contributions)
-
-    def _execute_optimizer(
-        self,
-        run: _PlanRun,
-        entrypoint: TrainingTaskEntrypoint,
-    ) -> None:
-        task_timing = self._begin_task_timing(entrypoint)
-        task = run.tasks[entrypoint.task_id]
-        stream = torch.cuda.current_stream()
-        aliases = run.input_aliases_by_task[task.task_id]
-        trace_label = self._task_trace_labels[task.task_id]
-        task_open = False
-        try:
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            self._record_task_readiness(task_timing, stream)
-            try:
-                with self._nvtx(f"shadowspill.before_task.{trace_label}"):
-                    bindings = self._bridge.before_task(task.task_id, stream, aliases)
-            except RuntimeError as error:
-                states = self._bridge.input_failure_states(aliases)
-                detail = "; ".join(states) if states else "all snapshots device-ready"
-                raise RuntimeError(f"{error}; input_states=[{detail}]") from error
-            if task_timing is not None:
-                task_timing.host_native_before_task_ns = (
-                    time.perf_counter_ns() - started_ns
-                )
-            task_open = True
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.storage_rebind.{trace_label}"):
-                for alias_id, binding in zip(aliases, bindings, strict=True):
-                    tensor = self._state.object_store.get(alias_id)
-                    if tensor is None:
-                        raise RuntimeError(f"optimizer input {alias_id!r} is unbound")
-                    self._bridge.rebind(tensor, alias_id, binding)
-                    self._state.generations[alias_id] = binding.generation
-                artifact = entrypoint.artifact
-                eager = isinstance(artifact, OpaqueOptimizerArtifact) or not (
-                    self._optimizer_state_available
-                )
-                arguments: tuple[torch.Tensor, ...] = ()
-                function: Callable[..., object] | None = None
-                if not eager:
-                    if not isinstance(artifact, GraphArtifact):
-                        raise RuntimeError("optimizer task has no executable artifact")
-                    current = self._optimizer_bindings()
-                    try:
-                        arguments = tuple(
-                            current[name].tensor
-                            for name in entrypoint.optimizer_binding_names
-                        )
-                    except KeyError as exc:
-                        raise RuntimeError(
-                            f"optimizer tensor {exc.args[0]!r} is unbound"
-                        ) from exc
-                    function = self._functions[artifact.compatibility_digest]
-            if task_timing is not None:
-                task_timing.host_rebind_ns = time.perf_counter_ns() - started_ns
-            self._record_compute_start(stream)
-            self._record_task_start(task_timing, stream)
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with (
-                self._nvtx(f"shadowspill.compiled_call.{trace_label}"),
-                torch.no_grad(),
-            ):
-                if eager:
-                    self.optimizer.step()
-                else:
-                    if function is None:
-                        raise AssertionError("optimizer function is unavailable")
-                    function(*arguments)
-            if task_timing is not None:
-                task_timing.host_dispatch_ns = time.perf_counter_ns() - started_ns
-            self._record_task_end(task_timing, stream)
-            if task.task_id == run.lowered.optimizer_task_id:
-                self._record_compute_end(stream)
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            if eager and not self._optimizer_state_available:
-                self._bind_created_optimizer_state(run.lowered)
-                self._optimizer_state_available = True
-            self._dematerialize_actions(run, task.task_id)
-            if task_timing is not None:
-                task_timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            with self._nvtx(f"shadowspill.after_task.{trace_label}"):
-                self._bridge.after_task(
-                    task.task_id,
-                    stream,
-                    task.mutations,
-                    run.actions.get(task.task_id, ()),
-                )
-            if task_timing is not None:
-                task_timing.host_native_after_task_ns = (
-                    time.perf_counter_ns() - started_ns
-                )
-            task_open = False
-            started_ns = time.perf_counter_ns() if task_timing is not None else 0
-            self._forget_released_objects(run, task.task_id)
-            if task.task_id == run.lowered.optimizer_task_id:
-                self._optimizer_state_initialized = True
-                for parameter in self._gradients.values():
-                    parameter.grad = None
-                for alias_id in self._gradients:
-                    self._state.object_store.pop(alias_id, None)
-                    self._state.generations.pop(alias_id, None)
-                for gradient_binding in run.lowered.gradients:
-                    self._state.object_tensors.pop(
-                        gradient_binding.gradient_object_id, None
-                    )
-                self._optimizer_binding_cache = None
-            if task_timing is not None:
-                task_timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
-        except BaseException as error:
-            if task_open:
-                self._bridge.abort_task_after_failure(
-                    f"execute task {task.task_id}", error
-                )
-            raise
-        finally:
-            self._finish_task_timing(task_timing)
 
     def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
         current = self._current_optimizer_bindings()

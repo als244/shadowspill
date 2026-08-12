@@ -1613,3 +1613,20 @@ the ignored internal progress log before this tracked summary is updated.
   state, rather than protecting the whole object population globally.
 - Hardened partial initialization so a failed table allocation never destroys
   an uninitialized POSIX read/write lock. All validation gates remain green.
+
+## 2026-08-12 — Training task boundaries are real orchestrators
+
+- Replaced the duplicated graph-task and optimizer-task dispatch bodies with
+  one `_execute_task()` skeleton around `_before_task()`,
+  `_run_compiled_task()`, `_after_task()`, and `_abort_task()`.
+- `_before_task()` now owns the complete frontend input boundary: runtime
+  acquisition, readiness, batched alias rebinding, and argument assembly.
+  `_after_task()` owns output flattening/classification, declared-output and
+  gradient publication, dematerialization, native action publication, released
+  binding cleanup, and terminal optimizer cleanup.
+- Graph and optimizer modes select only their small argument/output behaviors;
+  they no longer maintain independent boundary implementations. Existing
+  diagnostic subfields continue to measure native acquisition, rebinding,
+  dispatch, postprocessing, native after-task, and cleanup.
+- Full native/CUDA and Python validation, Ruff, and strict mypy pass without
+  changing task IDs, actions, graph-pair selection, or arithmetic.
