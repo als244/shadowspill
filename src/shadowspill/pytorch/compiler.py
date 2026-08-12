@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import ctypes
 import statistics
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import torch
@@ -25,6 +27,16 @@ from .capture import GraphArtifact
 from .contracts import CaptureError
 from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
 from .profiling import ProfilableArtifact, ProfileEnvironment, TaskMeasurement
+
+
+def _report_idle_progress(
+    progress: Callable[[int, int, str, str], None],
+    index: int,
+    total: int,
+    digest: str,
+    state: str,
+) -> None:
+    progress(index, total, state, digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +350,9 @@ class CudaTaskProfiler:
         )
 
     def _requested_allocated_bytes(self) -> int:
+        return int(self._allocator_statistics().runtime.requested_allocated_bytes)
+
+    def _allocator_statistics(self) -> AdapterStatistics:
         statistics = AdapterStatistics()
         status = int(
             self._library.shadowspill_pytorch_allocator_statistics(
@@ -348,7 +363,51 @@ class CudaTaskProfiler:
             raise AllocationTelemetryError(
                 f"allocator statistics failed during profiling with status {status}"
             )
-        return int(statistics.runtime.requested_allocated_bytes)
+        return statistics
+
+    def _diagnose_allocator_idle(
+        self,
+        *,
+        context: str,
+        progress: Callable[[str], None] | None,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        """Observe planning quiescence without hiding a retirement deadlock."""
+
+        if not hasattr(
+            self._library, "shadowspill_pytorch_allocator_statistics"
+        ):
+            status = int(self._library.shadowspill_pytorch_allocator_wait_idle())
+            if status != 0:
+                raise AllocationTelemetryError(
+                    f"allocator failed to become idle during {context}: "
+                    f"status={status}"
+                )
+            return
+
+        started = time.perf_counter()
+        next_report = started
+        while True:
+            statistics = self._allocator_statistics().runtime
+            if statistics.pending_retirements == 0 and statistics.queued_actions == 0:
+                return
+            state = (
+                f"pending={statistics.pending_retirements} "
+                f"fenced={statistics.retirement_records_fenced} "
+                f"evented={statistics.retirement_records_evented} "
+                f"preparing={statistics.retirement_records_preparing} "
+                f"unfenced={statistics.retirement_records_unfenced} "
+                f"actions={statistics.queued_actions}"
+            )
+            now = time.perf_counter()
+            if progress is not None and now >= next_report:
+                progress(f"waiting-idle {state}")
+                next_report = now + 1.0
+            if now - started >= timeout_seconds:
+                raise AllocationTelemetryError(
+                    f"allocator failed to become idle during {context}: {state}"
+                )
+            time.sleep(0.001)
 
     def _measure_opaque_optimizer(
         self, artifact: OpaqueOptimizerArtifact
@@ -371,12 +430,23 @@ class CudaTaskProfiler:
         return measurement
 
     def take_functions(
-        self, artifacts: Sequence[ProfilableArtifact]
+        self,
+        artifacts: Sequence[ProfilableArtifact],
+        *,
+        progress: Callable[[int, int, str, str], None] | None = None,
     ) -> dict[str, Callable[..., object]]:
         """Transfer warmed unique entrypoints while releasing examples."""
 
         result: dict[str, Callable[..., object]] = {}
         stream: torch.cuda.Stream | None = None
+        unique_count = len(
+            {
+                artifact.compatibility_digest
+                for artifact in artifacts
+                if not isinstance(artifact, OpaqueOptimizerArtifact)
+            }
+        )
+        completed = 0
         for artifact in artifacts:
             if isinstance(artifact, OpaqueOptimizerArtifact):
                 continue
@@ -388,6 +458,14 @@ class CudaTaskProfiler:
             if digest in result:
                 continue
             executable = self._executables.pop(digest, None)
+            completed += 1
+            if progress is not None:
+                progress(
+                    completed,
+                    unique_count,
+                    "warmed" if executable is not None else "compiling",
+                    digest,
+                )
             if executable is None:
                 executable = compile_artifact(
                     artifact, device_ordinal=self._device_ordinal
@@ -404,7 +482,20 @@ class CudaTaskProfiler:
                         self._library.shadowspill_pytorch_abort_task_range()
                         raise
                 stream.synchronize()
-                self._library.shadowspill_pytorch_allocator_wait_idle()
+                report_idle: Callable[[str], None] | None = None
+                if progress is not None:
+                    report_idle = partial(
+                        _report_idle_progress,
+                        progress,
+                        completed,
+                        unique_count,
+                        digest,
+                    )
+
+                self._diagnose_allocator_idle(
+                    context=f"compiled entrypoint {digest}",
+                    progress=report_idle,
+                )
             result[digest] = executable.function
         return result
 

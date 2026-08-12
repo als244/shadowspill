@@ -311,6 +311,7 @@ def profile_unique_artifacts(
     environment: ProfileEnvironment,
     measure: Callable[[ProfilableArtifact], TaskMeasurement],
     cache: ProfileCache,
+    progress: Callable[[int, int, str, str], None] | None = None,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
 
@@ -327,14 +328,19 @@ def profile_unique_artifacts(
     hits = 0
     misses = 0
     fixed_slab_bytes = 0
-    for digest in sorted(by_key):
+    ordered_digests = sorted(by_key)
+    for index, digest in enumerate(ordered_digests, start=1):
         key = key_objects[digest]
         measurement = cache.read(key)
         if measurement is None:
+            if progress is not None:
+                progress(index, len(ordered_digests), "measuring", digest)
             measurement = measure(representatives[digest])
             cache.write(key, measurement)
             misses += 1
         else:
+            if progress is not None:
+                progress(index, len(ordered_digests), "cache-hit", digest)
             hits += 1
         fixed_slab_bytes += sum(measurement.persistent_extent_bytes)
         for position in by_key[digest]:

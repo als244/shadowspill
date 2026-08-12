@@ -530,6 +530,26 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     pthread_mutex_lock(&runtime->mutex);
     pthread_mutex_lock(&runtime->device_pool.lock);
     pthread_mutex_lock(&runtime->host_pool.lock);
+    uint64_t retirement_records_fenced = 0U;
+    uint64_t retirement_records_evented = 0U;
+    uint64_t retirement_records_preparing = 0U;
+    uint64_t retirement_records_unfenced = 0U;
+    for (const ShadowSpillAllocationRecord *allocation =
+             runtime->active_allocations;
+         allocation != NULL; allocation = allocation->active_next) {
+        if (!allocation->logical_freed || allocation->pointer == NULL) {
+            continue;
+        }
+        if (allocation->retirement_fence != NULL) {
+            ++retirement_records_fenced;
+        } else if (allocation->retirement_events != NULL) {
+            ++retirement_records_evented;
+        } else if (allocation->retirement_preparing) {
+            ++retirement_records_preparing;
+        } else {
+            ++retirement_records_unfenced;
+        }
+    }
     *statistics = (ShadowSpillRuntimeStatistics){
         .slab_bytes = runtime->device_pool.ranges.capacity,
         .requested_allocated_bytes = runtime->requested_allocated_bytes,
@@ -554,6 +574,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .live_allocations = runtime->live_allocations,
         .blocked_allocators = runtime->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
+        .retirement_records_fenced = retirement_records_fenced,
+        .retirement_records_evented = retirement_records_evented,
+        .retirement_records_preparing = retirement_records_preparing,
+        .retirement_records_unfenced = retirement_records_unfenced,
         .registered_objects = atomic_load_explicit(
             &runtime->registered_objects, memory_order_acquire
         ),

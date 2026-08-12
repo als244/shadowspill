@@ -1750,3 +1750,30 @@ the ignored internal progress log before this tracked summary is updated.
 - All 17 warnings-as-errors C/CUDA canaries, the complete Python suite, Ruff,
   and strict mypy pass. The Qwen performance/NSYS gate remains pending until
   the remaining allocation-record and batched-storage-boundary work lands.
+
+## 2026-08-12 — Lost allocator-idle wakeup found after `29e5f56`
+
+- The first full Qwen control after commit `29e5f56` stopped with an idle GPU
+  in `CudaTaskProfiler.take_functions()` at
+  `shadowspill_pytorch_allocator_wait_idle()`. The PyTorch main thread and the
+  newly named `shadowspill.wkr` thread were both in condition waits, so this
+  was a real runtime quiescence deadlock rather than slow AOT compilation.
+- Added diagnostic-only retirement categories to the allocator statistics and
+  temporarily observed planning quiescence from Python. Every affected ABI
+  reported `pending == fenced`, with zero evented, preparing, or unfenced
+  retirements. Representative batches were 133, 242, 309, and 307 allocation
+  records; the worker cleared each batch almost immediately once the caller
+  polled instead of entering the blocking idle wait.
+- Root cause: the idle waiter checks `pending_retirements` while holding the
+  lifecycle mutex and then calls `pthread_cond_wait`. Retirement completion
+  changes that predicate under the device-pool lock and broadcasts the
+  lifecycle condition without holding its associated mutex. A completion can
+  therefore clear the final retirement and broadcast after the predicate check
+  but before the waiter sleeps. The notification is lost and no later work is
+  guaranteed to wake the already-satisfied waiter.
+- This finding is intentionally recorded before changing synchronization. The
+  resulting Qwen control retained exact frozen Program/schedule identities and
+  completed planning in 70.58 seconds with a 471.22-ms median untraced compute
+  bracket. A pre-polling NSYS capture is being collected first; the isolated
+  lost-wakeup fix and later low-latency polling policy will be separate commits
+  and evidence entries.

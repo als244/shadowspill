@@ -580,6 +580,7 @@ def forward_pass(
     device_budget: int,
     host_budget: int,
     partition: str = "auto",
+    verbose: bool = True,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
@@ -595,6 +596,7 @@ def forward_pass(
         device_budget=device_budget,
         host_budget=host_budget,
         partition=partition,
+        verbose=verbose,
     )
 
 
@@ -607,8 +609,14 @@ def plan(
     device_budget: int,
     host_budget: int,
     partition: str = "auto",
+    verbose: bool = True,
 ) -> PlannedTrainStep:
-    """Plan a fixed accumulated forward/objective/backward/update program."""
+    """Plan a fixed accumulated forward/objective/backward/update program.
+
+    ``verbose=True`` reports each planning phase and unique structural ABI as
+    it starts. Set it to ``False`` for silent embedding; diagnostics are still
+    retained in :attr:`PlannedTrainStep.plan_report` either way.
+    """
 
     from .training_session import build_training
 
@@ -620,6 +628,7 @@ def plan(
         device_budget=device_budget,
         host_budget=host_budget,
         partition=partition,
+        verbose=verbose,
     )
 
 

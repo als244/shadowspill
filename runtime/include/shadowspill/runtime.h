@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 9U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 10U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
@@ -200,6 +200,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t live_allocations;
     uint64_t blocked_allocators;
     uint64_t pending_retirements;
+    uint64_t retirement_records_fenced;
+    uint64_t retirement_records_evented;
+    uint64_t retirement_records_preparing;
+    uint64_t retirement_records_unfenced;
     uint64_t registered_objects;
     uint64_t queued_actions;
     uint64_t transfers_to_device;

@@ -66,11 +66,12 @@ def build_training(
     device_budget: int,
     host_budget: int,
     partition: str,
+    verbose: bool,
 ) -> PlannedTrainStep:
     """Construct one fixed accumulated training program."""
 
     started = time.perf_counter_ns()
-    timer = _PhaseTimer()
+    timer = _PhaseTimer(verbose=verbose)
     with timer.measure("validation"):
         _validate_training_request(
             model,
@@ -179,9 +180,17 @@ def build_training(
                 ),
                 measure=profiler.measure,
                 cache=ProfileCache(),
+                progress=lambda index, total, state, digest: timer.progress(
+                    f"structural profile {index}/{total} {state}: {digest[:12]}"
+                ),
             )
         with timer.measure("compilation"):
-            functions = profiler.take_functions(artifacts)
+            functions = profiler.take_functions(
+                artifacts,
+                progress=lambda index, total, state, digest: timer.progress(
+                    f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
+                ),
+            )
             installed.library.shadowspill_pytorch_allocator_wait_idle()
 
         with timer.measure("program_lowering"):

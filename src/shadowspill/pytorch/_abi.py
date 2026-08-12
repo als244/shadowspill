@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 16
-RUNTIME_ABI_VERSION: Final = 9
+ADAPTER_ABI_VERSION: Final = 17
+RUNTIME_ABI_VERSION: Final = 10
 TRACE_ABI_VERSION: Final = 1
 
 
@@ -90,6 +90,10 @@ class RuntimeStatistics(ctypes.Structure):
         ("live_allocations", ctypes.c_uint64),
         ("blocked_allocators", ctypes.c_uint64),
         ("pending_retirements", ctypes.c_uint64),
+        ("retirement_records_fenced", ctypes.c_uint64),
+        ("retirement_records_evented", ctypes.c_uint64),
+        ("retirement_records_preparing", ctypes.c_uint64),
+        ("retirement_records_unfenced", ctypes.c_uint64),
         ("registered_objects", ctypes.c_uint64),
         ("queued_actions", ctypes.c_uint64),
         ("transfers_to_device", ctypes.c_uint64),

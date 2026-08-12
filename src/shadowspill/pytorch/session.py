@@ -61,11 +61,24 @@ _HOST_ALIGNMENT = 64 << 10
 
 
 class _PhaseTimer:
-    def __init__(self) -> None:
+    def __init__(self, *, verbose: bool) -> None:
         self.values: list[tuple[str, int]] = []
+        self._verbose = verbose
+        self._depth = 0
+        self._started = time.perf_counter_ns()
 
     def measure(self, name: str) -> _MeasuredPhase:
         return _MeasuredPhase(self, name)
+
+    def progress(self, message: str) -> None:
+        if not self._verbose:
+            return
+        elapsed = (time.perf_counter_ns() - self._started) / 1e9
+        indentation = "  " * self._depth
+        print(
+            f"[shadowspill.plan +{elapsed:8.3f}s] {indentation}{message}",
+            flush=True,
+        )
 
 
 class _MeasuredPhase:
@@ -75,11 +88,19 @@ class _MeasuredPhase:
         self._start = 0
 
     def __enter__(self) -> None:
+        self._depth = self._timer._depth
+        self._timer.progress(f"{self._name}: started")
+        self._timer._depth += 1
         self._start = time.perf_counter_ns()
 
     def __exit__(self, *exception: object) -> None:
-        del exception
-        self._timer.values.append((self._name, time.perf_counter_ns() - self._start))
+        duration = time.perf_counter_ns() - self._start
+        self._timer.values.append((self._name, duration))
+        self._timer._depth = self._depth
+        outcome = "failed" if exception[0] is not None else "finished"
+        self._timer.progress(
+            f"{self._name}: {outcome} in {duration / 1e9:.3f}s"
+        )
 
 
 def build_forward(
@@ -89,11 +110,12 @@ def build_forward(
     device_budget: int,
     host_budget: int,
     partition: str,
+    verbose: bool,
 ) -> PlannedForward:
     """Construct a planned forward callable without mutating arithmetic."""
 
     started = time.perf_counter_ns()
-    timer = _PhaseTimer()
+    timer = _PhaseTimer(verbose=verbose)
     with timer.measure("validation"):
         _validate_forward_request(model, example_inputs, device_budget, host_budget)
         signature = capture_input_signature(example_inputs)
@@ -128,9 +150,17 @@ def build_forward(
             environment=environment,
             measure=profiler.measure,
             cache=ProfileCache(),
+            progress=lambda index, total, state, digest: timer.progress(
+                f"structural profile {index}/{total} {state}: {digest[:12]}"
+            ),
         )
     with timer.measure("compilation"):
-        functions = profiler.take_functions(artifacts)
+        functions = profiler.take_functions(
+            artifacts,
+            progress=lambda index, total, state, digest: timer.progress(
+                f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
+            ),
+        )
         installed.library.shadowspill_pytorch_allocator_wait_idle()
 
     with timer.measure("program_lowering"):
