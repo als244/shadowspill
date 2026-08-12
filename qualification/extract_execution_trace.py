@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 _TASK = re.compile(r"^shadowspill\.task\.(forward|backward|optimizer)\.(task_[0-9]+)$")
+_SEMANTIC_TASK = re.compile(
+    r"^shadowspill\.pytorch\.task\."
+    r"(execution_[0-9]+)\.(.+)$"
+)
 _SEGMENTS = (
     "before_task",
     "storage_rebind",
@@ -135,6 +139,14 @@ def _api_counts(connection: sqlite3.Connection) -> dict[str, int]:
     return {str(name): int(count) for name, count in rows}
 
 
+def _semantic_phase(name: str) -> str:
+    components = name.split(".")
+    for phase in ("forward", "backward", "optimizer"):
+        if phase in components:
+            return phase
+    raise ValueError(f"semantic task name {name!r} has no execution phase")
+
+
 def extract_trace(path: Path) -> dict[str, object]:
     """Return a deterministic execution summary for one NSYS SQLite export."""
 
@@ -148,15 +160,38 @@ def extract_trace(path: Path) -> dict[str, object]:
                 if name.startswith(prefix):
                     segment_by_task[(name.removeprefix(prefix), segment)] = item
 
+        task_ranges: dict[str, tuple[dict[str, Any], str, str]] = {}
+        for item in ranges:
+            name = str(item["name"])
+            semantic_match = _SEMANTIC_TASK.fullmatch(name)
+            if semantic_match is not None:
+                execution_task_id, semantic_name = semantic_match.groups()
+                previous = task_ranges.get(execution_task_id)
+                if previous is None or (
+                    int(item["end_ns"]) - int(item["start_ns"])
+                    > int(previous[0]["end_ns"]) - int(previous[0]["start_ns"])
+                ):
+                    task_ranges[execution_task_id] = (
+                        item,
+                        _semantic_phase(semantic_name),
+                        semantic_name,
+                    )
+                continue
+            legacy_match = _TASK.fullmatch(name)
+            if legacy_match is not None:
+                phase, task_id = legacy_match.groups()
+                task_ranges[task_id] = (item, phase, task_id)
+
         tasks: list[dict[str, object]] = []
         all_kernels: set[tuple[int, int, int, str]] = set()
         phase_kernel_ns: dict[str, int] = defaultdict(int)
-        for item in ranges:
-            match = _TASK.fullmatch(str(item["name"]))
-            if match is None:
-                continue
-            phase, task_id = match.groups()
-            compiled = segment_by_task.get((task_id, "compiled_call"))
+        for task_id, (item, phase, semantic_name) in task_ranges.items():
+            segment_key = (
+                f"{task_id}.{semantic_name}"
+                if task_id.startswith("execution_")
+                else task_id
+            )
+            compiled = segment_by_task.get((segment_key, "compiled_call"))
             kernels = (
                 []
                 if compiled is None
@@ -174,7 +209,8 @@ def extract_trace(path: Path) -> dict[str, object]:
             segments = {
                 segment: (
                     int(value["end_ns"]) - int(value["start_ns"])
-                    if (value := segment_by_task.get((task_id, segment))) is not None
+                    if (value := segment_by_task.get((segment_key, segment)))
+                    is not None
                     else 0
                 )
                 for segment in _SEGMENTS
@@ -182,6 +218,7 @@ def extract_trace(path: Path) -> dict[str, object]:
             tasks.append(
                 {
                     "task_id": task_id,
+                    "semantic_name": semantic_name,
                     "phase": phase,
                     "host_start_ns": int(item["start_ns"]),
                     "host_end_ns": int(item["end_ns"]),

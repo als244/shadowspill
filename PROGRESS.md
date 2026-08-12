@@ -1432,3 +1432,31 @@ the ignored internal progress log before this tracked summary is updated.
   registration. C and Python NVTX task ranges now use dense chronological
   `execution_XXXXXX` identities plus semantic stage names; canonical IR task
   IDs remain fallback/correlation metadata.
+
+## 2026-08-12 — Concurrency-redesign starting point frozen
+
+- Clarified the measured improvement boundary. Optimizer binding caching and
+  replacing stream host callbacks with preallocated CUDA events reduced the
+  less-invasive first-selected-task to final-optimizer span from 384.361 ms to
+  325.128 ms, with a 297.512-ms sum of task intervals and 27.616 ms of gaps.
+  The global runtime lock and full-population completion scan are not yet
+  fixed; 325.128 ms has therefore not yet reached the approximately 300-ms
+  target.
+- Captured a new warm NSYS report from commit `418a930` at
+  `qualification/results/phase1/qwen35_runtime_overheads_updated.nsys-rep`,
+  with matching JSON and SQLite artifacts. The Program digest, schedule
+  digest, 129 selected tasks, 1,415 ordered actions, 30-GiB predicted peak,
+  and 503.781231-ms simulator prediction are unchanged.
+- The instrumented capture reports a 505.5-ms selected-task span and 267,736
+  `cuEventQuery` calls. NSYS heavily perturbs this small-kernel workload, so
+  the report is the attribution authority, while untraced and reusable CUDA
+  event measurements remain the performance authority.
+- Updated `qualification/extract_execution_trace.py` to recognize semantic
+  `execution_XXXXXX.<stage-name>` NVTX identities while retaining legacy trace
+  compatibility. The updated extraction identifies all 129 tasks and 97
+  optimizer components rather than depending on canonical IR task labels.
+- Created the ignored live implementation plan and log under
+  `docs/internal/plans/concurrency_fix/`. The concurrency redesign is now the
+  sole prerequisite; the five-cell cold golden matrix in Phase 2 of
+  `remaining_agenda.md` stays paused until performance, runtime equivalence,
+  and multi-budget numerical/checkpoint gates pass.
