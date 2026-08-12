@@ -38,7 +38,31 @@ class _ExecutionTaskRecord:
     trace_label: str
     function: Callable[..., object] | None
     argument_template: tuple[object, ...] | None
+    forward_outputs: tuple[_ForwardOutputRecord, ...]
+    gradient_outputs: tuple[_GradientOutputRecord, ...]
+    optimizer_argument_object_ids: tuple[str | None, ...]
+    dematerialize_aliases: tuple[str, ...]
+    released_ephemeral: tuple[tuple[str, tuple[str, ...]], ...]
     native_handle: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ForwardOutputRecord:
+    """One predecoded forward leaf and its planned alias bundle."""
+
+    leaf_index: int
+    object_id: str
+    alias_id: str
+    adopt: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _GradientOutputRecord:
+    """All contribution leaves accumulated into one planned gradient."""
+
+    object_id: str
+    alias_id: str
+    leaf_indices: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +73,6 @@ class _PlanRun:
     execution: tuple[_ExecutionTaskRecord, ...]
     initial_device_aliases: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
-    ephemeral_aliases: frozenset[str]
-    objects_by_alias: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +127,10 @@ class TaskExecutionTiming:
     host_rebind_seconds: float
     host_dispatch_seconds: float
     host_output_flatten_seconds: float
+    host_output_classification_seconds: float
+    host_output_adoption_seconds: float
+    host_output_state_publish_seconds: float
+    host_gradient_accumulation_seconds: float
     host_output_publish_seconds: float
     host_dematerialize_seconds: float
     host_postprocess_seconds: float
@@ -170,6 +196,16 @@ class TaskExecutionTiming:
             "host_rebind_seconds": self.host_rebind_seconds,
             "host_dispatch_seconds": self.host_dispatch_seconds,
             "host_output_flatten_seconds": self.host_output_flatten_seconds,
+            "host_output_classification_seconds": (
+                self.host_output_classification_seconds
+            ),
+            "host_output_adoption_seconds": self.host_output_adoption_seconds,
+            "host_output_state_publish_seconds": (
+                self.host_output_state_publish_seconds
+            ),
+            "host_gradient_accumulation_seconds": (
+                self.host_gradient_accumulation_seconds
+            ),
             "host_output_publish_seconds": self.host_output_publish_seconds,
             "host_dematerialize_seconds": self.host_dematerialize_seconds,
             "host_postprocess_seconds": self.host_postprocess_seconds,
@@ -399,6 +435,10 @@ class _ArmedTaskTiming:
     host_rebind_ns: int = 0
     host_dispatch_ns: int = 0
     host_output_flatten_ns: int = 0
+    host_output_classification_ns: int = 0
+    host_output_adoption_ns: int = 0
+    host_output_state_publish_ns: int = 0
+    host_gradient_accumulation_ns: int = 0
     host_output_publish_ns: int = 0
     host_dematerialize_ns: int = 0
     host_postprocess_ns: int = 0
@@ -423,6 +463,16 @@ class _ArmedExecutionTiming:
     statistics_before: AdapterStatistics | None = None
     actions: tuple[MemoryAction, ...] = ()
     trace_setup_ns: int = 0
+
+
+@dataclass(slots=True)
+class _ArmedSpanTiming:
+    """Two-event production-like selected-task timing bracket."""
+
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    started: bool = False
+    finished: bool = False
 
 
 @dataclass(slots=True)
@@ -471,12 +521,12 @@ class TrainingExecutor:
         self._optimizer_state_available = (
             optimizer_state_preinitialized or not optimizer_state_was_lazy
         )
-        self._optimizer_binding_cache: dict[str, Any] | None = None
         self._optimizer_size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in self._recurrent.plan.program.alias_groups
         }
         self._armed_execution_timing: _ArmedExecutionTiming | None = None
+        self._armed_span_timing: _ArmedSpanTiming | None = None
         self._trace_allocation_capacity = 1_000_000
         self._trace_event_capacity = max(
             65_536,
@@ -492,6 +542,8 @@ class TrainingExecutor:
         self._trace_task_events: dict[
             str, tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]
         ] = {}
+        self._span_start_event: torch.cuda.Event | None = None
+        self._span_end_event: torch.cuda.Event | None = None
 
     def _admit_run(self, run: _PlanRun) -> _PlanRun:
         admitted: list[_ExecutionTaskRecord] = []
@@ -682,6 +734,45 @@ class TrainingExecutor:
             raise
         self._armed_execution_timing = armed
 
+    def arm_selected_span_timing(self) -> None:
+        """Arm a two-event selected-task span without detailed tracing.
+
+        This qualification path does not enable native tracing, callbacks,
+        NVTX, per-task events, allocator snapshots, or Python component
+        timestamps. The reusable events are materialized before arming so the
+        measured call follows the ordinary production path.
+        """
+
+        if self._armed_execution_timing is not None:
+            raise RuntimeError("detailed execution timing is already armed")
+        if self._armed_span_timing is not None:
+            raise RuntimeError("a selected-span measurement is already armed")
+        if self._span_start_event is None or self._span_end_event is None:
+            event_factory: Any = torch.cuda.Event
+            self._span_start_event = event_factory(enable_timing=True)
+            self._span_end_event = event_factory(enable_timing=True)
+            stream = torch.cuda.current_stream()
+            self._span_start_event.record(stream)
+            self._span_end_event.record(stream)
+            stream.synchronize()
+        self._armed_span_timing = _ArmedSpanTiming(
+            self._span_start_event,
+            self._span_end_event,
+        )
+
+    def collect_selected_span_seconds(self) -> float:
+        """Synchronize and return an armed production-like task span."""
+
+        timing = self._armed_span_timing
+        if timing is None or not timing.started:
+            raise RuntimeError("no selected-span measurement has started")
+        if not timing.finished:
+            raise RuntimeError("the selected-span measurement has not finished")
+        timing.end_event.synchronize()
+        result = float(timing.start_event.elapsed_time(timing.end_event)) / 1_000.0
+        self._armed_span_timing = None
+        return result
+
     def collect_compute_seconds(self) -> float:
         """Synchronize and return the armed compute-only interval."""
 
@@ -831,6 +922,16 @@ class TrainingExecutor:
                     host_rebind_seconds=task.host_rebind_ns / 1e9,
                     host_dispatch_seconds=task.host_dispatch_ns / 1e9,
                     host_output_flatten_seconds=task.host_output_flatten_ns / 1e9,
+                    host_output_classification_seconds=(
+                        task.host_output_classification_ns / 1e9
+                    ),
+                    host_output_adoption_seconds=task.host_output_adoption_ns / 1e9,
+                    host_output_state_publish_seconds=(
+                        task.host_output_state_publish_ns / 1e9
+                    ),
+                    host_gradient_accumulation_seconds=(
+                        task.host_gradient_accumulation_ns / 1e9
+                    ),
                     host_output_publish_seconds=task.host_output_publish_ns / 1e9,
                     host_dematerialize_seconds=task.host_dematerialize_ns / 1e9,
                     host_postprocess_seconds=task.host_postprocess_ns / 1e9,
@@ -994,6 +1095,10 @@ class TrainingExecutor:
             self._armed_execution_timing = None
 
     def _record_compute_start(self, stream: torch.cuda.Stream) -> None:
+        span = self._armed_span_timing
+        if span is not None and not span.started:
+            span.start_event.record(stream)
+            span.started = True
         timing = self._armed_execution_timing
         if timing is None or timing.started:
             return
@@ -1002,6 +1107,10 @@ class TrainingExecutor:
         timing.stream = stream
 
     def _record_compute_end(self, stream: torch.cuda.Stream) -> None:
+        span = self._armed_span_timing
+        if span is not None and not span.finished:
+            span.end_event.record(stream)
+            span.finished = True
         timing = self._armed_execution_timing
         if timing is None or timing.finished:
             return
@@ -1066,7 +1175,6 @@ class TrainingExecutor:
     def set_optimizer_state_initialized(self, value: bool) -> None:
         """Select the recurrent plan after a checkpoint restores lazy state."""
 
-        self._optimizer_binding_cache = None
         if value and self._initial is None:
             self._optimizer_state_initialized = True
             self._optimizer_state_available = True
@@ -1105,7 +1213,6 @@ class TrainingExecutor:
         """Load ordinary optimizer state, then adopt spillable CUDA tensors."""
 
         self._bridge.wait_idle()
-        self._optimizer_binding_cache = None
         self.optimizer.load_state_dict(copy.deepcopy(dict(value)))
         current = self._current_optimizer_bindings()
         planned = self._recurrent.lowered.optimizer_objects
@@ -1313,16 +1420,33 @@ class TrainingExecutor:
                                 raise RuntimeError(
                                     "optimizer task has no executable artifact"
                                 )
-                            current = self._optimizer_bindings()
-                            try:
-                                arguments = tuple(
-                                    current[name].tensor
-                                    for name in entrypoint.optimizer_binding_names
-                                )
-                            except KeyError as exc:
-                                raise RuntimeError(
-                                    f"optimizer tensor {exc.args[0]!r} is unbound"
-                                ) from exc
+                            if all(
+                                object_id is not None
+                                for object_id in record.optimizer_argument_object_ids
+                            ):
+                                try:
+                                    arguments = tuple(
+                                        self._state.object_tensors[object_id]
+                                        for object_id in (
+                                            record.optimizer_argument_object_ids
+                                        )
+                                        if object_id is not None
+                                    )
+                                except KeyError as exc:
+                                    raise RuntimeError(
+                                        f"optimizer object {exc.args[0]!r} is unbound"
+                                    ) from exc
+                            else:
+                                current = self._current_optimizer_bindings()
+                                try:
+                                    arguments = tuple(
+                                        current[name].tensor
+                                        for name in (entrypoint.optimizer_binding_names)
+                                    )
+                                except KeyError as exc:
+                                    raise RuntimeError(
+                                        f"optimizer tensor {exc.args[0]!r} is unbound"
+                                    ) from exc
                             function = record.function
                     else:
                         eager_optimizer = False
@@ -1463,13 +1587,13 @@ class TrainingExecutor:
                 if len(tensor_outputs) != len(leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
                 self._bind_forward_outputs(
-                    entrypoint,
+                    prepared.record,
                     tensor_outputs,
-                    prepared.record.input_aliases,
+                    timing,
                 )
                 outputs = tensor_outputs[: entrypoint.public_output_count]
             else:
-                self._accumulate_gradients(entrypoint, leaves)
+                self._accumulate_gradients(prepared.record, leaves, timing)
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
@@ -1488,7 +1612,6 @@ class TrainingExecutor:
                 self._state.object_tensors.pop(
                     gradient_binding.gradient_object_id, None
                 )
-            self._optimizer_binding_cache = None
 
     def _abort_task(
         self,
@@ -1503,55 +1626,67 @@ class TrainingExecutor:
 
     def _bind_forward_outputs(
         self,
-        entrypoint: TrainingTaskEntrypoint,
+        record: _ExecutionTaskRecord,
         outputs: tuple[torch.Tensor, ...],
-        input_aliases: tuple[str, ...],
+        timing: _ArmedTaskTiming | None,
     ) -> None:
-        produced: set[str] = set()
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         adopted: list[tuple[torch.Tensor, str]] = []
-        for slot in entrypoint.output_slots:
-            tensor = outputs[slot.leaf_index]
-            alias_id = self._bridge.alias_for_object(slot.object_id)
-            if alias_id not in input_aliases and alias_id not in produced:
-                adopted.append((tensor, alias_id))
-                produced.add(alias_id)
-            self._state.object_store.setdefault(alias_id, tensor)
-            self._state.object_tensors[slot.object_id] = tensor
+        for item in record.forward_outputs:
+            tensor = outputs[item.leaf_index]
+            if item.adopt:
+                adopted.append((tensor, item.alias_id))
+            self._state.object_store.setdefault(item.alias_id, tensor)
+            self._state.object_tensors[item.object_id] = tensor
+        if timing is not None:
+            timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         generations = self._bridge.adopt_many(adopted)
+        if timing is not None:
+            timing.host_output_adoption_ns = time.perf_counter_ns() - started_ns
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         for (_, alias_id), generation in zip(adopted, generations, strict=True):
             self._state.generations[alias_id] = generation
+        if timing is not None:
+            timing.host_output_state_publish_ns = time.perf_counter_ns() - started_ns
 
     def _accumulate_gradients(
-        self, entrypoint: TrainingTaskEntrypoint, leaves: list[object]
+        self,
+        record: _ExecutionTaskRecord,
+        leaves: list[object],
+        timing: _ArmedTaskTiming | None,
     ) -> None:
-        by_destination: dict[str, tuple[str, list[torch.Tensor]]] = {}
-        for slot in entrypoint.gradient_output_slots:
-            contribution = leaves[slot.leaf_index]
-            if not isinstance(contribution, torch.Tensor):
-                raise RuntimeError("parameter gradient became non-tensor")
-            alias_id = self._bridge.alias_for_object(slot.object_id)
-            item = by_destination.setdefault(alias_id, (slot.object_id, []))
-            item[1].append(contribution)
-
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         contributions: list[torch.Tensor] = []
         destinations: list[torch.Tensor] = []
         first: list[tuple[str, str, torch.Tensor]] = []
-        for alias_id, (object_id, values) in by_destination.items():
-            contribution = values[0]
+        for item in record.gradient_outputs:
+            values = [leaves[index] for index in item.leaf_indices]
+            if not all(isinstance(value, torch.Tensor) for value in values):
+                raise RuntimeError("parameter gradient became non-tensor")
+            contribution = cast(torch.Tensor, values[0])
             for additional in values[1:]:
+                if not isinstance(additional, torch.Tensor):
+                    raise AssertionError("validated gradient became non-tensor")
                 contribution.add_(additional)
-            destination = self._state.object_store.get(alias_id)
+            destination = self._state.object_store.get(item.alias_id)
             if destination is None:
-                first.append((object_id, alias_id, contribution))
+                first.append((item.object_id, item.alias_id, contribution))
             elif _same_tensor_view(destination, contribution):
-                self._state.object_tensors[object_id] = destination
+                self._state.object_tensors[item.object_id] = destination
             else:
                 destinations.append(destination)
                 contributions.append(contribution)
+        if timing is not None:
+            timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
         adopted: list[tuple[torch.Tensor, str]] = []
         for _object_id, alias_id, contribution in first:
             adopted.append((contribution, alias_id))
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         generations = self._bridge.adopt_many(adopted)
+        if timing is not None:
+            timing.host_output_adoption_ns = time.perf_counter_ns() - started_ns
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         for (object_id, alias_id, contribution), generation in zip(
             first, generations, strict=True
         ):
@@ -1561,8 +1696,15 @@ class TrainingExecutor:
             parameter = self._gradients.get(alias_id)
             if parameter is not None:
                 parameter.grad = contribution
+        if timing is not None:
+            timing.host_output_state_publish_ns = time.perf_counter_ns() - started_ns
         if destinations:
+            started_ns = time.perf_counter_ns() if timing is not None else 0
             torch._foreach_add_(destinations, contributions)
+            if timing is not None:
+                timing.host_gradient_accumulation_ns = (
+                    time.perf_counter_ns() - started_ns
+                )
 
     def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
         current = self._current_optimizer_bindings()
@@ -1620,18 +1762,6 @@ class TrainingExecutor:
                 dict(self._state.model.named_parameters()), self.optimizer
             )
         }
-
-    def _optimizer_bindings(self) -> dict[str, Any]:
-        """Return one capture-stable optimizer inventory for this step.
-
-        Gradients are replaced between steps, so the cache is cleared after
-        the terminal optimizer component. Parameters and optimizer-state
-        tensor identities remain stable across all components within a step.
-        """
-
-        if self._optimizer_binding_cache is None:
-            self._optimizer_binding_cache = self._current_optimizer_bindings()
-        return self._optimizer_binding_cache
 
     def _expose_optimizer_state_cpu(
         self,
@@ -1710,10 +1840,7 @@ class TrainingExecutor:
 
     def _dematerialize_actions(self, record: _ExecutionTaskRecord) -> None:
         pending: list[tuple[torch.Tensor, str, int]] = []
-        for action in record.actions:
-            if action.kind not in {MemoryActionKind.RELEASE, MemoryActionKind.OFFLOAD}:
-                continue
-            alias_id = action.alias_group_id
+        for alias_id in record.dematerialize_aliases:
             tensor = self._state.object_store.get(alias_id)
             generation = self._state.generations.get(alias_id)
             if tensor is None or generation is None:
@@ -1734,16 +1861,11 @@ class TrainingExecutor:
     def _forget_released_objects(
         self, run: _PlanRun, record: _ExecutionTaskRecord
     ) -> None:
-        for action in record.actions:
-            alias_id = action.alias_group_id
-            if (
-                action.kind is not MemoryActionKind.RELEASE
-                or alias_id not in run.ephemeral_aliases
-            ):
-                continue
+        del run
+        for alias_id, object_ids in record.released_ephemeral:
             self._state.object_store.pop(alias_id, None)
             self._state.generations.pop(alias_id, None)
-            for object_id in run.objects_by_alias.get(alias_id, ()):
+            for object_id in object_ids:
                 self._state.object_tensors.pop(object_id, None)
 
     def _prepare(
@@ -1766,6 +1888,33 @@ class TrainingExecutor:
             )
             for task_id, task in tasks.items()
         }
+        initial_aliases = {
+            item.alias_group_id for item in plan.schedule.initial_residency
+        }
+        ephemeral_aliases = frozenset(
+            item.alias_group_id
+            for item in plan.program.alias_groups
+            if item.alias_group_id not in initial_aliases
+        )
+        objects_by_alias = {
+            alias_id: tuple(
+                item.object_id
+                for item in plan.program.objects
+                if item.alias_group_id == alias_id
+            )
+            for alias_id in (item.alias_group_id for item in plan.program.alias_groups)
+        }
+        optimizer_object_by_name = {
+            **{
+                item.parameter_name: item.parameter_object_id
+                for item in lowered.gradients
+            },
+            **{
+                f"gradient.{item.parameter_name}": item.gradient_object_id
+                for item in lowered.gradients
+            },
+            **{item.name: item.object_id for item in lowered.optimizer_objects},
+        }
         identities = _selected_entrypoint_identities(entrypoints)
         execution: list[_ExecutionTaskRecord] = []
         for entrypoint in entrypoints:
@@ -1782,17 +1931,67 @@ class TrainingExecutor:
                 else None
             )
             execution_ordinal, semantic_name = identities[entrypoint.task_id]
+            input_aliases = input_aliases_by_task[entrypoint.task_id]
+            produced: set[str] = set()
+            forward_outputs: list[_ForwardOutputRecord] = []
+            for slot in entrypoint.output_slots:
+                alias_id = self._bridge.alias_for_object(slot.object_id)
+                adopt = alias_id not in input_aliases and alias_id not in produced
+                if adopt:
+                    produced.add(alias_id)
+                forward_outputs.append(
+                    _ForwardOutputRecord(
+                        slot.leaf_index,
+                        slot.object_id,
+                        alias_id,
+                        adopt,
+                    )
+                )
+            gradient_by_alias: dict[str, tuple[str, list[int]]] = {}
+            for slot in entrypoint.gradient_output_slots:
+                alias_id = self._bridge.alias_for_object(slot.object_id)
+                group = gradient_by_alias.setdefault(alias_id, (slot.object_id, []))
+                group[1].append(slot.leaf_index)
+            gradient_outputs = tuple(
+                _GradientOutputRecord(object_id, alias_id, tuple(indices))
+                for alias_id, (object_id, indices) in gradient_by_alias.items()
+            )
+            optimizer_argument_object_ids = tuple(
+                optimizer_object_by_name.get(name)
+                for name in entrypoint.optimizer_binding_names
+            )
+            task_actions = actions.get(entrypoint.task_id, ())
+            dematerialize_aliases = tuple(
+                item.alias_group_id
+                for item in task_actions
+                if item.kind
+                in {
+                    MemoryActionKind.RELEASE,
+                    MemoryActionKind.OFFLOAD,
+                }
+            )
+            released_ephemeral = tuple(
+                (item.alias_group_id, objects_by_alias[item.alias_group_id])
+                for item in task_actions
+                if item.kind is MemoryActionKind.RELEASE
+                and item.alias_group_id in ephemeral_aliases
+            )
             execution.append(
                 _ExecutionTaskRecord(
                     entrypoint=entrypoint,
                     task=tasks[entrypoint.task_id],
-                    input_aliases=input_aliases_by_task[entrypoint.task_id],
-                    actions=actions.get(entrypoint.task_id, ()),
+                    input_aliases=input_aliases,
+                    actions=task_actions,
                     execution_ordinal=execution_ordinal,
                     semantic_name=semantic_name,
                     trace_label=(f"execution_{execution_ordinal:06d}.{semantic_name}"),
                     function=function,
                     argument_template=argument_template,
+                    forward_outputs=tuple(forward_outputs),
+                    gradient_outputs=gradient_outputs,
+                    optimizer_argument_object_ids=optimizer_argument_object_ids,
+                    dematerialize_aliases=dematerialize_aliases,
+                    released_ephemeral=released_ephemeral,
                 )
             )
         return _PlanRun(
@@ -1809,25 +2008,6 @@ class TrainingExecutor:
                 if item.location.value == "device"
             ),
             public_by_microbatch=self._public_outputs(entrypoints),
-            ephemeral_aliases=frozenset(
-                item.alias_group_id
-                for item in plan.program.alias_groups
-                if item.alias_group_id
-                not in {
-                    residency.alias_group_id
-                    for residency in plan.schedule.initial_residency
-                }
-            ),
-            objects_by_alias={
-                alias_id: tuple(
-                    item.object_id
-                    for item in plan.program.objects
-                    if item.alias_group_id == alias_id
-                )
-                for alias_id in (
-                    item.alias_group_id for item in plan.program.alias_groups
-                )
-            },
         )
 
     def _configure_task_trace_labels(self) -> dict[str, str]:

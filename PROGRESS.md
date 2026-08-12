@@ -2057,3 +2057,32 @@ the ignored internal progress log before this tracked summary is updated.
   within the 312.4-ms gate); task sums are 294.188--295.807 ms. Summed
   before/after frontend boundary work is 27.634 ms versus 29.436 ms before
   batching/predecoding. The reset-inclusive untraced median is 463.518 ms.
+
+## 2026-08-12 — Task-scoped storage and predecoded boundary fast paths
+
+- Added task-scoped batch storage acquisition and dematerialization operations.
+  Arbitrary lifecycle rebinding retains complete runtime generation validation;
+  the repeated task path consumes bindings already validated by the neutral
+  runtime boundary and still rejects stale non-null addresses transactionally.
+- Added direct allocation-owner identity to output adoption and a batched
+  storage-adoption adapter. Forward output publication no longer performs an
+  objects-by-outputs scan. The frozen Qwen control reduced forward output
+  publication from 8.344 to 2.566 ms per step without changing the Program,
+  schedule, task, or action identities.
+- The admitted frontend record now predecodes forward output aliases, gradient
+  groups, recurrent optimizer arguments, dematerialization targets, and
+  ephemeral cleanup. The first optimizer component no longer rebuilds the
+  complete optimizer tensor inventory. Lazy or custom first-step optimizer
+  paths retain the generic dynamic fallback.
+- Added detailed output-classification/adoption/state/accumulation timers and a
+  separate reusable two-event selected-task bracket. The latter enables no
+  native trace, callback, NVTX range, per-task event, allocator snapshot, or
+  Python component timestamp and therefore measures the production path.
+- Frozen evidence is
+  `qualification/results/phase1/qwen35_predecoded_boundary_control.json`.
+  Program `65300023...d7e3`, schedule `e349ce5f...f3ed`, 129 tasks, and 1,415
+  actions remain exact. Its production-like selected-task samples are 291.914,
+  295.083, and 293.029 ms (293.029-ms median), only 0.30% above the 292.141-ms
+  standard-allocator authority. Detailed tracing measures 296.652--297.291 ms;
+  the roughly 4-ms difference is observer overhead from three timing events per
+  task and detailed host/native telemetry, not production execution.

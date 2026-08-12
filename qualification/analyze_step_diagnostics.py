@@ -34,6 +34,12 @@ _AFTER_COMPONENTS = (
     "host_native_after_task_seconds",
     "host_cleanup_seconds",
 )
+_OUTPUT_SUBCOMPONENTS = (
+    "host_output_classification_seconds",
+    "host_output_adoption_seconds",
+    "host_output_state_publish_seconds",
+    "host_gradient_accumulation_seconds",
+)
 _ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "host_dispatch_seconds", *_AFTER_COMPONENTS)
 
 
@@ -109,6 +115,7 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                 "host_dispatch_seconds",
                 "host_after_task_seconds",
                 *_AFTER_COMPONENTS,
+                *_OUTPUT_SUBCOMPONENTS,
             )
         }
         for phase, selected in sorted(by_phase.items())
@@ -139,7 +146,10 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                     0.0,
                     _seconds(task, "host_after_task_seconds") - after_accounted,
                 ),
-                "components": {key: _seconds(task, key) for key in _ALL_COMPONENTS},
+                "components": {
+                    key: _seconds(task, key)
+                    for key in (*_ALL_COMPONENTS, *_OUTPUT_SUBCOMPONENTS)
+                },
             }
         )
 

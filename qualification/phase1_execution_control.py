@@ -20,13 +20,16 @@ def _event_bracket(
     stream = torch.cuda.current_stream()
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
+    training._arm_selected_span_timing()  # type: ignore[attr-defined]
     wall_start = time.perf_counter()
     start.record(stream)
     training(microbatches, trace=False)  # type: ignore[operator]
     end.record(stream)
+    selected_task_seconds = training._collect_selected_span_seconds()  # type: ignore[attr-defined]
     end.synchronize()
     return {
         "compute_seconds": float(start.elapsed_time(end)) / 1e3,
+        "selected_task_seconds": selected_task_seconds,
         "host_and_compute_seconds": time.perf_counter() - wall_start,
     }
 
@@ -84,8 +87,7 @@ def main() -> int:
                 {
                     "selected_task_seconds": diagnostics.timing.compute_seconds,
                     "task_interval_sum_seconds": sum(
-                        value
-                        for _, value in diagnostics.timing.phase_gpu_seconds
+                        value for _, value in diagnostics.timing.phase_gpu_seconds
                     ),
                     "host_call_seconds": diagnostics.timing.host_call_seconds,
                     "wall_seconds": time.perf_counter() - sample_wall_start,
@@ -107,6 +109,9 @@ def main() -> int:
         "untraced_steps": untraced,
         "untraced_compute_median_seconds": statistics.median(
             item["compute_seconds"] for item in untraced
+        ),
+        "untraced_selected_task_median_seconds": statistics.median(
+            item["selected_task_seconds"] for item in untraced
         ),
         "traced_wall_seconds": traced_wall_seconds,
         "traced_samples": traced_samples,

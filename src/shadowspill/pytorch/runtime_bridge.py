@@ -619,15 +619,13 @@ class RuntimeBridge:
         self,
         items: Sequence[tuple[torch.Tensor, str, ObjectBinding]],
     ) -> None:
-        """Transactionally rebind a task's distinct input alias bundles."""
+        """Install bindings already validated by the runtime task boundary."""
 
         if not items:
             return
-        torch.ops.shadowspill._rebind_storages(
+        torch.ops.shadowspill._acquire_storages(
             [tensor for tensor, _, _ in items],
             [binding.pointer for _, _, binding in items],
-            [_dense_id(alias_id, "alias_") for _, alias_id, _ in items],
-            [binding.generation for _, _, binding in items],
         )
 
     def dematerialize(
@@ -650,11 +648,8 @@ class RuntimeBridge:
         )
         if not materialized:
             return
-        torch.ops.shadowspill._rebind_storages(
-            [tensor for tensor, _, _ in materialized],
-            [0] * len(materialized),
-            [_dense_id(alias_id, "alias_") for _, alias_id, _ in materialized],
-            [generation for _, _, generation in materialized],
+        torch.ops.shadowspill._dematerialize_storages(
+            [tensor for tensor, _, _ in materialized]
         )
 
     def wait_idle(self) -> None:

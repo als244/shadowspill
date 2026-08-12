@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 19
+ADAPTER_ABI_VERSION: Final = 20
 RUNTIME_ABI_VERSION: Final = 11
 TRACE_ABI_VERSION: Final = 1
 

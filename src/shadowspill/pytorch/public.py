@@ -515,6 +515,16 @@ class PlannedTrainStep:
 
         return self._executor.collect_execution_timing()
 
+    def _arm_selected_span_timing(self) -> None:
+        """Arm production-like two-event task-span timing."""
+
+        self._executor.arm_selected_span_timing()
+
+    def _collect_selected_span_seconds(self) -> float:
+        """Collect production-like two-event task-span timing."""
+
+        return self._executor.collect_selected_span_seconds()
+
     def state_dict(self) -> dict[str, object]:
         """Synchronously snapshot model, optimizer, and logical step state."""
 

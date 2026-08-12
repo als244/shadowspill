@@ -167,6 +167,16 @@ def main() -> int:
         raise AssertionError("batch adapter accepted a stale generation")
     if parameter.data_ptr() != address:
         raise AssertionError("failed batch validation partially mutated storage")
+    try:
+        torch.ops.shadowspill._acquire_storages(
+            [parameter, parameter], [address, address + 256]
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("storage acquisition accepted a stale address")
+    if parameter.data_ptr() != address:
+        raise AssertionError("failed storage acquisition partially mutated storage")
     torch.ops.shadowspill._rebind_storages(
         [parameter],
         [address],
