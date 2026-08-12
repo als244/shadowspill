@@ -10,6 +10,7 @@
 
 #include "internal/failure_state.h"
 #include "internal/event_pool.h"
+#include "internal/completion_tracker.h"
 
 typedef struct ShadowSpillRange {
     uint64_t offset;
@@ -40,6 +41,28 @@ typedef struct ShadowSpillEventRecord {
     ShadowSpillEventLease *event;
     struct ShadowSpillEventRecord *next;
 } ShadowSpillEventRecord;
+
+typedef struct ShadowSpillCompletionRecord {
+    ShadowSpillEventLease *event;
+    uint64_t object_id;
+    uint64_t allocation_id;
+    struct ShadowSpillCompletionRecord *next;
+} ShadowSpillCompletionRecord;
+
+typedef struct ShadowSpillCompletionStream {
+    ShadowSpillBackendStream stream;
+    ShadowSpillCompletionRecord *head;
+    ShadowSpillCompletionRecord *tail;
+    uint64_t poll_misses;
+    uint64_t next_poll_timestamp_ns;
+    struct ShadowSpillCompletionStream *next;
+} ShadowSpillCompletionStream;
+
+typedef struct ShadowSpillCompletionTracker {
+    pthread_mutex_t lock;
+    ShadowSpillCompletionStream *streams;
+    uint64_t pending;
+} ShadowSpillCompletionTracker;
 
 typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
 
@@ -159,6 +182,8 @@ struct ShadowSpillRuntime {
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
     ShadowSpillObjectTable objects;
+    ShadowSpillCompletionTracker completions;
+    uint8_t completions_initialized;
     ShadowSpillQueuedAction *action_head;
     ShadowSpillQueuedAction *action_tail;
 

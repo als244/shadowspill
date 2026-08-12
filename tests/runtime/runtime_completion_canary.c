@@ -1,0 +1,92 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <shadowspill/backend_mock.h>
+#include <shadowspill/runtime.h>
+
+enum {
+    COMPLETION_COUNT = 64,
+    ALLOCATION_BYTES = 16,
+};
+
+int main(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .event_delay_nanoseconds = 2000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return EXIT_FAILURE;
+    }
+
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .device_slab_bytes = COMPLETION_COUNT * ALLOCATION_BYTES,
+        .minimum_alignment = 1U,
+        .progress_poll_nanoseconds = 10000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        return EXIT_FAILURE;
+    }
+
+    ShadowSpillAllocation allocations[COMPLETION_COUNT] = {{0}};
+    for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
+        if (shadowspill_allocate(
+                runtime,
+                ALLOCATION_BYTES,
+                1U,
+                compute,
+                &allocations[index]
+            ) != SHADOWSPILL_RUNTIME_OK) {
+            return EXIT_FAILURE;
+        }
+    }
+    if (shadowspill_mock_enqueue_compute(mock, compute, 1000000U) != 0) {
+        return EXIT_FAILURE;
+    }
+    for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
+        if (shadowspill_free(
+                runtime, allocations[index].allocation_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK) {
+            return EXIT_FAILURE;
+        }
+    }
+    if (shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        return EXIT_FAILURE;
+    }
+
+    ShadowSpillMockBackendStatistics backend_statistics = {0};
+    ShadowSpillRuntimeStatistics runtime_statistics = {0};
+    shadowspill_mock_backend_statistics(mock, &backend_statistics);
+    (void)printf(
+        "completion_count=%u event_queries=%llu queries_per_completion=%.3f\n",
+        COMPLETION_COUNT,
+        (unsigned long long)backend_statistics.event_queries,
+        (double)backend_statistics.event_queries / (double)COMPLETION_COUNT
+    );
+    if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        backend_statistics.events_created != COMPLETION_COUNT ||
+        backend_statistics.events_destroyed != COMPLETION_COUNT ||
+        backend_statistics.event_queries > 4U * COMPLETION_COUNT ||
+        runtime_statistics.pending_retirements != 0U ||
+        runtime_statistics.live_allocations != 0U ||
+        runtime_statistics.free_bytes !=
+            COMPLETION_COUNT * ALLOCATION_BYTES) {
+        return EXIT_FAILURE;
+    }
+
+    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
+        return EXIT_FAILURE;
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return EXIT_SUCCESS;
+}

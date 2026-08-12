@@ -613,7 +613,13 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         : shadowspill_event_lease_create_locked(runtime, &fence->event);
     if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
             runtime->backend.context, fence->event->event, compute_stream
-        ) != 0) {
+        ) != 0 || shadowspill_completion_submit(
+            runtime,
+            compute_stream,
+            fence->event,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID
+        ) != SHADOWSPILL_RUNTIME_OK) {
         if (fence != NULL && fence->event != NULL) {
             (void)shadowspill_event_lease_release(runtime, fence->event);
         }

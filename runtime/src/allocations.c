@@ -198,21 +198,10 @@ int shadowspill_task_fence_complete_locked(
     if (fence == NULL || complete == NULL) {
         return -1;
     }
-    if (atomic_load_explicit(
-            &fence->completion_known, memory_order_acquire
-        ) != 0U) {
-        *complete = 1;
-        return 0;
-    }
-    if (fence->last_query_epoch == runtime->event_query_epoch) {
-        *complete = fence->last_query_complete != 0U;
-        return 0;
-    }
-    if (shadowspill_event_lease_query(runtime, fence->event, complete) != 0) {
-        return -1;
-    }
-    fence->last_query_epoch = runtime->event_query_epoch;
-    fence->last_query_complete = (uint8_t)(*complete != 0);
+    (void)runtime;
+    *complete = atomic_load_explicit(
+        &fence->event->completion_known, memory_order_acquire
+    ) != 0U;
     if (*complete) {
         atomic_store_explicit(
             &fence->completion_known, 1U, memory_order_release
@@ -300,7 +289,13 @@ static ShadowSpillRuntimeStatus fence_task_retirements_locked(
         : shadowspill_event_lease_create_locked(runtime, &fence->event);
     if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
             runtime->backend.context, fence->event->event, stream
-        ) != 0) {
+        ) != 0 || shadowspill_completion_submit(
+            runtime,
+            stream,
+            fence->event,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            SHADOWSPILL_RUNTIME_NO_ID
+        ) != SHADOWSPILL_RUNTIME_OK) {
         if (fence != NULL && fence->event != NULL) {
             (void)shadowspill_event_lease_release(runtime, fence->event);
         }
@@ -936,7 +931,13 @@ ShadowSpillRuntimeStatus shadowspill_free(
         if (event_status != SHADOWSPILL_RUNTIME_OK ||
             runtime->backend.record_event(
                 runtime->backend.context, event->event->event, item->stream
-            ) != 0) {
+            ) != 0 || shadowspill_completion_submit(
+                runtime,
+                item->stream,
+                event->event,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                allocation->allocation_id
+            ) != SHADOWSPILL_RUNTIME_OK) {
             if (event != NULL && event->event != NULL) {
                 (void)shadowspill_event_lease_release(runtime, event->event);
             }
@@ -998,7 +999,13 @@ void shadowspill_finalize_aborted_task_retirements(
             if (event_status != SHADOWSPILL_RUNTIME_OK ||
                 runtime->backend.record_event(
                     runtime->backend.context, event->event->event, item->stream
-                ) != 0) {
+                ) != 0 || shadowspill_completion_submit(
+                    runtime,
+                    item->stream,
+                    event->event,
+                    SHADOWSPILL_RUNTIME_NO_ID,
+                    allocation->allocation_id
+                ) != SHADOWSPILL_RUNTIME_OK) {
                 if (event != NULL && event->event != NULL) {
                     (void)shadowspill_event_lease_release(runtime, event->event);
                 }

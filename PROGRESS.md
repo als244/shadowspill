@@ -1521,3 +1521,31 @@ the ignored internal progress log before this tracked summary is updated.
   duplicates, 129 nested `compiled_call` ranges, and 97 optimizer tasks. Its
   258,781 event queries confirm that the separate concurrency defect remains
   visible for the next milestone.
+
+## 2026-08-12 — FIFO completion frontiers implemented
+
+- Replaced retirement, task-fence, H2D, and D2H full-population event queries
+  with a central per-recording-stream FIFO completion tracker. The worker
+  snapshots only each stream head, issues the nonblocking backend query with
+  no runtime-state or completion lock held, and atomically publishes the
+  completion before existing transition code consumes it.
+- Completion records retain generation-tagged event leases. This separates
+  backend completion lifetime from task fences, transfer actions, objects,
+  and allocation retirement owners without changing action or residency
+  order. Query failures retain their causal object/allocation identity; the
+  first implementation omitted this attribution and caused the existing
+  failure canary to reject the change.
+- Added adaptive idle polling from 10 microseconds through 10 milliseconds.
+  Stream order allows a completed head to drain already-completed successors
+  immediately and proves that an incomplete head's successors need not be
+  queried.
+- Added a deterministic 64-retirement completion canary and mock-backend event
+  telemetry. It observes 72 backend queries for 64 completions, or 1.125
+  queries per completion, while reclaiming every allocation and event. The
+  acceptance ceiling is four queries per completion.
+- Normal warnings-as-errors CTest (17 tests), the complete Python suite, Ruff,
+  strict mypy, and UBSan pass. Both GCC and Clang ASan binaries pass direct
+  runs, but this host intermittently segfaults during ASan process startup even
+  for the empty `shadowspill_build_canary`; GDB suppresses the failure. This is
+  therefore classified as sanitizer-host infrastructure rather than a runtime
+  lifetime failure. Repeated normal canaries and UBSan remain clean.

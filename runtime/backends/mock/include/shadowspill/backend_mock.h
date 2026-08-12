@@ -39,6 +39,9 @@ typedef struct ShadowSpillMockBackendStatistics {
     uint64_t copies_to_host;
     uint64_t stream_waits;
     uint64_t stream_synchronizations;
+    uint64_t events_created;
+    uint64_t events_destroyed;
+    uint64_t event_queries;
 } ShadowSpillMockBackendStatistics;
 
 SHADOWSPILL_BACKEND_MOCK_API int shadowspill_mock_backend_create(

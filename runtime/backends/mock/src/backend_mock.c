@@ -131,6 +131,9 @@ static int create_event(void *context, ShadowSpillBackendEvent *event) {
     }
     event->words[0] = (uintptr_t)created;
     event->words[1] = 0U;
+    pthread_mutex_lock(&backend->mutex);
+    ++backend->statistics.events_created;
+    pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
@@ -140,6 +143,9 @@ static int destroy_event(void *context, ShadowSpillBackendEvent event) {
         return -1;
     }
     free(event_pointer(event));
+    pthread_mutex_lock(&backend->mutex);
+    ++backend->statistics.events_destroyed;
+    pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
@@ -182,6 +188,7 @@ static int query_event(
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
+    ++backend->statistics.event_queries;
     if (!target->recorded) {
         pthread_mutex_unlock(&backend->mutex);
         return -1;

@@ -65,19 +65,9 @@ static int progress_retirements_locked(ShadowSpillRuntime *runtime) {
         }
         for (ShadowSpillEventRecord *event = allocation->retirement_events;
              complete && event != NULL; event = event->next) {
-            int event_complete = 0;
-            if (shadowspill_event_lease_query(
-                    runtime, event->event, &event_complete
-                ) != 0) {
-                shadowspill_latch_failure_locked(
-                    runtime,
-                    SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                    SHADOWSPILL_RUNTIME_NO_ID,
-                    allocation->allocation_id,
-                    0U
-                );
-                return changed;
-            }
+            const int event_complete = atomic_load_explicit(
+                &event->event->completion_known, memory_order_acquire
+            ) != 0U;
             if (!event_complete) {
                 complete = 0;
             }
@@ -148,16 +138,11 @@ static int event_complete_locked(
     uint64_t object_id,
     int *complete
 ) {
-    if (shadowspill_event_lease_query(runtime, event, complete) != 0) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            object_id,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            0U
-        );
-        return -1;
-    }
+    (void)runtime;
+    (void)object_id;
+    *complete = atomic_load_explicit(
+        &event->completion_known, memory_order_acquire
+    ) != 0U;
     return 0;
 }
 
@@ -293,6 +278,12 @@ static int dispatch_offload_locked(
             runtime->backend.context,
             action->completion_event->event,
             runtime->d2h_stream
+        ) != 0 || shadowspill_completion_submit(
+            runtime,
+            runtime->d2h_stream,
+            action->completion_event,
+            object->object_id,
+            allocation->allocation_id
         ) != 0) {
         goto backend_failure;
     }
@@ -400,6 +391,12 @@ static int dispatch_prefetch_locked(
             runtime->backend.context,
             action->completion_event->event,
             runtime->h2d_stream
+        ) != 0 || shadowspill_completion_submit(
+            runtime,
+            runtime->h2d_stream,
+            action->completion_event,
+            object->object_id,
+            allocation->allocation_id
         ) != 0) {
         goto backend_failure;
     }
@@ -645,8 +642,14 @@ static int progress_actions_locked(ShadowSpillRuntime *runtime) {
     return changed;
 }
 
-static void timed_wait_locked(ShadowSpillRuntime *runtime) {
-    uint64_t wait_ns = runtime->progress_poll_nanoseconds;
+static void timed_wait_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t completion_wait_nanoseconds
+) {
+    uint64_t wait_ns = completion_wait_nanoseconds;
+    if (wait_ns == 0U) {
+        wait_ns = runtime->progress_poll_nanoseconds;
+    }
     if (wait_ns == 0U) {
         wait_ns = 1000000U;
     }
@@ -682,6 +685,26 @@ void *shadowspill_progress_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     pthread_mutex_lock(&runtime->mutex);
     while (!runtime->worker_stop) {
+        pthread_mutex_unlock(&runtime->mutex);
+        uint64_t next_completion_poll = 0U;
+        uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+        const int completion_status = shadowspill_completion_poll(
+            runtime,
+            &next_completion_poll,
+            &failure_object_id,
+            &failure_allocation_id
+        );
+        pthread_mutex_lock(&runtime->mutex);
+        if (completion_status < 0) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                failure_object_id,
+                failure_allocation_id,
+                0U
+            );
+        }
         (void)progress_retirements_locked(runtime);
         (void)progress_actions_locked(runtime);
         if (runtime->failure.status != SHADOWSPILL_RUNTIME_OK) {
@@ -699,7 +722,7 @@ void *shadowspill_progress_main(void *pointer) {
                  * each completion otherwise starves framework malloc/free
                  * callbacks that need the same state lock.
                  */
-                timed_wait_locked(runtime);
+                timed_wait_locked(runtime, next_completion_poll);
             }
         }
     }

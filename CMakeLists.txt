@@ -104,6 +104,7 @@ add_library(
   shadowspill_runtime
   SHARED
   runtime/src/allocations.c
+  runtime/src/completion_tracker.c
   runtime/src/event_pool.c
   runtime/src/failure_state.c
   runtime/src/lifecycle.c
@@ -321,7 +322,7 @@ if(BUILD_TESTING)
   )
   add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
 
-  foreach(runtime_test IN ITEMS blocking failure telemetry transitions)
+  foreach(runtime_test IN ITEMS blocking completion failure telemetry transitions)
     add_executable(
       shadowspill_runtime_${runtime_test}_canary
       tests/runtime/runtime_${runtime_test}_canary.c

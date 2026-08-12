@@ -91,6 +91,12 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
 }
 
 static void release_resources(ShadowSpillRuntime *runtime) {
+    if (runtime->completions_initialized) {
+        shadowspill_completion_tracker_destroy(
+            runtime, &runtime->completions
+        );
+        runtime->completions_initialized = 0U;
+    }
     destroy_actions(runtime);
     destroy_allocations(runtime);
     destroy_objects(runtime);
@@ -179,6 +185,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         runtime->reusable_by_size == NULL ||
         shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
+        ) != 0 || shadowspill_completion_tracker_initialize(
+            &runtime->completions
         ) != 0) {
         free(runtime->allocations_by_id);
         free(runtime->allocations_by_pointer);
@@ -187,6 +195,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
+    runtime->completions_initialized = 1U;
     if (pthread_mutex_init(&runtime->mutex, NULL) != 0) {
         release_resources(runtime);
         free(runtime);
