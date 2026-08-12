@@ -444,14 +444,24 @@ def _seal_physical_budget(installed: InstalledAllocator, execution_plan: Any) ->
             64 * _MIB,
         ),
     )
-    # Every selected task can contribute at most one shared completion fence.
-    # Double the largest event demand actually observed during compilation and
-    # profiling for cross-stream/custom-op retirements, then retain bounded
-    # transfer/service leeway.  Object count is not event demand: H2D and D2H
-    # are serialized on their respective lanes.
+    # Every selected task can contribute one shared completion fence. Every
+    # admitted transfer may also remain queued on its direction's CUDA stream
+    # with a distinct readiness/completion event. The streams preserve FIFO
+    # order; keeping the complete admitted window enqueued lets before_task
+    # insert stream waits without blocking the Python dispatch thread.
+    initial_transfer_count = sum(
+        item.location.value == "device"
+        for item in execution_plan.schedule.initial_residency
+    )
+    scheduled_transfer_count = sum(
+        item.kind in {MemoryActionKind.OFFLOAD, MemoryActionKind.PREFETCH}
+        for item in execution_plan.schedule.actions
+    )
     event_pool_reserve = max(
         256,
         len(execution_plan.program.selected_tasks(execution_plan.selections))
+        + initial_transfer_count
+        + scheduled_transfer_count
         + 2 * int(statistics.cuda.event_pool_peak_in_use)
         + 64,
     )

@@ -1271,3 +1271,39 @@ the ignored internal progress log before this tracked summary is updated.
   completeness, no overflow, reuse across steps, and numerical/checkpoint
   behavior. All native/CUDA canaries, the full Python suite, strict mypy, and
   Ruff pass.
+
+## 2026-08-11 — Readiness serialization root cause
+
+- Froze the unchanged linear-object-lookup Qwen baseline before modifying
+  runtime behavior. The full trace is
+  `/tmp/shadowspill_qwen35_linear_lookup_trace_baseline.json`; compact internal
+  and NSYS evidence lives under `qualification/results/phase1/`.
+- Root cause: the progress service admitted only one transfer per direction to
+  its CUDA stream. Although all 395 startup destinations were already
+  physically reserved, a later object's event did not exist until earlier
+  H2Ds completed. `before_task` therefore host-blocked instead of inserting a
+  stream wait and returning.
+- Removed the redundant software one-in-flight gates. CUDA streams retain FIFO
+  copy order; the complete admitted window now receives pooled events and is
+  enqueued. A delayed mock regression proves that acquiring the second object
+  returns through a stream wait while the first copy remains in flight.
+- Corrected 30-GiB Qwen evidence: host-condition readiness waits fell 311 ->
+  0, stream-event waits rose 2 -> 27, total host `before_task` time fell
+  165.209 -> 15.571 ms, and median untraced execution fell 642.580 -> 542.809
+  ms. Task CUDA time remained essentially unchanged (286.281 versus 290.923
+  ms); no PressureFit action or recomputation choice moved.
+- All 129 selected tasks record `before_readiness_waits` and
+  `before_task_compute`. Only three tasks inserted actual event dependencies.
+  No-wait intervals up to 0.458 ms are diagnostic `cuLaunchHostFunc`
+  overhead/jitter, not residency stalls.
+- Surprise: terminal backward task 17 retained a real 44.910-ms dependency on
+  a 4-byte FP32 input. Direct FX inspection identifies input slot 58 as
+  `tangents_1`, the AOTAutograd `torch.ones_like(loss)` seed consumed by
+  `aten.nll_loss_backward`. Lowering incorrectly classifies this
+  compiler-generated constant as a host-backed step input, placing it last in
+  the 6.0418-GB non-cyclic startup queue. This is a separate generic lowering
+  bug; the terminal unit cotangent should be specialized out of the backward
+  ABI, while internal activation cotangents remain ordinary planned objects.
+- Added `docs/runtime_overheads.md` with the standalone clocks, causal
+  timeline, exact task/object evidence, before/after measurements, and
+  remaining attribution controls.

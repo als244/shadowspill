@@ -61,7 +61,7 @@ static void sleep_milliseconds(uint64_t milliseconds) {
     (void)nanosleep(&delay, NULL);
 }
 
-static int prefetch_capacity_is_reserved_at_trigger(void) {
+static int prefetch_window_is_enqueued_without_host_blocking(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -114,9 +114,24 @@ static int prefetch_capacity_is_reserved_at_trigger(void) {
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.live_allocations != 1U ||
+        statistics.live_allocations != 2U ||
         statistics.allocated_bytes != 64U ||
-        statistics.transfers_to_device != 1U;
+        statistics.transfers_to_device != 2U;
+    const uint64_t input = 2U;
+    ShadowSpillObjectBinding binding = {0};
+    struct timespec started = {0};
+    struct timespec finished = {0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &started);
+    failed = failed || shadowspill_before_task(
+            runtime, 2U, compute, &input, 1U, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    (void)clock_gettime(CLOCK_MONOTONIC, &finished);
+    const uint64_t elapsed_nanoseconds =
+        ((uint64_t)finished.tv_sec - (uint64_t)started.tv_sec) * 1000000000U +
+        (uint64_t)finished.tv_nsec - (uint64_t)started.tv_nsec;
+    failed = failed || elapsed_nanoseconds > 30000000U ||
+        binding.object_id != 2U;
+    shadowspill_abort_task(runtime);
     failed = failed || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -129,7 +144,7 @@ static int prefetch_capacity_is_reserved_at_trigger(void) {
     return failed ? -1 : 0;
 }
 
-static int offload_capacity_is_reserved_at_trigger(void) {
+static int offload_window_is_enqueued_without_host_serialization(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -189,7 +204,7 @@ static int offload_capacity_is_reserved_at_trigger(void) {
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.host_allocated_bytes != 64U ||
-        statistics.transfers_to_host != 1U;
+        statistics.transfers_to_host != 2U;
     failed = failed || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -531,8 +546,8 @@ int main(void) {
             invalid_before_task(1U) == 0 && duplicate_action() == 0 &&
             output_allocation_handoff() == 0 &&
             valid_transition_paths() == 0 &&
-            prefetch_capacity_is_reserved_at_trigger() == 0 &&
-            offload_capacity_is_reserved_at_trigger() == 0 &&
+            prefetch_window_is_enqueued_without_host_blocking() == 0 &&
+            offload_window_is_enqueued_without_host_serialization() == 0 &&
             trigger_reservation_failure_is_a_plan_violation() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;

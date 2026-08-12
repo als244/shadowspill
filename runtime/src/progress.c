@@ -237,12 +237,6 @@ static int dispatch_offload_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    for (ShadowSpillQueuedAction *earlier = runtime->action_head;
-         earlier != NULL && earlier != action; earlier = earlier->next) {
-        if (earlier->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
-            return 0;
-        }
-    }
     ShadowSpillObjectRecord *object = action->object;
     if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
         return 0;
@@ -351,12 +345,6 @@ static int dispatch_prefetch_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    for (ShadowSpillQueuedAction *earlier = runtime->action_head;
-         earlier != NULL && earlier != action; earlier = earlier->next) {
-        if (earlier->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            return 0;
-        }
-    }
     if (!action->destination_reserved) {
         shadowspill_latch_failure_locked(
             runtime,
