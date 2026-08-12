@@ -100,7 +100,7 @@ def _case_identity(
     data_geometry: list[dict[str, Any]] | None,
     case_factory: str | None,
     case_options: dict[str, Any],
-    steps: int,
+    steps: int = 5,
 ) -> str:
     payload = {
         "reference_execution": _REFERENCE_EXECUTION,
