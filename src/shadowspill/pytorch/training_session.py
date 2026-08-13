@@ -13,11 +13,11 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, PhysicalAdmission
-from shadowspill.planner._cache import PressureFitCache
 from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
 from ._plan_diagnostics import training_stage_inventory
+from ._planning_artifacts import planning_artifacts
 from ._planning_cache import PlanningCache
 from ._profiling_metadata import training_profiling_metadata
 from .aot import capture_training_objective
@@ -33,12 +33,8 @@ from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
 from .materialization import representative_cpu_inputs
 from .optimizer import OptimizerTaskArtifact, capture_optimizer
-from .partition import (
-    _TrainingGraphPairCache,
-    partition_training_capture,
-    training_parameter_stage_owners,
-)
-from .profiling import ProfileCache, TaskMeasurement, profile_unique_artifacts
+from .partition import partition_training_capture, training_parameter_stage_owners
+from .profiling import TaskMeasurement, profile_unique_artifacts
 from .public import (
     PlanDiagnostics,
     PlannedTrainStep,
@@ -49,7 +45,6 @@ from .public import (
 from .runtime import PlanMemory
 from .runtime_bridge import RuntimeBridge
 from .session import (
-    _archive_export_capture,
     _finalize_plan_report,
     _forward_report,
     _PhaseTimer,
@@ -94,6 +89,7 @@ def build_training(
 
     started = time.perf_counter_ns()
     timer = _PhaseTimer(verbose=verbose)
+    artifact_store = planning_artifacts(planning_cache)
     workloads = training_profiling_metadata(
         profiling_metadata,
         microbatch_count=len(example_inputs),
@@ -133,8 +129,7 @@ def build_training(
             )
         with timer.measure("export_archival"):
             for position, objective_capture in enumerate(captures):
-                _archive_export_capture(
-                    planning_cache,
+                artifact_store.archive_export(
                     objective_capture.exported,
                     mode="training_objective",
                     position=position,
@@ -152,13 +147,7 @@ def build_training(
             )
         )
         with fake_mode, timer.measure("stage_partition_aot"):
-            graph_pair_cache = _TrainingGraphPairCache(
-                planning_cache.graphpairs,
-                read_enabled=planning_cache.read_enabled,
-                write_enabled=planning_cache.write_enabled,
-                overwrite=planning_cache.overwrite_plan,
-                artifact_recorder=planning_cache.record,
-            )
+            graph_pair_cache = artifact_store.graph_pairs
             partitioned_captures = tuple(
                 partition_training_capture(
                     capture,
@@ -272,19 +261,11 @@ def build_training(
             provider_id="shadowspill.device_pool",
             implementation_revision=planning_cache.implementation_revision,
         )
-        profile_cache = ProfileCache(
-            planning_cache.profile_measurements,
-            compiled_manifest_root=planning_cache.compiled_manifests,
-            read_enabled=planning_cache.read_enabled,
-            write_enabled=planning_cache.write_enabled,
-            overwrite=planning_cache.overwrite_plan,
-            artifact_recorder=planning_cache.record,
-        )
         with timer.measure("compiler_manifest"):
             resolved_manifests = resolve_task_manifests(
                 artifacts,
                 environment=environment,
-                profile_cache=profile_cache,
+                profile_cache=artifact_store.profiles,
                 profiler=profiler,
                 progress=lambda index, total, state, digest: timer.progress(
                     f"compiled manifest {index}/{total} {state}: {digest[:12]}"
@@ -300,7 +281,7 @@ def build_training(
                 profile_artifacts,
                 environment=environment,
                 measure=profiler.measure,
-                cache=profile_cache,
+                cache=artifact_store.profiles,
                 validate=lambda artifact, measurement: validate_compiled_profile(
                     artifact,
                     measurement,
@@ -405,17 +386,7 @@ def build_training(
                 ).latency_nanoseconds,
             )
         with timer.measure("pressurefit_simulation"):
-            planning_cache.archive_program(recurrent_lowered.program)
-            if initial_lowered.program.digest != recurrent_lowered.program.digest:
-                planning_cache.archive_program(initial_lowered.program)
-            selection_cache = PressureFitCache(
-                planning_cache.pressurefit_selections,
-                read_enabled=planning_cache.read_enabled,
-                write_enabled=planning_cache.write_enabled,
-                overwrite=planning_cache.overwrite_plan,
-                artifact_recorder=planning_cache.record,
-            )
-            recurrent_cached = selection_cache.resolve(
+            recurrent_cached = artifact_store.select(
                 recurrent_lowered.program,
                 initial_residency=recurrent_lowered.initial_residency,
                 final_residency=recurrent_lowered.final_residency,
@@ -427,7 +398,7 @@ def build_training(
                 item.created_on_first_step for item in initial_lowered.optimizer_objects
             )
             initial_cached = (
-                selection_cache.resolve(
+                artifact_store.select(
                     initial_lowered.program,
                     initial_residency=initial_lowered.initial_residency,
                     final_residency=initial_lowered.final_residency,

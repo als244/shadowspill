@@ -15,6 +15,38 @@ result = pressurefit(
 execution_plan = result.to_execution_plan(entrypoints=entrypoints)
 ```
 
+Every PyTorch callable retains this exact framework-neutral boundary.  This
+makes budget sweeps independent of Export, AOTAutograd, Inductor compilation,
+and profiling:
+
+```python
+from dataclasses import replace
+
+from shadowspill.planner import pressurefit
+
+report = train_step.plan_report
+baseline = report.pressurefit_result
+device = baseline.simulation_config.devices[0]
+simulation_config = replace(
+    baseline.simulation_config,
+    devices=(replace(device, capacity_bytes=new_object_capacity),),
+)
+
+alternative = pressurefit(
+    report.program,
+    initial_residency=baseline.initial_residency,
+    final_residency=baseline.final_residency,
+    config=simulation_config,
+    options=baseline.options,
+)
+```
+
+The simulator capacity above is PressureFit's admitted object capacity, not the
+PyTorch API's complete physical execution-pool budget.  The latter additionally
+accounts for context/provider allocation, fixed slab use, workspace reserve,
+and spatial admission.  Direct PressureFit sweeps deliberately do not mutate or
+re-admit the live callable.
+
 The API accepts only framework-neutral immutable IR. It knows nothing about
 PyTorch, optimizers, model families, operation names, CUDA handles, or tensor
 pointers.

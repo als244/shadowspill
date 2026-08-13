@@ -7,27 +7,31 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import TreeSpec, tree_flatten
 
 from shadowspill.ir import EntrypointSpec, MemoryActionKind, PhysicalAdmission
-from shadowspill.planner._cache import PressureFitCache
-from shadowspill.runtime import AdmissionError, workspace_reserve_bytes
+from shadowspill.planner._cache import CachedPressureFitResult
+from shadowspill.runtime import AdmissionError, SlabReplay, workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
 from ._abi import AdapterStatistics
 from ._allocator import InstalledAllocator
 from ._plan_diagnostics import forward_stage_inventory
+from ._planning_artifacts import PlanningArtifacts, planning_artifacts
 from ._planning_cache import PlanningCache
-from ._profiling_metadata import canonicalize_profiling_metadata
-from .aot import ExportCapture, capture_forward, export_capture_digest
+from ._profiling_metadata import ProfilingMetadata, canonicalize_profiling_metadata
+from .aot import ExportCapture, capture_forward
+from .capture import GraphArtifact
 from .compiler import (
+    CompiledTaskSet,
     CudaTaskProfiler,
+    ResolvedTaskManifests,
     profile_environment,
     resolve_task_manifests,
     validate_compiled_profile,
@@ -35,15 +39,15 @@ from .compiler import (
 from .contracts import PlanningError
 from .executor import ForwardExecutor
 from .fake import fake_cuda_inputs, fake_cuda_model
-from .guards import capture_input_signature
-from .lowering import lower_forward_program
+from .guards import InputSignature, capture_input_signature
+from .lowering import LoweredForwardProgram, lower_forward_program
 from .materialization import (
     MaterializedForwardState,
     flat_runtime_arguments,
     representative_cpu_inputs,
 )
-from .partition import capture_forward_stages, partition_export
-from .profiling import ProfileCache, profile_unique_artifacts
+from .partition import PartitionedExport, capture_forward_stages, partition_export
+from .profiling import ProfilingResult, TaskMeasurement, profile_unique_artifacts
 from .public import (
     PlanCacheArtifact,
     PlanCompilerProfile,
@@ -150,295 +154,439 @@ def build_forward(
 ) -> PlannedForward:
     """Construct a planned forward callable without mutating arithmetic."""
 
-    started = time.perf_counter_ns()
-    timer = _PhaseTimer(verbose=verbose)
-    workload = canonicalize_profiling_metadata(profiling_metadata)
-    with timer.measure("validation"):
-        _validate_forward_request(
-            model,
-            example_inputs,
-            memory.execution_budget,
-            memory.spill_budget,
-        )
-        signature = capture_input_signature(example_inputs)
-        cpu_inputs = representative_cpu_inputs(example_inputs)
-        _spill_pool_estimate(model, cpu_inputs, memory.spill_budget)
+    return _ForwardPlanningSession(
+        model,
+        example_inputs=example_inputs,
+        memory=memory,
+        partition=partition,
+        verbose=verbose,
+        artifacts=planning_artifacts(planning_cache),
+        profiling_metadata=profiling_metadata,
+    ).run()
 
-    with timer.measure("runtime_binding"):
-        installed = memory.installed
-        device_ordinal = memory.execution_device
 
-    with timer.measure("capture_lowering"):
-        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-        fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
-        fake_inputs = fake_cuda_inputs(
-            cpu_inputs, fake_mode, device_index=device_ordinal
+@dataclass(frozen=True, slots=True)
+class _ForwardRequest:
+    signature: InputSignature
+    cpu_inputs: tuple[object, ...]
+    workload: ProfilingMetadata
+    installed: InstalledAllocator
+    device_ordinal: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ForwardCaptureArtifacts:
+    fake_model: nn.Module
+    capture: ExportCapture
+    partitioned: PartitionedExport
+    task_artifacts: tuple[GraphArtifact, ...]
+    output_tree_spec: TreeSpec
+
+
+@dataclass(frozen=True, slots=True)
+class _ForwardProfileArtifacts:
+    profiler: CudaTaskProfiler
+    manifests: ResolvedTaskManifests
+    profiles: ProfilingResult
+    compiled_tasks: CompiledTaskSet
+
+
+@dataclass(frozen=True, slots=True)
+class _ForwardProgramArtifacts:
+    lowered: LoweredForwardProgram
+    measurements: dict[str, TaskMeasurement]
+    measurements_by_profile: dict[str, TaskMeasurement]
+    workspace_reserve: int
+    simulation_config: SimulationConfig
+
+
+class _ForwardPlanningSession:
+    """Rollback-safe orchestration for one forward planning request."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        *,
+        example_inputs: Sequence[Any],
+        memory: PlanMemory,
+        partition: str,
+        verbose: bool,
+        artifacts: PlanningArtifacts,
+        profiling_metadata: object,
+    ) -> None:
+        self.model = model
+        self.example_inputs = example_inputs
+        self.memory = memory
+        self.partition = partition
+        self.artifacts = artifacts
+        self.profiling_metadata = profiling_metadata
+        self.started = time.perf_counter_ns()
+        self.timer = _PhaseTimer(verbose=verbose)
+
+    def run(self) -> PlannedForward:
+        """Execute the five explicit planning phases in dependency order."""
+
+        request = self._validate_request()
+        captured = self._capture_and_partition(request)
+        profiled = self._compile_and_profile(request, captured)
+        program = self._build_program(request, captured, profiled)
+        selection = self._run_pressurefit(program)
+        return self._admit_and_publish(
+            request,
+            captured,
+            profiled,
+            program,
+            selection,
         )
-        with fake_mode, torch.no_grad():
-            example_output = fake_model(*fake_inputs)
-            _output_leaves, output_tree_spec = tree_flatten(example_output)
-            capture = capture_forward(fake_model, fake_inputs)
-        with timer.measure("export_archival"):
-            _archive_export_capture(
-                planning_cache,
-                capture,
-                mode="forward",
-                position=0,
+
+    def _validate_request(self) -> _ForwardRequest:
+        with self.timer.measure("validation"):
+            _validate_forward_request(
+                self.model,
+                self.example_inputs,
+                self.memory.execution_budget,
+                self.memory.spill_budget,
             )
-        representative_roots = tuple(
-            value.detach() if isinstance(value, torch.Tensor) else value
-            for value in flat_runtime_arguments(capture, model, cpu_inputs)
-        )
-        with fake_mode, torch.no_grad():
-            partitioned = partition_export(
-                capture,
-                fake_model,
-                partition=partition,
-                representative_root_inputs=representative_roots,
-            )
-            artifacts = capture_forward_stages(partitioned)
-
-    profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
-    environment = profile_environment(
-        device_ordinal=device_ordinal,
-        provider_id="shadowspill.device_pool",
-        implementation_revision=planning_cache.implementation_revision,
-    )
-    profile_cache = ProfileCache(
-        planning_cache.profile_measurements,
-        compiled_manifest_root=planning_cache.compiled_manifests,
-        read_enabled=planning_cache.read_enabled,
-        write_enabled=planning_cache.write_enabled,
-        overwrite=planning_cache.overwrite_plan,
-        artifact_recorder=planning_cache.record,
-    )
-    with timer.measure("compiler_manifest"):
-        resolved_manifests = resolve_task_manifests(
-            artifacts,
-            environment=environment,
-            profile_cache=profile_cache,
-            profiler=profiler,
-            progress=lambda index, total, state, digest: timer.progress(
-                f"compiled manifest {index}/{total} {state}: {digest[:12]}"
-            ),
-        )
-    with timer.measure("structural_profiling"):
-        profiles = profile_unique_artifacts(
-            artifacts,
-            environment=environment,
-            measure=profiler.measure,
-            cache=profile_cache,
-            validate=lambda artifact, measurement: validate_compiled_profile(
-                artifact,
-                measurement,
-                resolved_manifests.manifests,
-            ),
-            progress=lambda index, total, state, digest: timer.progress(
-                f"structural profile {index}/{total} {state}: {digest[:12]}"
-            ),
-            profiling_metadata_digests=(workload.digest,) * len(artifacts),
-        )
-    with timer.measure("compilation"):
-        compiled_tasks = profiler.take_compiled_tasks(
-            artifacts,
-            progress=lambda index, total, state, digest: timer.progress(
-                f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
-            ),
-        )
-        for digest, manifest in compiled_tasks.manifests.items():
-            expected = resolved_manifests.manifests.get(digest)
-            if expected is None or (
-                expected.compatibility_digest != manifest.compatibility_digest
-            ):
-                raise PlanningError(
-                    f"compiled entrypoint changed its storage ABI: artifact={digest}"
-                )
-        installed.library.shadowspill_pytorch_allocator_wait_idle()
-    timer.attribute_compilation_and_profiling(profiler)
-
-    with timer.measure("program_lowering"):
-        measurements = {
-            artifact.compatibility_digest: measurement
-            for artifact, measurement in zip(
-                artifacts, profiles.measurements, strict=True
-            )
-        }
-        measurements_by_profile = dict(
-            zip(profiles.key_digests, profiles.measurements, strict=True)
-        )
-        lowered = lower_forward_program(
-            fake_model,
-            partitioned,
-            artifacts,
-            profiles.measurements,
-            storage_contracts={
-                digest: manifest.storage_contract
-                for digest, manifest in resolved_manifests.manifests.items()
-            },
-            compiled_root_allocations={
-                digest: manifest.root_allocations
-                for digest, manifest in resolved_manifests.manifests.items()
-            },
-            device_ordinal=device_ordinal,
-            profile_compatibility_digests=profiles.key_digests,
-        )
-        workspace_reserve = _workspace_reserve(profiles.measurements)
-        simulation_capacity = _simulation_capacity(
-            memory.execution_budget,
-            workspace_reserve,
-            profiles.measurements,
-            fixed_slab_bytes=profiles.fixed_slab_bytes,
-        )
-        simulation_config = SimulationConfig.single_device(
-            "cuda_0",
-            device_capacity_bytes=simulation_capacity,
-            host_capacity_bytes=memory.spill_budget,
-            fetch_bandwidth_bytes_per_second=memory.transfers.route(
-                memory.spill.name, memory.execution.name
-            ).bandwidth_bytes_per_second,
-            evict_bandwidth_bytes_per_second=memory.transfers.route(
-                memory.execution.name, memory.spill.name
-            ).bandwidth_bytes_per_second,
-            fetch_latency_ns=memory.transfers.route(
-                memory.spill.name, memory.execution.name
-            ).latency_nanoseconds,
-            evict_latency_ns=memory.transfers.route(
-                memory.execution.name, memory.spill.name
-            ).latency_nanoseconds,
-        )
-
-    with timer.measure("pressurefit_simulation"):
-        planning_cache.archive_program(lowered.program)
-        cached_selection = PressureFitCache(
-            planning_cache.pressurefit_selections,
-            read_enabled=planning_cache.read_enabled,
-            write_enabled=planning_cache.write_enabled,
-            overwrite=planning_cache.overwrite_plan,
-            artifact_recorder=planning_cache.record,
-        ).resolve(
-            lowered.program,
-            initial_residency=lowered.initial_residency,
-            final_residency=lowered.final_residency,
-            config=simulation_config,
-        )
-        selected = cached_selection.result
-
-    with timer.measure("host_admission"):
-        _reconcile_spill_pool(
+            signature = capture_input_signature(self.example_inputs)
+            cpu_inputs = tuple(representative_cpu_inputs(self.example_inputs))
+            _spill_pool_estimate(self.model, cpu_inputs, self.memory.spill_budget)
+            workload = canonicalize_profiling_metadata(self.profiling_metadata)
+        with self.timer.measure("runtime_binding"):
+            installed = self.memory.installed
+            device_ordinal = self.memory.execution_device
+        return _ForwardRequest(
+            signature,
+            cpu_inputs,
+            workload,
             installed,
-            predicted_host_peak=selected.simulation.host_peak_bytes,
-            host_budget=memory.spill_budget,
+            device_ordinal,
         )
 
-    with timer.measure("slab_admission"):
-        try:
-            slab_replay = replay_selected_schedule(
-                selected,
-                measurements_by_profile,
-                execution_pool_bytes=(
-                    int(installed.admission.execution_pool_bytes)
-                    - profiles.fixed_slab_bytes
-                ),
-                output_bindings=output_bindings_for_entrypoints(
-                    selected.program.selected_tasks(selected.selections),
-                    lowered.entrypoints,
-                    {
-                        item.object_id: item.alias_group_id
-                        for item in selected.program.objects
-                    },
-                ),
+    def _capture_and_partition(
+        self,
+        request: _ForwardRequest,
+    ) -> _ForwardCaptureArtifacts:
+        with self.timer.measure("capture_lowering"):
+            fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+            fake_model = fake_cuda_model(
+                self.model,
+                fake_mode,
+                device_index=request.device_ordinal,
             )
-        except AdmissionError as exc:
-            raise PlanningError(f"slab spatial admission failed: {exc}") from exc
-
-    admission = PhysicalAdmission(
-        device_budget_bytes=(
-            memory.execution.physical_capacity or memory.execution_budget
-        ),
-        host_budget_bytes=memory.spill_budget,
-        context_bytes=int(installed.admission.context_bytes),
-        provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
-        slab_bytes=memory.execution_budget,
-        workspace_reserve_bytes=workspace_reserve,
-        host_reservation_bytes=int(installed.admission.spill_pool_bytes),
-        predicted_fragmentation_bytes=slab_replay.peak_fragmentation_bytes,
-    )
-    entrypoints = tuple(
-        EntrypointSpec(
-            task_id=item.task_id,
-            entrypoint_id=f"entrypoint_{index:06d}",
-            executor_id="pytorch_inductor",
-            abi_digest=item.artifact.compatibility_digest,
+            fake_inputs = fake_cuda_inputs(
+                request.cpu_inputs,
+                fake_mode,
+                device_index=request.device_ordinal,
+            )
+            with fake_mode, torch.no_grad():
+                example_output = fake_model(*fake_inputs)
+                _output_leaves, output_tree_spec = tree_flatten(example_output)
+                capture = capture_forward(fake_model, fake_inputs)
+            with self.timer.measure("export_archival"):
+                self.artifacts.archive_export(
+                    capture,
+                    mode="forward",
+                    position=0,
+                )
+            representative_roots = tuple(
+                value.detach() if isinstance(value, torch.Tensor) else value
+                for value in flat_runtime_arguments(
+                    capture,
+                    self.model,
+                    request.cpu_inputs,
+                )
+            )
+            with fake_mode, torch.no_grad():
+                partitioned = partition_export(
+                    capture,
+                    fake_model,
+                    partition=self.partition,
+                    representative_root_inputs=representative_roots,
+                )
+                task_artifacts = capture_forward_stages(partitioned)
+        return _ForwardCaptureArtifacts(
+            fake_model,
+            capture,
+            partitioned,
+            task_artifacts,
+            output_tree_spec,
         )
-        for index, item in enumerate(lowered.entrypoints)
-    )
-    execution_plan = selected.to_execution_plan(
-        entrypoints=entrypoints, admission=admission
-    )
 
-    bridge = RuntimeBridge(installed.library, execution_plan.program)
-    state: MaterializedForwardState | None = None
-    try:
-        with timer.measure("materialization"):
-            state = MaterializedForwardState(
-                model,
-                lowered,
-                capture,
-                cpu_inputs,
-                bridge,
-                device_ordinal=device_ordinal,
+    def _compile_and_profile(
+        self,
+        request: _ForwardRequest,
+        captured: _ForwardCaptureArtifacts,
+    ) -> _ForwardProfileArtifacts:
+        profiler = CudaTaskProfiler(
+            request.installed.library,
+            device_ordinal=request.device_ordinal,
+        )
+        environment = profile_environment(
+            device_ordinal=request.device_ordinal,
+            provider_id="shadowspill.device_pool",
+            implementation_revision=self.artifacts.cache.implementation_revision,
+        )
+        with self.timer.measure("compiler_manifest"):
+            manifests = resolve_task_manifests(
+                captured.task_artifacts,
+                environment=environment,
+                profile_cache=self.artifacts.profiles,
+                profiler=profiler,
+                progress=lambda index, total, state, digest: self.timer.progress(
+                    f"compiled manifest {index}/{total} {state}: {digest[:12]}"
+                ),
             )
-        with timer.measure("physical_sealing"):
-            _seal_physical_budget(installed, execution_plan)
-        with timer.measure("diagnostic_inventory"):
-            task_stage_map, unique_stages = forward_stage_inventory(
-                lowered,
-                execution_plan,
-                measurements,
-                compiled_tasks.manifests,
-                profiling_metadata_digest=workload.digest,
+        with self.timer.measure("structural_profiling"):
+            profiles = profile_unique_artifacts(
+                captured.task_artifacts,
+                environment=environment,
+                measure=profiler.measure,
+                cache=self.artifacts.profiles,
+                validate=lambda artifact, measurement: validate_compiled_profile(
+                    artifact,
+                    measurement,
+                    manifests.manifests,
+                ),
+                progress=lambda index, total, state, digest: self.timer.progress(
+                    f"structural profile {index}/{total} {state}: {digest[:12]}"
+                ),
+                profiling_metadata_digests=(request.workload.digest,)
+                * len(captured.task_artifacts),
             )
-        with timer.measure("callable_construction"):
-            executor = ForwardExecutor(
-                partitioned,
-                lowered,
-                execution_plan,
-                bridge,
-                state,
-                compiled_tasks.functions,
-                capture.user_output_indices,
-                output_tree_spec,
+        with self.timer.measure("compilation"):
+            compiled_tasks = profiler.take_compiled_tasks(
+                captured.task_artifacts,
+                progress=lambda index, total, state, digest: self.timer.progress(
+                    f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
+                ),
             )
-        report = _forward_report(
-            signature.digest,
-            execution_plan,
+            _verify_manifest_identity(manifests, compiled_tasks)
+            request.installed.library.shadowspill_pytorch_allocator_wait_idle()
+        self.timer.attribute_compilation_and_profiling(profiler)
+        return _ForwardProfileArtifacts(
+            profiler,
+            manifests,
             profiles,
-            tuple(timer.values),
-            started,
-            recomputation_cache_hit=cached_selection.cache_hit,
-            pressurefit_results=(selected,),
-            captured_stage_count=len(partitioned.stages),
-            aot_unique_stage_abis=profiles.unique_keys,
-            task_stage_map=task_stage_map,
-            unique_stages=unique_stages,
-            compiler_phase_timings_ns=profiler.compilation_phase_timings_ns,
-            compiler_phase_timings_by_abi=(profiler.compilation_phase_timings_by_abi),
-            cache_directories=planning_cache.diagnostics(),
-            cache_artifacts=_public_cache_artifacts(planning_cache),
-            profiling_metadata=(workload,),
-            memory=memory,
+            compiled_tasks,
         )
-        report = _finalize_plan_report(
-            model,
-            report,
-            planning_cache,
-            started=started,
+
+    def _build_program(
+        self,
+        request: _ForwardRequest,
+        captured: _ForwardCaptureArtifacts,
+        profiled: _ForwardProfileArtifacts,
+    ) -> _ForwardProgramArtifacts:
+        with self.timer.measure("program_lowering"):
+            measurements = {
+                artifact.compatibility_digest: measurement
+                for artifact, measurement in zip(
+                    captured.task_artifacts,
+                    profiled.profiles.measurements,
+                    strict=True,
+                )
+            }
+            measurements_by_profile = dict(
+                zip(
+                    profiled.profiles.key_digests,
+                    profiled.profiles.measurements,
+                    strict=True,
+                )
+            )
+            lowered = lower_forward_program(
+                captured.fake_model,
+                captured.partitioned,
+                captured.task_artifacts,
+                profiled.profiles.measurements,
+                storage_contracts={
+                    digest: manifest.storage_contract
+                    for digest, manifest in profiled.manifests.manifests.items()
+                },
+                compiled_root_allocations={
+                    digest: manifest.root_allocations
+                    for digest, manifest in profiled.manifests.manifests.items()
+                },
+                device_ordinal=request.device_ordinal,
+                profile_compatibility_digests=profiled.profiles.key_digests,
+            )
+            workspace_reserve = _workspace_reserve(profiled.profiles.measurements)
+            simulation_config = _simulation_config(
+                self.memory,
+                workspace_reserve,
+                profiled.profiles,
+            )
+        return _ForwardProgramArtifacts(
+            lowered,
+            measurements,
+            measurements_by_profile,
+            workspace_reserve,
+            simulation_config,
         )
-        return PlannedForward(model, signature, executor, state, report, memory.runtime)
-    except BaseException:
-        if state is not None:
-            state.restore_cpu_and_unregister()
-        raise
+
+    def _run_pressurefit(
+        self,
+        program: _ForwardProgramArtifacts,
+    ) -> CachedPressureFitResult:
+        with self.timer.measure("pressurefit_simulation"):
+            return self.artifacts.select(
+                program.lowered.program,
+                initial_residency=program.lowered.initial_residency,
+                final_residency=program.lowered.final_residency,
+                config=program.simulation_config,
+            )
+
+    def _admit_and_publish(
+        self,
+        request: _ForwardRequest,
+        captured: _ForwardCaptureArtifacts,
+        profiled: _ForwardProfileArtifacts,
+        program: _ForwardProgramArtifacts,
+        selection: CachedPressureFitResult,
+    ) -> PlannedForward:
+        selected = selection.result
+        with self.timer.measure("host_admission"):
+            _reconcile_spill_pool(
+                request.installed,
+                predicted_host_peak=selected.simulation.host_peak_bytes,
+                host_budget=self.memory.spill_budget,
+            )
+        slab_replay = self._replay_slab(request, profiled, program, selection)
+        admission = _physical_admission(
+            self.memory,
+            request.installed,
+            workspace_reserve=program.workspace_reserve,
+            slab_replay=slab_replay,
+        )
+        entrypoints = tuple(
+            EntrypointSpec(
+                task_id=item.task_id,
+                entrypoint_id=f"entrypoint_{index:06d}",
+                executor_id="pytorch_inductor",
+                abi_digest=item.artifact.compatibility_digest,
+            )
+            for index, item in enumerate(program.lowered.entrypoints)
+        )
+        execution_plan = selected.to_execution_plan(
+            entrypoints=entrypoints,
+            admission=admission,
+        )
+        bridge = RuntimeBridge(request.installed.library, execution_plan.program)
+        state: MaterializedForwardState | None = None
+        try:
+            with self.timer.measure("materialization"):
+                state = MaterializedForwardState(
+                    self.model,
+                    program.lowered,
+                    captured.capture,
+                    request.cpu_inputs,
+                    bridge,
+                    device_ordinal=request.device_ordinal,
+                )
+            with self.timer.measure("physical_sealing"):
+                _seal_physical_budget(request.installed, execution_plan)
+            with self.timer.measure("diagnostic_inventory"):
+                task_stage_map, unique_stages = forward_stage_inventory(
+                    program.lowered,
+                    execution_plan,
+                    program.measurements,
+                    profiled.compiled_tasks.manifests,
+                    profiling_metadata_digest=request.workload.digest,
+                )
+            with self.timer.measure("callable_construction"):
+                executor = ForwardExecutor(
+                    captured.partitioned,
+                    program.lowered,
+                    execution_plan,
+                    bridge,
+                    state,
+                    profiled.compiled_tasks.functions,
+                    captured.capture.user_output_indices,
+                    captured.output_tree_spec,
+                )
+            report = _forward_report(
+                request.signature.digest,
+                execution_plan,
+                profiled.profiles,
+                tuple(self.timer.values),
+                self.started,
+                recomputation_cache_hit=selection.cache_hit,
+                pressurefit_results=(selected,),
+                captured_stage_count=len(captured.partitioned.stages),
+                aot_unique_stage_abis=profiled.profiles.unique_keys,
+                task_stage_map=task_stage_map,
+                unique_stages=unique_stages,
+                compiler_phase_timings_ns=(
+                    profiled.profiler.compilation_phase_timings_ns
+                ),
+                compiler_phase_timings_by_abi=(
+                    profiled.profiler.compilation_phase_timings_by_abi
+                ),
+                cache_directories=self.artifacts.cache.diagnostics(),
+                cache_artifacts=_public_cache_artifacts(self.artifacts.cache),
+                profiling_metadata=(request.workload,),
+                memory=self.memory,
+            )
+            report = _finalize_plan_report(
+                self.model,
+                report,
+                self.artifacts.cache,
+                started=self.started,
+            )
+            return PlannedForward(
+                self.model,
+                request.signature,
+                executor,
+                state,
+                report,
+                self.memory.runtime,
+            )
+        except BaseException:
+            if state is not None:
+                state.restore_cpu_and_unregister()
+            raise
+
+    def _replay_slab(
+        self,
+        request: _ForwardRequest,
+        profiled: _ForwardProfileArtifacts,
+        program: _ForwardProgramArtifacts,
+        selection: CachedPressureFitResult,
+    ) -> SlabReplay:
+        with self.timer.measure("slab_admission"):
+            try:
+                return replay_selected_schedule(
+                    selection.result,
+                    program.measurements_by_profile,
+                    execution_pool_bytes=(
+                        int(request.installed.admission.execution_pool_bytes)
+                        - profiled.profiles.fixed_slab_bytes
+                    ),
+                    output_bindings=output_bindings_for_entrypoints(
+                        selection.result.program.selected_tasks(
+                            selection.result.selections
+                        ),
+                        program.lowered.entrypoints,
+                        {
+                            item.object_id: item.alias_group_id
+                            for item in selection.result.program.objects
+                        },
+                    ),
+                )
+            except AdmissionError as exc:
+                raise PlanningError(f"slab spatial admission failed: {exc}") from exc
+
+
+def _verify_manifest_identity(
+    resolved: ResolvedTaskManifests,
+    compiled: CompiledTaskSet,
+) -> None:
+    for digest, manifest in compiled.manifests.items():
+        expected = resolved.manifests.get(digest)
+        if expected is None or (
+            expected.compatibility_digest != manifest.compatibility_digest
+        ):
+            raise PlanningError(
+                f"compiled entrypoint changed its storage ABI: artifact={digest}"
+            )
 
 
 def _validate_forward_request(
@@ -495,6 +643,64 @@ def _spill_pool_estimate(
 def _workspace_reserve(measurements: Sequence[Any]) -> int:
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
     return workspace_reserve_bytes(peak)
+
+
+def _simulation_config(
+    memory: PlanMemory,
+    workspace_reserve: int,
+    profiles: ProfilingResult,
+) -> SimulationConfig:
+    """Build the exact framework-neutral simulator input for one Program."""
+
+    return SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=_simulation_capacity(
+            memory.execution_budget,
+            workspace_reserve,
+            profiles.measurements,
+            fixed_slab_bytes=profiles.fixed_slab_bytes,
+        ),
+        host_capacity_bytes=memory.spill_budget,
+        fetch_bandwidth_bytes_per_second=memory.transfers.route(
+            memory.spill.name,
+            memory.execution.name,
+        ).bandwidth_bytes_per_second,
+        evict_bandwidth_bytes_per_second=memory.transfers.route(
+            memory.execution.name,
+            memory.spill.name,
+        ).bandwidth_bytes_per_second,
+        fetch_latency_ns=memory.transfers.route(
+            memory.spill.name,
+            memory.execution.name,
+        ).latency_nanoseconds,
+        evict_latency_ns=memory.transfers.route(
+            memory.execution.name,
+            memory.spill.name,
+        ).latency_nanoseconds,
+    )
+
+
+def _physical_admission(
+    memory: PlanMemory,
+    installed: InstalledAllocator,
+    *,
+    workspace_reserve: int,
+    slab_replay: SlabReplay,
+) -> PhysicalAdmission:
+    """Describe the physical resources admitted after spatial replay."""
+
+    return PhysicalAdmission(
+        device_budget_bytes=(
+            memory.execution.physical_capacity or memory.execution_budget
+        ),
+        host_budget_bytes=memory.spill_budget,
+        context_bytes=int(installed.admission.context_bytes),
+        provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
+        slab_bytes=memory.execution_budget,
+        workspace_reserve_bytes=workspace_reserve,
+        host_reservation_bytes=int(installed.admission.spill_pool_bytes),
+        predicted_fragmentation_bytes=slab_replay.peak_fragmentation_bytes,
+    )
 
 
 def _reconcile_spill_pool(
@@ -801,42 +1007,6 @@ def _finalize_plan_report(
             ("total", elapsed),
         ),
     )
-
-
-def _archive_export_capture(
-    planning_cache: PlanningCache,
-    capture: ExportCapture,
-    *,
-    mode: str,
-    position: int,
-) -> str:
-    digest = export_capture_digest(capture)
-    signature = capture.exported_program.graph_signature
-    planning_cache.archive_export(
-        capture.exported_program,
-        digest=digest,
-        metadata={
-            "mode": mode,
-            "position": position,
-            "input_specs": [
-                {
-                    "kind": item.kind.name,
-                    "target": item.target,
-                    "argument": getattr(item.arg, "name", None),
-                }
-                for item in signature.input_specs
-            ],
-            "output_specs": [
-                {
-                    "kind": item.kind.name,
-                    "target": item.target,
-                    "argument": getattr(item.arg, "name", None),
-                }
-                for item in signature.output_specs
-            ],
-        },
-    )
-    return digest
 
 
 __all__ = ["build_forward"]

@@ -13,7 +13,7 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 
-from shadowspill.ir import ExecutionPlan, MemoryAction, TaskProfile
+from shadowspill.ir import ExecutionPlan, MemoryAction, Program, TaskProfile
 from shadowspill.planner import PressureFitResult
 
 from ._planning_cache import PlanningCache
@@ -626,6 +626,43 @@ class PlanReport:
     aot_graph_pair_cache_hits: int = 0
     aot_graph_pair_cache_misses: int = 0
     pressurefit_results: tuple[PressureFitResult, ...] = ()
+
+    @property
+    def program(self) -> Program:
+        """Canonical recurrent Program supplied directly to PressureFit.
+
+        Forward plans have one Program.  Training plans expose the recurrent
+        step here; :attr:`initial_program` names the optional lazy-state first
+        step separately.
+        """
+
+        return self.execution_plan.program
+
+    @property
+    def initial_program(self) -> Program | None:
+        """Canonical first-step Program, when lazy optimizer state requires one."""
+
+        if self.initial_execution_plan is None:
+            return None
+        return self.initial_execution_plan.program
+
+    @property
+    def pressurefit_result(self) -> PressureFitResult:
+        """PressureFit call boundary and selected result for the recurrent plan."""
+
+        if not self.pressurefit_results:
+            raise RuntimeError("PlanReport does not contain PressureFit evidence")
+        return self.pressurefit_results[-1]
+
+    @property
+    def initial_pressurefit_result(self) -> PressureFitResult | None:
+        """Selected first-step PressureFit result, when one was planned."""
+
+        if self.initial_execution_plan is None:
+            return None
+        if len(self.pressurefit_results) < 2:
+            raise RuntimeError("PlanReport is missing first-step PressureFit evidence")
+        return self.pressurefit_results[0]
 
     @property
     def predicted_device_peak_bytes(self) -> int:
