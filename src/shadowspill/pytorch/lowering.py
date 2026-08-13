@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -33,7 +34,12 @@ from .compiled_layout import (
     replacement_transition_bytes,
 )
 from .contracts import CaptureError
-from .output_contract import StorageRoot, StorageRootKind, TaskStorageContract
+from .output_contract import (
+    OutputView,
+    StorageRoot,
+    StorageRootKind,
+    TaskStorageContract,
+)
 from .partition import PartitionedExport, StageExample
 from .profiling import TaskMeasurement
 
@@ -142,6 +148,21 @@ def _view_extent_bytes(tensor: torch.Tensor) -> int:
     return int((last_element + 1) * tensor.element_size())
 
 
+def _contract_view_size(view: OutputView) -> int:
+    """Return logical bytes from one already-validated symbolic output view."""
+
+    elements = math.prod(view.shape)
+    if elements == 0:
+        return 0
+    span_elements = 1 + sum(
+        (extent - 1) * stride
+        for extent, stride in zip(view.shape, view.stride, strict=True)
+    )
+    if span_elements <= 0 or view.span_bytes % span_elements:
+        raise CaptureError("task output view has an invalid symbolic byte span")
+    return elements * (view.span_bytes // span_elements)
+
+
 class ObjectCatalog:
     """Canonical cross-task objects and alias bundles.
 
@@ -159,6 +180,7 @@ class ObjectCatalog:
         self._retain_host: set[str] = set()
         self._object_by_key: dict[_TensorKey, str] = {}
         self._objects: list[_ObjectRecord] = []
+        self._object_specs: tuple[ObjectSpec, ...] | None = None
         self._next_alias_id = 0
 
     @staticmethod
@@ -214,6 +236,29 @@ class ObjectCatalog:
             index_by_tensor_key=False,
         )
 
+    def add_contract_output_view(
+        self,
+        view: OutputView,
+        *,
+        alias_id: str,
+        offset_bytes: int,
+        role: ObjectRole,
+        persistence: Persistence,
+    ) -> str:
+        """Create an output object directly from the offline task contract."""
+
+        if alias_id not in self._alias_sizes:
+            raise CaptureError("task output references an unknown alias group")
+        if offset_bytes + view.span_bytes > self._alias_sizes[alias_id]:
+            raise CaptureError("task output view exceeds its declared storage")
+        return self._new_record(
+            alias_id=alias_id,
+            offset_bytes=offset_bytes,
+            size_bytes=_contract_view_size(view),
+            role=role,
+            persistence=persistence,
+        )
+
     def validate_canonical_output_view(
         self,
         tensor: torch.Tensor,
@@ -242,6 +287,35 @@ class ObjectCatalog:
                 f"actual={offset_bytes}"
             )
         size_bytes = int(tensor.numel()) * tensor.element_size()
+        if record.size_bytes != size_bytes:
+            raise CaptureError(
+                "canonical output changed its logical byte size: "
+                f"object={object_id}, expected={record.size_bytes}, "
+                f"actual={size_bytes}"
+            )
+
+    def validate_canonical_contract_view(
+        self,
+        view: OutputView,
+        object_id: str,
+        *,
+        alias_id: str,
+        offset_bytes: int,
+    ) -> None:
+        """Validate a contract view against an existing canonical object."""
+
+        record = self._record(object_id)
+        if record.alias_group_id != alias_id:
+            raise CaptureError("canonical output changed its alias group")
+        if offset_bytes + view.span_bytes > self._alias_sizes[alias_id]:
+            raise CaptureError("canonical output exceeds its declared storage")
+        if record.offset_bytes != offset_bytes:
+            raise CaptureError(
+                "canonical output changed its storage offset: "
+                f"object={object_id}, expected={record.offset_bytes}, "
+                f"actual={offset_bytes}"
+            )
+        size_bytes = _contract_view_size(view)
         if record.size_bytes != size_bytes:
             raise CaptureError(
                 "canonical output changed its logical byte size: "
@@ -316,19 +390,38 @@ class ObjectCatalog:
         persistence: Persistence,
         index_by_tensor_key: bool = True,
     ) -> str:
-        object_id = f"object_{len(self._objects):06d}"
+        object_id = self._new_record(
+            alias_id=alias_id,
+            offset_bytes=offset_bytes,
+            size_bytes=int(tensor.numel()) * tensor.element_size(),
+            role=role,
+            persistence=persistence,
+        )
         if index_by_tensor_key:
             self._object_by_key[key] = object_id
+        return object_id
+
+    def _new_record(
+        self,
+        *,
+        alias_id: str,
+        offset_bytes: int,
+        size_bytes: int,
+        role: ObjectRole,
+        persistence: Persistence,
+    ) -> str:
+        object_id = f"object_{len(self._objects):06d}"
         self._objects.append(
             _ObjectRecord(
                 object_id=object_id,
                 alias_group_id=alias_id,
                 offset_bytes=offset_bytes,
-                size_bytes=int(tensor.numel()) * tensor.element_size(),
+                size_bytes=size_bytes,
                 role=role,
                 persistence=persistence,
             )
         )
+        self._object_specs = None
         return object_id
 
     def _upgrade_object(
@@ -340,20 +433,32 @@ class ObjectCatalog:
         retain_spill_copy: bool,
     ) -> None:
         record = self._record(object_id)
-        if persistence is Persistence.CHECKPOINT:
+        changed = False
+        if (
+            persistence is Persistence.CHECKPOINT
+            and record.persistence is not Persistence.CHECKPOINT
+        ):
             record.persistence = persistence
+            changed = True
         if _ROLE_PRIORITY[role] > _ROLE_PRIORITY[record.role]:
             record.role = role
+            changed = True
         if retain_spill_copy:
             self._retain_host.add(record.alias_group_id)
+        if changed:
+            self._object_specs = None
 
     def alias_id(self, object_id: str) -> str:
         return self._record(object_id).alias_group_id
+
+    def object_size(self, object_id: str) -> int:
+        return self._record(object_id).size_bytes
 
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
         if record.role in {ObjectRole.OTHER, ObjectRole.ACTIVATION}:
             record.role = ObjectRole.OUTPUT
+            self._object_specs = None
 
     def _record(self, object_id: str) -> _ObjectRecord:
         index = int(object_id.removeprefix("object_"))
@@ -371,17 +476,19 @@ class ObjectCatalog:
         )
 
     def objects(self) -> tuple[ObjectSpec, ...]:
-        return tuple(
-            ObjectSpec(
-                item.object_id,
-                item.alias_group_id,
-                item.offset_bytes,
-                item.size_bytes,
-                item.role,
-                item.persistence,
+        if self._object_specs is None:
+            self._object_specs = tuple(
+                ObjectSpec(
+                    item.object_id,
+                    item.alias_group_id,
+                    item.offset_bytes,
+                    item.size_bytes,
+                    item.role,
+                    item.persistence,
+                )
+                for item in self._objects
             )
-            for item in self._objects
-        )
+        return self._object_specs
 
 
 class TaskBindingResolver:
@@ -424,7 +531,7 @@ class TaskBindingResolver:
             )
         )
         self._view_by_identity: dict[
-            tuple[str, int, tuple[int, ...], tuple[int, ...], torch.dtype], str
+            tuple[str, int, tuple[int, ...], tuple[int, ...], str], str
         ] = {}
         self._handoff_by_destination: dict[str, TaskStorageHandoff] = {}
 
@@ -437,13 +544,63 @@ class TaskBindingResolver:
         persistence: Persistence,
         canonical_object_id: str | None = None,
     ) -> str:
-        """Bind one returned tensor without consulting compiled execution."""
+        """Bind one returned tensor and validate it against the contract."""
 
         view = self._views.get(leaf_index)
         if view is None:
             raise CaptureError(
                 f"tensor output leaf {leaf_index} has no graph storage contract"
             )
+        if (
+            tuple(tensor.shape) != view.shape
+            or tuple(tensor.stride()) != view.stride
+            or str(tensor.dtype) != view.dtype
+            or _view_extent_bytes(tensor) != view.span_bytes
+        ):
+            raise CaptureError("task output tensor differs from its storage contract")
+        return self._bind_view(
+            leaf_index,
+            view,
+            tensor=tensor,
+            role=role,
+            persistence=persistence,
+            canonical_object_id=canonical_object_id,
+        )
+
+    def bind_contract(
+        self,
+        leaf_index: int,
+        *,
+        role: ObjectRole,
+        persistence: Persistence,
+        canonical_object_id: str | None = None,
+    ) -> str:
+        """Bind one output using only its offline semantic/physical contract."""
+
+        view = self._views.get(leaf_index)
+        if view is None:
+            raise CaptureError(
+                f"tensor output leaf {leaf_index} has no graph storage contract"
+            )
+        return self._bind_view(
+            leaf_index,
+            view,
+            tensor=None,
+            role=role,
+            persistence=persistence,
+            canonical_object_id=canonical_object_id,
+        )
+
+    def _bind_view(
+        self,
+        leaf_index: int,
+        view: OutputView,
+        *,
+        tensor: torch.Tensor | None,
+        role: ObjectRole,
+        persistence: Persistence,
+        canonical_object_id: str | None,
+    ) -> str:
         root = self._roots[view.root_id]
         replacement_object = self._replacement_by_leaf.get(leaf_index)
         source_object = (
@@ -514,9 +671,9 @@ class TaskBindingResolver:
         view_identity = (
             alias_id,
             offset_bytes,
-            tuple(tensor.shape),
-            tuple(tensor.stride()),
-            tensor.dtype,
+            view.shape,
+            view.stride,
+            view.dtype,
         )
         existing = self._view_by_identity.get(view_identity)
         if canonical_object_id is not None:
@@ -525,28 +682,39 @@ class TaskBindingResolver:
                 raise CaptureError(
                     "one compiled output view maps to multiple canonical objects"
                 )
-            self._inventory.validate_canonical_output_view(
-                tensor,
-                object_id,
-                alias_id=alias_id,
-                offset_bytes=offset_bytes,
-            )
-            view_identity = (
-                alias_id,
-                offset_bytes,
-                tuple(tensor.shape),
-                tuple(tensor.stride()),
-                tensor.dtype,
-            )
+            if tensor is None:
+                self._inventory.validate_canonical_contract_view(
+                    view,
+                    object_id,
+                    alias_id=alias_id,
+                    offset_bytes=offset_bytes,
+                )
+            else:
+                self._inventory.validate_canonical_output_view(
+                    tensor,
+                    object_id,
+                    alias_id=alias_id,
+                    offset_bytes=offset_bytes,
+                )
         elif existing is not None:
             object_id = existing
         else:
-            object_id = self._inventory.add_output_view(
-                tensor,
-                alias_id=alias_id,
-                offset_bytes=offset_bytes,
-                role=role,
-                persistence=persistence,
+            object_id = (
+                self._inventory.add_contract_output_view(
+                    view,
+                    alias_id=alias_id,
+                    offset_bytes=offset_bytes,
+                    role=role,
+                    persistence=persistence,
+                )
+                if tensor is None
+                else self._inventory.add_output_view(
+                    tensor,
+                    alias_id=alias_id,
+                    offset_bytes=offset_bytes,
+                    role=role,
+                    persistence=persistence,
+                )
             )
         self._view_by_identity[view_identity] = object_id
         return object_id

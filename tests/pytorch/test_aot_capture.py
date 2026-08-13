@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch import ObjectiveError, ObjectiveResult
+from shadowspill.pytorch import CaptureError, ObjectiveError, ObjectiveResult
 from shadowspill.pytorch.aot import (
     capture_forward,
     capture_training,
@@ -75,6 +75,24 @@ def test_objective_export_does_not_construct_a_whole_model_vjp(
     assert capture.objective_schema.tensor_metric_positions == (0,)
 
 
+def test_objective_schema_preserves_position_specific_static_metrics() -> None:
+    model = _Network()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    first_inputs = fake_cuda_inputs(
+        [torch.randn(4, 8), torch.randn(4, 8), 2], mode
+    )
+    second_inputs = fake_cuda_inputs(
+        [torch.randn(4, 8), torch.randn(4, 8), 3], mode
+    )
+    with mode:
+        first = capture_training_objective(replica, _objective, first_inputs)
+        second = capture_training_objective(replica, _objective, second_inputs)
+
+    assert first.objective_schema.static_metric_leaves == ((1, 2),)
+    assert second.objective_schema.static_metric_leaves == ((1, 3),)
+
+
 def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> None:
     model = _Network().eval()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -109,6 +127,59 @@ def test_structural_identity_includes_input_storage_aliases_and_offsets() -> Non
     assert aliased.tensor_inputs[0].storage_offset == 1
     assert aliased.tensor_inputs[1].storage_offset == 2
     assert aliased.compatibility_digest != distinct.compatibility_digest
+
+
+def test_artifact_rebind_preserves_contract_and_rejects_abi_changes() -> None:
+    class _Pair(nn.Module):
+        def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+            return left + right
+
+    graph = torch.fx.symbolic_trace(_Pair())
+    first_owner = torch.arange(20, dtype=torch.float32)
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=graph,
+        example_inputs=(first_owner[1:9], first_owner[2:10]),
+    )
+    second_owner = torch.arange(20, dtype=torch.float32)
+    rebound = artifact.rebind_examples((second_owner[1:9], second_owner[2:10]))
+
+    assert rebound.compatibility_digest == artifact.compatibility_digest
+    assert rebound.storage_contract is artifact.storage_contract
+    assert rebound.example_arguments[0].untyped_storage()._cdata != (
+        artifact.example_arguments[0].untyped_storage()._cdata
+    )
+    with pytest.raises(CaptureError, match="geometry"):
+        artifact.rebind_examples((second_owner[1:8], second_owner[2:9]))
+    left_owner = torch.arange(20, dtype=torch.float32)
+    right_owner = torch.arange(20, dtype=torch.float32)
+    with pytest.raises(CaptureError, match="aliases"):
+        artifact.rebind_examples((left_owner[1:9], right_owner[2:10]))
+
+
+def test_input_compatibility_digest_is_offline_and_alias_sensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Pair(nn.Module):
+        def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+            return left + right
+
+    graph = torch.fx.symbolic_trace(_Pair())
+    owner = torch.arange(20, dtype=torch.float32)
+    monkeypatch.setattr(
+        graph,
+        "forward",
+        lambda *args: pytest.fail(f"unexpected graph execution: {args}"),
+    )
+    aliased = GraphArtifact.input_compatibility_digest(
+        graph_module=graph,
+        example_inputs=(owner[1:9], owner[2:10]),
+    )
+    distinct = GraphArtifact.input_compatibility_digest(
+        graph_module=graph,
+        example_inputs=(owner[1:9].clone(), owner[2:10].clone()),
+    )
+    assert aliased != distinct
 
 
 @torch.library.custom_op("shadowspill_test::affine", mutates_args=())

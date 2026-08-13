@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import torch
@@ -15,7 +15,7 @@ from torch.fx.node import Node, map_arg
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from ._live_storage import live_storage_identity
-from .contracts import ObjectiveError, ObjectiveResult
+from .contracts import CaptureError, ObjectiveError, ObjectiveResult
 from .output_contract import (
     ExplicitMutation,
     TaskStorageContract,
@@ -70,6 +70,50 @@ class GraphArtifact:
     storage_contract_capture_ns: int = field(compare=False)
     compatibility_digest: str
     example_arguments: tuple[object, ...] = field(repr=False, compare=False)
+
+    @classmethod
+    def input_compatibility_digest(
+        cls,
+        *,
+        graph_module: GraphModule,
+        example_inputs: tuple[object, ...],
+        explicit_mutations: tuple[ExplicitMutation, ...] = (),
+    ) -> str:
+        """Identify a graph/input ABI without evaluating the graph outputs."""
+
+        graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
+            graph_module, example_inputs
+        )
+        tensor_arguments = tuple(
+            value for value in example_inputs if isinstance(value, torch.Tensor)
+        )
+        alias_group_by_storage: dict[int, int] = {}
+        identity = {
+            "graph": _canonical_graph(graph_module),
+            "inputs": [
+                TensorGeometry.from_tensor(value).identity()
+                for value in tensor_arguments
+            ],
+            "tensor_argument_positions": tensor_positions,
+            "tensor_argument_alias_groups": [
+                alias_group_by_storage.setdefault(
+                    live_storage_identity(value), len(alias_group_by_storage)
+                )
+                for value in tensor_arguments
+            ],
+            "mutations": [
+                {
+                    "input_position": item.input_position,
+                    "output_leaf_index": item.output_leaf_index,
+                    "target": item.target,
+                }
+                for item in explicit_mutations
+            ],
+            "torch": torch.__version__,
+            "cuda": torch.version.cuda,
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
     @classmethod
     def capture(
@@ -163,6 +207,37 @@ class GraphArtifact:
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
             example_arguments=example_inputs,
         )
+
+    def rebind_examples(self, example_arguments: tuple[object, ...]) -> GraphArtifact:
+        """Bind equivalent live tensors without re-extracting graph semantics.
+
+        Structural AOT cache hits reuse the exact same FX graph and storage
+        contract.  Only their occurrence-specific tensor storages differ.  The
+        complete tensor geometry and input-alias ABI are sufficient to prove
+        that the cached contract still applies; re-running the graph merely to
+        rediscover that immutable contract is both redundant and expensive.
+        """
+
+        if len(example_arguments) != self.argument_count or any(
+            not isinstance(value, torch.Tensor) for value in example_arguments
+        ):
+            raise CaptureError("rebound graph arguments differ from the tensor ABI")
+        tensors = tuple(
+            value for value in example_arguments if isinstance(value, torch.Tensor)
+        )
+        geometry = tuple(TensorGeometry.from_tensor(value) for value in tensors)
+        if geometry != self.tensor_inputs:
+            raise CaptureError("rebound graph tensor geometry differs from its ABI")
+        alias_group_by_storage: dict[int, int] = {}
+        alias_groups = tuple(
+            alias_group_by_storage.setdefault(
+                live_storage_identity(value), len(alias_group_by_storage)
+            )
+            for value in tensors
+        )
+        if alias_groups != self.tensor_argument_alias_groups:
+            raise CaptureError("rebound graph input aliases differ from its ABI")
+        return replace(self, example_arguments=example_arguments)
 
 
 def _specialize_static_inputs(

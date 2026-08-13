@@ -48,6 +48,11 @@ Every opaque operation must provide correct fake/meta, alias, mutation, and
 autograd contracts to PyTorch. ShadowSpill fails closed when one of those
 contracts is absent or ambiguous.
 
+Each gradient-accumulation position retains its own objective-output schema.
+Tensor metric structure may be structurally identical across positions, but
+static metric leaves are values produced for that guarded microbatch and are
+never borrowed from another position.
+
 The AOT graph is not the final executable storage ABI. Inductor is allowed to
 rewrite it while preserving values. For example, post-gradient optimization
 turns `x * ones_like(x)` into `x`; a logically fresh AOT output is therefore an
@@ -166,6 +171,24 @@ not a semantic-lowering mechanism.
 `TaskBindingResolver` combines one executable storage contract, its compiled
 layout, and predecoded task inputs. Forward, backward, recomputation,
 inference, and optimizer tasks use this same path.
+
+Program lowering is an offline translation. It never invokes a captured
+forward or backward graph to rediscover outputs, residuals, or gradients.
+Instead, the resolver binds every task leaf directly from its immutable
+storage contract and reconciled compiled layout. Occurrence-specific live
+inputs may be rebound to a cached structural graph pair only after their full
+geometry and input-alias pattern match; the cached backward contract is shared
+directly because its residual and tangent slots are canonical Program objects,
+not occurrence-specific Python tensors.
+
+This distinction is both semantic and operational. Executing graph pairs while
+constructing the Program made lowering depend on CUDA execution and retained
+large temporary result trees long enough to distort planning latency. It also
+repeated identical work for the initial and recurrent optimizer phases. The
+current path memoizes compiled-layout reconciliation by structural ABI and
+constructs both phases from contracts alone. Profiling remains responsible for
+timing, physical extents, workspace, and provider growth; none of those
+measurements is needed to decide which logical object a task leaf denotes.
 
 Program lowering is responsible for saved values, stage boundaries, gradient
 contributions, parameters, buffers, optimizer state, and public outputs.
@@ -331,6 +354,25 @@ Zero-byte alias groups are now explicitly nonphysical throughout planning,
 simulation, spatial replay, and runtime bridging. They remain tensor values in
 the frontend, are always ready for dependency purposes, and never receive an
 initial residency, memory action, lease, transfer, rebind, or retirement.
+
+### Program lowering re-executed structural graph pairs
+
+The first robust-contract implementation still called every captured
+forward/backward pair while building the canonical Program. Those calls did
+not determine the final executable ABI—the semantic and GraphLowering
+contracts already did—but they manufactured Python tensors used by the old
+binding path. Repeated blocks therefore paid repeated CUDA execution, output
+flattening, and tensor-lifetime costs during what should have been an offline
+translation. Pure Qwen spent 7.414 seconds in Program lowering in a controlled
+pre-change run.
+
+`TaskBindingResolver.bind_contract()` now consumes `OutputView` records
+directly, and `ObjectCatalog` derives logical extents from view geometry.
+Compiled-layout reconciliation is cached once per structural ABI. With the
+same profile cache and identical Program digest, pure Qwen Program lowering
+fell to 0.373 seconds. Five-step pressured execution and checkpoint replay
+then passed, proving that the removed graph executions supplied no required
+runtime semantics.
 
 ## Genericity and limits
 

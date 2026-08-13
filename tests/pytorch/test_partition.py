@@ -103,6 +103,7 @@ def test_repeated_stage_aot_code_reuses_one_structural_capture() -> None:
     second_interior = stages[2].save_pair
     assert first_interior.forward.graph_module is second_interior.forward.graph_module
     assert first_interior.backward.graph_module is second_interior.backward.graph_module
+    assert first_interior.backward is second_interior.backward
     assert (
         first_interior.forward.compatibility_digest
         == second_interior.forward.compatibility_digest

@@ -17,7 +17,6 @@ from torch.utils._pytree import tree_flatten
 from .aot import (
     ExportCapture,
     TrainingObjectiveCapture,
-    _tensor_only_mutations,
     capture_graph_pair,
 )
 from .capture import AotGraphPair, GraphArtifact
@@ -190,13 +189,12 @@ class _TrainingGraphPairCache:
         *,
         specialize_unit_tangents: bool,
     ) -> tuple[AotGraphPair, AotGraphPair]:
-        stage_abi = GraphArtifact.capture(
-            kind="inference",
+        stage_abi = GraphArtifact.input_compatibility_digest(
             graph_module=example.graph_module,
             example_inputs=example.inputs,
             explicit_mutations=example.mutations,
         )
-        key = (stage_abi.compatibility_digest, roots, specialize_unit_tangents)
+        key = (stage_abi, roots, specialize_unit_tangents)
         existing = self._pairs.get(key)
         if existing is None:
             existing = (
@@ -500,7 +498,14 @@ def _rebind_graph_pair(
     example: StageExample,
     roots: tuple[int, ...],
 ) -> AotGraphPair:
-    """Bind shared AOT code to one occurrence's symbolic input geometry."""
+    """Bind shared AOT forward inputs to one equivalent stage occurrence.
+
+    The cached backward artifact describes a structural ABI, not a concrete
+    layer's storage.  Its residual and tangent slots are rebound to canonical
+    Program objects later by ``TaskBindingResolver``.  Re-executing the forward
+    graph here solely to manufacture occurrence-specific FakeTensor residuals
+    would duplicate work without adding semantic validation.
+    """
 
     forward_arguments: list[torch.Tensor] = []
     for position in pair.forward.tensor_argument_positions:
@@ -515,48 +520,12 @@ def _rebind_graph_pair(
         forward_arguments.append(value.detach())
     if len(forward_arguments) != pair.forward.argument_count:
         raise CaptureError("reused stage forward tensor argument count changed")
-    forward = GraphArtifact.capture(
-        kind="forward",
-        graph_module=pair.forward.graph_module,
-        example_inputs=tuple(forward_arguments),
-        explicit_mutations=_tensor_only_mutations(
-            example.mutations, tuple(example.inputs)
-        ),
-    )
-    if forward.compatibility_digest != pair.forward.compatibility_digest:
-        raise CaptureError("reused stage forward ABI differs from its representative")
-
-    with torch.no_grad():
-        forward_values, _ = tree_flatten(
-            forward.graph_module(*forward.example_arguments)
-        )
-    residuals = (
-        tuple(forward_values[-pair.saved_value_count :])
-        if pair.saved_value_count
-        else ()
-    )
-    explicit_root_count = len(roots) - pair.specialized_unit_tangent_count
-    if explicit_root_count < 0:
+    forward = pair.forward.rebind_examples(tuple(forward_arguments))
+    if len(roots) < pair.specialized_unit_tangent_count:
         raise CaptureError("specialized tangent count exceeds stage roots")
-    tangents: list[torch.Tensor] = []
-    for position in roots[:explicit_root_count]:
-        try:
-            value = forward_values[position]
-        except IndexError as exc:
-            raise CaptureError("reused stage tangent position changed") from exc
-        if not isinstance(value, torch.Tensor):
-            raise CaptureError("reused stage tangent output became static")
-        tangents.append(torch.ones_like(value))
-    backward = GraphArtifact.capture(
-        kind="backward",
-        graph_module=pair.backward.graph_module,
-        example_inputs=(*residuals, *tangents),
-    )
-    if backward.compatibility_digest != pair.backward.compatibility_digest:
-        raise CaptureError("reused stage backward ABI differs from its representative")
     return AotGraphPair(
         forward=forward,
-        backward=backward,
+        backward=pair.backward,
         recomputation=pair.recomputation,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,

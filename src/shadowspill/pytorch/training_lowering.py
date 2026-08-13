@@ -32,6 +32,7 @@ from ._live_storage import live_view_key
 from .aot import TrainingCapture, TrainingObjectiveCapture
 from .capture import AotGraphPair, GraphArtifact
 from .compiled_layout import (
+    CompiledTaskLayout,
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
@@ -130,6 +131,27 @@ class _PairValues:
     backward_outputs: tuple[object, ...]
 
 
+class TrainingLoweringCache:
+    """Memoize immutable structural evidence shared by optimizer phases."""
+
+    def __init__(self) -> None:
+        self._layouts: dict[str, CompiledTaskLayout] = {}
+
+    def layout(
+        self,
+        artifact: GraphArtifact,
+        contract: TaskStorageContract,
+        measurement: TaskMeasurement,
+    ) -> CompiledTaskLayout:
+        existing = self._layouts.get(artifact.compatibility_digest)
+        if existing is None:
+            existing = reconcile_compiled_task_layout(contract, measurement)
+            self._layouts[artifact.compatibility_digest] = existing
+        elif existing.contract_digest != contract.compatibility_digest:
+            raise CaptureError("one artifact ABI resolved to several storage contracts")
+        return existing
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedStageVariant:
     stage: TrainingStage
@@ -183,6 +205,7 @@ def lower_partitioned_training_program(
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    lowering_cache: TrainingLoweringCache | None = None,
 ) -> LoweredTrainingProgram:
     """Compose stage-local graph pairs into one accumulated training program."""
 
@@ -194,6 +217,7 @@ def lower_partitioned_training_program(
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     if optimizer_ordering not in {"stage_interleaved", "tail"}:
         raise CaptureError(f"unknown optimizer ordering {optimizer_ordering!r}")
+    cache = lowering_cache or TrainingLoweringCache()
     device_id = f"cuda_{device_ordinal}"
     inventory = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = _register_model(model, inventory)
@@ -252,8 +276,15 @@ def lower_partitioned_training_program(
     def mutation_transition_bytes(artifact: GraphArtifact) -> int:
         measurement = measurement_for(artifact)
         contract = contract_for(artifact)
-        layout = reconcile_compiled_task_layout(contract, measurement)
+        layout = cache.layout(artifact, contract, measurement)
         return replacement_transition_bytes(contract, layout)
+
+    def compiled_layout_for(artifact: GraphArtifact) -> CompiledTaskLayout:
+        return cache.layout(
+            artifact,
+            contract_for(artifact),
+            measurement_for(artifact),
+        )
 
     parameter_ids = set(parameter_objects.values())
     boundary_ids: list[list[tuple[str, ...]]] = []
@@ -287,7 +318,6 @@ def lower_partitioned_training_program(
             )
             if boundary_count != len(leaves):
                 raise CaptureError("stage boundary output count changed during AOT")
-            save_values = _execute_stage_pair_examples(save_pair).forward_outputs
             save_inputs = resolve_stage_input_slots(
                 stage.example,
                 save_pair.forward,
@@ -302,24 +332,16 @@ def lower_partitioned_training_program(
                 inventory,
                 save_pair.forward,
                 save_inputs,
-                reconcile_compiled_task_layout(
-                    contract_for(save_pair.forward),
-                    measurement_for(save_pair.forward),
-                ),
+                compiled_layout_for(save_pair.forward),
                 storage_contract=contract_for(save_pair.forward),
             )
             ids: list[str] = []
-            for index, (value, graph_value) in enumerate(
-                zip(leaves, save_values[:boundary_count], strict=True)
-            ):
-                if not isinstance(value, torch.Tensor) or not isinstance(
-                    graph_value, torch.Tensor
-                ):
+            for index, value in enumerate(leaves):
+                if not isinstance(value, torch.Tensor):
                     raise CaptureError("training stage output became non-tensor")
                 ids.append(
-                    boundary_resolver.bind(
+                    boundary_resolver.bind_contract(
                         index,
-                        graph_value,
                         role=(
                             ObjectRole.OUTPUT
                             if index in public_output_leaves
@@ -382,7 +404,6 @@ def lower_partitioned_training_program(
                 ("save", stage.save_pair),
                 ("recompute", stage.recompute_pair),
             ):
-                values = _execute_stage_pair_examples(pair)
                 forward_inputs = resolve_stage_input_slots(
                     stage.example,
                     pair.forward,
@@ -404,11 +425,10 @@ def lower_partitioned_training_program(
                     forward_storage_handoffs,
                 ) = _stage_forward_outputs(
                     pair,
-                    values.forward_outputs,
                     forward_inputs,
                     canonical_outputs,
                     inventory,
-                    measurement_for(pair.forward),
+                    compiled_layout_for(pair.forward),
                     contract_for(pair.forward),
                     context=(
                         f"microbatch={position}, stage={stage_index}, "
@@ -432,14 +452,13 @@ def lower_partitioned_training_program(
                         _stage_backward_contributions(
                             position,
                             pair,
-                            values.backward_outputs,
                             forward_inputs,
                             backward_inputs,
                             parameter_ids,
                             gradient_by_parameter,
                             cotangent_by_activation,
                             inventory,
-                            measurement_for(pair.backward),
+                            compiled_layout_for(pair.backward),
                             contract_for(pair.backward),
                         )
                     )
@@ -604,11 +623,7 @@ def lower_partitioned_training_program(
                     dependencies.extend(initial_writers[object_id])
                     dependencies.extend(latest_contributors[object_id])
                 mutation_bytes = sum(
-                    next(
-                        value.size_bytes
-                        for value in inventory.objects()
-                        if value.object_id == object_id
-                    )
+                    inventory.object_size(object_id)
                     for object_id in mutated
                 )
                 inputs = [slot.object_id for slot in item.backward_inputs]
@@ -880,11 +895,7 @@ def lower_training_program(
     all_backward_ids: list[str] = []
     fixed_tensors: dict[str, FixedTensorBinding] = {}
     gradient_bytes = sum(
-        next(
-            item.size_bytes
-            for item in inventory.objects()
-            if item.object_id == binding.gradient_object_id
-        )
+        inventory.object_size(binding.gradient_object_id)
         for binding in gradients
     )
 
@@ -1385,23 +1396,12 @@ def _execute_pair_examples(pair: AotGraphPair) -> _PairValues:
     return _PairValues(tuple(forward_values), tuple(backward_values))
 
 
-def _execute_stage_pair_examples(pair: AotGraphPair) -> _PairValues:
-    forward_raw = pair.forward.graph_module(*pair.forward.example_arguments)
-    forward_values, _ = tree_flatten(forward_raw)
-    residuals = forward_values[pair.forward.output_count - pair.saved_value_count :]
-    tangents = pair.backward.example_arguments[pair.saved_value_count :]
-    backward_raw = pair.backward.graph_module(*residuals, *tangents)
-    backward_values, _ = tree_flatten(backward_raw)
-    return _PairValues(tuple(forward_values), tuple(backward_values))
-
-
 def _stage_forward_outputs(
     pair: AotGraphPair,
-    values: tuple[object, ...],
     forward_inputs: tuple[TensorSlot, ...],
     canonical_outputs: tuple[str, ...],
     inventory: ObjectCatalog,
-    measurement: TaskMeasurement,
+    compiled_layout: CompiledTaskLayout,
     storage_contract: TaskStorageContract,
     *,
     context: str,
@@ -1417,12 +1417,8 @@ def _stage_forward_outputs(
         raise CaptureError("stage boundary output count changed across AOT capture")
     slots: list[TensorSlot] = []
     residual_object_ids: list[str] = []
-    try:
-        compiled_layout = reconcile_compiled_task_layout(
-            storage_contract, measurement
-        )
-    except CaptureError as exc:
-        raise CaptureError(f"{context}: {exc}") from exc
+    if compiled_layout.contract_digest != storage_contract.compatibility_digest:
+        raise CaptureError(f"{context}: compiled layout belongs to another contract")
     resolver = TaskBindingResolver(
         inventory,
         pair.forward,
@@ -1430,21 +1426,17 @@ def _stage_forward_outputs(
         compiled_layout,
         storage_contract=storage_contract,
     )
-    for index, value in enumerate(values):
-        if not isinstance(value, torch.Tensor):
-            raise CaptureError("AOT stage forward returned a non-tensor leaf")
+    for index in range(pair.forward.output_count):
         if index < public_count:
-            object_id = resolver.bind(
+            object_id = resolver.bind_contract(
                 index,
-                value,
                 role=ObjectRole.ACTIVATION,
                 persistence=Persistence.STEP,
                 canonical_object_id=canonical_outputs[index],
             )
         else:
-            object_id = resolver.bind(
+            object_id = resolver.bind_contract(
                 index,
-                value,
                 role=ObjectRole.ACTIVATION,
                 persistence=Persistence.STEP,
             )
@@ -1519,14 +1511,13 @@ def _stage_backward_inputs(
 def _stage_backward_contributions(
     position: int,
     pair: AotGraphPair,
-    values: tuple[object, ...],
     forward_inputs: tuple[TensorSlot, ...],
     backward_inputs: tuple[TensorSlot, ...],
     parameter_ids: set[str],
     gradient_by_parameter: dict[str, str],
     cotangent_by_activation: dict[tuple[int, str], str],
     inventory: ObjectCatalog,
-    measurement: TaskMeasurement,
+    compiled_layout: CompiledTaskLayout,
     storage_contract: TaskStorageContract,
 ) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
@@ -1534,16 +1525,14 @@ def _stage_backward_contributions(
         inventory,
         pair.backward,
         backward_inputs,
-        reconcile_compiled_task_layout(storage_contract, measurement),
+        compiled_layout,
         storage_contract=storage_contract,
     )
+    output_leaves = {item.leaf_index for item in storage_contract.output_views}
     results: list[TensorSlot] = []
     for output_index in pair.forward.tensor_argument_positions:
         object_id = input_by_position.get(output_index)
-        if object_id is None or output_index >= len(values):
-            continue
-        value = values[output_index]
-        if not isinstance(value, torch.Tensor):
+        if object_id is None or output_index not in output_leaves:
             continue
         destination: str | None
         if object_id in parameter_ids:
@@ -1552,9 +1541,8 @@ def _stage_backward_contributions(
             destination = cotangent_by_activation.get((position, object_id))
             if destination is None:
                 continue
-        bound = resolver.bind(
+        bound = resolver.bind_contract(
             output_index,
-            value,
             role=ObjectRole.GRADIENT,
             persistence=Persistence.STEP,
             canonical_object_id=destination,

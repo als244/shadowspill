@@ -56,6 +56,7 @@ from .spatial_admission import (
 )
 from .training_executor import TrainingExecutor
 from .training_lowering import (
+    TrainingLoweringCache,
     lower_partitioned_training_program,
     lower_training_storage_layout,
 )
@@ -222,6 +223,7 @@ def build_training(
                     artifacts, profiles.measurements, strict=True
                 )
             }
+            lowering_cache = TrainingLoweringCache()
             initial_lowered = lower_partitioned_training_program(
                 fake_model,
                 partitioned_captures,
@@ -230,6 +232,7 @@ def build_training(
                 storage_contracts=compiled_tasks.storage_contracts,
                 optimizer_phase="initial",
                 optimizer_ordering=optimizer_ordering,
+                lowering_cache=lowering_cache,
             )
             recurrent_lowered = lower_partitioned_training_program(
                 fake_model,
@@ -239,6 +242,7 @@ def build_training(
                 storage_contracts=compiled_tasks.storage_contracts,
                 optimizer_phase="recurrent",
                 optimizer_ordering=optimizer_ordering,
+                lowering_cache=lowering_cache,
             )
             _verify_provisional_layout(layout, recurrent_lowered)
             _verify_optimizer_phase_identity(initial_lowered, recurrent_lowered)
