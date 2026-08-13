@@ -33,9 +33,11 @@ For every bounded recomputation selection, PressureFit:
 7. selects the shortest valid makespan, using portfolio order only as a tie
    break.
 
-Candidate evaluation may run concurrently. Worker count never enters candidate
-identity or ordering. Once a candidate is selected, its action locations are
-immutable; physical admission may reject the result but cannot move a trigger.
+Candidate evaluation may run concurrently. `PressureFitOptions.workers=0` is
+the default and uses the available logical CPUs; `workers=1` provides an
+explicit serial control. Worker count never enters candidate identity or
+ordering. Once a candidate is selected, its action locations are immutable;
+physical admission may reject the result but cannot move a trigger.
 
 ## Selection cache
 
@@ -68,10 +70,16 @@ spaces. This keeps search finite without introducing operation-specific rules.
 
 ## Compiled boundary
 
-The readable Python policy constructs candidates. `libshadowspill_planner.so`
-owns the framework-neutral compiled selection boundary: it independently
-replays every materialized candidate through `libshadowspill_simulator.so` and
-selects by makespan and declaration order. Differential tests require this
-selection to agree with the Python policy. Keeping schedule construction in
-the policy layer avoids a second, divergent implementation of PressureFit's
-heuristics while retaining a stable C handoff for other language frontends.
+Python constructs each resolved recomputation context and remains the readable
+semantic authority. `libshadowspill_planner.so` then evaluates that context's
+complete policy portfolio in dense records: residency reduction and repair,
+interval refinement, action emission, simulator replay, schedule hashing,
+diagnostics, and context-local selection. Only the globally selected schedule
+is materialized as Python IR.
+
+The Python candidate path remains an independently executable differential
+oracle when the compiled planner is unavailable. Native and Python paths must
+agree on every recomputation choice, action and trigger, byte count, repair,
+failure diagnostic, stall, peak, schedule digest, and makespan. Parallel native
+contexts preserve declaration order and use the same deterministic
+makespan/ordinal tie-break as serial execution.

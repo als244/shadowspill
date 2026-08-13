@@ -10,6 +10,7 @@ from shadowspill.planner._residency import (
     ResidencyPlan,
     Span,
     _pressure_by_device,
+    _required_floor_pressure,
     boundary_bytes,
     extend_interval_entries,
     reduce_pressure,
@@ -100,6 +101,22 @@ def test_pressure_sweep_matches_scalar_boundaries(
             )
             for boundary in range(-1, facts.last_boundary + 1)
         )
+
+
+def test_direct_required_floor_matches_minimal_residency_sweep() -> None:
+    program = training_chain_program(10)
+    initial = training_chain_initial(10)
+    selected_config = training_chain_config(500)
+    facts = build_facts(program, (), initial, (), selected_config)
+    minimal = ResidencyPlan(
+        tuple(
+            tuple(Span(value, value) for value in sorted(anchors))
+            for anchors in facts.anchors
+        ),
+        facts.anchors,
+    )
+
+    assert _required_floor_pressure(facts) == _pressure_by_device(facts, minimal)
 
 
 def test_interval_extension_matches_scalar_admission() -> None:

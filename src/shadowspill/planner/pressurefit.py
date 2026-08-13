@@ -43,6 +43,7 @@ from ._facts import PlanningFacts, build_facts
 from ._native_portfolio import (
     NativeContextResult,
     decode_candidate_diagnostic,
+    decode_schedule,
     evaluate_context_compiled,
 )
 from ._residency import (
@@ -627,7 +628,7 @@ def _native_worker_count(options: PressureFitOptions, count: int) -> int:
         return 1
     if options.workers > 1:
         return min(options.workers, count)
-    return min(max(os.cpu_count() or 1, 1), 16, count)
+    return min(max(os.cpu_count() or 1, 1), count)
 
 
 def _run_native_contexts(
@@ -699,9 +700,10 @@ def _finish_native_pressurefit(
     per_context = len(result.candidates)
     context_index, candidate_index = divmod(ordinal, per_context)
     context = contexts[context_index]
-    schedule = result.selected_schedule
-    assert schedule is not None
+    dense_schedule = result.selected_schedule
+    assert dense_schedule is not None
     assert context.compiled_template is not None
+    schedule = decode_schedule(dense_schedule, context.compiled_template)
     simulation = simulate_compiled_template(context.compiled_template, schedule)
     selected_diagnostic = result.candidates[candidate_index]
     public_diagnostics = PressureFitDiagnostics(

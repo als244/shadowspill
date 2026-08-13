@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from array import array
 from dataclasses import dataclass
 
 from shadowspill.ir import (
@@ -61,17 +62,25 @@ _STALL_REASONS = (
 
 def _u32_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
     array_type = ctypes.c_uint32 * max(1, len(values))
-    return array_type(*values) if values else array_type()
+    return (
+        array_type.from_buffer_copy(array("I", values))
+        if values
+        else array_type()
+    )
 
 
 def _u64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
     array_type = ctypes.c_uint64 * max(1, len(values))
-    return array_type(*values) if values else array_type()
+    return (
+        array_type.from_buffer_copy(array("Q", values))
+        if values
+        else array_type()
+    )
 
 
 def _u8_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
     array_type = ctypes.c_uint8 * max(1, len(values))
-    return array_type(*values) if values else array_type()
+    return array_type.from_buffer_copy(bytes(values)) if values else array_type()
 
 
 def _offsets(

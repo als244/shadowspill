@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from array import array
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,9 +25,19 @@ from .model import PressureFitInfeasibleError
 
 def _array(ctype: Any, values: list[int]) -> Any:
     array_type = ctype * max(1, len(values))
-    if ctype is ctypes.c_uint8 and values:
-        return array_type.from_buffer_copy(bytes(values))
-    return array_type(*values) if values else array_type()
+    if not values:
+        return array_type()
+    if ctype is ctypes.c_uint8:
+        payload: object = bytes(values)
+    elif ctype is ctypes.c_int8:
+        payload = array("b", values)
+    elif ctype is ctypes.c_uint32:
+        payload = array("I", values)
+    elif ctype is ctypes.c_uint64:
+        payload = array("Q", values)
+    else:  # pragma: no cover - private helper accepts only the cases above.
+        raise TypeError(f"unsupported dense array type: {ctype!r}")
+    return array_type.from_buffer_copy(payload)
 
 
 @dataclass(frozen=True, slots=True)

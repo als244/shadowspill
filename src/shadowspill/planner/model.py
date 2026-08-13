@@ -30,7 +30,8 @@ class PressureFitOptions:
     """Bounded heuristic portfolio configuration.
 
     Worker count changes only evaluation concurrency. It never enters candidate
-    identity or tie-breaking.
+    identity or tie-breaking. Zero selects all available logical CPUs; one
+    forces serial evaluation.
     """
 
     initial_placement: InitialPlacement = InitialPlacement.GREEDY
@@ -49,7 +50,7 @@ class PressureFitOptions:
     )
     evaluate_coalesced: bool = True
     max_repair_attempts: int = 16
-    workers: int = 1
+    workers: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.initial_placement, InitialPlacement):

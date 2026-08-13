@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 
 from shadowspill.ir import (
     MemoryAction,
@@ -79,10 +80,28 @@ class NativeCandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeDenseSchedule:
+    """Copied dense indices for one context winner.
+
+    Keeping the context-local winner dense avoids constructing and validating
+    thousands of Python IR records that will be discarded when a different
+    recomputation context wins the global portfolio.
+    """
+
+    action_trigger_tasks: tuple[int, ...]
+    action_aliases: tuple[int, ...]
+    action_kinds: tuple[int, ...]
+    initial_aliases: tuple[int, ...]
+    initial_locations: tuple[int, ...]
+    final_aliases: tuple[int, ...]
+    final_locations: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class NativeContextResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
-    selected_schedule: MemorySchedule | None
+    selected_schedule: NativeDenseSchedule | None
     candidates: tuple[NativeCandidateDiagnostic, ...]
     residency_cache_hits: int
     residency_cache_misses: int
@@ -155,38 +174,85 @@ def decode_candidate_diagnostic(
     )
 
 
+@lru_cache(maxsize=131_072)
 def _escaped_identifier(value: str) -> bytes:
     encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return encoded[1:-1].encode("utf-8")
 
 
-def _decode_schedule(
-    result: CPressureFitContextResult,
+def _copy_schedule(result: CPressureFitContextResult) -> NativeDenseSchedule:
+    value = result.selected_schedule
+    return NativeDenseSchedule(
+        action_trigger_tasks=tuple(
+            int(value.action_trigger_tasks[index])
+            for index in range(int(value.action_count))
+        ),
+        action_aliases=tuple(
+            int(value.action_aliases[index])
+            for index in range(int(value.action_count))
+        ),
+        action_kinds=tuple(
+            int(value.action_kinds[index])
+            for index in range(int(value.action_count))
+        ),
+        initial_aliases=tuple(
+            int(value.initial_aliases[index])
+            for index in range(int(value.initial_count))
+        ),
+        initial_locations=tuple(
+            int(value.initial_locations[index])
+            for index in range(int(value.initial_count))
+        ),
+        final_aliases=tuple(
+            int(value.final_aliases[index])
+            for index in range(int(value.final_count))
+        ),
+        final_locations=tuple(
+            int(value.final_locations[index])
+            for index in range(int(value.final_count))
+        ),
+    )
+
+
+def decode_schedule(
+    value: NativeDenseSchedule,
     simulation: CompiledSimulationTemplate,
 ) -> MemorySchedule:
-    value = result.selected_schedule
     return MemorySchedule(
         initial_residency=tuple(
             ResidencySpec(
-                simulation.alias_ids[int(value.initial_aliases[index])],
-                _LOCATION[int(value.initial_locations[index])],
+                simulation.alias_ids[alias],
+                _LOCATION[location],
             )
-            for index in range(int(value.initial_count))
+            for alias, location in zip(
+                value.initial_aliases,
+                value.initial_locations,
+                strict=True,
+            )
         ),
         actions=tuple(
             MemoryAction(
-                simulation.task_ids[int(value.action_trigger_tasks[index])],
-                simulation.alias_ids[int(value.action_aliases[index])],
-                _ACTION_KIND[int(value.action_kinds[index])],
+                simulation.task_ids[task],
+                simulation.alias_ids[alias],
+                _ACTION_KIND[kind],
             )
-            for index in range(int(value.action_count))
+            for task, alias, kind in zip(
+                value.action_trigger_tasks,
+                value.action_aliases,
+                value.action_kinds,
+                strict=True,
+            )
         ),
         final_residency=tuple(
             ResidencySpec(
-                simulation.alias_ids[int(value.final_aliases[index])],
-                _LOCATION[int(value.final_locations[index])],
+                simulation.alias_ids[alias],
+                _LOCATION[location],
             )
-            for index in range(int(value.final_count))
+            for alias, location in zip(
+                value.final_aliases,
+                value.final_locations,
+                strict=True,
+            )
         ),
     )
 
@@ -291,7 +357,7 @@ def evaluate_context_compiled(
             selected_schedule=(
                 None
                 if selected == NO_INDEX
-                else _decode_schedule(native_result, simulation)
+                else _copy_schedule(native_result)
             ),
             candidates=tuple(candidates),
             residency_cache_hits=int(native_result.residency_cache_hits),
@@ -314,6 +380,8 @@ def evaluate_context_compiled(
 __all__ = [
     "NativeCandidateDiagnostic",
     "NativeContextResult",
+    "NativeDenseSchedule",
     "decode_candidate_diagnostic",
+    "decode_schedule",
     "evaluate_context_compiled",
 ]

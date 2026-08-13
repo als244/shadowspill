@@ -604,17 +604,45 @@ def extend_interval_entries(
     return current
 
 
+def _required_floor_pressure(facts: PlanningFacts) -> dict[str, tuple[int, ...]]:
+    """Return the exact anchor/output floor without materializing spans."""
+
+    boundary_count = len(facts.tasks) + 1
+    pressure = {
+        device_id: [0] * boundary_count
+        for device_id in facts.object_capacity_by_device
+    }
+    charged_anchors: list[set[int]] = []
+    for alias, anchors in enumerate(facts.anchors):
+        charged: set[int] = set()
+        for boundary in anchors:
+            contributes = (
+                boundary < 0
+                or facts.final_locations[alias] is MemoryLocation.DEVICE
+                or any(
+                    access_boundary == boundary and task > boundary
+                    for access_boundary, task in facts.access_events[alias]
+                )
+            )
+            if contributes:
+                charged.add(boundary)
+                pressure[facts.alias_devices[alias]][boundary + 1] += (
+                    facts.alias_sizes[alias]
+                )
+        charged_anchors.append(charged)
+
+    for task, reservations in enumerate(facts.output_reservations):
+        boundary = task - 1
+        for alias in reservations:
+            if boundary not in charged_anchors[alias]:
+                pressure[facts.alias_devices[alias]][task] += facts.alias_sizes[alias]
+    return {device_id: tuple(values) for device_id, values in pressure.items()}
+
+
 def assert_required_floor(facts: PlanningFacts) -> None:
     """Fail early when anchors plus fresh outputs exceed object capacity."""
 
-    minimal = ResidencyPlan(
-        tuple(
-            tuple(Span(value, value) for value in sorted(anchors))
-            for anchors in facts.anchors
-        ),
-        facts.anchors,
-    )
-    pressure = _pressure_by_device(facts, minimal)
+    pressure = _required_floor_pressure(facts)
     for boundary in range(-1, facts.last_boundary + 1):
         for device_id, capacity in facts.object_capacity_by_device.items():
             required = pressure[device_id][boundary + 1]
