@@ -8,6 +8,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.aot import capture_forward
 from shadowspill.pytorch.capture import GraphArtifact
+from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.partition import capture_forward_stages, partition_export
 from shadowspill.pytorch.profiling import (
@@ -140,3 +141,40 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
         cache=cache,
     )
     assert calls == 2
+
+
+def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:
+    artifact = _artifacts()[0]
+    cache = ProfileCache(tmp_path)
+    calls = 0
+
+    def measure(_artifact: GraphArtifact) -> TaskMeasurement:
+        nonlocal calls
+        calls += 1
+        return TaskMeasurement(2, 0, 0, (), (2,), "fresh")
+
+    profile_unique_artifacts(
+        (artifact,),
+        environment=_environment(),
+        measure=lambda _artifact: TaskMeasurement(1, 0, 0, (), (1,), "stale"),
+        cache=cache,
+    )
+
+    def validate(
+        _artifact: GraphArtifact,
+        measurement: TaskMeasurement,
+    ) -> None:
+        if measurement.runtime_ns != 2:
+            raise CaptureError("stale physical output extent")
+
+    result = profile_unique_artifacts(
+        (artifact,),
+        environment=_environment(),
+        measure=measure,
+        cache=cache,
+        validate=validate,
+    )
+    assert calls == 1
+    assert result.cache_hits == 0
+    assert result.cache_misses == 1
+    assert result.measurements[0].runtime_ns == 2

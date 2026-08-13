@@ -15,13 +15,13 @@ Inductor optimized FX (captured before code generation)
     │ value rewrites and candidate output provenance
     ▼
 Inductor GraphLowering output manifest
-    │ final executable buffers, aliases, views, layouts, mutations
+    │ final buffers, aliases, views, mutations, wrapper allocation extents
     ▼
 ExecutableTaskManifest
     │ validated by isolated execution; never inferred from it
     ▼
 CompiledTaskLayout
-    │ extents, allocation lifetimes, workspace, provider growth, timing
+    │ validated leases, charged geometry, workspace, provider growth, timing
     ▼
 canonical Program → PressureFit → simulator → runtime
 ```
@@ -91,6 +91,9 @@ This layer owns:
   executable buffers;
 - which returned views share one final executable buffer;
 - executable output offsets, strides, and extents before physical execution;
+- exact requested allocation length for every fresh returned root, using the
+  same `GraphLowering.get_allocation_storage_size()` calculation as Inductor's
+  generated wrapper;
 - the mutation ABI retained by the optimized graph.
 
 The optimized FX contract is diagnostic provenance, not the final allocation
@@ -141,13 +144,17 @@ exact-stride arguments restores byte-identical executable contracts, compiled
 layouts, workspace, and transition accounting while still enabling cache
 reuse.
 
-### 4. Compiled physical layout: measurement authority
+### 4. Compiled physical layout: compiler authority plus measurement
 
-Isolated structural profiling produces `CompiledTaskLayout` from allocator and
-provider observations:
+`ExecutableTaskManifest` owns each fresh output root's requested allocation
+extent. This value comes directly from Inductor's final buffer layout and is
+available offline. Isolated structural profiling then produces
+`CompiledTaskLayout` by validating allocator and provider observations against
+that immutable ABI:
 
 - output allocation ordinals and actual view offsets;
-- requested and charged physical extents;
+- exact agreement between the observed allocation request and the compiler
+  request, plus the allocator-charged extent;
 - allocation/free lifetime and reuse geometry;
 - anonymous or opaque workspace high-water;
 - bounded persistent provider growth;
@@ -158,6 +165,15 @@ FX contract.
 An input-root output must be observed at that input; a fresh root must have one
 compatible output allocation; distinct simultaneously-live roots cannot be
 merged. Any disagreement fails closed.
+
+This distinction prevents a cached telemetry trace from redefining a Program
+object. A concrete Qwen regression attributed a 156,672-byte returned buffer
+to a later reused 221,184-byte allocation. Its semantic and executable roots
+were unchanged, but the stale physical observation made the Program declare
+the larger object and fail when the real callable returned the correct smaller
+lease. ShadowSpill now rejects and remeasures such a cache entry before Program
+construction. Telemetry still owns charged slab geometry because a generic
+pool may round a compiler request, but it cannot alter the requested extent.
 
 Opaque custom-operation workspace is necessarily measured unless the provider
 declares it. Inductor can expose wrapper-visible temporary buffers, but it
@@ -187,7 +203,7 @@ large temporary result trees long enough to distort planning latency. It also
 repeated identical work for the initial and recurrent optimizer phases. The
 current path memoizes compiled-layout reconciliation by structural ABI and
 constructs both phases from contracts alone. Profiling remains responsible for
-timing, physical extents, workspace, and provider growth; none of those
+timing, charged extents, workspace, and provider growth; none of those
 measurements is needed to decide which logical object a task leaf denotes.
 
 Program lowering is responsible for saved values, stage boundaries, gradient
@@ -233,7 +249,8 @@ would be incorrect.
 | Is the compiled output fresh or an input alias? | Infer from allocator pointers | Optimized FX provenance plus final GraphLowering buffer |
 | Do returned leaves share storage? | FakeTensor `_cdata` or allocation ordinal | Final GraphLowering root |
 | What is the executable view offset? | Mix captured and observed offsets | GraphLowering layout, physically validated |
-| What is the charged extent? | Telemetry also influenced identity | Telemetry only after identity is fixed |
+| What is the requested output extent? | Timing-sensitive telemetry attribution | Inductor wrapper allocation manifest |
+| What is the allocator-charged extent? | Telemetry also influenced identity | Telemetry validated after identity and request are fixed |
 | What is opaque workspace? | Allocator telemetry | Allocator telemetry or provider declaration |
 | Who creates Program objects? | Capture/profiling mixture | `ObjectCatalog` + `TaskBindingResolver` |
 | Can profiling merge roots? | Previously yes in edge cases | Never |

@@ -23,7 +23,10 @@ from shadowspill.pytorch.compiler import (
     profile_environment,
 )
 from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.inductor_adapter import ExecutableTaskManifest
+from shadowspill.pytorch.inductor_adapter import (
+    ExecutableRootAllocation,
+    ExecutableTaskManifest,
+)
 from shadowspill.pytorch.optimizer import capture_optimizer
 
 
@@ -52,6 +55,13 @@ def _manifest(artifact: GraphArtifact) -> ExecutableTaskManifest:
         storage_contract=artifact.storage_contract,
         contract_capture_ns=0,
         compatibility_digest="0" * 64,
+        root_allocations=tuple(
+            ExecutableRootAllocation(
+                root.root_id,
+                0 if root.kind.value == "input" else root.minimum_span_bytes,
+            )
+            for root in artifact.storage_contract.roots
+        ),
     )
 
 
@@ -93,6 +103,9 @@ def test_materialization_preserves_storage_alias_and_compiles() -> None:
     assert metadata == {"mode": 2}
 
     executable = compile_artifact(_artifact(), device_ordinal=0)
+    assert tuple(
+        item.requested_bytes for item in executable.manifest.root_allocations
+    ) == (256,)
     output = executable()
     assert isinstance(output, torch.Tensor)
     torch.testing.assert_close(output, torch.zeros_like(output))
@@ -141,6 +154,27 @@ def test_inductor_manifest_captures_post_grad_output_alias() -> None:
     output = executable()
     assert isinstance(output, torch.Tensor)
     assert output.data_ptr() == executable.example_arguments[0].data_ptr()  # type: ignore[union-attr]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_manifest_hydration_restores_arguments_before_measurement() -> None:
+    artifact = _artifact()
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    profiler.prepare_manifests((artifact,))
+    observed_arguments: list[int] = []
+
+    def measure(executable: Any, **_options: object) -> Any:
+        observed_arguments.append(len(executable.example_arguments))
+        return compiler_module.TaskMeasurement(1, 0, 0, (), (1,), "test")
+
+    profiler._measure_callable = measure  # type: ignore[method-assign]
+
+    profiler.measure(artifact)
+
+    assert observed_arguments == [len(artifact.example_arguments)]
+    assert profiler._compiled(artifact).example_arguments == ()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

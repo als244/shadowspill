@@ -25,6 +25,7 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
     timer = _PhaseTimer(verbose=False)
     timer.values = [
         ("capture_lowering", 11),
+        ("compiler_manifest", 30),
         ("structural_profiling", 100),
         ("compilation", 20),
         ("program_lowering", 13),
@@ -42,7 +43,7 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
         ("compiled_entrypoint_construction", 40),
         ("unique_stage_warmup_profiling", 60),
         ("cached_entrypoint_warmup", 5),
-        ("profile_cache_and_entrypoint_orchestration", 15),
+        ("profile_cache_and_entrypoint_orchestration", 45),
         ("program_lowering", 13),
     ]
 

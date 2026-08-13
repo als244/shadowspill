@@ -15,7 +15,7 @@ from torch._inductor.runtime.cache_dir_utils import cache_dir
 
 from .output_contract import TaskStorageContract
 
-_SCHEMA = "shadowspill.inductor_task_manifest/v1"
+_SCHEMA = "shadowspill.inductor_task_manifest/v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,7 @@ class CachedTaskManifest:
 
     optimized_storage_contract: TaskStorageContract
     storage_contract: TaskStorageContract
+    root_allocation_bytes: tuple[int, ...]
     compatibility_digest: str
 
 
@@ -46,6 +47,7 @@ def load_task_manifest(
             "accelerator_runtime_version",
             "optimized_storage_contract",
             "storage_contract",
+            "root_allocation_bytes",
             "compatibility_digest",
         }
         if set(payload) != expected:
@@ -61,13 +63,20 @@ def load_task_manifest(
         optimized = payload["optimized_storage_contract"]
         executable = payload["storage_contract"]
         digest = payload["compatibility_digest"]
+        raw_allocation_bytes = payload["root_allocation_bytes"]
         if not isinstance(optimized, dict) or not isinstance(executable, dict):
             return None
         if not isinstance(digest, str) or len(digest) != 64:
             return None
+        if not isinstance(raw_allocation_bytes, list) or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in raw_allocation_bytes
+        ):
+            return None
         return CachedTaskManifest(
             TaskStorageContract.from_dict(optimized),
             TaskStorageContract.from_dict(executable),
+            tuple(raw_allocation_bytes),
             digest,
         )
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
@@ -90,6 +99,7 @@ def store_task_manifest(
         "accelerator_runtime_version": _accelerator_runtime_version(),
         "optimized_storage_contract": manifest.optimized_storage_contract.to_dict(),
         "storage_contract": manifest.storage_contract.to_dict(),
+        "root_allocation_bytes": list(manifest.root_allocation_bytes),
         "compatibility_digest": manifest.compatibility_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -121,7 +131,7 @@ def _manifest_path(
         Path(cache_dir())
         / "shadowspill"
         / "task_manifests"
-        / "v1"
+        / "v2"
         / identity[:2]
         / f"{identity}.json"
     )

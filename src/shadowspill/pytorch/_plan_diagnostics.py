@@ -125,6 +125,7 @@ def training_stage_inventory(
             compiled_layout_digest: str | None = reconcile_compiled_task_layout(
                 executable_contract,
                 measurements[artifact.compatibility_digest],
+                root_allocations=executable_manifest.root_allocations,
             ).compatibility_digest
         else:
             contract_digest = None
@@ -254,6 +255,9 @@ def forward_stage_inventory(
                     entrypoint.artifact.compatibility_digest
                 ].storage_contract,
                 measurements[entrypoint.artifact.compatibility_digest],
+                root_allocations=manifests[
+                    entrypoint.artifact.compatibility_digest
+                ].root_allocations,
             ).compatibility_digest,
             graph_pair_variant="inference",
             chosen_graph_pair_variant="inference",
@@ -360,7 +364,11 @@ def _graph_profile(
         item for item in program.profiles if item.profile_id == task.profile_id
     )
     storage_contract = manifest.storage_contract
-    layout = reconcile_compiled_task_layout(storage_contract, measurement)
+    layout = reconcile_compiled_task_layout(
+        storage_contract,
+        measurement,
+        root_allocations=manifest.root_allocations,
+    )
     return PlanGraphProfile(
         direction=direction,
         structural_abi_key=artifact.compatibility_digest,

@@ -37,6 +37,7 @@ from .compiled_layout import (
     replacement_transition_bytes,
 )
 from .contracts import CaptureError
+from .inductor_adapter import ExecutableRootAllocation
 from .lowering import (
     ObjectCatalog,
     RegistrationBinding,
@@ -142,10 +143,15 @@ class TrainingLoweringCache:
         artifact: GraphArtifact,
         contract: TaskStorageContract,
         measurement: TaskMeasurement,
+        root_allocations: tuple[ExecutableRootAllocation, ...] | None = None,
     ) -> CompiledTaskLayout:
         existing = self._layouts.get(artifact.compatibility_digest)
         if existing is None:
-            existing = reconcile_compiled_task_layout(contract, measurement)
+            existing = reconcile_compiled_task_layout(
+                contract,
+                measurement,
+                root_allocations=root_allocations,
+            )
             self._layouts[artifact.compatibility_digest] = existing
         elif existing.contract_digest != contract.compatibility_digest:
             raise CaptureError("one artifact ABI resolved to several storage contracts")
@@ -202,6 +208,8 @@ def lower_partitioned_training_program(
     optimizer: OptimizerCapture,
     *,
     storage_contracts: Mapping[str, TaskStorageContract] | None = None,
+    compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
+    | None = None,
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
@@ -253,6 +261,19 @@ def lower_partitioned_training_program(
             )
         return measurement
 
+    def root_allocations_for(
+        artifact: GraphArtifact,
+    ) -> tuple[ExecutableRootAllocation, ...] | None:
+        if compiled_root_allocations is None:
+            return None
+        try:
+            return compiled_root_allocations[artifact.compatibility_digest]
+        except KeyError as exc:
+            raise CaptureError(
+                "compiled root allocations are missing for artifact "
+                f"{artifact.compatibility_digest}"
+            ) from exc
+
     def profile_id(
         artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
     ) -> str:
@@ -276,7 +297,12 @@ def lower_partitioned_training_program(
     def mutation_transition_bytes(artifact: GraphArtifact) -> int:
         measurement = measurement_for(artifact)
         contract = contract_for(artifact)
-        layout = cache.layout(artifact, contract, measurement)
+        layout = cache.layout(
+            artifact,
+            contract,
+            measurement,
+            root_allocations_for(artifact),
+        )
         return replacement_transition_bytes(contract, layout)
 
     def compiled_layout_for(artifact: GraphArtifact) -> CompiledTaskLayout:
@@ -284,6 +310,7 @@ def lower_partitioned_training_program(
             artifact,
             contract_for(artifact),
             measurement_for(artifact),
+            root_allocations_for(artifact),
         )
 
     parameter_ids = set(parameter_objects.values())
@@ -623,8 +650,7 @@ def lower_partitioned_training_program(
                     dependencies.extend(initial_writers[object_id])
                     dependencies.extend(latest_contributors[object_id])
                 mutation_bytes = sum(
-                    inventory.object_size(object_id)
-                    for object_id in mutated
+                    inventory.object_size(object_id) for object_id in mutated
                 )
                 inputs = [slot.object_id for slot in item.backward_inputs]
                 inputs.extend(mutated)
@@ -816,6 +842,8 @@ def lower_training_program(
     optimizer: OptimizerCapture,
     *,
     storage_contracts: Mapping[str, TaskStorageContract] | None = None,
+    compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
+    | None = None,
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
 ) -> LoweredTrainingProgram:
@@ -861,6 +889,19 @@ def lower_training_program(
             )
         return measurement
 
+    def root_allocations_for(
+        artifact: GraphArtifact,
+    ) -> tuple[ExecutableRootAllocation, ...] | None:
+        if compiled_root_allocations is None:
+            return None
+        try:
+            return compiled_root_allocations[artifact.compatibility_digest]
+        except KeyError as exc:
+            raise CaptureError(
+                "compiled root allocations are missing for artifact "
+                f"{artifact.compatibility_digest}"
+            ) from exc
+
     def profile_id(
         artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
     ) -> str:
@@ -884,7 +925,11 @@ def lower_training_program(
     def mutation_transition_bytes(artifact: GraphArtifact) -> int:
         measurement = measurement_for(artifact)
         contract = contract_for(artifact)
-        layout = reconcile_compiled_task_layout(contract, measurement)
+        layout = reconcile_compiled_task_layout(
+            contract,
+            measurement,
+            root_allocations=root_allocations_for(artifact),
+        )
         return replacement_transition_bytes(contract, layout)
 
     tasks: list[TaskSpec] = []
@@ -895,8 +940,7 @@ def lower_training_program(
     all_backward_ids: list[str] = []
     fixed_tensors: dict[str, FixedTensorBinding] = {}
     gradient_bytes = sum(
-        inventory.object_size(binding.gradient_object_id)
-        for binding in gradients
+        inventory.object_size(binding.gradient_object_id) for binding in gradients
     )
 
     for position, capture in enumerate(captures):
@@ -927,6 +971,7 @@ def lower_training_program(
                 public_objects_by_position,
                 measurement_for(pair.forward),
                 contract_for(pair.forward),
+                root_allocations_for(pair.forward),
             )
             backward_inputs, fixed = _backward_inputs(
                 pair,
@@ -946,6 +991,7 @@ def lower_training_program(
                 backward_inputs,
                 measurement_for(pair.backward),
                 contract_for(pair.backward),
+                root_allocations_for(pair.backward),
             )
             backward_inputs_objects = [slot.object_id for slot in backward_inputs]
             forward_input_aliases = {
@@ -1574,6 +1620,7 @@ def _forward_outputs(
     public_by_position: dict[int, tuple[str, ...]],
     measurement: TaskMeasurement,
     storage_contract: TaskStorageContract,
+    root_allocations: tuple[ExecutableRootAllocation, ...] | None,
 ) -> tuple[
     tuple[TensorSlot, ...],
     tuple[str, ...],
@@ -1595,7 +1642,11 @@ def _forward_outputs(
         inventory,
         pair.forward,
         forward_inputs,
-        reconcile_compiled_task_layout(storage_contract, measurement),
+        reconcile_compiled_task_layout(
+            storage_contract,
+            measurement,
+            root_allocations=root_allocations,
+        ),
         storage_contract=storage_contract,
     )
     for index, value in enumerate(values):
@@ -1680,6 +1731,7 @@ def _gradient_outputs(
     backward_inputs: tuple[TensorSlot, ...],
     measurement: TaskMeasurement,
     storage_contract: TaskStorageContract,
+    root_allocations: tuple[ExecutableRootAllocation, ...] | None,
 ) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
     tensor_primals = tuple(
         value
@@ -1696,7 +1748,11 @@ def _gradient_outputs(
         inventory,
         pair.backward,
         backward_inputs,
-        reconcile_compiled_task_layout(storage_contract, measurement),
+        reconcile_compiled_task_layout(
+            storage_contract,
+            measurement,
+            root_allocations=root_allocations,
+        ),
         storage_contract=storage_contract,
     )
     for index, primal in zip(positions, tensor_primals, strict=True):

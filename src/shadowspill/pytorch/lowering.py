@@ -34,6 +34,7 @@ from .compiled_layout import (
     replacement_transition_bytes,
 )
 from .contracts import CaptureError
+from .inductor_adapter import ExecutableRootAllocation
 from .output_contract import (
     OutputView,
     StorageRoot,
@@ -834,6 +835,8 @@ def lower_forward_program(
     measurements: tuple[TaskMeasurement, ...],
     *,
     storage_contracts: Mapping[str, TaskStorageContract] | None = None,
+    compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
+    | None = None,
     device_ordinal: int = 0,
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
@@ -894,8 +897,18 @@ def lower_forward_program(
         for artifact in artifacts
     )
     compiled_layouts = tuple(
-        reconcile_compiled_task_layout(contract, measurement)
-        for contract, measurement in zip(contracts, measurements, strict=True)
+        reconcile_compiled_task_layout(
+            contract,
+            measurement,
+            root_allocations=(
+                None
+                if compiled_root_allocations is None
+                else compiled_root_allocations[artifact.compatibility_digest]
+            ),
+        )
+        for artifact, contract, measurement in zip(
+            artifacts, contracts, measurements, strict=True
+        )
     )
     for artifact, contract, measurement, layout in zip(
         artifacts, contracts, measurements, compiled_layouts, strict=True

@@ -23,7 +23,12 @@ from ._abi import AdapterStatistics
 from ._allocator import InstalledAllocator
 from ._plan_diagnostics import forward_stage_inventory
 from .aot import capture_forward
-from .compiler import CudaTaskProfiler, profile_environment
+from .compiler import (
+    CudaTaskProfiler,
+    profile_environment,
+    resolve_task_manifests,
+    validate_compiled_profile,
+)
 from .contracts import PlanningError
 from .executor import ForwardExecutor
 from .fake import fake_cuda_inputs, fake_cuda_model
@@ -72,12 +77,10 @@ class _PhaseTimer:
             flush=True,
         )
 
-    def attribute_compilation_and_profiling(
-        self, profiler: CudaTaskProfiler
-    ) -> None:
-        """Replace two coarse intervals with disjoint measured work classes."""
+    def attribute_compilation_and_profiling(self, profiler: CudaTaskProfiler) -> None:
+        """Replace compiler/profile intervals with disjoint work classes."""
 
-        names = {"structural_profiling", "compilation"}
+        names = {"compiler_manifest", "structural_profiling", "compilation"}
         indexed = [
             (index, name, duration)
             for index, (name, duration) in enumerate(self.values)
@@ -166,15 +169,31 @@ def build_forward(
             artifacts = capture_forward_stages(partitioned)
 
     profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
-    with timer.measure("structural_profiling"):
-        environment = profile_environment(
-            device_ordinal=device_ordinal, provider_id="shadowspill.device_pool"
+    environment = profile_environment(
+        device_ordinal=device_ordinal, provider_id="shadowspill.device_pool"
+    )
+    profile_cache = ProfileCache()
+    with timer.measure("compiler_manifest"):
+        resolved_manifests = resolve_task_manifests(
+            artifacts,
+            environment=environment,
+            profile_cache=profile_cache,
+            profiler=profiler,
+            progress=lambda index, total, state, digest: timer.progress(
+                f"compiled manifest {index}/{total} {state}: {digest[:12]}"
+            ),
         )
+    with timer.measure("structural_profiling"):
         profiles = profile_unique_artifacts(
             artifacts,
             environment=environment,
             measure=profiler.measure,
-            cache=ProfileCache(),
+            cache=profile_cache,
+            validate=lambda artifact, measurement: validate_compiled_profile(
+                artifact,
+                measurement,
+                resolved_manifests.manifests,
+            ),
             progress=lambda index, total, state, digest: timer.progress(
                 f"structural profile {index}/{total} {state}: {digest[:12]}"
             ),
@@ -186,6 +205,14 @@ def build_forward(
                 f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
             ),
         )
+        for digest, manifest in compiled_tasks.manifests.items():
+            expected = resolved_manifests.manifests.get(digest)
+            if expected is None or (
+                expected.compatibility_digest != manifest.compatibility_digest
+            ):
+                raise PlanningError(
+                    f"compiled entrypoint changed its storage ABI: artifact={digest}"
+                )
         installed.library.shadowspill_pytorch_allocator_wait_idle()
     timer.attribute_compilation_and_profiling(profiler)
 
@@ -201,7 +228,14 @@ def build_forward(
             partitioned,
             artifacts,
             profiles.measurements,
-            storage_contracts=compiled_tasks.storage_contracts,
+            storage_contracts={
+                digest: manifest.storage_contract
+                for digest, manifest in resolved_manifests.manifests.items()
+            },
+            compiled_root_allocations={
+                digest: manifest.root_allocations
+                for digest, manifest in resolved_manifests.manifests.items()
+            },
             device_ordinal=device_ordinal,
         )
         workspace_reserve = _workspace_reserve(profiles.measurements)

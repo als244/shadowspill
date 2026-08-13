@@ -20,7 +20,12 @@ from shadowspill.simulator import SimulationConfig
 from ._plan_diagnostics import training_stage_inventory
 from .aot import capture_training_objective
 from .capture import GraphArtifact
-from .compiler import CudaTaskProfiler, profile_environment
+from .compiler import (
+    CudaTaskProfiler,
+    profile_environment,
+    resolve_task_manifests,
+    validate_compiled_profile,
+)
 from .contracts import ObjectiveResult, PlanningError
 from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_training_signatures
@@ -193,28 +198,41 @@ def build_training(
             f"optimizer_tasks={len(optimizer_capture.recurrent_tasks)}"
         )
         profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
+        environment = profile_environment(
+            device_ordinal=device_ordinal,
+            provider_id="shadowspill.device_pool",
+        )
+        profile_cache = ProfileCache()
+        with timer.measure("compiler_manifest"):
+            resolved_manifests = resolve_task_manifests(
+                artifacts,
+                environment=environment,
+                profile_cache=profile_cache,
+                profiler=profiler,
+                progress=lambda index, total, state, digest: timer.progress(
+                    f"compiled manifest {index}/{total} {state}: {digest[:12]}"
+                ),
+            )
+            timer.progress(
+                "compiled manifest cache: "
+                f"hits={resolved_manifests.cache_hits}, "
+                f"misses={resolved_manifests.cache_misses}"
+            )
         with timer.measure("structural_profiling"):
             profiles = profile_unique_artifacts(
                 artifacts,
-                environment=profile_environment(
-                    device_ordinal=device_ordinal,
-                    provider_id="shadowspill.device_pool",
-                ),
+                environment=environment,
                 measure=profiler.measure,
-                cache=ProfileCache(),
+                cache=profile_cache,
+                validate=lambda artifact, measurement: validate_compiled_profile(
+                    artifact,
+                    measurement,
+                    resolved_manifests.manifests,
+                ),
                 progress=lambda index, total, state, digest: timer.progress(
                     f"structural profile {index}/{total} {state}: {digest[:12]}"
                 ),
             )
-        with timer.measure("compilation"):
-            compiled_tasks = profiler.take_compiled_tasks(
-                artifacts,
-                progress=lambda index, total, state, digest: timer.progress(
-                    f"compiled entrypoint {index}/{total} {state}: {digest[:12]}"
-                ),
-            )
-            installed.library.shadowspill_pytorch_allocator_wait_idle()
-        timer.attribute_compilation_and_profiling(profiler)
 
         with timer.measure("program_lowering"):
             measurements = {
@@ -229,7 +247,14 @@ def build_training(
                 partitioned_captures,
                 measurements,
                 optimizer_capture,
-                storage_contracts=compiled_tasks.storage_contracts,
+                storage_contracts={
+                    digest: manifest.storage_contract
+                    for digest, manifest in resolved_manifests.manifests.items()
+                },
+                compiled_root_allocations={
+                    digest: manifest.root_allocations
+                    for digest, manifest in resolved_manifests.manifests.items()
+                },
                 optimizer_phase="initial",
                 optimizer_ordering=optimizer_ordering,
                 lowering_cache=lowering_cache,
@@ -239,7 +264,14 @@ def build_training(
                 partitioned_captures,
                 measurements,
                 optimizer_capture,
-                storage_contracts=compiled_tasks.storage_contracts,
+                storage_contracts={
+                    digest: manifest.storage_contract
+                    for digest, manifest in resolved_manifests.manifests.items()
+                },
+                compiled_root_allocations={
+                    digest: manifest.root_allocations
+                    for digest, manifest in resolved_manifests.manifests.items()
+                },
                 optimizer_phase="recurrent",
                 optimizer_ordering=optimizer_ordering,
                 lowering_cache=lowering_cache,
@@ -308,6 +340,33 @@ def build_training(
                 else None
             )
             initial_selected = None if initial_cached is None else initial_cached.result
+        required_digests = _selected_artifact_digests(
+            recurrent_lowered,
+            recurrent_selected,
+        )
+        if initial_selected is not None:
+            required_digests.update(
+                _selected_artifact_digests(initial_lowered, initial_selected)
+            )
+        required_artifacts = tuple(
+            artifact
+            for artifact in artifacts
+            if artifact.compatibility_digest in required_digests
+        )
+        with timer.measure("compilation"):
+            compiled_tasks = profiler.take_compiled_tasks(
+                required_artifacts,
+                progress=lambda index, total, state, digest: timer.progress(
+                    f"selected entrypoint {index}/{total} {state}: {digest[:12]}"
+                ),
+            )
+            _verify_compiled_manifest_identity(
+                resolved_manifests.manifests,
+                compiled_tasks.manifests,
+            )
+            profiler.discard_compiled_tasks()
+            installed.library.shadowspill_pytorch_allocator_wait_idle()
+        timer.attribute_compilation_and_profiling(profiler)
         with timer.measure("host_admission"):
             _reconcile_spill_pool(
                 installed,
@@ -408,7 +467,7 @@ def build_training(
                 recurrent_lowered,
                 recurrent_plan,
                 measurements,
-                compiled_tasks.manifests,
+                resolved_manifests.manifests,
             )
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
@@ -468,6 +527,32 @@ def build_training(
                 parameter.grad = None
             state.restore_cpu_and_unregister()
         raise
+
+
+def _selected_artifact_digests(lowered: Any, selected: Any) -> set[str]:
+    selected_task_ids = {
+        task.task_id for task in lowered.program.selected_tasks(selected.selections)
+    }
+    return {
+        entrypoint.artifact.compatibility_digest
+        for entrypoint in lowered.entrypoints
+        if entrypoint.task_id in selected_task_ids and entrypoint.artifact is not None
+    }
+
+
+def _verify_compiled_manifest_identity(
+    planned: dict[str, Any],
+    executable: dict[str, Any],
+) -> None:
+    for digest, manifest in executable.items():
+        expected = planned.get(digest)
+        if expected is None or (
+            expected.compatibility_digest != manifest.compatibility_digest
+        ):
+            raise PlanningError(
+                "selected compiled entrypoint changed its storage ABI: "
+                f"artifact={digest}"
+            )
 
 
 def _validate_training_request(

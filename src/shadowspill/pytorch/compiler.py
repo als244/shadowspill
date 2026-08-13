@@ -22,13 +22,21 @@ from ._telemetry import (
     summarize_task_workspace,
 )
 from .capture import GraphArtifact
+from .compiled_layout import reconcile_compiled_task_layout
+from .compiled_manifest_cache import CompiledManifestCache
 from .contracts import CaptureError
-from .inductor_adapter import ExecutableTaskManifest, compile_inductor_task
+from .inductor_adapter import (
+    ExecutableRootAllocation,
+    ExecutableTaskManifest,
+    compile_inductor_task,
+)
 from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
 from .output_contract import TaskStorageContract
 from .profiling import (
     ProfilableArtifact,
+    ProfileCache,
     ProfileEnvironment,
+    ProfileKey,
     TaskMeasurement,
     TaskOutputInputBinding,
 )
@@ -67,6 +75,48 @@ class CompiledTaskSet:
             for digest, manifest in self.manifests.items()
         }
 
+    @property
+    def root_allocations(
+        self,
+    ) -> dict[str, tuple[ExecutableRootAllocation, ...]]:
+        """Compiler-owned persistent output extents by structural ABI."""
+
+        return {
+            digest: manifest.root_allocations
+            for digest, manifest in self.manifests.items()
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTaskManifests:
+    """All structural manifests plus profile-sidecar cache evidence."""
+
+    manifests: dict[str, ExecutableTaskManifest]
+    cache_hits: int
+    cache_misses: int
+
+
+def validate_compiled_profile(
+    artifact: ProfilableArtifact,
+    measurement: TaskMeasurement,
+    manifests: dict[str, ExecutableTaskManifest],
+) -> None:
+    """Reject a physical profile that disagrees with the compiler wrapper ABI."""
+
+    if not isinstance(artifact, GraphArtifact):
+        return
+    try:
+        manifest = manifests[artifact.compatibility_digest]
+    except KeyError as exc:
+        raise CaptureError(
+            "compiled task manifest is missing during profile validation"
+        ) from exc
+    reconcile_compiled_task_layout(
+        manifest.storage_contract,
+        measurement,
+        root_allocations=manifest.root_allocations,
+    )
+
 
 def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvironment:
     """Describe every implementation attribute that can change task cost."""
@@ -79,6 +129,53 @@ def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvi
         compute_capability=(properties.major, properties.minor),
         compiler_id="shadowspill-structural-compiler/v2:torch-inductor",
         provider_id=provider_id,
+    )
+
+
+def resolve_task_manifests(
+    artifacts: Sequence[ProfilableArtifact],
+    *,
+    environment: ProfileEnvironment,
+    profile_cache: ProfileCache,
+    profiler: CudaTaskProfiler,
+    progress: Callable[[int, int, str, str], None] | None = None,
+) -> ResolvedTaskManifests:
+    """Load compiled storage ABIs, hydrating only absent profile sidecars."""
+
+    unique = {
+        artifact.compatibility_digest: artifact
+        for artifact in artifacts
+        if isinstance(artifact, GraphArtifact)
+    }
+    sidecars = CompiledManifestCache(profile_cache.root)
+    manifests: dict[str, ExecutableTaskManifest] = {}
+    missing: list[GraphArtifact] = []
+    for index, digest in enumerate(sorted(unique), start=1):
+        artifact = unique[digest]
+        key = ProfileKey(digest, environment)
+        manifest = sidecars.read(
+            key,
+            semantic_contract=artifact.storage_contract,
+        )
+        if manifest is None:
+            missing.append(artifact)
+            state = "cache-miss"
+        else:
+            manifests[digest] = manifest
+            state = "cache-hit"
+        if progress is not None:
+            progress(index, len(unique), state, digest)
+
+    hydrated = profiler.prepare_manifests(missing)
+    for artifact in missing:
+        digest = artifact.compatibility_digest
+        manifest = hydrated[digest]
+        manifests[digest] = manifest
+        sidecars.write(ProfileKey(digest, environment), manifest)
+    return ResolvedTaskManifests(
+        manifests,
+        cache_hits=len(unique) - len(missing),
+        cache_misses=len(missing),
     )
 
 
@@ -188,6 +285,7 @@ class CudaTaskProfiler:
         self._telemetry_capacity = telemetry_capacity
         self._next_task_id = 1 << 62
         self._executables: dict[str, CompiledTask] = {}
+        self._warmed_digests: set[str] = set()
         self._compilation_wall_time_ns = 0
         self._profiling_wall_time_ns = 0
         self._entrypoint_warmup_wall_time_ns = 0
@@ -222,8 +320,11 @@ class CudaTaskProfiler:
         if not isinstance(artifact, GraphArtifact):
             raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
 
-        executable = self._compiled(artifact)
         digest = artifact.compatibility_digest
+        executable = self._compiled(artifact)
+        if not executable.example_arguments and artifact.example_arguments:
+            executable = self._restore_example_arguments(executable)
+            self._executables[digest] = executable
         try:
             profiling_started = time.perf_counter_ns()
             measurement = self._measure_callable(
@@ -238,8 +339,10 @@ class CudaTaskProfiler:
                 profiling_wall_time_ns=time.perf_counter_ns() - profiling_started,
             )
             self._profiling_wall_time_ns += measurement.profiling_wall_time_ns
+            self._warmed_digests.add(digest)
         except AllocationTelemetryError as exc:
             self._executables.pop(digest, None)
+            self._warmed_digests.discard(digest)
             raise AllocationTelemetryError(
                 "allocator trace is incomplete for structural ABI "
                 f"{digest} ({artifact.kind}; operators="
@@ -247,6 +350,7 @@ class CudaTaskProfiler:
             ) from exc
         except BaseException:
             self._executables.pop(digest, None)
+            self._warmed_digests.discard(digest)
             raise
         else:
             # The compiled function does not own its example arguments. Keeping
@@ -264,6 +368,38 @@ class CudaTaskProfiler:
             return measurement
         finally:
             del executable
+
+    def prepare_manifests(
+        self,
+        artifacts: Sequence[ProfilableArtifact],
+        *,
+        progress: Callable[[int, int, str, str], None] | None = None,
+    ) -> dict[str, ExecutableTaskManifest]:
+        """Compile only missing storage manifests without retaining examples."""
+
+        graph_artifacts = {
+            artifact.compatibility_digest: artifact
+            for artifact in artifacts
+            if isinstance(artifact, GraphArtifact)
+        }
+        manifests: dict[str, ExecutableTaskManifest] = {}
+        total = len(graph_artifacts)
+        for index, digest in enumerate(sorted(graph_artifacts), start=1):
+            artifact = graph_artifacts[digest]
+            executable = self._executables.get(digest)
+            state = "available"
+            if executable is None:
+                state = "compiling"
+                executable = self._compile_artifact(artifact)
+                self._executables[digest] = executable
+            if progress is not None:
+                progress(index, total, state, digest)
+            manifests[digest] = executable.manifest
+            if digest not in self._warmed_digests and executable.example_arguments:
+                # The callable and manifest are reusable, but representative
+                # CUDA arguments must not accumulate while PressureFit runs.
+                self._executables[digest] = replace(executable, example_arguments=())
+        return manifests
 
     def _measure_callable(
         self,
@@ -495,6 +631,10 @@ class CudaTaskProfiler:
                 )
             if executable is None:
                 executable = self._compile_artifact(artifact)
+            needs_warmup = digest not in self._warmed_digests
+            if needs_warmup:
+                if not executable.example_arguments:
+                    executable = self._restore_example_arguments(executable)
                 if stream is None:
                     stream = torch.cuda.current_stream(self._device_ordinal)
                 warmup_started = time.perf_counter_ns()
@@ -514,9 +654,16 @@ class CudaTaskProfiler:
                 self._entrypoint_warmup_wall_time_ns += (
                     time.perf_counter_ns() - warmup_started
                 )
+            self._warmed_digests.discard(digest)
             result[digest] = executable.function
             manifests[digest] = executable.manifest
         return CompiledTaskSet(result, manifests)
+
+    def discard_compiled_tasks(self) -> None:
+        """Drop compiled but unselected callables retained during planning."""
+
+        self._executables.clear()
+        self._warmed_digests.clear()
 
     def _compiled(self, artifact: GraphArtifact) -> CompiledTask:
         digest = artifact.compatibility_digest
@@ -532,6 +679,17 @@ class CudaTaskProfiler:
             return compile_artifact(artifact, device_ordinal=self._device_ordinal)
         finally:
             self._compilation_wall_time_ns += time.perf_counter_ns() - started
+
+    def _restore_example_arguments(self, executable: CompiledTask) -> CompiledTask:
+        examples = materialize_example_arguments(
+            executable.artifact.example_arguments,
+            device_ordinal=self._device_ordinal,
+        )
+        detached = tuple(
+            value.detach() if isinstance(value, torch.Tensor) else value
+            for value in examples
+        )
+        return replace(executable, example_arguments=detached)
 
     def _measure_workspace(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
@@ -551,15 +709,13 @@ class CudaTaskProfiler:
                 raise CaptureError(f"profiling before_task failed with status {status}")
             task_open = True
             output = executable()
-            output_allocations, output_input_bindings = (
-                self._output_allocation_views(
-                    output,
-                    inputs=(
-                        executable.example_arguments
-                        if isinstance(executable, CompiledTask)
-                        else ()
-                    ),
-                )
+            output_allocations, output_input_bindings = self._output_allocation_views(
+                output,
+                inputs=(
+                    executable.example_arguments
+                    if isinstance(executable, CompiledTask)
+                    else ()
+                ),
             )
             # Profiling does not retain task results. Release them while the
             # task range is still active so output-dependent temporary frees

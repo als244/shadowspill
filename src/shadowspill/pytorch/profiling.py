@@ -13,6 +13,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from .contracts import CaptureError
+
 # v10 records when a compiled output is physically served by a task input.
 # The optimized Inductor storage contract must already describe that alias;
 # profiling validates the contract and measures layout, workspace, and timing.
@@ -107,11 +109,14 @@ class TaskOutputInputBinding:
     output_offset_bytes: int
 
     def __post_init__(self) -> None:
-        if min(
-            self.output_leaf_index,
-            self.input_position,
-            self.output_offset_bytes,
-        ) < 0:
+        if (
+            min(
+                self.output_leaf_index,
+                self.input_position,
+                self.output_offset_bytes,
+            )
+            < 0
+        ):
             raise ValueError("task output/input binding fields must be non-negative")
 
     def to_dict(self) -> dict[str, int]:
@@ -242,9 +247,7 @@ class TaskMeasurement:
                     "task allocation trace changes allocation size on free"
                 )
             retired[event.allocation_ordinal] = sizes
-        donated_leaves = [
-            item.output_leaf_index for item in self.output_input_bindings
-        ]
+        donated_leaves = [item.output_leaf_index for item in self.output_input_bindings]
         if len(set(donated_leaves)) != len(donated_leaves):
             raise ValueError("task output/input binding names one leaf twice")
         if output_leaves.intersection(donated_leaves):
@@ -378,6 +381,7 @@ def profile_unique_artifacts(
     environment: ProfileEnvironment,
     measure: Callable[[ProfilableArtifact], TaskMeasurement],
     cache: ProfileCache,
+    validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None = None,
     progress: Callable[[int, int, str, str], None] | None = None,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
@@ -399,10 +403,19 @@ def profile_unique_artifacts(
     for index, digest in enumerate(ordered_digests, start=1):
         key = key_objects[digest]
         measurement = cache.read(key)
+        if measurement is not None and validate is not None:
+            try:
+                validate(representatives[digest], measurement)
+            except CaptureError:
+                if progress is not None:
+                    progress(index, len(ordered_digests), "cache-invalid", digest)
+                measurement = None
         if measurement is None:
             if progress is not None:
                 progress(index, len(ordered_digests), "measuring", digest)
             measurement = measure(representatives[digest])
+            if validate is not None:
+                validate(representatives[digest], measurement)
             cache.write(key, measurement)
             misses += 1
         else:

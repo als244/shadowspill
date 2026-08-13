@@ -17,7 +17,7 @@ import hashlib
 import json
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,6 +47,24 @@ from .output_contract import (
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutableRootAllocation:
+    """Compiler-owned allocation extent for one executable storage root."""
+
+    root_id: int
+    requested_bytes: int
+
+    def __post_init__(self) -> None:
+        if self.root_id < 0 or self.requested_bytes < 0:
+            raise ValueError("executable root allocation fields must be non-negative")
+
+    def identity(self) -> dict[str, int]:
+        return {
+            "root_id": self.root_id,
+            "requested_bytes": self.requested_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutableTaskManifest:
     """Offline storage ABI emitted for one optimized compiled task."""
 
@@ -55,6 +73,7 @@ class ExecutableTaskManifest:
     contract_capture_ns: int
     compatibility_digest: str
     optimized_storage_contract: TaskStorageContract | None = None
+    root_allocations: tuple[ExecutableRootAllocation, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.semantic_contract_digest) != 64:
@@ -63,6 +82,22 @@ class ExecutableTaskManifest:
             raise ValueError("executable contract timing must be non-negative")
         if len(self.compatibility_digest) != 64:
             raise ValueError("executable manifest digest must be SHA-256")
+        if tuple(item.root_id for item in self.root_allocations) != tuple(
+            range(len(self.storage_contract.roots))
+        ):
+            raise ValueError("executable root allocations must have dense root IDs")
+        for root, allocation in zip(
+            self.storage_contract.roots, self.root_allocations, strict=True
+        ):
+            if root.kind is StorageRootKind.INPUT and allocation.requested_bytes:
+                raise ValueError("input executable root cannot allocate storage")
+            if (
+                root.kind is StorageRootKind.FRESH
+                and allocation.requested_bytes < root.minimum_span_bytes
+            ):
+                raise ValueError(
+                    "executable root allocation is smaller than its output views"
+                )
 
     def identity(self) -> dict[str, object]:
         return {
@@ -74,7 +109,90 @@ class ExecutableTaskManifest:
             ),
             "storage_contract": self.storage_contract.identity(),
             "storage_contract_digest": self.storage_contract.compatibility_digest,
+            "root_allocations": [item.identity() for item in self.root_allocations],
         }
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the compiler-owned storage ABI for a profile sidecar."""
+
+        if self.optimized_storage_contract is None:
+            raise ValueError("compiled task manifest has no optimized contract")
+        return {
+            "semantic_contract_digest": self.semantic_contract_digest,
+            "storage_contract": self.storage_contract.to_dict(),
+            "contract_capture_ns": self.contract_capture_ns,
+            "compatibility_digest": self.compatibility_digest,
+            "optimized_storage_contract": (self.optimized_storage_contract.to_dict()),
+            "root_allocations": [item.identity() for item in self.root_allocations],
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        payload: Mapping[str, object],
+        *,
+        semantic_contract: TaskStorageContract,
+    ) -> ExecutableTaskManifest:
+        """Restore and fully validate one cached compiler storage ABI."""
+
+        expected = {
+            "semantic_contract_digest",
+            "storage_contract",
+            "contract_capture_ns",
+            "compatibility_digest",
+            "optimized_storage_contract",
+            "root_allocations",
+        }
+        if set(payload) != expected:
+            raise ValueError("compiled task manifest fields differ from schema")
+        if payload["semantic_contract_digest"] != (
+            semantic_contract.compatibility_digest
+        ):
+            raise ValueError("compiled task manifest has the wrong semantic ABI")
+        executable = payload["storage_contract"]
+        optimized = payload["optimized_storage_contract"]
+        capture_ns = payload["contract_capture_ns"]
+        declared_digest = payload["compatibility_digest"]
+        raw_allocations = payload["root_allocations"]
+        if not isinstance(executable, dict) or not isinstance(optimized, dict):
+            raise ValueError("compiled task manifest contracts must be objects")
+        if (
+            not isinstance(capture_ns, int)
+            or isinstance(capture_ns, bool)
+            or capture_ns < 0
+        ):
+            raise ValueError("compiled task manifest timing is invalid")
+        if not isinstance(declared_digest, str):
+            raise ValueError("compiled task manifest digest is invalid")
+        if not isinstance(raw_allocations, list):
+            raise ValueError("compiled task root allocations must be a list")
+        allocations: list[ExecutableRootAllocation] = []
+        for item in raw_allocations:
+            if not isinstance(item, dict) or set(item) != {
+                "root_id",
+                "requested_bytes",
+            }:
+                raise ValueError("compiled task root allocation is invalid")
+            root_id = item["root_id"]
+            requested_bytes = item["requested_bytes"]
+            if (
+                not isinstance(root_id, int)
+                or isinstance(root_id, bool)
+                or not isinstance(requested_bytes, int)
+                or isinstance(requested_bytes, bool)
+            ):
+                raise ValueError("compiled task root allocation is invalid")
+            allocations.append(ExecutableRootAllocation(root_id, requested_bytes))
+        restored = _make_manifest(
+            semantic_contract,
+            TaskStorageContract.from_dict(optimized),
+            TaskStorageContract.from_dict(executable),
+            tuple(allocations),
+            capture_ns=capture_ns,
+        )
+        if restored.compatibility_digest != declared_digest:
+            raise ValueError("compiled task manifest digest does not match")
+        return restored
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +214,12 @@ class _LoweredOutput:
     shape: tuple[int, ...]
     stride: tuple[int, ...]
     dtype: str
+
+
+@dataclass(frozen=True, slots=True)
+class _GraphLoweringManifest:
+    storage_contract: TaskStorageContract
+    root_allocations: tuple[ExecutableRootAllocation, ...]
 
 
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
@@ -151,7 +275,7 @@ def compile_inductor_task(
             )
         cache_key = _fx_graph_cache_key(compiled)
         if len(graph_lowerings) == 1:
-            executable_contract = _graph_lowering_contract(
+            executable = _graph_lowering_contract(
                 graph_lowerings[0],
                 optimized_graph,
                 inner_contract,
@@ -161,7 +285,8 @@ def compile_inductor_task(
             manifest = _make_manifest(
                 semantic_contract,
                 optimized_contract,
-                executable_contract,
+                executable.storage_contract,
+                executable.root_allocations,
                 capture_ns=capture_ns,
             )
             manifests.append(manifest)
@@ -234,6 +359,7 @@ def _make_manifest(
     semantic_contract: TaskStorageContract,
     optimized_contract: TaskStorageContract,
     executable_contract: TaskStorageContract,
+    root_allocations: tuple[ExecutableRootAllocation, ...],
     *,
     capture_ns: int,
 ) -> ExecutableTaskManifest:
@@ -245,6 +371,7 @@ def _make_manifest(
         "optimized_storage_contract_digest": optimized_contract.compatibility_digest,
         "storage_contract": executable_contract.identity(),
         "storage_contract_digest": executable_contract.compatibility_digest,
+        "root_allocations": [item.identity() for item in root_allocations],
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
     }
@@ -255,6 +382,7 @@ def _make_manifest(
         capture_ns,
         hashlib.sha256(encoded.encode()).hexdigest(),
         optimized_contract,
+        root_allocations,
     )
 
 
@@ -284,6 +412,10 @@ def _load_cached_manifest(
             semantic_contract,
             cached.optimized_storage_contract,
             cached.storage_contract,
+            tuple(
+                ExecutableRootAllocation(root_id, requested_bytes)
+                for root_id, requested_bytes in enumerate(cached.root_allocation_bytes)
+            ),
             capture_ns=capture_ns,
         )
     except (CaptureError, ValueError):
@@ -309,6 +441,10 @@ def _store_cached_manifest(
             CachedTaskManifest(
                 optimized,
                 manifest.storage_contract,
+                tuple(
+                    allocation.requested_bytes
+                    for allocation in manifest.root_allocations
+                ),
                 manifest.compatibility_digest,
             ),
         )
@@ -396,7 +532,7 @@ def _graph_lowering_contract(
     optimized_graph: GraphModule,
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
-) -> TaskStorageContract:
+) -> _GraphLoweringManifest:
     """Project Inductor's final returned buffers into a storage contract.
 
     Post-gradient FX still describes value provenance. During lowering and
@@ -520,6 +656,7 @@ def _graph_lowering_contract(
     root_order = tuple(dict.fromkeys(record.root_name for record in records))
     root_id_by_name = {name: index for index, name in enumerate(root_order)}
     roots: list[StorageRoot] = []
+    root_allocations: list[ExecutableRootAllocation] = []
     for name in root_order:
         members = tuple(record for record in records if record.root_name == name)
         provenance = members[0].provenance
@@ -539,7 +676,29 @@ def _graph_lowering_contract(
                     minimum_span,
                 )
             )
+            root_allocations.append(ExecutableRootAllocation(root_id_by_name[name], 0))
             continue
+        try:
+            buffer: Any = graph.get_buffer(name)
+            allocation_elements = _static_int(
+                graph,
+                graph.get_allocation_storage_size(buffer),
+                "output allocation storage length",
+            )
+            allocation_item_size = torch.empty(
+                (), device="meta", dtype=buffer.get_dtype()
+            ).element_size()
+        except (AttributeError, NotImplementedError, RuntimeError, TypeError) as exc:
+            raise CaptureError(
+                f"Inductor GraphLowering output has no allocation extent: root={name}"
+            ) from exc
+        allocation_bytes = allocation_elements * allocation_item_size
+        if allocation_bytes < minimum_span:
+            raise CaptureError(
+                "Inductor output allocation is smaller than its returned views: "
+                f"root={name}, allocation={allocation_bytes}, "
+                f"minimum_span={minimum_span}"
+            )
         roots.append(
             StorageRoot(
                 root_id_by_name[name],
@@ -550,6 +709,9 @@ def _graph_lowering_contract(
                 provenance.producer_result or 0,
                 minimum_span,
             )
+        )
+        root_allocations.append(
+            ExecutableRootAllocation(root_id_by_name[name], allocation_bytes)
         )
 
     output_views = tuple(
@@ -572,11 +734,14 @@ def _graph_lowering_contract(
         "mutations": [mutation.identity() for mutation in mutations],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return TaskStorageContract(
-        tuple(roots),
-        output_views,
-        mutations,
-        hashlib.sha256(encoded.encode()).hexdigest(),
+    return _GraphLoweringManifest(
+        TaskStorageContract(
+            tuple(roots),
+            output_views,
+            mutations,
+            hashlib.sha256(encoded.encode()).hexdigest(),
+        ),
+        tuple(root_allocations),
     )
 
 
@@ -739,6 +904,7 @@ def _validate_value_abi(
 
 
 __all__ = [
+    "ExecutableRootAllocation",
     "ExecutableTaskManifest",
     "InductorCompilation",
     "compile_inductor_task",

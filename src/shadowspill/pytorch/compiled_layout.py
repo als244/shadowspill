@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass
 
 from .contracts import CaptureError
+from .inductor_adapter import ExecutableRootAllocation
 from .output_contract import StorageRootKind, TaskStorageContract
 from .profiling import TaskAllocationEvent, TaskAllocationOperation, TaskMeasurement
 
@@ -130,8 +131,25 @@ class CompiledTaskLayout:
 def reconcile_compiled_task_layout(
     contract: TaskStorageContract,
     measurement: TaskMeasurement,
+    *,
+    root_allocations: tuple[ExecutableRootAllocation, ...] | None = None,
 ) -> CompiledTaskLayout:
-    """Validate allocator observations against an immutable semantic contract."""
+    """Validate physical observations against the compiler-owned output ABI.
+
+    Inductor's offline allocation extent is authoritative when supplied.
+    Allocator telemetry locates the corresponding live lease and reports its
+    charged extent; it may not redefine the requested output size.
+    """
+
+    if root_allocations is not None and tuple(
+        item.root_id for item in root_allocations
+    ) != tuple(range(len(contract.roots))):
+        raise CaptureError("compiled root allocations do not match the contract")
+    compiler_extent = (
+        None
+        if root_allocations is None
+        else {item.root_id: item.requested_bytes for item in root_allocations}
+    )
 
     allocation_by_ordinal = {
         event.allocation_ordinal: event
@@ -188,8 +206,7 @@ def reconcile_compiled_task_layout(
             )
             if missing:
                 raise CaptureError(
-                    f"input root {root.root_id} has unobserved output leaves "
-                    f"{missing}"
+                    f"input root {root.root_id} has unobserved output leaves {missing}"
                 )
             if any(
                 input_by_leaf[view.leaf_index].input_position != root.source_input
@@ -278,9 +295,19 @@ def reconcile_compiled_task_layout(
                 f"compiled allocation {ordinal}"
             )
         event = allocation_by_ordinal[ordinal]
+        expected_requested = (
+            event.requested_bytes
+            if compiler_extent is None
+            else compiler_extent[root.root_id]
+        )
+        if event.requested_bytes != expected_requested:
+            raise CaptureError(
+                "allocator profile disagrees with Inductor output extent: "
+                f"root={root.root_id}, compiler={expected_requested}, "
+                f"observed={event.requested_bytes}"
+            )
         offsets = {
-            view.leaf_index: physical_by_leaf[view.leaf_index][1]
-            for view in nonempty
+            view.leaf_index: physical_by_leaf[view.leaf_index][1] for view in nonempty
         }
         semantic_origin = min(view.offset_bytes for view in nonempty)
         physical_origin = min(offsets.values())
@@ -299,7 +326,7 @@ def reconcile_compiled_task_layout(
             CompiledRootLayout(
                 root.root_id,
                 ordinal,
-                event.requested_bytes,
+                expected_requested,
                 event.charged_bytes,
             )
         )
@@ -325,9 +352,7 @@ def reconcile_compiled_task_layout(
         "contract_digest": contract.compatibility_digest,
         "roots": [item.identity() for item in root_layouts],
         "output_views": [item.identity() for item in output_layouts],
-        "allocation_trace": [
-            event.to_dict() for event in measurement.allocation_trace
-        ],
+        "allocation_trace": [event.to_dict() for event in measurement.allocation_trace],
         "anonymous_workspace_high_water": measurement.workspace_charged_bytes,
         "anonymous_workspace_extents": list(measurement.workspace_extent_bytes),
         "persistent_provider_extents": list(measurement.persistent_extent_bytes),
