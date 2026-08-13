@@ -113,6 +113,29 @@ geometry, and explicit mutation targets. Alias changes are legal and recorded.
 An unsupported ABI rewrite fails during compilation with both contracts in the
 diagnostic.
 
+Inductor's content-addressed FX cache can return the compiled callable without
+reconstructing `GraphLowering`; therefore a cache hit cannot reproduce this
+manifest by calling the compiler hook again. ShadowSpill stores a deterministic
+manifest sidecar keyed by the exact Inductor FX-cache key and AOT semantic
+contract digest. The sidecar records both optimized-FX and executable storage
+contracts, the PyTorch and accelerator-runtime versions, and its own validated
+compatibility digest. A cache hit is accepted only when every identity agrees.
+If an external compiler cache entry has no sidecar, ShadowSpill recompiles that
+one task once with compiler caches disabled, captures the authoritative
+`GraphLowering` result, and seeds the sidecar; it never guesses the missing
+contract from pointers.
+
+Direct `compile_fx` normally creates an internal fixed-shape FakeTensor mode
+without a `ShapeEnv`, causing its inner FX cache to report `No shape env` and
+bypass caching. The adapter attaches an empty `ShapeEnv` to that exact existing
+compiler context. It does not replace task arguments. This distinction is part
+of the contract: an earlier experiment converted real task arguments to new
+FakeTensors and changed Inductor's physical allocation for two sliced Qwen
+matrix-multiply outputs from 156,672 to 221,184 bytes. Preserving the original
+exact-stride arguments restores byte-identical executable contracts, compiled
+layouts, workspace, and transition accounting while still enabling cache
+reuse.
+
 ### 4. Compiled physical layout: measurement authority
 
 Isolated structural profiling produces `CompiledTaskLayout` from allocator and

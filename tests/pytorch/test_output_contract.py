@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 import torch.nn as nn
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -8,6 +9,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.pytorch.output_contract import (
     ExplicitMutation,
     StorageRootKind,
+    TaskStorageContract,
     capture_task_storage_contract,
 )
 
@@ -219,6 +221,24 @@ def test_contract_digest_is_deterministic() -> None:
     assert first == second
     assert first.compatibility_digest == second.compatibility_digest
     assert first.to_json() == second.to_json()
+    assert TaskStorageContract.from_json(first.to_json()) == first
+
+
+def test_contract_deserialization_rejects_modified_contents() -> None:
+    def function(value: torch.Tensor) -> torch.Tensor:
+        return torch.sin(value)
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+    payload = contract.to_dict()
+    roots = payload["roots"]
+    assert isinstance(roots, list)
+    root = roots[0]
+    assert isinstance(root, dict)
+    root["minimum_span_bytes"] = 1
+
+    with pytest.raises(ValueError, match="digest"):
+        TaskStorageContract.from_dict(payload)
 
 
 def test_registered_custom_alias_schema_controls_semantic_root() -> None:

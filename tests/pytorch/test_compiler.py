@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import compiler as compiler_module
+from shadowspill.pytorch import inductor_adapter as inductor_module
 from shadowspill.pytorch._abi import Allocation
 from shadowspill.pytorch._telemetry import AllocationTelemetryError
 from shadowspill.pytorch.capture import GraphArtifact
@@ -95,6 +96,32 @@ def test_materialization_preserves_storage_alias_and_compiles() -> None:
     output = executable()
     assert isinstance(output, torch.Tensor)
     torch.testing.assert_close(output, torch.zeros_like(output))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_inductor_cache_restores_the_exact_executable_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    monkeypatch.setenv("TORCHINDUCTOR_CACHE_DIR", str(tmp_path))
+    artifact = _artifact()
+
+    first = compile_artifact(artifact, device_ordinal=0)
+    first_output = first()
+    monkeypatch.setattr(
+        inductor_module,
+        "_graph_lowering_contract",
+        lambda *args, **kwargs: pytest.fail(
+            "warm AOT/Inductor cache unexpectedly rebuilt GraphLowering"
+        ),
+    )
+    second = compile_artifact(artifact, device_ordinal=0)
+    second_output = second()
+
+    torch.testing.assert_close(first_output, second_output)
+    assert first.manifest.compatibility_digest == second.manifest.compatibility_digest
+    assert first.manifest.storage_contract == second.manifest.storage_contract
+    assert tuple((tmp_path / "shadowspill" / "task_manifests").rglob("*.json"))
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

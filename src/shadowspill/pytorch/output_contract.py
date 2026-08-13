@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import operator
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -208,15 +209,189 @@ class TaskStorageContract:
     def to_json(self) -> str:
         """Return deterministic standalone diagnostic serialization."""
 
-        return json.dumps(
-            {
-                "schema": "shadowspill.task_storage_contract/v1",
-                "compatibility_digest": self.compatibility_digest,
-                **self.identity(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    def to_dict(self) -> dict[str, object]:
+        """Return the versioned JSON-compatible contract record."""
+
+        return {
+            "schema": "shadowspill.task_storage_contract/v1",
+            "compatibility_digest": self.compatibility_digest,
+            **self.identity(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> TaskStorageContract:
+        """Validate and restore one versioned contract record."""
+
+        expected_keys = {
+            "schema",
+            "compatibility_digest",
+            "roots",
+            "output_views",
+            "mutations",
+        }
+        if set(payload) != expected_keys:
+            raise ValueError(
+                "task storage contract fields differ from schema: "
+                f"expected={sorted(expected_keys)}, actual={sorted(payload)}"
+            )
+        if payload["schema"] != "shadowspill.task_storage_contract/v1":
+            raise ValueError("unsupported task storage contract schema")
+        roots = tuple(
+            _storage_root_from_record(item) for item in _records(payload, "roots")
         )
+        output_views = tuple(
+            _output_view_from_record(item) for item in _records(payload, "output_views")
+        )
+        mutations = tuple(
+            _mutation_from_record(item) for item in _records(payload, "mutations")
+        )
+        identity = {
+            "roots": [root.identity() for root in roots],
+            "output_views": [view.identity() for view in output_views],
+            "mutations": [mutation.identity() for mutation in mutations],
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        calculated = hashlib.sha256(encoded.encode()).hexdigest()
+        declared = payload["compatibility_digest"]
+        if not isinstance(declared, str) or declared != calculated:
+            raise ValueError("task storage contract digest does not match its contents")
+        return cls(roots, output_views, mutations, calculated)
+
+    @classmethod
+    def from_json(cls, encoded: str) -> TaskStorageContract:
+        """Validate and restore deterministic standalone JSON."""
+
+        try:
+            payload = json.loads(encoded)
+        except json.JSONDecodeError as exc:
+            raise ValueError("task storage contract is not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("task storage contract JSON must contain an object")
+        return cls.from_dict(payload)
+
+
+def _records(
+    payload: Mapping[str, object], field: str
+) -> tuple[Mapping[str, object], ...]:
+    value = payload[field]
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError(f"task storage contract {field!r} must be a list of objects")
+    return tuple(value)
+
+
+def _integer(record: Mapping[str, object], field: str) -> int:
+    value = record.get(field)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"task storage contract field {field!r} must be an integer")
+    return value
+
+
+def _optional_integer(record: Mapping[str, object], field: str) -> int | None:
+    value = record.get(field)
+    if value is None:
+        return None
+    return _integer(record, field)
+
+
+def _optional_string(record: Mapping[str, object], field: str) -> str | None:
+    value = record.get(field)
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError(f"task storage contract field {field!r} must be a string or null")
+
+
+def _string(record: Mapping[str, object], field: str) -> str:
+    value = record.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"task storage contract field {field!r} must be a string")
+    return value
+
+
+def _integer_tuple(record: Mapping[str, object], field: str) -> tuple[int, ...]:
+    value = record.get(field)
+    if not isinstance(value, list):
+        raise ValueError(f"task storage contract field {field!r} must be a list")
+    result: list[int] = []
+    for item in value:
+        if not isinstance(item, int) or isinstance(item, bool):
+            raise ValueError(
+                f"task storage contract field {field!r} must contain integers"
+            )
+        result.append(item)
+    return tuple(result)
+
+
+def _storage_root_from_record(record: Mapping[str, object]) -> StorageRoot:
+    expected = {
+        "root_id",
+        "kind",
+        "source_input",
+        "producer_node",
+        "producer_target",
+        "producer_result",
+        "minimum_span_bytes",
+    }
+    if set(record) != expected:
+        raise ValueError("storage-root record fields differ from schema")
+    try:
+        kind = StorageRootKind(_string(record, "kind"))
+    except ValueError as exc:
+        raise ValueError("storage-root kind is unknown") from exc
+    return StorageRoot(
+        _integer(record, "root_id"),
+        kind,
+        _optional_integer(record, "source_input"),
+        _optional_string(record, "producer_node"),
+        _optional_string(record, "producer_target"),
+        _optional_integer(record, "producer_result"),
+        _integer(record, "minimum_span_bytes"),
+    )
+
+
+def _output_view_from_record(record: Mapping[str, object]) -> OutputView:
+    expected = {
+        "leaf_index",
+        "root_id",
+        "offset_bytes",
+        "span_bytes",
+        "shape",
+        "stride",
+        "dtype",
+        "layout",
+    }
+    if set(record) != expected:
+        raise ValueError("output-view record fields differ from schema")
+    return OutputView(
+        _integer(record, "leaf_index"),
+        _integer(record, "root_id"),
+        _integer(record, "offset_bytes"),
+        _integer(record, "span_bytes"),
+        _integer_tuple(record, "shape"),
+        _integer_tuple(record, "stride"),
+        _string(record, "dtype"),
+        _string(record, "layout"),
+    )
+
+
+def _mutation_from_record(record: Mapping[str, object]) -> MutationBinding:
+    expected = {
+        "input_position",
+        "replacement_output_leaf",
+        "producer_node",
+        "producer_target",
+        "argument_name",
+    }
+    if set(record) != expected:
+        raise ValueError("mutation record fields differ from schema")
+    return MutationBinding(
+        _integer(record, "input_position"),
+        _optional_integer(record, "replacement_output_leaf"),
+        _string(record, "producer_node"),
+        _string(record, "producer_target"),
+        _string(record, "argument_name"),
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,6 +12,7 @@ allocator telemetry.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -21,11 +22,19 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from torch._guards import TracingContext
+from torch._inductor import config as inductor_config
 from torch._inductor.compile_fx import compile_fx, compile_fx_inner
 from torch._inductor.graph import GraphLowering
 from torch._inductor.utils import run_and_get_graph_lowering
 from torch.fx import GraphModule
+from torch.fx.experimental.symbolic_shapes import ShapeEnv
 
+from ._inductor_manifest_cache import (
+    CachedTaskManifest,
+    load_task_manifest,
+    store_task_manifest,
+)
 from .contracts import CaptureError
 from .output_contract import (
     MutationBinding,
@@ -102,6 +111,8 @@ def compile_inductor_task(
 
     manifests: list[ExecutableTaskManifest] = []
     inner_backend: Any = compile_fx_inner
+    compilation_started = time.perf_counter_ns()
+    source_graph = copy.deepcopy(graph_module)
 
     def inner_compile(
         optimized_graph: GraphModule,
@@ -119,6 +130,17 @@ def compile_inductor_task(
             semantic_contract,
         )
         _validate_value_abi(semantic_contract, optimized_contract)
+        tracing_context = TracingContext.try_get()
+        if (
+            tracing_context is not None
+            and tracing_context.fake_mode is not None
+            and tracing_context.fake_mode.shape_env is None
+        ):
+            # Direct compile_fx creates a fixed-shape FakeTensorMode without a
+            # ShapeEnv. Inductor then bypasses only its inner FX graph cache.
+            # Attach the missing, empty environment to that exact compiler
+            # mode so caching does not change arguments or physical layout.
+            tracing_context.fake_mode.shape_env = ShapeEnv()
         with _GRAPH_LOWERING_CAPTURE_LOCK:
             compiled, graph_lowerings = run_and_get_graph_lowering(
                 lambda: inner_backend(
@@ -127,57 +149,174 @@ def compile_inductor_task(
                     **options,
                 )
             )
-        if len(graph_lowerings) != 1:
+        cache_key = _fx_graph_cache_key(compiled)
+        if len(graph_lowerings) == 1:
+            executable_contract = _graph_lowering_contract(
+                graph_lowerings[0],
+                optimized_graph,
+                inner_contract,
+                semantic_contract,
+            )
+            capture_ns = time.perf_counter_ns() - started
+            manifest = _make_manifest(
+                semantic_contract,
+                optimized_contract,
+                executable_contract,
+                capture_ns=capture_ns,
+            )
+            manifests.append(manifest)
+            if cache_key is not None:
+                _store_cached_manifest(cache_key, manifest)
+            return compiled
+        if len(graph_lowerings) > 1:
             raise CaptureError(
-                "Inductor did not expose one GraphLowering result: "
+                "Inductor exposed multiple GraphLowering results: "
                 f"observed={len(graph_lowerings)}"
             )
-        executable_contract = _graph_lowering_contract(
-            graph_lowerings[0],
-            optimized_graph,
-            inner_contract,
-            semantic_contract,
-        )
-        capture_ns = time.perf_counter_ns() - started
-        _validate_value_abi(semantic_contract, executable_contract)
-        identity = {
-            "semantic_contract_digest": semantic_contract.compatibility_digest,
-            "optimized_storage_contract": optimized_contract.identity(),
-            "optimized_storage_contract_digest": (
-                optimized_contract.compatibility_digest
-            ),
-            "storage_contract": executable_contract.identity(),
-            "storage_contract_digest": executable_contract.compatibility_digest,
-            "torch": torch.__version__,
-            "cuda": torch.version.cuda,
-        }
-        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        manifests.append(
-            ExecutableTaskManifest(
-                semantic_contract.compatibility_digest,
-                executable_contract,
-                capture_ns,
-                hashlib.sha256(encoded.encode()).hexdigest(),
-                optimized_contract,
+        if cache_key is not None:
+            cached = _load_cached_manifest(
+                cache_key,
+                semantic_contract,
+                optimized_contract=optimized_contract,
+                capture_ns=time.perf_counter_ns() - started,
             )
-        )
+            if cached is not None:
+                manifests.append(cached)
         return compiled
 
-    try:
+    def invoke_compiler() -> Any:
         compiler: Any = compile_fx
-        compiled: Any = compiler(
-            graph_module,
+        return compiler(
+            copy.deepcopy(source_graph),
             list(example_inputs),
             inner_compile=inner_compile,
         )
+
+    try:
+        compiled = invoke_compiler()
     except BaseException as exc:
         raise CaptureError(f"Inductor task compilation failed: {exc}") from exc
+    if not manifests:
+        cache_key = _fx_graph_cache_key(compiled)
+        if cache_key is not None:
+            cached = _load_cached_manifest(
+                cache_key,
+                semantic_contract,
+                optimized_contract=None,
+                capture_ns=time.perf_counter_ns() - compilation_started,
+            )
+            if cached is not None:
+                manifests.append(cached)
+        if not manifests:
+            # A compiler cache created outside ShadowSpill has no executable
+            # storage sidecar. Recompile once without AOT/FX caches so
+            # GraphLowering can publish the contract, then seed the sidecar for
+            # every later process. Never infer physical aliases from the cached
+            # callable or allocator telemetry.
+            try:
+                with inductor_config.patch({"force_disable_caches": True}):
+                    compiled = invoke_compiler()
+            except BaseException as exc:
+                raise CaptureError(
+                    f"Inductor task manifest regeneration failed: {exc}"
+                ) from exc
+            if len(manifests) == 1 and cache_key is not None:
+                _store_cached_manifest(cache_key, manifests[0])
     if len(manifests) != 1:
         raise CaptureError(
             "Inductor task compilation did not expose one optimized root graph: "
             f"observed={len(manifests)}"
         )
     return InductorCompilation(compiled, manifests[0])
+
+
+def _make_manifest(
+    semantic_contract: TaskStorageContract,
+    optimized_contract: TaskStorageContract,
+    executable_contract: TaskStorageContract,
+    *,
+    capture_ns: int,
+) -> ExecutableTaskManifest:
+    _validate_value_abi(semantic_contract, optimized_contract)
+    _validate_value_abi(semantic_contract, executable_contract)
+    identity = {
+        "semantic_contract_digest": semantic_contract.compatibility_digest,
+        "optimized_storage_contract": optimized_contract.identity(),
+        "optimized_storage_contract_digest": optimized_contract.compatibility_digest,
+        "storage_contract": executable_contract.identity(),
+        "storage_contract_digest": executable_contract.compatibility_digest,
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return ExecutableTaskManifest(
+        semantic_contract.compatibility_digest,
+        executable_contract,
+        capture_ns,
+        hashlib.sha256(encoded.encode()).hexdigest(),
+        optimized_contract,
+    )
+
+
+def _fx_graph_cache_key(compiled: object) -> str | None:
+    value = getattr(compiled, "_fx_graph_cache_key", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _load_cached_manifest(
+    cache_key: str,
+    semantic_contract: TaskStorageContract,
+    *,
+    optimized_contract: TaskStorageContract | None,
+    capture_ns: int,
+) -> ExecutableTaskManifest | None:
+    cached = load_task_manifest(cache_key, semantic_contract.compatibility_digest)
+    if cached is None:
+        return None
+    if (
+        optimized_contract is not None
+        and optimized_contract.compatibility_digest
+        != cached.optimized_storage_contract.compatibility_digest
+    ):
+        return None
+    try:
+        manifest = _make_manifest(
+            semantic_contract,
+            cached.optimized_storage_contract,
+            cached.storage_contract,
+            capture_ns=capture_ns,
+        )
+    except (CaptureError, ValueError):
+        return None
+    return (
+        manifest
+        if manifest.compatibility_digest == cached.compatibility_digest
+        else None
+    )
+
+
+def _store_cached_manifest(
+    cache_key: str,
+    manifest: ExecutableTaskManifest,
+) -> None:
+    optimized = manifest.optimized_storage_contract
+    if optimized is None:
+        raise AssertionError("compiled task manifest omitted its optimized contract")
+    try:
+        store_task_manifest(
+            cache_key,
+            manifest.semantic_contract_digest,
+            CachedTaskManifest(
+                optimized,
+                manifest.storage_contract,
+                manifest.compatibility_digest,
+            ),
+        )
+    except OSError:
+        # The compiler cache is an optimization. The current process already
+        # owns a complete manifest and remains correct if its cache directory
+        # is read-only or disappears concurrently.
+        return
 
 
 def _project_callable_contract(
@@ -188,13 +327,9 @@ def _project_callable_contract(
     """Remove compiler-private saved outputs using Inductor's ABI metadata."""
 
     visible = _visible_output_indices(optimized_graph)
-    inner_view_by_leaf = {
-        view.leaf_index: view for view in inner_contract.output_views
-    }
+    inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
     visible_views = tuple(
-        inner_view_by_leaf[index]
-        for index in visible
-        if index in inner_view_by_leaf
+        inner_view_by_leaf[index] for index in visible if index in inner_view_by_leaf
     )
     semantic_views = tuple(
         sorted(semantic_contract.output_views, key=lambda view: view.leaf_index)
@@ -207,9 +342,7 @@ def _project_callable_contract(
         )
 
     inner_root_by_id = {root.root_id: root for root in inner_contract.roots}
-    selected_root_ids = tuple(
-        dict.fromkeys(view.root_id for view in visible_views)
-    )
+    selected_root_ids = tuple(dict.fromkeys(view.root_id for view in visible_views))
     dense_root_id = {
         original: dense for dense, original in enumerate(selected_root_ids)
     }
@@ -279,13 +412,9 @@ def _graph_lowering_contract(
         raise CaptureError(
             "Inductor callable-visible output index exceeds GraphLowering ABI"
         )
-    inner_view_by_leaf = {
-        view.leaf_index: view for view in inner_contract.output_views
-    }
+    inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
     selected_outputs = tuple(
-        graph.graph_outputs[index]
-        for index in visible
-        if index in inner_view_by_leaf
+        graph.graph_outputs[index] for index in visible if index in inner_view_by_leaf
     )
     semantic_views = tuple(
         sorted(semantic_contract.output_views, key=lambda view: view.leaf_index)
@@ -306,13 +435,9 @@ def _graph_lowering_contract(
         if node.name in graph.graph_inputs
     }
     optimized_views = tuple(
-        inner_view_by_leaf[index]
-        for index in visible
-        if index in inner_view_by_leaf
+        inner_view_by_leaf[index] for index in visible if index in inner_view_by_leaf
     )
-    optimized_root_by_id = {
-        root.root_id: root for root in inner_contract.roots
-    }
+    optimized_root_by_id = {root.root_id: root for root in inner_contract.roots}
 
     records: list[_LoweredOutput] = []
     for semantic_view, optimized_view, output in zip(
@@ -331,8 +456,7 @@ def _graph_lowering_contract(
             layout = output.get_layout()
             dtype = output.get_dtype()
             shape = tuple(
-                _static_int(graph, value, "output shape")
-                for value in output.get_size()
+                _static_int(graph, value, "output shape") for value in output.get_size()
             )
             stride = tuple(
                 _static_int(graph, value, "output stride")
@@ -467,9 +591,7 @@ def _visible_output_indices(graph: GraphModule) -> tuple[int, ...]:
     if not isinstance(raw_visible, (tuple, list)) or any(
         not isinstance(index, int) or index < 0 for index in raw_visible
     ):
-        raise CaptureError(
-            "Inductor did not publish callable-visible output indices"
-        )
+        raise CaptureError("Inductor did not publish callable-visible output indices")
     return tuple(raw_visible)
 
 
@@ -515,14 +637,11 @@ def _static_int(graph: GraphLowering, value: Any, field: str) -> int:
         return int(hinted)
 
 
-def _span_bytes(
-    shape: tuple[int, ...], stride: tuple[int, ...], item_size: int
-) -> int:
+def _span_bytes(shape: tuple[int, ...], stride: tuple[int, ...], item_size: int) -> int:
     if not shape or any(extent == 0 for extent in shape):
         return 0 if shape and any(extent == 0 for extent in shape) else item_size
     last_element = sum(
-        (extent - 1) * step
-        for extent, step in zip(shape, stride, strict=True)
+        (extent - 1) * step for extent, step in zip(shape, stride, strict=True)
     )
     return (1 + last_element) * item_size
 
