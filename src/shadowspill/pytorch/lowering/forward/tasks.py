@@ -92,7 +92,7 @@ def emit_forward_tasks(
         entrypoints.append(
             TaskEntrypoint(
                 task_id,
-                stage.module_target,
+                stage.stage.module_target,
                 artifact,
                 input_slots,
                 output_slots,
@@ -138,7 +138,7 @@ def _bind_forward_outputs(
         ):
             outputs.append(object_id)
             produced_aliases.add(alias_id)
-        if position in stage.user_output_indices:
+        if position in stage.stage.user_output_indices:
             catalog.mark_output(object_id)
             public_outputs.append(object_id)
     return tuple(output_slots), tuple(outputs)

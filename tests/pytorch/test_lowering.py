@@ -8,12 +8,13 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.ir import MemoryLocation, ObjectRole
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.aot import capture_forward
+from shadowspill.pytorch.capture import capture_forward_stage_artifacts
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
 )
-from shadowspill.pytorch.partition import capture_forward_stages, partition_export
+from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
@@ -40,7 +41,7 @@ def _lowered() -> object:
     inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
-        artifacts = capture_forward_stages(partitioned)
+        artifacts = capture_forward_stage_artifacts(partitioned)
     measurements = tuple(_measurement(artifact) for artifact in artifacts)
     return lower_partitioned_forward_program(
         model, partitioned, artifacts, measurements
@@ -120,7 +121,7 @@ def test_forward_lowering_rejects_incomplete_profile_scatter() -> None:
     inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
-        artifacts = capture_forward_stages(partitioned)
+        artifacts = capture_forward_stage_artifacts(partitioned)
     with pytest.raises(CaptureError, match="counts"):
         lower_partitioned_forward_program(model, partitioned, artifacts, ())
 
@@ -142,7 +143,7 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
         partitioned = partition_export(
             capture_forward(model, inputs), model, partition="whole"
         )
-        artifacts = capture_forward_stages(partitioned)
+        artifacts = capture_forward_stage_artifacts(partitioned)
     lowered = lower_partitioned_forward_program(
         model,
         partitioned,

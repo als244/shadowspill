@@ -13,13 +13,13 @@ from shadowspill.pytorch.aot import capture_training
 from shadowspill.pytorch.capture import GraphArtifact
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.graph_pairs import GraphPairVariant, partition_training_capture
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     lower_partitioned_training_program,
     lower_training_storage_layout,
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.pytorch.partition import partition_training_capture
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
@@ -164,7 +164,7 @@ def _measurement(artifact: object) -> TaskMeasurement:
     )
 
 
-def _lowered() -> LoweredTrainingProgram:
+def _lowered(*, include_intermediate_variant: bool = False) -> LoweredTrainingProgram:
     real_model = _Model()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
     for parameter in real_model.parameters():
@@ -186,12 +186,38 @@ def _lowered() -> LoweredTrainingProgram:
             )
             for values in examples
         )
+    if include_intermediate_variant:
+        captures = tuple(
+            replace(
+                capture,
+                stages=tuple(
+                    replace(
+                        stage,
+                        graph_pairs=replace(
+                            stage.graph_pairs,
+                            variants=(
+                                stage.graph_pairs.variant("save"),
+                                GraphPairVariant(
+                                    "recompute_050",
+                                    0.5,
+                                    stage.graph_pairs.variant("recompute").pair,
+                                ),
+                                stage.graph_pairs.variant("recompute"),
+                            ),
+                        ),
+                    )
+                    for stage in capture.stages
+                ),
+            )
+            for capture in captures
+        )
     artifacts = (
         *(
             artifact
             for capture in captures
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -227,6 +253,27 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         "backward",
     ]
     assert all(task.phase == "optimizer" for task in selected[4:])
+
+
+def test_training_lowering_accepts_arbitrary_graph_pair_portfolios() -> None:
+    lowered = _lowered(include_intermediate_variant=True)
+    assert len(lowered.program.recomputation_groups) == 2
+    assert all(
+        tuple(option.option_id for option in group.options)
+        == ("save", "recompute_050", "recompute")
+        for group in lowered.program.recomputation_groups
+    )
+    selections = tuple(
+        RecomputationSelection(group.group_id, "recompute_050")
+        for group in lowered.program.recomputation_groups
+    )
+    selected = lowered.program.selected_tasks(selections)
+    assert [task.phase for task in selected[:4]] == [
+        "forward",
+        "backward",
+        "forward",
+        "backward",
+    ]
     assert selected[3].mutations
     assert selected[-1].mutations
     for entrypoint in lowered.entrypoints:
@@ -285,7 +332,8 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
             artifact
             for capture in captures
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -348,7 +396,8 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
             artifact
             for capture in captures
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -417,7 +466,8 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
         *(
             artifact
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -499,7 +549,8 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
         *(
             artifact
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -548,7 +599,8 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
         *(
             artifact
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -604,7 +656,8 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
         *(
             artifact
             for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
+            for option in stage.graph_pairs.variants
+            for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,

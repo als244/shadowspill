@@ -27,7 +27,7 @@ planning_cachedir/
 │   ├── exports/v1/<prefix>/<export-digest>/
 │   └── inductor/<implementation-revision>/...
 ├── graphpairs/
-│   └── v3/<prefix>/<stage-aot-input-abi>/<selection-digest>/
+│   └── v4/<prefix>/<structural-task-abi>/<selection-digest>/
 ├── profiling/
 │   ├── compiled_manifests/v2/<prefix>/<compiler-key>.json
 │   └── measurements/v12/<prefix>/<profile-key>.json
@@ -57,18 +57,20 @@ The cache uses a different key at each conversion boundary:
 | Artifact | Identity |
 |---|---|
 | Export archive | Canonical Export graph, signature, tensor geometry, aliases, mutations, and PyTorch runtime |
-| AOT graph pair | Stage AOT input ABI, differentiated root positions, and terminal-unit-tangent specialization |
+| AOT graph-pair portfolio | Structural task ABI, differentiated root positions, terminal-unit-tangent specialization, and portfolio schema |
 | Compiled manifest | Compiled task ABI, compiler/device environment, and `implementation_revision` |
 | Task measurement | Compiled task ABI, compiler/device environment, representative-value policy, `implementation_revision`, and `profiling_metadata` |
 | Program | Canonical objects, tasks, profiles, alternatives, and resource identities |
 | PressureFit selection | Program, initial/final residency, simulator capacities/routes, and planner options |
 | Execution plan | Selected Program variants, schedule, entrypoints, and physical admission |
 
-The stage AOT input ABI describes the tensor and graph interface presented to
+The structural task ABI describes the tensor and graph interface presented to
 AOTAutograd: normalized FX topology and static arguments, tensor geometry and
-gradient requirements, alias groups, and explicit mutations. It excludes
-tensor values, task names, timing profiles, budgets, and physical allocation
-sizes.
+gradient requirements, alias groups, and explicit mutations. Differentiated
+root positions and terminal-unit-tangent specialization complete graph-pair
+lookup identity. It excludes tensor values, stage occurrence IDs, task names,
+timing profiles, runtime budgets, and physical allocation sizes. Equivalent
+stage occurrences therefore share one persisted portfolio.
 
 ## Value-sensitive profiling
 

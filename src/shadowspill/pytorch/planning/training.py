@@ -17,9 +17,9 @@ from shadowspill.runtime import AdmissionError, SlabReplay
 
 from .._allocator import InstalledAllocator
 from .._plan_diagnostics import training_stage_inventory
-from .._planning_cache import PlanningCache
 from .._profiling_metadata import ProfilingMetadata, training_profiling_metadata
 from ..aot import TrainingObjectiveCapture, capture_training_objective
+from ..cache import PlanningCache
 from ..capture import GraphArtifact
 from ..compiler import (
     CompiledTaskSet,
@@ -31,8 +31,13 @@ from ..compiler import (
 )
 from ..contracts import ObjectiveResult, PlanningError
 from ..fake import fake_cuda_inputs, fake_cuda_model
+from ..graph_pairs import (
+    PartitionedTrainingCapture,
+    partition_training_capture,
+    training_parameter_stage_owners,
+)
 from ..guards import InputSignature, capture_training_signatures
-from ..lowering.profiles import CompiledLayoutCache, ProfileMeasurementKey
+from ..lowering.profiles import CompiledLayoutIndex, ProfileMeasurementKey
 from ..lowering.training import (
     LoweredTrainingProgram,
     TrainingStorageLayout,
@@ -42,9 +47,7 @@ from ..lowering.training import (
 from ..materialization import representative_cpu_inputs
 from ..optimizer import OptimizerCapture, OptimizerTaskArtifact, capture_optimizer
 from ..partition import (
-    PartitionedTrainingCapture,
-    partition_training_capture,
-    training_parameter_stage_owners,
+    PartitionSpec,
 )
 from ..profiling import TaskMeasurement, profile_unique_artifacts
 from ..public import PlannedTrainStep, PlanReport
@@ -69,7 +72,6 @@ from .artifacts import (
     TrainingProgramArtifacts,
     TrainingSelections,
 )
-from .cache import PlanningArtifactCache, open_artifact_cache
 from .common import (
     PlanningTimer,
     build_simulation_config,
@@ -79,6 +81,7 @@ from .common import (
     workspace_reserve,
 )
 from .reporting import build_training_report, cache_artifacts, publish_plan_report
+from .repositories import PlanningArtifactRepositories, open_artifact_repositories
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,9 +99,9 @@ def capture_training_graphs(
     opt: Callable[[Any], torch.optim.Optimizer],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
-    partition: str,
+    partition: PartitionSpec,
     profiling_metadata: Sequence[object] | None,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline."""
@@ -188,7 +191,7 @@ def _capture_training_objectives(
     *,
     fake_mode: FakeTensorMode,
     device_ordinal: int,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> tuple[TrainingObjectiveCapture, ...]:
     with fake_mode, timer.measure("objective_export"):
@@ -220,8 +223,8 @@ def _partition_training_graphs(
     cpu_inputs: tuple[tuple[object, ...], ...],
     *,
     fake_mode: FakeTensorMode,
-    partition: str,
-    artifact_cache: PlanningArtifactCache,
+    partition: PartitionSpec,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     representative_roots = tuple(
@@ -233,7 +236,7 @@ def _partition_training_graphs(
             partition_training_capture(
                 capture,
                 partition=partition,
-                graph_pair_cache=artifact_cache.graph_pairs,
+                graph_pair_repository=artifact_cache.graph_pairs,
                 representative_root_inputs=root_inputs,
             )
             for capture, root_inputs in zip(
@@ -304,7 +307,7 @@ def profile_training_tasks(
     captured: TrainingCaptureArtifacts,
     materialized: TrainingMaterializationArtifacts,
     *,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
     """Compile/profile each unique graph-pair and optimizer structural ABI."""
@@ -451,7 +454,7 @@ def _lower_optimizer_phases(
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
 ) -> tuple[LoweredTrainingProgram, LoweredTrainingProgram]:
-    layout_cache = CompiledLayoutCache()
+    layout_cache = CompiledLayoutIndex()
     storage_contracts = {
         digest: manifest.storage_contract
         for digest, manifest in profiled.manifests.manifests.items()
@@ -501,7 +504,7 @@ def _report_training_program_inventory(
 def pressurefit_training_programs(
     programs: TrainingProgramArtifacts,
     *,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingSelections:
     """Resolve recurrent and, when required, lazy-state first-step selections."""
@@ -579,7 +582,7 @@ def admit_training_plan(
     *,
     memory: PlanMemory,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
     started: int,
 ) -> PlannedTrainStep:
@@ -711,7 +714,7 @@ def _training_plan_report(
     initial_plan: ExecutionPlan | None,
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
@@ -787,7 +790,7 @@ def build_training(
     opt: Callable[[Any], torch.optim.Optimizer],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
-    partition: str,
+    partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
     planning_cache: PlanningCache,
@@ -797,7 +800,7 @@ def build_training(
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
-    artifacts = open_artifact_cache(planning_cache)
+    artifacts = open_artifact_repositories(planning_cache)
     captured = capture_training_graphs(
         model,
         objective=objective,
@@ -865,8 +868,8 @@ def _training_task_inventory(
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:
-            for pair in (stage.save_pair, stage.recompute_pair):
-                for artifact in (pair.forward, pair.backward):
+            for option in stage.graph_pairs.variants:
+                for artifact in (option.pair.forward, option.pair.backward):
                     compile_by_digest.setdefault(
                         artifact.compatibility_digest,
                         artifact,

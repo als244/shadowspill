@@ -16,10 +16,10 @@ from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.runtime import AdmissionError, SlabReplay
 
 from .._plan_diagnostics import forward_stage_inventory
-from .._planning_cache import PlanningCache
 from .._profiling_metadata import ProfilingMetadata, canonicalize_profiling_metadata
 from ..aot import ExportCapture, capture_forward
-from ..capture import GraphArtifact
+from ..cache import PlanningCache
+from ..capture import GraphArtifact, capture_forward_stage_artifacts
 from ..compiler import (
     CompiledTaskSet,
     CudaTaskProfiler,
@@ -38,7 +38,11 @@ from ..materialization import (
     flat_runtime_arguments,
     representative_cpu_inputs,
 )
-from ..partition import PartitionedExport, capture_forward_stages, partition_export
+from ..partition import (
+    PartitionedExport,
+    PartitionSpec,
+    partition_export,
+)
 from ..profiling import profile_unique_artifacts
 from ..public import PlannedForward, PlanReport
 from ..runtime import PlanMemory
@@ -53,7 +57,6 @@ from .artifacts import (
     ForwardProfileArtifacts,
     ForwardProgramArtifacts,
 )
-from .cache import PlanningArtifactCache, open_artifact_cache
 from .common import (
     PlanningTimer,
     build_simulation_config,
@@ -63,6 +66,7 @@ from .common import (
     workspace_reserve,
 )
 from .reporting import build_forward_report, cache_artifacts, publish_plan_report
+from .repositories import PlanningArtifactRepositories, open_artifact_repositories
 
 
 def capture_forward_graph(
@@ -70,9 +74,9 @@ def capture_forward_graph(
     *,
     example_inputs: Sequence[Any],
     memory: PlanMemory,
-    partition: str,
+    partition: PartitionSpec,
     profiling_metadata: object,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ForwardCaptureArtifacts:
     """Validate and capture one forward graph without numerical CUDA execution."""
@@ -94,7 +98,7 @@ def capture_forward_graph(
             partitioned,
             tasks,
             output_tree_spec,
-        ) = _capture_forward_stages(
+        ) = _capture_partitioned_forward(
             model,
             cpu_inputs,
             device_ordinal=device_ordinal,
@@ -136,13 +140,13 @@ def _prepare_forward_inputs(
     )
 
 
-def _capture_forward_stages(
+def _capture_partitioned_forward(
     model: nn.Module,
     cpu_inputs: tuple[object, ...],
     *,
     device_ordinal: int,
-    partition: str,
-    artifact_cache: PlanningArtifactCache,
+    partition: PartitionSpec,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> tuple[
     nn.Module,
@@ -175,14 +179,14 @@ def _capture_forward_stages(
             partition=partition,
             representative_root_inputs=representative_roots,
         )
-        tasks = capture_forward_stages(partitioned)
+        tasks = capture_forward_stage_artifacts(partitioned)
     return fake_model, capture, partitioned, tasks, output_tree_spec
 
 
 def profile_forward_tasks(
     captured: ForwardCaptureArtifacts,
     *,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ForwardProfileArtifacts:
     """Compile and profile every unique structural task ABI exactly once."""
@@ -291,7 +295,7 @@ def build_forward_program(
 def pressurefit_forward_program(
     program: ForwardProgramArtifacts,
     *,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> CachedPressureFitResult:
     """Resolve the exact PressureFit result for a canonical forward Program."""
@@ -313,7 +317,7 @@ def admit_forward_plan(
     selection: CachedPressureFitResult,
     *,
     memory: PlanMemory,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
     started: int,
 ) -> PlannedForward:
@@ -416,7 +420,7 @@ def _forward_plan_report(
     selection: CachedPressureFitResult,
     execution_plan: ExecutionPlan,
     *,
-    artifact_cache: PlanningArtifactCache,
+    artifact_cache: PlanningArtifactRepositories,
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
@@ -463,7 +467,7 @@ def build_forward(
     *,
     example_inputs: Sequence[Any],
     memory: PlanMemory,
-    partition: str,
+    partition: PartitionSpec,
     verbose: bool,
     planning_cache: PlanningCache,
     profiling_metadata: object,
@@ -472,7 +476,7 @@ def build_forward(
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
-    artifacts = open_artifact_cache(planning_cache)
+    artifacts = open_artifact_repositories(planning_cache)
     captured = capture_forward_graph(
         model,
         example_inputs=example_inputs,

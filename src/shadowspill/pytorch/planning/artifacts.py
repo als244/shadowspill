@@ -18,6 +18,7 @@ from .._profiling_metadata import ProfilingMetadata
 from ..aot import ExportCapture, TrainingObjectiveCapture
 from ..capture import GraphArtifact
 from ..compiler import CompiledTaskSet, CudaTaskProfiler, ResolvedTaskManifests
+from ..graph_pairs import PartitionedTrainingCapture
 from ..guards import InputSignature
 from ..lowering.forward import LoweredForwardProgram
 from ..lowering.profiles import ProfileMeasurementKey
@@ -26,7 +27,7 @@ from ..lowering.training import (
     TrainingStorageLayout,
 )
 from ..optimizer import OptimizerCapture, OptimizerTaskArtifact
-from ..partition import PartitionedExport, PartitionedTrainingCapture
+from ..partition import PartitionedExport
 from ..profiling import ProfilingResult, TaskMeasurement
 from ..training_materialization import TrainingMaterializedState
 

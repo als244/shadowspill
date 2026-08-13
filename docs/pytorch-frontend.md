@@ -203,12 +203,44 @@ differentiable operator semantics until AOTAutograd constructs the explicit
 forward/backward pair.
 
 Training first exports the complete objective for semantic partitioning. It
-does not differentiate that whole graph and then discard it. After partitioning,
-each executable stage produces save-oriented and min-cut recomputation graph
-pairs. Metrics are detached tensor outputs or preserved static pytree leaves;
-only the scalar objective is differentiated. Structural graph identities use
-operator targets, tensor geometry, calling convention, and the pinned
-Torch/CUDA implementation identity, not task ordinal or microbatch position.
+does not differentiate that whole graph and then discard it. Metrics are
+detached tensor outputs or preserved static pytree leaves; only the scalar
+objective is differentiated.
+
+Partitioning and differentiation are deliberately separate:
+
+```text
+captured Export graph
+    -> partition_export() -> ordered Stage occurrences
+    -> graph-pair capture -> one shared GraphPairPortfolio per structural ABI
+    -> Program lowering   -> legal recomputation options per occurrence
+```
+
+A `Stage` is one contiguous partition occurrence in topological order. It owns
+the FX subgraph, boundary sources, mutations, and public-output projection; it
+does not own AOT graphs, recomputation choices, profiles, or cache behavior.
+A `StageExample` attaches the representative values needed to determine one
+concrete fixed-shape ABI. Static specialization may therefore change a
+captured stage graph, but tensor contents do not define partition boundaries.
+
+Graph-pair construction lives separately under `pytorch/graph_pairs/`. It
+derives a structural ABI from normalized graph semantics, tensor geometry,
+layouts, aliases, mutations, static arguments, and differentiated roots.
+Equivalent repeated `Stage` occurrences reuse the same
+`GraphPairPortfolio`, while occurrence-local initialized values are rebound
+after lookup. Task ordinal, layer name, microbatch position, values, timing,
+budgets, and physical allocation sizes do not enter that identity.
+
+A portfolio is an ordered collection of labeled `GraphPairVariant` records.
+Each record carries an option ID, AOT forward/backward pair, and—when it uses
+the min-cut partitioner—the activation-memory budget that generated it. The
+default-partitioner `save` choice therefore has no min-cut budget. The
+historical `recompute` choice is PyTorch's runtime-optimized min-cut at an
+explicitly fixed budget of `1.0`; this preserves established plans and avoids
+silently inheriting ambient Functorch configuration. Lowering, persistence,
+diagnostics, and `Program` construction already accept arbitrary future
+min-cut portfolios such as `1.0, 0.75, 0.5, 0.25, 0.0` without changing
+partitioning.
 
 `partition="auto"` discovers outer containers with repeated sibling module
 types and splits the functional Export graph at those child boundaries. Nested
@@ -218,13 +250,21 @@ operations join the last. If there is no repeated structure, the complete
 graph is one legal stage. Opaque operations and data dependencies remain
 ordinary FX edges; partitioning does not rewrite their semantics.
 
-Each split stage receives its own save/recompute VJP. Profile keys canonicalize
-FX dataflow without placeholder, node, layer, or task names. Tensor geometry,
-gradient requirements, static arguments, operators, compiler/provider identity,
-Torch/CUDA version, and device capability remain semantic. Thus identical
-interior layers share one profile, while a first layer that does not return an
-input gradient or a last layer containing the objective correctly remains a
+Each distinct structural ABI receives its graph-pair portfolio and executable
+profiles once. Profile keys canonicalize FX dataflow without placeholder,
+node, layer, or task names. Tensor geometry, gradient requirements, static
+arguments, operators, compiler/provider identity, Torch/CUDA version, and
+device capability remain semantic. Thus identical interior layers share one
+portfolio and profile, while a first layer that does not return an input
+gradient or a last layer containing the objective correctly remains a
 different ABI.
+
+`partition="auto"` and `partition="whole"` are built in. Advanced callers may
+pass a `PartitionPolicy` whose `assign_stages(graph_module, module)` method
+returns one nonnegative integer label for every executable FX node. ShadowSpill
+requires complete coverage and topologically contiguous labels, normalizes the
+labels to dense stage IDs, and rejects policies that mutate the graph. Forward
+and training planning use the same policy contract.
 
 PyTorch 2.13 AOTAutograd may initialize CUDA provider state even when its model
 and examples are FakeTensors. Public planning therefore installs ShadowSpill's
@@ -250,13 +290,13 @@ from shadowspill.pytorch.planning import (
     PlanningTimer,
     build_forward_program,
     capture_forward_graph,
-    open_artifact_cache,
+    open_artifact_repositories,
     pressurefit_forward_program,
     profile_forward_tasks,
 )
 
 timer = PlanningTimer(verbose=True)
-artifacts = open_artifact_cache(PlanningCache.resolve(cache_directory))
+artifacts = open_artifact_repositories(PlanningCache.resolve(cache_directory))
 
 captured = capture_forward_graph(
     model,

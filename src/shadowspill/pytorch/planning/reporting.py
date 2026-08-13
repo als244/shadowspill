@@ -12,8 +12,8 @@ import torch.nn as nn
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import PressureFitResult
 
-from .._planning_cache import PlanningCache
 from .._profiling_metadata import ProfilingMetadata
+from ..cache import PlanningCache
 from ..profiling import ProfilingResult
 from ..public import (
     PlanCacheArtifact,

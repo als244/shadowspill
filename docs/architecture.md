@@ -69,11 +69,29 @@ The frontend cold path is organized around immutable artifacts rather than a
 stateful planning coordinator:
 
 ```text
+pytorch/cache.py       central cache root, policy, and artifact ledger
+
+pytorch/partition/
+├── api.py             short Stage-construction orchestrator
+├── policy.py          built-in and custom contiguous partition policies
+├── split.py           FX graph splitting and observed stage calls
+├── provenance.py      boundary sources, mutations, and output projection
+├── sources.py         representative root/stage value resolution
+└── artifacts.py       Stage, StageExample, and PartitionedExport
+
+pytorch/graph_pairs/
+├── artifacts.py       arbitrary GraphPairVariant portfolios
+├── build.py           portfolio construction policy
+├── capture.py         occurrence → differentiated portfolio binding
+├── rebind.py          occurrence-local value rebinding
+├── repository.py      structural-ABI persistence and reuse
+└── training.py        training-only composition after partitioning
+
 pytorch/planning/
-├── cache.py       artifact lookup, validation, and archival policy only
 ├── artifacts.py   immutable values passed between planning phases
 ├── forward.py     forward capture → profile → Program → PressureFit composition
 ├── training.py    training capture → profile → Program → PressureFit composition
+├── repositories.py typed artifact-repository construction
 ├── admission.py   physical-cap checks and pool sealing
 ├── reporting.py   PlanReport construction and lineage publication
 └── common.py      validation, phase timing, and capacity calculations
@@ -98,6 +116,14 @@ pytorch/lowering/
     └── artifacts.py immutable phase values
 ```
 
+Partitioning ends when ordered `Stage` occurrences and their boundary
+provenance exist. It has no AOTAutograd, graph-pair, profile, cache, or planner
+dependency. Graph-pair construction is a subsequent training-only conversion:
+it keys the geometry-specialized structural ABI and shares one arbitrary
+portfolio of legal differentiation choices across equivalent stage
+occurrences. Forward capture converts stage occurrences directly into
+inference task artifacts and never enters the graph-pair package.
+
 `plan_forward()` and `plan_step()` resolve public runtime/cache policy and then
 call these phase functions in order. Every phase has a typed input and
 immutable result, so tools may stop after Program construction, rerun
@@ -110,5 +136,8 @@ binds offline task-storage contracts to the objects in
 Program publisher; only their real semantic differences live under
 `lowering/forward/` and `lowering/training/`.
 Compiler measurements supply extents, workspace, and time but never redefine
-semantic identity. Cache code cannot capture, compile, lower, plan, or admit a
-model—it only resolves or persists artifacts at those explicit boundaries.
+semantic identity. `pytorch/cache.py` is the only cache-policy module.
+Artifact-specific repositories retain their domain names and serialization
+contracts instead of introducing more generic `cache.py` modules. Cache code
+cannot capture, compile, lower, plan, or admit a model—it only resolves or
+persists artifacts at those explicit boundaries.

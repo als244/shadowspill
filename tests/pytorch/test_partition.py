@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
-
+import pytest
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
+from torch.fx import GraphModule
 
-from shadowspill.pytorch.aot import capture_forward, capture_training
+from shadowspill.pytorch.aot import capture_forward
+from shadowspill.pytorch.capture import capture_forward_stage_artifacts
+from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.partition import (
-    _TrainingGraphPairCache,
-    capture_forward_stages,
-    capture_training_stages,
     partition_export,
 )
 
@@ -33,7 +32,85 @@ class _Block(nn.Module):
         self.experts = nn.ModuleList([nn.Linear(8, 8) for _ in range(2)])
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.experts[0](value) + self.experts[1](value)
+        result = self.experts[0](value) + self.experts[1](value)
+        assert isinstance(result, torch.Tensor)
+        return result
+
+
+class _TwoStagePolicy:
+    def assign_stages(
+        self,
+        graph_module: GraphModule,
+        module: nn.Module,
+    ) -> dict[str, int]:
+        del module
+        nodes = tuple(
+            node
+            for node in graph_module.graph.nodes
+            if node.op not in {"placeholder", "output", "get_attr"}
+        )
+        midpoint = max(1, len(nodes) // 2)
+        return {
+            node.name: 10 if index < midpoint else 20
+            for index, node in enumerate(nodes)
+        }
+
+
+def test_custom_partition_policy_is_normalized_and_shared_by_forward() -> None:
+    model = _NestedRepeatedNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    with mode, torch.no_grad():
+        exported = capture_forward(replica, inputs)
+        partitioned = partition_export(
+            exported,
+            replica,
+            partition=_TwoStagePolicy(),
+        )
+        artifacts = capture_forward_stage_artifacts(partitioned)
+    assert partitioned.repeated_groups == ()
+    assert len(partitioned.stages) == 2
+    assert len(artifacts) == 2
+
+
+def test_custom_partition_policy_rejects_incomplete_or_noncontiguous_labels() -> None:
+    class Incomplete:
+        def assign_stages(
+            self,
+            graph_module: GraphModule,
+            module: nn.Module,
+        ) -> dict[str, int]:
+            del graph_module, module
+            return {}
+
+    class Noncontiguous:
+        def assign_stages(
+            self,
+            graph_module: GraphModule,
+            module: nn.Module,
+        ) -> dict[str, int]:
+            del module
+            nodes = tuple(
+                node
+                for node in graph_module.graph.nodes
+                if node.op not in {"placeholder", "output", "get_attr"}
+            )
+            return {
+                node.name: (0 if index % 2 == 0 else 1)
+                for index, node in enumerate(nodes)
+            }
+
+    model = _NestedRepeatedNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    with mode, torch.no_grad():
+        exported = capture_forward(replica, inputs)
+        with pytest.raises(CaptureError, match="coverage"):
+            partition_export(exported, replica, partition=Incomplete())
+        with pytest.raises(CaptureError, match="contiguous"):
+            partition_export(exported, replica, partition=Noncontiguous())
 
 
 def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
@@ -44,142 +121,12 @@ def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
     with mode, torch.no_grad():
         exported = capture_forward(replica, inputs)
         partitioned = partition_export(exported, replica)
-        artifacts = capture_forward_stages(partitioned)
+        artifacts = capture_forward_stage_artifacts(partitioned)
     assert partitioned.repeated_groups == ("blocks",)
     assert len(partitioned.stages) == 4
     assert len(artifacts) == 4
     assert all(artifact.operator_targets for artifact in artifacts)
     assert len({artifact.compatibility_digest for artifact in artifacts}) == 1
-
-
-def test_each_training_stage_has_save_and_recompute_vjp() -> None:
-    model = _NestedRepeatedNetwork()
-    mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
-
-    def objective(
-        current: nn.Module, value: torch.Tensor, target: torch.Tensor
-    ) -> torch.Tensor:
-        return torch.nn.functional.mse_loss(current(value), target)
-
-    with mode:
-        capture = capture_training(replica, objective, inputs)
-        partitioned = partition_export(capture.exported, capture.capture_module)
-        stages = capture_training_stages(partitioned)
-    assert partitioned.repeated_groups == ("model.blocks",)
-    assert len(stages) == 4
-    assert all(stage.save_pair.backward.operator_targets for stage in stages)
-    assert all(stage.recompute_pair.forward.operator_targets for stage in stages)
-    assert all(
-        stage.save_pair.specialized_unit_tangent_count == 0 for stage in stages[:-1]
-    )
-    assert stages[-1].save_pair.specialized_unit_tangent_count == 1
-    assert stages[-1].recompute_pair.specialized_unit_tangent_count == 1
-    assert (
-        stages[1].save_pair.forward.compatibility_digest
-        == stages[2].save_pair.forward.compatibility_digest
-    )
-
-
-def test_repeated_stage_aot_code_reuses_one_structural_capture() -> None:
-    model = _NestedRepeatedNetwork()
-    mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
-
-    def objective(
-        current: nn.Module, value: torch.Tensor, target: torch.Tensor
-    ) -> torch.Tensor:
-        return torch.nn.functional.mse_loss(current(value), target)
-
-    with mode:
-        capture = capture_training(replica, objective, inputs)
-        partitioned = partition_export(capture.exported, capture.capture_module)
-        cache = _TrainingGraphPairCache()
-        stages = capture_training_stages(partitioned, graph_pair_cache=cache)
-
-    assert cache.misses == 3
-    assert cache.hits == 1
-    first_interior = stages[1].save_pair
-    second_interior = stages[2].save_pair
-    assert first_interior.forward.graph_module is second_interior.forward.graph_module
-    assert first_interior.backward.graph_module is second_interior.backward.graph_module
-    # The executable graphs are structurally shared, while the artifact wrappers
-    # remain occurrence-local so their provenance can carry the initialized state
-    # for the corresponding repeated module.
-    assert first_interior.backward is not second_interior.backward
-    assert (
-        first_interior.forward.compatibility_digest
-        == second_interior.forward.compatibility_digest
-    )
-    first_storages = tuple(
-        value.untyped_storage()._cdata
-        for value in first_interior.forward.example_arguments
-        if isinstance(value, torch.Tensor)
-    )
-    second_storages = tuple(
-        value.untyped_storage()._cdata
-        for value in second_interior.forward.example_arguments
-        if isinstance(value, torch.Tensor)
-    )
-    assert first_storages != second_storages
-
-
-def test_graph_pair_cache_persists_structural_artifacts(tmp_path: Path) -> None:
-    model = _NestedRepeatedNetwork()
-    mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
-
-    def objective(
-        current: nn.Module, value: torch.Tensor, target: torch.Tensor
-    ) -> torch.Tensor:
-        return torch.nn.functional.mse_loss(current(value), target)
-
-    with mode:
-        capture = capture_training(replica, objective, inputs)
-        partitioned = partition_export(capture.exported, capture.capture_module)
-        first = _TrainingGraphPairCache(tmp_path)
-        expected = capture_training_stages(partitioned, graph_pair_cache=first)
-        second = _TrainingGraphPairCache(tmp_path)
-        actual = capture_training_stages(partitioned, graph_pair_cache=second)
-
-    assert first.unique_keys == 3
-    assert first.misses == 3
-    assert second.unique_keys == 3
-    assert second.misses == 0
-    assert second.hits == 4
-    assert tuple(tmp_path.rglob("graph_pairs.pt"))
-    assert tuple(
-        (
-            stage.save_pair.forward.compatibility_digest,
-            stage.save_pair.backward.compatibility_digest,
-            stage.recompute_pair.forward.compatibility_digest,
-            stage.recompute_pair.backward.compatibility_digest,
-        )
-        for stage in actual
-    ) == tuple(
-        (
-            stage.save_pair.forward.compatibility_digest,
-            stage.save_pair.backward.compatibility_digest,
-            stage.recompute_pair.forward.compatibility_digest,
-            stage.recompute_pair.backward.compatibility_digest,
-        )
-        for stage in expected
-    )
-    for expected_stage, actual_stage in zip(expected, actual, strict=True):
-        for expected_pair, actual_pair in (
-            (expected_stage.save_pair, actual_stage.save_pair),
-            (expected_stage.recompute_pair, actual_stage.recompute_pair),
-        ):
-            for expected_artifact, actual_artifact in (
-                (expected_pair.forward, actual_pair.forward),
-                (expected_pair.backward, actual_pair.backward),
-            ):
-                assert str(actual_artifact.graph_module.graph) == str(
-                    expected_artifact.graph_module.graph
-                )
 
 
 def test_whole_partition_is_one_stage() -> None:
@@ -197,6 +144,8 @@ def test_whole_partition_is_one_stage() -> None:
 
 def test_export_buffer_mutation_is_projected_onto_producer_stage() -> None:
     class Stateful(nn.Module):
+        running: torch.Tensor
+
         def __init__(self) -> None:
             super().__init__()
             self.register_buffer("running", torch.zeros(8))
@@ -209,10 +158,10 @@ def test_export_buffer_mutation_is_projected_onto_producer_stage() -> None:
     inputs = (torch.randn(2, 8),)
     capture = capture_forward(model, inputs)
     partitioned = partition_export(capture, model, partition="whole")
-    artifacts = capture_forward_stages(partitioned)
+    artifacts = capture_forward_stage_artifacts(partitioned)
 
     assert len(capture.mutations) == 1
-    assert len(partitioned.stages[0].mutations) == 1
+    assert len(partitioned.stages[0].stage.mutations) == 1
     mutation = artifacts[0].storage_contract.mutations[0]
     assert mutation.replacement_output_leaf == 0
     assert mutation.producer_target == "aten.add.Tensor"

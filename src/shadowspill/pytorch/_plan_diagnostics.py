@@ -19,6 +19,7 @@ from .compiled_layout import (
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
+from .graph_pairs import DifferentiatedStage, PartitionedTrainingCapture
 from .inductor_adapter import ExecutableTaskManifest
 from .lowering.forward import LoweredForwardProgram
 from .lowering.profiles import ProfileMeasurementKey
@@ -26,7 +27,6 @@ from .lowering.training import (
     LoweredTrainingProgram,
     TrainingTaskEntrypoint,
 )
-from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 from .public import (
     PlanAllocationEvent,
@@ -90,7 +90,7 @@ def training_stage_inventory(
         item.task_id: index for index, item in enumerate(selected_tasks)
     }
     occurrence_keys: dict[tuple[int, int], str] = {}
-    stage_by_key: dict[str, list[tuple[int, int, TrainingStage]]] = {}
+    stage_by_key: dict[str, list[tuple[int, int, DifferentiatedStage]]] = {}
     for microbatch, capture in enumerate(captures):
         for stage_index, stage in enumerate(capture.stages):
             structural_key = _stage_key(stage)
@@ -189,10 +189,9 @@ def training_stage_inventory(
         occurrences = stage_by_key[structural_key]
         microbatch, stage_index, representative = occurrences[0]
         graph_pairs: list[PlanGraphPair] = []
-        for variant, pair in (
-            ("save", representative.save_pair),
-            ("recompute", representative.recompute_pair),
-        ):
+        for option in representative.graph_pairs.variants:
+            variant = option.option_id
+            pair = option.pair
             forward_entrypoint = entrypoint_by_key[
                 (microbatch, stage_index, variant, "forward")
             ]
@@ -202,6 +201,7 @@ def training_stage_inventory(
             graph_pairs.append(
                 PlanGraphPair(
                     variant=variant,
+                    memory_budget=option.memory_budget,
                     recomputation=pair.recomputation,
                     saved_value_count=pair.saved_value_count,
                     specialized_unit_tangent_count=(
@@ -231,7 +231,7 @@ def training_stage_inventory(
                 structural_key=structural_key,
                 module_targets=tuple(
                     dict.fromkeys(
-                        stage.example.module_target for _, _, stage in occurrences
+                        stage.example.stage.module_target for _, _, stage in occurrences
                     )
                 ),
                 occurrence_count=len(occurrences),
@@ -319,6 +319,7 @@ def forward_stage_inventory(
                 graph_pairs=(
                     PlanGraphPair(
                         variant="inference",
+                        memory_budget=None,
                         recomputation=False,
                         saved_value_count=0,
                         specialized_unit_tangent_count=0,
@@ -338,11 +339,17 @@ def forward_stage_inventory(
     return task_map, tuple(unique_stages)
 
 
-def _stage_key(stage: TrainingStage) -> str:
+def _stage_key(stage: DifferentiatedStage) -> str:
     payload = {
         "roots": list(stage.differentiable_output_indices),
-        "save": _pair_key(stage.save_pair),
-        "recompute": _pair_key(stage.recompute_pair),
+        "variants": [
+            {
+                "option_id": item.option_id,
+                "memory_budget": item.memory_budget,
+                "pair": _pair_key(item.pair),
+            }
+            for item in stage.graph_pairs.variants
+        ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

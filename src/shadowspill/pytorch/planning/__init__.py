@@ -1,6 +1,6 @@
 """Composable high-level PyTorch planning boundaries."""
 
-from .._planning_cache import PlanningCache
+from ..cache import PlanningCache
 from .artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,
@@ -13,7 +13,6 @@ from .artifacts import (
     TrainingProgramArtifacts,
     TrainingSelections,
 )
-from .cache import PlanningArtifactCache, open_artifact_cache
 from .common import PlanningTimer
 from .forward import (
     admit_forward_plan,
@@ -22,6 +21,7 @@ from .forward import (
     pressurefit_forward_program,
     profile_forward_tasks,
 )
+from .repositories import PlanningArtifactRepositories, open_artifact_repositories
 from .training import (
     admit_training_plan,
     build_training_programs,
@@ -37,7 +37,7 @@ __all__ = [
     "ForwardCaptureArtifacts",
     "ForwardProfileArtifacts",
     "ForwardProgramArtifacts",
-    "PlanningArtifactCache",
+    "PlanningArtifactRepositories",
     "PlanningCache",
     "PlanningTimer",
     "TrainingAdmissionArtifacts",
@@ -55,7 +55,7 @@ __all__ = [
     "capture_training_graphs",
     "compile_selected_training_tasks",
     "materialize_training_state",
-    "open_artifact_cache",
+    "open_artifact_repositories",
     "pressurefit_forward_program",
     "pressurefit_training_programs",
     "profile_forward_tasks",

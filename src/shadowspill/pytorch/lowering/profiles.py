@@ -22,8 +22,8 @@ ProfileMeasurementKey = str | tuple[str, str | None]
 ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact
 
 
-class CompiledLayoutCache:
-    """Memoize immutable layouts shared by all lowering modes and phases."""
+class CompiledLayoutIndex:
+    """Deduplicate immutable compiled layouts within one lowering call."""
 
     def __init__(self) -> None:
         self._layouts: dict[str, CompiledTaskLayout] = {}
@@ -60,14 +60,14 @@ class TaskProfileCatalog:
         | None = None,
         compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
         metadata_enabled: bool = False,
-        layout_cache: CompiledLayoutCache | None = None,
+        layout_cache: CompiledLayoutIndex | None = None,
     ) -> None:
         self._measurements = measurements
         self._storage_contracts = storage_contracts
         self._root_allocations = root_allocations
         self._compatibility_digests = compatibility_digests
         self._metadata_enabled = metadata_enabled
-        self._layout_cache = layout_cache or CompiledLayoutCache()
+        self._layout_cache = layout_cache or CompiledLayoutIndex()
         self._profile_by_key: dict[str, str] = {}
         self._profiles: list[TaskProfile] = []
 
@@ -191,7 +191,7 @@ class TaskProfileCatalog:
 
 
 __all__ = [
-    "CompiledLayoutCache",
+    "CompiledLayoutIndex",
     "ProfileMeasurementKey",
     "TaskProfileCatalog",
 ]

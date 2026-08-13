@@ -2334,3 +2334,44 @@ the ignored internal progress log before this tracked summary is updated.
 - Removed obsolete whole-graph and mixed-authority lowering paths. Ruff
   complexity checks, strict mypy, the complete Python suite, and fresh-process
   CUDA forward/training canaries pass after the structural change.
+
+## 2026-08-13 — Stage partitioning and graph-pair portfolio boundary
+
+- Replaced the monolithic partition module with a focused `partition/`
+  package. Its 43-line public orchestrator now only resolves a built-in or
+  custom contiguous policy, splits Export, and constructs ordered `Stage`
+  occurrences with boundary provenance. Forward task-ABI capture was moved
+  out of partitioning, and the package has no AOTAutograd, graph-pair,
+  profiling, cache, recomputation, or planner dependency.
+- Defined the semantic levels explicitly: `Stage` is one topological partition
+  occurrence; `StageExample` adds occurrence-local representative values; a
+  structural task ABI additionally includes fixed geometry, layouts, aliases,
+  mutations, static arguments, and differentiated roots. Equivalent repeated
+  stage occurrences may therefore share compiled graph choices without
+  conflating their initialized values.
+- Added a separate `graph_pairs/` package and immutable
+  `GraphPairPortfolio`/`GraphPairVariant` records. The current builder emits
+  the established default-partitioner `save` choice and PyTorch's
+  runtime-optimized min-cut `recompute` choice at an explicitly fixed `1.0`
+  activation-memory budget. Persistence, diagnostics, lowering, task emission,
+  and canonical Program construction now accept any ordered portfolio. A
+  synthetic third `0.5` option proves downstream selection is no longer
+  binary-coded.
+- Pre-commit review found that the old min-cut call inherited Functorch's
+  ambient `activation_memory_budget`, which is currently `1.0`; it was not a
+  `0.0` full-recompute endpoint. The builder now fixes that existing budget
+  explicitly so external configuration cannot change cache identity, and the
+  default-partitioner choice correctly records no min-cut budget. This is a
+  metadata/determinism correction, not a graph or schedule change.
+- Consolidated generic cache policy and the artifact ledger in the sole
+  `pytorch/cache.py`. Graph-pair, profile, and PressureFit persistence remain
+  explicit typed repositories with their own schemas; no partitioning or
+  lowering package contains a generic `cache.py`. Graph-pair cache schema v4
+  persists every option ID, memory-budget fraction, reference option, and
+  structural ABI.
+- Validation: Ruff and strict mypy pass over all 104 source files; the complete
+  Python suite passes; and all 20 compiled neutral/CUDA/PyTorch CTest canaries
+  pass. The first CTest invocation exposed a stale build-tree configuration
+  that embedded the base-Conda Python interpreter and failed before tests on an
+  incompatible Torch private API. Reconfiguring that same tree explicitly with
+  the pinned `shadowspill` interpreter made all eight PyTorch canaries pass.

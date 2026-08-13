@@ -16,10 +16,11 @@ import torch.nn as nn
 from shadowspill.ir import ExecutionPlan, MemoryAction, Program, TaskProfile
 from shadowspill.planner import PressureFitResult
 
-from ._planning_cache import PlanningCache
+from .cache import PlanningCache
 from .executor import ForwardExecutor
 from .guards import InputSignature, validate_training_inputs
 from .materialization import MaterializedForwardState
+from .partition import PartitionSpec
 from .runtime import Runtime, TransferCapabilities, TransferProfile
 from .training_executor import ExecutionTiming, StepDiagnostics, TrainingExecutor
 from .training_materialization import TrainingMaterializedState
@@ -401,6 +402,7 @@ class PlanGraphPair:
     """One legal stage choice; forward-only choices omit ``backward``."""
 
     variant: str
+    memory_budget: float | None
     recomputation: bool
     saved_value_count: int
     specialized_unit_tangent_count: int
@@ -410,6 +412,7 @@ class PlanGraphPair:
     def as_dict(self) -> dict[str, object]:
         return {
             "variant": self.variant,
+            "memory_budget": self.memory_budget,
             "recomputation": self.recomputation,
             "saved_value_count": self.saved_value_count,
             "specialized_unit_tangent_count": self.specialized_unit_tangent_count,
@@ -978,7 +981,7 @@ def plan_forward(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     execution_device: int | str | torch.device | None = None,
-    partition: str = "auto",
+    partition: PartitionSpec = "auto",
     verbose: bool = True,
     planning_cachedir: str | os.PathLike[str] | None = None,
     profiling_metadata: object = None,
@@ -1000,6 +1003,10 @@ def plan_forward(
     run. ``implementation_revision`` invalidates compiler/profile artifacts
     when a lower-level custom implementation changes without changing its
     exported graph.
+
+    ``partition`` accepts ``"auto"``, ``"whole"``, or a
+    :class:`PartitionPolicy`. Partitioning only creates ordered stage
+    occurrences; it does not choose training graph-pair alternatives.
     """
 
     from .planning.forward import build_forward
@@ -1049,7 +1056,7 @@ def plan_step(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     execution_device: int | str | torch.device | None = None,
-    partition: str = "auto",
+    partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
     planning_cachedir: str | os.PathLike[str] | None = None,
@@ -1069,6 +1076,9 @@ def plan_step(
     microbatch. It only distinguishes value-sensitive task measurements and
     their downstream plans; it is never passed to the objective or runtime.
     Cache policy arguments have the same meaning as :func:`plan_forward`.
+    ``partition`` uses the same stage-only policy contract as forward
+    planning. A later graph-pair phase independently shares differentiation
+    portfolios across structurally equivalent stage occurrences.
     """
 
     from .planning.training import build_training

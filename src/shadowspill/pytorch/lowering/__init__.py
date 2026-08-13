@@ -1,7 +1,7 @@
 """Offline semantic and physical lowering for the PyTorch frontend."""
 
 from .forward import LoweredForwardProgram, lower_partitioned_forward_program
-from .profiles import CompiledLayoutCache, ProfileMeasurementKey
+from .profiles import CompiledLayoutIndex, ProfileMeasurementKey
 from .training import (
     LoweredTrainingProgram,
     TrainingStorageLayout,
@@ -10,7 +10,7 @@ from .training import (
 )
 
 __all__ = [
-    "CompiledLayoutCache",
+    "CompiledLayoutIndex",
     "LoweredForwardProgram",
     "LoweredTrainingProgram",
     "ProfileMeasurementKey",

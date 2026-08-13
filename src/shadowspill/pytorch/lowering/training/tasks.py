@@ -96,8 +96,7 @@ class _TrainingTaskEmitter:
         metadata_digest = self.metadata[position]
         for stage_index, variants in enumerate(position_variants):
             current_ids: list[str] = []
-            for variant in ("save", "recompute"):
-                item = variants[variant]
+            for variant, item in variants.items():
                 task_id = f"task_{len(self.tasks):06d}"
                 self.forward_ids[(position, stage_index, variant)] = task_id
                 input_aliases = {
@@ -163,7 +162,8 @@ class _TrainingTaskEmitter:
         for stage_index in reversed(range(len(position_variants))):
             variants = position_variants[stage_index]
             stage_task_ids = tuple(
-                f"task_{len(self.tasks) + offset:06d}" for offset in range(2)
+                f"task_{len(self.tasks) + offset:06d}"
+                for offset in range(len(variants))
             )
             first_destinations = {
                 slot.object_id
@@ -171,17 +171,15 @@ class _TrainingTaskEmitter:
                 for slot in item.contributions
                 if slot.object_id not in self.initial_writers
             }
-            for variant, task_id in zip(
-                ("save", "recompute"),
-                stage_task_ids,
-                strict=True,
+            for (variant, item), task_id in zip(
+                variants.items(), stage_task_ids, strict=True
             ):
                 self._emit_backward_variant(
                     position,
                     stage_index,
                     variant,
                     task_id,
-                    variants[variant],
+                    item,
                     downstream_ids,
                     first_destinations,
                     metadata_digest,
@@ -390,7 +388,7 @@ class _TrainingTaskEmitter:
                             )
                         ),
                     )
-                    for variant in ("save", "recompute")
+                    for variant in self.prepared[position][stage_index]
                 ),
             )
             for position, position_variants in enumerate(self.prepared)

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
+from torch._functorch import config as functorch_config
 from torch._functorch.aot_autograd import aot_function
 from torch._functorch.partitioners import min_cut_rematerialization_partition
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
@@ -251,12 +253,21 @@ def capture_graph_pair(
     *,
     original_output: object,
     recomputation: bool,
+    activation_memory_budget: float | None = None,
     root_output_positions: tuple[int, ...] | None = None,
     specialize_unit_tangents: bool = False,
     explicit_mutations: tuple[ExplicitMutation, ...] = (),
     input_provenance: tuple[TaskInputProvenance, ...] | None = None,
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
+
+    if activation_memory_budget is not None:
+        if not recomputation:
+            raise ValueError(
+                "activation_memory_budget requires the min-cut partitioner"
+            )
+        if not 0.0 <= activation_memory_budget <= 1.0:
+            raise ValueError("activation_memory_budget must be between zero and one")
 
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
     tensor_provenance = (
@@ -299,19 +310,28 @@ def capture_graph_pair(
     try:
         aot: Any = aot_function
         if recomputation:
-            compiled = aot(
-                graph_module,
-                fw_compiler=forward_compiler,
-                bw_compiler=backward_compiler,
-                partition_fn=min_cut_rematerialization_partition,
+            budget_scope = (
+                nullcontext()
+                if activation_memory_budget is None
+                else functorch_config.patch(
+                    activation_memory_budget=activation_memory_budget
+                )
             )
+            with budget_scope:
+                compiled = aot(
+                    graph_module,
+                    fw_compiler=forward_compiler,
+                    bw_compiler=backward_compiler,
+                    partition_fn=min_cut_rematerialization_partition,
+                )
+                outputs = compiled(*capture_inputs)
         else:
             compiled = aot(
                 graph_module,
                 fw_compiler=forward_compiler,
                 bw_compiler=backward_compiler,
             )
-        outputs = compiled(*capture_inputs)
+            outputs = compiled(*capture_inputs)
         output_values, _ = tree_flatten(outputs)
         if root_output_positions is None:
             roots = tuple(

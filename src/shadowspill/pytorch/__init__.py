@@ -8,6 +8,7 @@ from .contracts import (
     PlanningError,
     TensorSpec,
 )
+from .partition import PartitionPolicy, PartitionSpec
 from .public import (
     DiagnosticsHandle,
     ExecutionTiming,
@@ -51,6 +52,8 @@ __all__ = [
     "MemoryPool",
     "ObjectiveError",
     "ObjectiveResult",
+    "PartitionPolicy",
+    "PartitionSpec",
     "PlanAllocationEvent",
     "PlanCacheArtifact",
     "PlanCompiledOutputView",

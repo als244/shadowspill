@@ -9,8 +9,8 @@ import torch
 from shadowspill.ir import Program, RecomputationGroup, ResidencySpec, TaskSpec
 
 from ...capture import AotGraphPair, GraphArtifact
+from ...graph_pairs import DifferentiatedStage
 from ...optimizer import OptimizerTaskArtifact, OptimizerTensorRole
-from ...partition import TrainingStage
 from ..catalog import ObjectCatalog, RegistrationBinding, TensorSlot
 from ..task_binding import TaskStorageHandoff
 
@@ -86,7 +86,7 @@ class TrainingStorageLayout:
 
 @dataclass(frozen=True, slots=True)
 class PreparedStageVariant:
-    stage: TrainingStage
+    stage: DifferentiatedStage
     pair: AotGraphPair
     forward_inputs: tuple[TensorSlot, ...]
     forward_outputs: tuple[TensorSlot, ...]

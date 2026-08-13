@@ -1,4 +1,4 @@
-"""Artifact lookup and persistence for PyTorch planning.
+"""Typed artifact repositories opened for one PyTorch planning call.
 
 This module is intentionally policy-only.  It does not capture graphs, profile
 tasks, construct Programs, or admit runtime memory.
@@ -14,20 +14,20 @@ from shadowspill.planner import PressureFitOptions
 from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
 from shadowspill.simulator import SimulationConfig
 
-from .._planning_cache import PlanningCache
 from ..aot import ExportCapture, export_capture_digest
-from ..partition import _TrainingGraphPairCache
+from ..cache import PlanningCache
+from ..graph_pairs import GraphPairRepository
 from ..profiling import ProfileCache
 
 
 @dataclass(frozen=True, slots=True)
-class PlanningArtifactCache:
+class PlanningArtifactRepositories:
     """Typed lookup/write boundary for one planning call's artifacts."""
 
     store: PlanningCache
     profiles: ProfileCache
     pressurefit: PressureFitCache
-    graph_pairs: _TrainingGraphPairCache
+    graph_pairs: GraphPairRepository
 
     def archive_export(
         self,
@@ -89,10 +89,10 @@ class PlanningArtifactCache:
         )
 
 
-def open_artifact_cache(store: PlanningCache) -> PlanningArtifactCache:
+def open_artifact_repositories(store: PlanningCache) -> PlanningArtifactRepositories:
     """Translate one public cache policy into typed artifact lookups."""
 
-    return PlanningArtifactCache(
+    return PlanningArtifactRepositories(
         store=store,
         profiles=ProfileCache(
             store.profile_measurements,
@@ -109,7 +109,7 @@ def open_artifact_cache(store: PlanningCache) -> PlanningArtifactCache:
             overwrite=store.overwrite_plan,
             artifact_recorder=store.record,
         ),
-        graph_pairs=_TrainingGraphPairCache(
+        graph_pairs=GraphPairRepository(
             store.graphpairs,
             read_enabled=store.read_enabled,
             write_enabled=store.write_enabled,
@@ -119,4 +119,4 @@ def open_artifact_cache(store: PlanningCache) -> PlanningArtifactCache:
     )
 
 
-__all__ = ["PlanningArtifactCache", "open_artifact_cache"]
+__all__ = ["PlanningArtifactRepositories", "open_artifact_repositories"]

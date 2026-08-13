@@ -11,8 +11,8 @@ from shadowspill.ir import ObjectRole, Persistence
 from ..._live_storage import live_view_key
 from ...aot import TrainingObjectiveCapture
 from ...contracts import CaptureError
+from ...graph_pairs import PartitionedTrainingCapture
 from ...optimizer import OptimizerCapture, OptimizerTensorRole
-from ...partition import PartitionedTrainingCapture
 from ..catalog import ObjectCatalog, TensorSlot, register_model_state
 from ..program import execution_device_id, publish_storage_program
 from .artifacts import (

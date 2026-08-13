@@ -1,4 +1,4 @@
-"""One explicit, inspectable artifact store for PyTorch planning."""
+"""Central, explicit, and inspectable artifact store for PyTorch planning."""
 
 from __future__ import annotations
 
@@ -269,7 +269,7 @@ class PlanningCache:
                     "schema": _LAYOUT_SCHEMA,
                     "directories": {
                         "pytorch": "Export and Inductor artifacts",
-                        "graphpairs": "save/recompute AOT graph pairs",
+                        "graphpairs": "structural AOT graph-pair portfolios",
                         "profiling": "hardware-specific task measurements",
                         "pressurefit": "Programs and selected memory schedules",
                         "plans": "human-readable request-to-artifact indexes",
@@ -627,7 +627,7 @@ Digests determine identity; readable model names under `plans/` are indexes only
 
 - `pytorch/exports/`: normalized Export archives and manifests.
 - `pytorch/inductor/`: files managed internally by PyTorch Inductor.
-- `graphpairs/`: structural save/recompute AOT graph pairs.
+- `graphpairs/`: structural AOT graph-pair portfolios.
 - `profiling/`: hardware/compiler-specific layouts and task measurements.
 - `pressurefit/programs/`: exact canonical Programs supplied to PressureFit.
 - `pressurefit/selections/`: selected recomputation and memory schedules.

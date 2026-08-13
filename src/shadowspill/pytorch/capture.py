@@ -8,7 +8,7 @@ import json
 import time
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import torch
 from torch.fx import GraphModule
@@ -22,6 +22,9 @@ from .output_contract import (
     TaskStorageContract,
     capture_task_storage_contract,
 )
+
+if TYPE_CHECKING:
+    from .partition import PartitionedExport
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +449,28 @@ def _canonical_argument(value: object, identities: dict[Node, int]) -> object:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     return {"type": type(value).__qualname__, "value": str(value)}
+
+
+def capture_forward_stage_artifacts(
+    partitioned: PartitionedExport,
+) -> tuple[GraphArtifact, ...]:
+    """Capture one structural inference ABI for each stage occurrence.
+
+    Partitioning itself stops at :class:`Stage`. This conversion belongs to
+    graph capture because it adds the geometry-dependent task ABI consumed by
+    compilation and profiling.
+    """
+
+    return tuple(
+        GraphArtifact.capture(
+            kind="inference",
+            graph_module=example.stage.graph_module,
+            example_inputs=example.inputs,
+            explicit_mutations=example.stage.mutations,
+            input_provenance=example.stage.input_provenance,
+        )
+        for example in partitioned.stages
+    )
 
 
 @dataclass(frozen=True, slots=True)

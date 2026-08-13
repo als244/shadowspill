@@ -12,10 +12,11 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch._allocator import install_allocator
 from shadowspill.pytorch.aot import capture_forward
+from shadowspill.pytorch.capture import capture_forward_stage_artifacts
 from shadowspill.pytorch.compiler import CudaTaskProfiler, profile_environment
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.materialization import flat_runtime_arguments
-from shadowspill.pytorch.partition import capture_forward_stages, partition_export
+from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import ProfileCache, profile_unique_artifacts
 
 
@@ -50,7 +51,7 @@ def main() -> int:
             value.detach() if isinstance(value, torch.Tensor) else value
             for value in flat_runtime_arguments(capture, real_model, real_inputs)
         )
-        artifacts = capture_forward_stages(
+        artifacts = capture_forward_stage_artifacts(
             partition_export(
                 capture,
                 model,

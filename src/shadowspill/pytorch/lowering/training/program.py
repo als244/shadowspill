@@ -8,12 +8,12 @@ from typing import Literal
 import torch.nn as nn
 
 from ...contracts import CaptureError
+from ...graph_pairs import PartitionedTrainingCapture
 from ...inductor_adapter import ExecutableRootAllocation
 from ...optimizer import OptimizerCapture
 from ...output_contract import TaskStorageContract
-from ...partition import PartitionedTrainingCapture
 from ...profiling import TaskMeasurement
-from ..profiles import CompiledLayoutCache, ProfileMeasurementKey, TaskProfileCatalog
+from ..profiles import CompiledLayoutIndex, ProfileMeasurementKey, TaskProfileCatalog
 from ..program import execution_device_id, publish_program
 from .artifacts import LoweredTrainingProgram
 from .bindings import bind_training_boundaries, prepare_training_variants
@@ -34,7 +34,7 @@ def lower_partitioned_training_program(
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
-    layout_cache: CompiledLayoutCache | None = None,
+    layout_cache: CompiledLayoutIndex | None = None,
     profiling_metadata_digests: tuple[str, ...] | None = None,
     profile_compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
 ) -> LoweredTrainingProgram:
@@ -60,7 +60,7 @@ def lower_partitioned_training_program(
         root_allocations=compiled_root_allocations,
         compatibility_digests=profile_compatibility_digests,
         metadata_enabled=profiling_metadata_digests is not None,
-        layout_cache=layout_cache or CompiledLayoutCache(),
+        layout_cache=layout_cache or CompiledLayoutIndex(),
     )
     boundaries = bind_training_boundaries(
         captures,

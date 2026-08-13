@@ -10,8 +10,8 @@ from shadowspill.ir import ObjectRole, Persistence
 from ...capture import AotGraphPair
 from ...compiled_layout import CompiledTaskLayout
 from ...contracts import CaptureError
+from ...graph_pairs import DifferentiatedStage, PartitionedTrainingCapture
 from ...output_contract import TaskStorageContract
-from ...partition import PartitionedTrainingCapture, TrainingStage
 from ..catalog import ObjectCatalog, TensorSlot
 from ..profiles import TaskProfileCatalog
 from ..task_binding import (
@@ -65,7 +65,7 @@ def bind_training_boundaries(
             terminal = stage_index == len(capture.stages) - 1
             if terminal:
                 public_outputs[position] = tuple(
-                    ids[index] for index in stage.example.user_output_indices
+                    ids[index] for index in stage.example.stage.user_output_indices
                 )
             _register_stage_cotangents(
                 position,
@@ -90,7 +90,7 @@ def _bind_canonical_stage_boundary(
     position: int,
     stage_index: int,
     capture: PartitionedTrainingCapture,
-    stage: TrainingStage,
+    stage: DifferentiatedStage,
     prior_boundaries: list[tuple[str, ...]],
     root_objects: dict[int, str],
     catalog: ObjectCatalog,
@@ -99,7 +99,7 @@ def _bind_canonical_stage_boundary(
 ) -> tuple[str, ...]:
     leaves, _ = tree_flatten(stage.example.output)
     terminal = stage_index == len(capture.stages) - 1
-    public_leaves = stage.example.user_output_indices
+    public_leaves = stage.example.stage.user_output_indices
     expected_public_count = (
         1 + len(capture.training.objective_schema.tensor_metric_positions)
         if terminal
@@ -107,7 +107,7 @@ def _bind_canonical_stage_boundary(
     )
     if len(public_leaves) != expected_public_count:
         raise CaptureError("stage user outputs differ from objective schema")
-    pair = stage.save_pair
+    pair = stage.graph_pairs.reference
     if pair.forward.output_count - pair.saved_value_count != len(leaves):
         raise CaptureError("stage boundary output count changed during AOT")
     inputs = resolve_stage_input_slots(
@@ -147,7 +147,7 @@ def _bind_canonical_stage_boundary(
 
 def _register_stage_cotangents(
     position: int,
-    stage: TrainingStage,
+    stage: DifferentiatedStage,
     boundary_ids: tuple[str, ...],
     catalog: ObjectCatalog,
     cotangents: dict[tuple[int, str], str],
@@ -155,7 +155,7 @@ def _register_stage_cotangents(
     *,
     terminal: bool,
 ) -> None:
-    pair = stage.save_pair
+    pair = stage.graph_pairs.reference
     tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
     explicit_indices = stage.differentiable_output_indices[
         : len(stage.differentiable_output_indices) - pair.specialized_unit_tangent_count
@@ -220,7 +220,7 @@ def prepare_training_variants(
 def _prepare_stage_variants(
     position: int,
     stage_index: int,
-    stage: TrainingStage,
+    stage: DifferentiatedStage,
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
     profiles: TaskProfileCatalog,
@@ -230,10 +230,9 @@ def _prepare_stage_variants(
     variants: dict[str, PreparedStageVariant] = {}
     canonical_outputs = boundaries.object_ids[position][stage_index]
     terminal = stage_index == len(boundaries.object_ids[position]) - 1
-    for variant, pair in (
-        ("save", stage.save_pair),
-        ("recompute", stage.recompute_pair),
-    ):
+    for option in stage.graph_pairs.variants:
+        variant = option.option_id
+        pair = option.pair
         forward_inputs = resolve_stage_input_slots(
             stage.example,
             pair.forward,
@@ -302,7 +301,7 @@ def _prepare_stage_variants(
             backward_inputs,
             contributions,
             residuals,
-            stage.example.user_output_indices,
+            stage.example.stage.user_output_indices,
             mutations,
             replacement_leaves,
             forward_handoffs,
@@ -369,7 +368,7 @@ def _stage_forward_outputs(
 
 def _stage_backward_inputs(
     position: int,
-    stage: TrainingStage,
+    stage: DifferentiatedStage,
     pair: AotGraphPair,
     forward_outputs: tuple[TensorSlot, ...],
     canonical_outputs: tuple[str, ...],

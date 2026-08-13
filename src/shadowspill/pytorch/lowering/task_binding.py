@@ -401,7 +401,7 @@ def resolve_stage_input_slots(
     """Resolve stage inputs from split-root FX topology, never storage IDs."""
 
     input_leaves, _ = tree_flatten(stage.inputs)
-    if len(stage.input_sources) != len(input_leaves):
+    if len(stage.stage.input_sources) != len(input_leaves):
         raise CaptureError("stage input provenance arity changed")
     slots: list[TensorSlot] = []
     for compact_index, stage_position in enumerate(artifact.tensor_argument_positions):
@@ -409,7 +409,7 @@ def resolve_stage_input_slots(
             input_leaves[stage_position], torch.Tensor
         ):
             raise CaptureError("stage tensor argument position is invalid")
-        source = stage.input_sources[stage_position]
+        source = stage.stage.input_sources[stage_position]
         if source is None:
             raise CaptureError("tensor stage argument has no semantic source")
         if source.root_input_index is not None:

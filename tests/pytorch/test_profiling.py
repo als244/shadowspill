@@ -7,10 +7,10 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.aot import capture_forward
-from shadowspill.pytorch.capture import GraphArtifact
+from shadowspill.pytorch.capture import GraphArtifact, capture_forward_stage_artifacts
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.partition import capture_forward_stages, partition_export
+from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     ProfileCache,
     ProfileEnvironment,
@@ -38,7 +38,7 @@ def _artifacts() -> tuple[GraphArtifact, ...]:
     inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
-        return capture_forward_stages(partitioned)
+        return capture_forward_stage_artifacts(partitioned)
 
 
 def _environment() -> ProfileEnvironment:
