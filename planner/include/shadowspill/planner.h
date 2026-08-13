@@ -15,8 +15,9 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 3U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 4U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
+#define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
 typedef enum ShadowSpillPlannerStatus {
     SHADOWSPILL_PLANNER_OK = 0,
@@ -70,6 +71,109 @@ typedef struct ShadowSpillResidencyResult {
     uint8_t *breaks;
     uint64_t break_capacity;
 } ShadowSpillResidencyResult;
+
+typedef enum ShadowSpillResidencyStrategy {
+    SHADOWSPILL_RESIDENCY_HEADROOM_STALL = 0,
+    SHADOWSPILL_RESIDENCY_HEADROOM_TRANSFER = 1,
+    SHADOWSPILL_RESIDENCY_TIGHT_STALL = 2,
+    SHADOWSPILL_RESIDENCY_TIGHT_TRANSFER = 3,
+    SHADOWSPILL_RESIDENCY_RELAXED_STALL = 4,
+} ShadowSpillResidencyStrategy;
+
+typedef enum ShadowSpillPrefetchRule {
+    SHADOWSPILL_PREFETCH_PACKED_FIFO = 0,
+    SHADOWSPILL_PREFETCH_PACKED_FIT = 1,
+    SHADOWSPILL_PREFETCH_INTERVAL_ENTRY = 2,
+    SHADOWSPILL_PREFETCH_LATEST_SAFE = 3,
+} ShadowSpillPrefetchRule;
+
+/*
+ * Dense schedule storage used by the complete compiled candidate evaluator.
+ * Every identifier is the corresponding dense task or alias index in the
+ * supplied simulation program. Arrays are owned by the result and remain
+ * valid until shadowspill_pressurefit_context_result_destroy().
+ */
+typedef struct ShadowSpillDenseSchedule {
+    uint32_t action_count;
+    uint32_t *action_trigger_tasks;
+    uint32_t *action_aliases;
+    uint8_t *action_kinds;
+    uint32_t initial_count;
+    uint32_t *initial_aliases;
+    uint8_t *initial_locations;
+    uint32_t final_count;
+    uint32_t *final_aliases;
+    uint8_t *final_locations;
+} ShadowSpillDenseSchedule;
+
+typedef struct ShadowSpillPressureFitContext {
+    uint32_t abi_version;
+    const ShadowSpillResidencyProblem *residency;
+    const ShadowSpillSimulationProgram *simulation;
+    const uint8_t *seed_resident;
+    const uint8_t *seed_breaks;
+
+    /* JSON-escaped identifier payloads, without surrounding quotes. */
+    const char *const *alias_json_names;
+    const char *const *task_json_names;
+} ShadowSpillPressureFitContext;
+
+typedef struct ShadowSpillPressureFitContextOptions {
+    const uint8_t *residency_strategies;
+    uint32_t residency_strategy_count;
+    const uint8_t *prefetch_rules;
+    uint32_t prefetch_rule_count;
+    uint8_t evaluate_coalesced;
+    uint32_t max_repair_attempts;
+} ShadowSpillPressureFitContextOptions;
+
+typedef enum ShadowSpillCandidateStatus {
+    SHADOWSPILL_CANDIDATE_VALID = 0,
+    SHADOWSPILL_CANDIDATE_ANALYTIC_INFEASIBLE = 1,
+    SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE = 2,
+    SHADOWSPILL_CANDIDATE_INTERNAL_ERROR = 3,
+} ShadowSpillCandidateStatus;
+
+typedef struct ShadowSpillPressureFitCandidateDiagnostic {
+    uint8_t status;
+    uint8_t residency_strategy;
+    uint8_t prefetch_rule;
+    uint8_t coalesced;
+    uint32_t repair_attempts;
+    uint32_t simulation_status;
+    uint64_t makespan_ns;
+    uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
+
+    uint32_t error_task;
+    uint32_t error_alias;
+    uint32_t error_device;
+    uint8_t error_location;
+    int32_t error_boundary;
+    uint64_t error_time_ns;
+    uint64_t error_capacity_bytes;
+    uint64_t error_used_bytes;
+    uint64_t error_requested_bytes;
+    uint64_t error_required_bytes;
+} ShadowSpillPressureFitCandidateDiagnostic;
+
+typedef struct ShadowSpillPressureFitContextResult {
+    uint32_t status;
+    uint32_t selected_candidate_index;
+    uint64_t selected_makespan_ns;
+    ShadowSpillDenseSchedule selected_schedule;
+    ShadowSpillPressureFitCandidateDiagnostic *candidates;
+    uint32_t candidate_count;
+    uint64_t residency_cache_hits;
+    uint64_t residency_cache_misses;
+    uint64_t schedule_emissions;
+    uint64_t schedule_cache_hits;
+    uint64_t simulation_calls;
+    uint64_t simulation_cache_hits;
+    uint64_t residency_time_ns;
+    uint64_t schedule_time_ns;
+    uint64_t simulation_time_ns;
+    uint64_t digest_time_ns;
+} ShadowSpillPressureFitContextResult;
 
 /*
  * One fully materialized PressureFit candidate. `program` includes the
@@ -131,6 +235,25 @@ shadowspill_reduce_residency(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
     ShadowSpillResidencyResult *result
+);
+
+/*
+ * Evaluate the complete deterministic candidate portfolio for one already
+ * resolved recomputation selection. The function performs no Python calls and
+ * retains dense residency and schedule records throughout evaluation. Result
+ * storage is owned by the caller after success or a no-feasible result and
+ * must be released with the matching destroy function.
+ */
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_evaluate_pressurefit_context(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitContextOptions *options,
+    ShadowSpillPressureFitContextResult *result
+);
+
+SHADOWSPILL_PLANNER_API void
+shadowspill_pressurefit_context_result_destroy(
+    ShadowSpillPressureFitContextResult *result
 );
 
 SHADOWSPILL_PLANNER_API uint32_t shadowspill_planner_abi_version(void);

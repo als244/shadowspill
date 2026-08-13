@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from bisect import bisect_right
 from collections.abc import Callable
@@ -39,6 +40,11 @@ from ._dense_residency import (
     reduce_residency_compiled,
 )
 from ._facts import PlanningFacts, build_facts
+from ._native_portfolio import (
+    NativeContextResult,
+    decode_candidate_diagnostic,
+    evaluate_context_compiled,
+)
 from ._residency import (
     Cut,
     ResidencyPlan,
@@ -616,6 +622,109 @@ def _run_candidates(
     return tuple(sorted(results, key=lambda item: item.spec.ordinal))
 
 
+def _native_worker_count(options: PressureFitOptions, count: int) -> int:
+    if count <= 1 or options.workers == 1:
+        return 1
+    if options.workers > 1:
+        return min(options.workers, count)
+    return min(max(os.cpu_count() or 1, 1), 16, count)
+
+
+def _run_native_contexts(
+    contexts: tuple[_SelectionContext, ...],
+    options: PressureFitOptions,
+) -> tuple[NativeContextResult, ...]:
+    def evaluate(context: _SelectionContext) -> NativeContextResult:
+        assert context.compiled_residency is not None
+        assert context.compiled_template is not None
+        return evaluate_context_compiled(
+            context.compiled_residency,
+            context.compiled_template,
+            options,
+        )
+
+    workers = _native_worker_count(options, len(contexts))
+    if workers == 1:
+        return tuple(evaluate(context) for context in contexts)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return tuple(executor.map(evaluate, contexts))
+
+
+def _finish_native_pressurefit(
+    program: Program,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...],
+    config: SimulationConfig,
+    options: PressureFitOptions,
+    contexts: tuple[_SelectionContext, ...],
+    results: tuple[NativeContextResult, ...],
+) -> PressureFitResult:
+    diagnostics: list[CandidateDiagnostic] = []
+    selected: tuple[int, int, NativeContextResult] | None = None
+    valid_count = 0
+    for context_index, (context, result) in enumerate(
+        zip(contexts, results, strict=True)
+    ):
+        assert context.compiled_template is not None
+        diagnostics.extend(
+            decode_candidate_diagnostic(
+                candidate,
+                selection_id=context.selection_id,
+                simulation=context.compiled_template,
+            )
+            for candidate in result.candidates
+        )
+        valid_count += sum(candidate.status == 0 for candidate in result.candidates)
+        if result.selected_candidate_index is None:
+            continue
+        assert result.selected_makespan_ns is not None
+        candidate_ordinal = (
+            context_index * len(result.candidates) + result.selected_candidate_index
+        )
+        key = (result.selected_makespan_ns, candidate_ordinal)
+        if selected is None or key < (selected[0], selected[1]):
+            selected = (key[0], key[1], result)
+
+    if selected is None:
+        frozen = tuple(diagnostics)
+        first = frozen[0] if frozen else None
+        raise PressureFitInfeasibleError(
+            "no simulator-valid PressureFit candidate satisfied the declared "
+            "capacity and residency constraints",
+            kind=first.failure_kind if first and first.failure_kind else "no_candidate",
+            diagnostics=frozen,
+        )
+
+    _makespan, ordinal, result = selected
+    per_context = len(result.candidates)
+    context_index, candidate_index = divmod(ordinal, per_context)
+    context = contexts[context_index]
+    schedule = result.selected_schedule
+    assert schedule is not None
+    assert context.compiled_template is not None
+    simulation = simulate_compiled_template(context.compiled_template, schedule)
+    selected_diagnostic = result.candidates[candidate_index]
+    public_diagnostics = PressureFitDiagnostics(
+        selected_candidate_id=selected_diagnostic.candidate_id,
+        selected_selection_id=context.selection_id,
+        candidate_count=len(diagnostics),
+        valid_candidate_count=valid_count,
+        selected_makespan_ns=simulation.makespan_ns,
+        candidates=tuple(diagnostics),
+    )
+    return PressureFitResult(
+        program=program,
+        options=options,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        simulation_config=config,
+        schedule=schedule,
+        selections=context.selections,
+        simulation=simulation,
+        diagnostics=public_diagnostics,
+    )
+
+
 def pressurefit(
     program: Program,
     *,
@@ -663,6 +772,31 @@ def pressurefit(
             "PressureFit contexts ready: "
             f"valid={len(contexts)}/{len(portfolio)}, "
             f"elapsed={(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
+        )
+    if all(
+        context.compiled_template is not None and
+        context.compiled_residency is not None
+        for context in contexts
+    ):
+        candidates_started = time.perf_counter_ns()
+        native_results = _run_native_contexts(contexts, selected_options)
+        if progress is not None:
+            progress(
+                "PressureFit compiled candidates finished: "
+                f"contexts={len(contexts)}, "
+                f"candidates={sum(len(item.candidates) for item in native_results)}, "
+                f"workers={_native_worker_count(selected_options, len(contexts))}, "
+                "elapsed="
+                f"{(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
+            )
+        return _finish_native_pressurefit(
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            selected_options,
+            contexts,
+            native_results,
         )
     specs = _candidate_specs(contexts, selected_options)
     if progress is not None:

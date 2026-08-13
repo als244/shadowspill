@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "residency_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -15,6 +16,19 @@ typedef struct CutScore {
     uint64_t exposed_ns;
     int64_t values[7];
 } CutScore;
+
+struct ShadowSpillResidencyWorkspace {
+    uint32_t alias_count;
+    uint32_t boundary_count;
+    uint32_t device_count;
+    uint64_t *pressure;
+    uint8_t *before;
+    uint8_t *after;
+    ResidencyCut *cuts;
+    uint32_t *first_required;
+    int32_t *gap_start;
+    int32_t *gap_end;
+};
 
 static uint64_t cell(uint32_t alias, uint32_t boundary_count, uint32_t index) {
     return (uint64_t)alias * boundary_count + index;
@@ -339,6 +353,31 @@ static void apply_cut(
     }
 }
 
+static void canonicalize_breaks(
+    uint8_t *breaks,
+    const uint8_t *resident,
+    uint32_t alias_count,
+    uint32_t boundary_count
+) {
+    for (uint32_t alias = 0U; alias < alias_count; ++alias) {
+        uint64_t row = (uint64_t)alias * boundary_count;
+        int has_later_residency = 0;
+        for (uint32_t cursor = boundary_count; cursor > 0U; --cursor) {
+            uint32_t index = cursor - 1U;
+            if (resident[row + index] == 0U) {
+                breaks[row + index] = 0U;
+                continue;
+            }
+            int next_is_resident = index + 1U < boundary_count &&
+                resident[row + index + 1U] != 0U;
+            if (!next_is_resident) {
+                breaks[row + index] = has_later_residency ? 1U : 0U;
+            }
+            has_later_residency = 1;
+        }
+    }
+}
+
 static int valid_problem(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
@@ -365,12 +404,86 @@ static int valid_problem(
         result->resident_capacity >= cells && result->break_capacity >= cells;
 }
 
-ShadowSpillPlannerStatus shadowspill_reduce_residency(
+int shadowspill_residency_workspace_create(
+    const ShadowSpillResidencyProblem *problem,
+    ShadowSpillResidencyWorkspace **workspace_output
+) {
+    if (problem == NULL || workspace_output == NULL ||
+        problem->alias_count == 0U || problem->boundary_count == 0U ||
+        problem->device_count == 0U) {
+        return -1;
+    }
+    *workspace_output = NULL;
+    uint64_t cells =
+        (uint64_t)problem->alias_count * problem->boundary_count;
+    uint64_t pressure_cells =
+        (uint64_t)problem->device_count * problem->boundary_count;
+    if (cells > SIZE_MAX / sizeof(int32_t) ||
+        pressure_cells > SIZE_MAX / sizeof(uint64_t)) {
+        return -1;
+    }
+    ShadowSpillResidencyWorkspace *workspace =
+        calloc(1U, sizeof(*workspace));
+    if (workspace == NULL) {
+        return -1;
+    }
+    workspace->alias_count = problem->alias_count;
+    workspace->boundary_count = problem->boundary_count;
+    workspace->device_count = problem->device_count;
+    workspace->pressure = malloc(
+        (size_t)pressure_cells * sizeof(*workspace->pressure)
+    );
+    workspace->before = malloc(
+        (size_t)problem->boundary_count * sizeof(*workspace->before)
+    );
+    workspace->after = malloc(
+        (size_t)problem->boundary_count * sizeof(*workspace->after)
+    );
+    workspace->cuts = malloc(
+        (size_t)problem->alias_count * sizeof(*workspace->cuts)
+    );
+    workspace->first_required = malloc(
+        (size_t)problem->alias_count * sizeof(*workspace->first_required)
+    );
+    workspace->gap_start = malloc((size_t)cells * sizeof(*workspace->gap_start));
+    workspace->gap_end = malloc((size_t)cells * sizeof(*workspace->gap_end));
+    if (workspace->pressure == NULL || workspace->before == NULL ||
+        workspace->after == NULL || workspace->cuts == NULL ||
+        workspace->first_required == NULL || workspace->gap_start == NULL ||
+        workspace->gap_end == NULL) {
+        shadowspill_residency_workspace_destroy(workspace);
+        return -1;
+    }
+    *workspace_output = workspace;
+    return 0;
+}
+
+void shadowspill_residency_workspace_destroy(
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    if (workspace == NULL) {
+        return;
+    }
+    free(workspace->pressure);
+    free(workspace->before);
+    free(workspace->after);
+    free(workspace->cuts);
+    free(workspace->first_required);
+    free(workspace->gap_start);
+    free(workspace->gap_end);
+    free(workspace);
+}
+
+ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result
+    ShadowSpillResidencyResult *result,
+    ShadowSpillResidencyWorkspace *workspace
 ) {
-    if (!valid_problem(problem, options, result)) {
+    if (!valid_problem(problem, options, result) || workspace == NULL ||
+        workspace->alias_count != problem->alias_count ||
+        workspace->boundary_count != problem->boundary_count ||
+        workspace->device_count != problem->device_count) {
         return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
     }
     uint8_t *resident_output = result->resident;
@@ -391,28 +504,14 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
 
     uint64_t pressure_cells =
         (uint64_t)problem->device_count * problem->boundary_count;
-    uint64_t *pressure = calloc(pressure_cells, sizeof(*pressure));
-    uint8_t *before = calloc(problem->boundary_count, sizeof(*before));
-    uint8_t *after = calloc(problem->boundary_count, sizeof(*after));
-    ResidencyCut *cuts = calloc(problem->alias_count, sizeof(*cuts));
-    uint32_t *first_required = calloc(
-        problem->alias_count,
-        sizeof(*first_required)
-    );
-    int32_t *gap_start = calloc(cells, sizeof(*gap_start));
-    int32_t *gap_end = calloc(cells, sizeof(*gap_end));
-    if (pressure == NULL || before == NULL || after == NULL || cuts == NULL ||
-        first_required == NULL || gap_start == NULL || gap_end == NULL) {
-        free(pressure);
-        free(before);
-        free(after);
-        free(cuts);
-        free(first_required);
-        free(gap_start);
-        free(gap_end);
-        result->status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
-    }
+    uint64_t *pressure = workspace->pressure;
+    uint8_t *before = workspace->before;
+    uint8_t *after = workspace->after;
+    ResidencyCut *cuts = workspace->cuts;
+    uint32_t *first_required = workspace->first_required;
+    int32_t *gap_start = workspace->gap_start;
+    int32_t *gap_end = workspace->gap_end;
+    memset(pressure, 0, (size_t)pressure_cells * sizeof(*pressure));
 
     build_cut_geometry(
         problem,
@@ -474,13 +573,12 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             }
         }
         if (selected_device == UINT32_MAX) {
-            free(pressure);
-            free(before);
-            free(after);
-            free(cuts);
-            free(first_required);
-            free(gap_start);
-            free(gap_end);
+            canonicalize_breaks(
+                result->breaks,
+                result->resident,
+                problem->alias_count,
+                problem->boundary_count
+            );
             result->status = SHADOWSPILL_PLANNER_OK;
             return SHADOWSPILL_PLANNER_OK;
         }
@@ -504,13 +602,6 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             result->required_bytes = selected_used;
             result->capacity_bytes =
                 problem->device_capacity_bytes[selected_device];
-            free(pressure);
-            free(before);
-            free(after);
-            free(cuts);
-            free(first_required);
-            free(gap_start);
-            free(gap_end);
             return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
         }
 
@@ -567,4 +658,26 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency(
             }
         }
     }
+}
+
+ShadowSpillPlannerStatus shadowspill_reduce_residency(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyResult *result
+) {
+    if (!valid_problem(problem, options, result)) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+    ShadowSpillResidencyWorkspace *workspace = NULL;
+    if (shadowspill_residency_workspace_create(problem, &workspace) != 0) {
+        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    }
+    ShadowSpillPlannerStatus status = shadowspill_reduce_residency_reusing(
+        problem,
+        options,
+        result,
+        workspace
+    );
+    shadowspill_residency_workspace_destroy(workspace);
+    return status;
 }

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 3
+ABI_VERSION = 4
 NO_INDEX = (1 << 32) - 1
 
 
@@ -94,6 +94,88 @@ class CResidencyResult(ctypes.Structure):
     ]
 
 
+class CDenseSchedule(ctypes.Structure):
+    _fields_ = [
+        ("action_count", ctypes.c_uint32),
+        ("action_trigger_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("action_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("action_kinds", ctypes.POINTER(ctypes.c_uint8)),
+        ("initial_count", ctypes.c_uint32),
+        ("initial_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("initial_locations", ctypes.POINTER(ctypes.c_uint8)),
+        ("final_count", ctypes.c_uint32),
+        ("final_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("final_locations", ctypes.POINTER(ctypes.c_uint8)),
+    ]
+
+
+class CPressureFitContext(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("residency", ctypes.POINTER(CResidencyProblem)),
+        ("simulation", ctypes.POINTER(CProgram)),
+        ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
+        ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
+        ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
+        ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
+    ]
+
+
+class CPressureFitContextOptions(ctypes.Structure):
+    _fields_ = [
+        ("residency_strategies", ctypes.POINTER(ctypes.c_uint8)),
+        ("residency_strategy_count", ctypes.c_uint32),
+        ("prefetch_rules", ctypes.POINTER(ctypes.c_uint8)),
+        ("prefetch_rule_count", ctypes.c_uint32),
+        ("evaluate_coalesced", ctypes.c_uint8),
+        ("max_repair_attempts", ctypes.c_uint32),
+    ]
+
+
+class CPressureFitCandidateDiagnostic(ctypes.Structure):
+    _fields_ = [
+        ("status", ctypes.c_uint8),
+        ("residency_strategy", ctypes.c_uint8),
+        ("prefetch_rule", ctypes.c_uint8),
+        ("coalesced", ctypes.c_uint8),
+        ("repair_attempts", ctypes.c_uint32),
+        ("simulation_status", ctypes.c_uint32),
+        ("makespan_ns", ctypes.c_uint64),
+        ("schedule_digest", ctypes.c_uint8 * 32),
+        ("error_task", ctypes.c_uint32),
+        ("error_alias", ctypes.c_uint32),
+        ("error_device", ctypes.c_uint32),
+        ("error_location", ctypes.c_uint8),
+        ("error_boundary", ctypes.c_int32),
+        ("error_time_ns", ctypes.c_uint64),
+        ("error_capacity_bytes", ctypes.c_uint64),
+        ("error_used_bytes", ctypes.c_uint64),
+        ("error_requested_bytes", ctypes.c_uint64),
+        ("error_required_bytes", ctypes.c_uint64),
+    ]
+
+
+class CPressureFitContextResult(ctypes.Structure):
+    _fields_ = [
+        ("status", ctypes.c_uint32),
+        ("selected_candidate_index", ctypes.c_uint32),
+        ("selected_makespan_ns", ctypes.c_uint64),
+        ("selected_schedule", CDenseSchedule),
+        ("candidates", ctypes.POINTER(CPressureFitCandidateDiagnostic)),
+        ("candidate_count", ctypes.c_uint32),
+        ("residency_cache_hits", ctypes.c_uint64),
+        ("residency_cache_misses", ctypes.c_uint64),
+        ("schedule_emissions", ctypes.c_uint64),
+        ("schedule_cache_hits", ctypes.c_uint64),
+        ("simulation_calls", ctypes.c_uint64),
+        ("simulation_cache_hits", ctypes.c_uint64),
+        ("residency_time_ns", ctypes.c_uint64),
+        ("schedule_time_ns", ctypes.c_uint64),
+        ("simulation_time_ns", ctypes.c_uint64),
+        ("digest_time_ns", ctypes.c_uint64),
+    ]
+
+
 def _library_candidates() -> tuple[Path, ...]:
     explicit = os.environ.get("SHADOWSPILL_PLANNER_LIBRARY")
     packaged = Path(__file__).resolve().parents[1] / "lib/libshadowspill_planner.so"
@@ -141,6 +223,16 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CResidencyResult),
     ]
     library.shadowspill_reduce_residency.restype = ctypes.c_uint32
+    library.shadowspill_evaluate_pressurefit_context.argtypes = [
+        ctypes.POINTER(CPressureFitContext),
+        ctypes.POINTER(CPressureFitContextOptions),
+        ctypes.POINTER(CPressureFitContextResult),
+    ]
+    library.shadowspill_evaluate_pressurefit_context.restype = ctypes.c_uint32
+    library.shadowspill_pressurefit_context_result_destroy.argtypes = [
+        ctypes.POINTER(CPressureFitContextResult),
+    ]
+    library.shadowspill_pressurefit_context_result_destroy.restype = None
     library.shadowspill_planner_status_string.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_status_string.restype = ctypes.c_char_p
     return library
@@ -150,7 +242,12 @@ __all__ = [
     "ABI_VERSION",
     "NO_INDEX",
     "CCandidateResult",
+    "CDenseSchedule",
     "CPlanCandidate",
+    "CPressureFitCandidateDiagnostic",
+    "CPressureFitContext",
+    "CPressureFitContextOptions",
+    "CPressureFitContextResult",
     "CResidencyOptions",
     "CResidencyProblem",
     "CResidencyResult",
