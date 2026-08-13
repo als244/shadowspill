@@ -41,10 +41,12 @@ from ._dense_residency import (
 )
 from ._facts import PlanningFacts, build_facts
 from ._native_portfolio import (
+    NativeContextPreparationError,
     NativeContextResult,
     decode_candidate_diagnostic,
     decode_schedule,
     evaluate_context_compiled,
+    evaluate_program_context_compiled,
 )
 from ._residency import (
     Cut,
@@ -97,6 +99,15 @@ class _SelectionContext:
         MemorySchedule,
         SimulationResult | CompiledSimulationSummary | _CachedSimulationFailure,
     ] = field(default_factory=dict, compare=False, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeSelectionContext:
+    """One selection projected directly into the compiled planner ABI."""
+
+    selections: tuple[RecomputationSelection, ...]
+    selection_id: str
+    compiled_template: CompiledSimulationTemplate
 
 
 @dataclass(frozen=True, slots=True)
@@ -573,6 +584,45 @@ def _build_contexts(
     )
 
 
+def _build_native_contexts(
+    program: Program,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...],
+    config: SimulationConfig,
+    *,
+    portfolio: tuple[tuple[RecomputationSelection, ...], ...],
+    progress: Callable[[str], None] | None,
+) -> tuple[_NativeSelectionContext, ...]:
+    """Project each recomputation selection without Python residency matrices."""
+
+    contexts: list[_NativeSelectionContext] = []
+    started = time.perf_counter_ns()
+    for selection_index, selections in enumerate(portfolio, start=1):
+        tasks = program.selected_tasks(selections)
+        contexts.append(
+            _NativeSelectionContext(
+                selections=selections,
+                selection_id=_selection_id(selections),
+                compiled_template=compile_simulation_template(
+                    program,
+                    selections,
+                    config,
+                    selected_tasks=tasks,
+                    initial_residency=initial_residency,
+                    final_residency=final_residency,
+                ),
+            )
+        )
+        if progress is not None:
+            progress(
+                "PressureFit compiled context "
+                f"{selection_index}/{len(portfolio)}: "
+                f"tasks={len(tasks)}, aliases={len(program.alias_groups)}, "
+                f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
+            )
+    return tuple(contexts)
+
+
 def _candidate_specs(
     contexts: tuple[_SelectionContext, ...],
     options: PressureFitOptions,
@@ -651,13 +701,29 @@ def _run_native_contexts(
         return tuple(executor.map(evaluate, contexts))
 
 
+def _run_native_program_contexts(
+    contexts: tuple[_NativeSelectionContext, ...],
+    options: PressureFitOptions,
+) -> tuple[NativeContextResult | None, ...]:
+    """Prepare and evaluate each selection in the compiled planner."""
+
+    def evaluate(context: _NativeSelectionContext) -> NativeContextResult | None:
+        return evaluate_program_context_compiled(context.compiled_template, options)
+
+    workers = _native_worker_count(options, len(contexts))
+    if workers == 1:
+        return tuple(evaluate(context) for context in contexts)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return tuple(executor.map(evaluate, contexts))
+
+
 def _finish_native_pressurefit(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    contexts: tuple[_SelectionContext, ...],
+    contexts: tuple[_SelectionContext | _NativeSelectionContext, ...],
     results: tuple[NativeContextResult, ...],
 ) -> PressureFitResult:
     diagnostics: list[CandidateDiagnostic] = []
@@ -759,6 +825,68 @@ def pressurefit(
             f"groups={len(program.recomputation_groups)}, "
             f"selections={len(portfolio)}"
         )
+    if (
+        program.alias_groups
+        and simulator_library_path() is not None
+        and planner_library_path() is not None
+    ):
+        contexts_started = time.perf_counter_ns()
+        native_contexts = _build_native_contexts(
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            portfolio=portfolio,
+            progress=progress,
+        )
+        try:
+            native_results = _run_native_program_contexts(
+                native_contexts,
+                selected_options,
+            )
+        except NativeContextPreparationError:
+            native_results = ()
+            if progress is not None:
+                progress(
+                    "PressureFit compiled context rejected semantic input; "
+                    "using the Python diagnostic authority"
+                )
+        valid_pairs = (
+            tuple(
+                (context, result)
+                for context, result in zip(
+                    native_contexts,
+                    native_results,
+                    strict=True,
+                )
+                if result is not None
+            )
+            if native_results
+            else ()
+        )
+        if progress is not None and native_results:
+            progress(
+                "PressureFit compiled contexts and candidates finished: "
+                f"valid={len(valid_pairs)}/{len(native_contexts)}, "
+                "candidates="
+                f"{sum(len(result.candidates) for _context, result in valid_pairs)}, "
+                "workers="
+                f"{_native_worker_count(selected_options, len(native_contexts))}, "
+                "elapsed="
+                f"{(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
+            )
+        if valid_pairs:
+            return _finish_native_pressurefit(
+                program,
+                initial_residency,
+                final_residency,
+                config,
+                selected_options,
+                tuple(context for context, _result in valid_pairs),
+                tuple(result for _context, result in valid_pairs),
+            )
+        # Rebuild the rare all-infeasible case through the Python authority so
+        # its field-specific diagnostic remains unchanged.
     contexts_started = time.perf_counter_ns()
     contexts = _build_contexts(
         program,

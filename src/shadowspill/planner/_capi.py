@@ -9,7 +9,7 @@ from pathlib import Path
 
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 4
+ABI_VERSION = 5
 NO_INDEX = (1 << 32) - 1
 
 
@@ -129,6 +129,17 @@ class CPressureFitContextOptions(ctypes.Structure):
         ("prefetch_rule_count", ctypes.c_uint32),
         ("evaluate_coalesced", ctypes.c_uint8),
         ("max_repair_attempts", ctypes.c_uint32),
+        ("initial_placement", ctypes.c_uint8),
+    ]
+
+
+class CPressureFitProgramContext(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("simulation", ctypes.POINTER(CProgram)),
+        ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
+        ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
+        ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
 
 
@@ -229,6 +240,12 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitContextResult),
     ]
     library.shadowspill_evaluate_pressurefit_context.restype = ctypes.c_uint32
+    library.shadowspill_evaluate_pressurefit_program_context.argtypes = [
+        ctypes.POINTER(CPressureFitProgramContext),
+        ctypes.POINTER(CPressureFitContextOptions),
+        ctypes.POINTER(CPressureFitContextResult),
+    ]
+    library.shadowspill_evaluate_pressurefit_program_context.restype = ctypes.c_uint32
     library.shadowspill_pressurefit_context_result_destroy.argtypes = [
         ctypes.POINTER(CPressureFitContextResult),
     ]
@@ -248,6 +265,7 @@ __all__ = [
     "CPressureFitContext",
     "CPressureFitContextOptions",
     "CPressureFitContextResult",
+    "CPressureFitProgramContext",
     "CResidencyOptions",
     "CResidencyProblem",
     "CResidencyResult",

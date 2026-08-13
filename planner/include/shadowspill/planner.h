@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 4U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 5U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -87,6 +87,11 @@ typedef enum ShadowSpillPrefetchRule {
     SHADOWSPILL_PREFETCH_LATEST_SAFE = 3,
 } ShadowSpillPrefetchRule;
 
+typedef enum ShadowSpillInitialPlacement {
+    SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED = 0,
+    SHADOWSPILL_INITIAL_PLACEMENT_GREEDY = 1,
+} ShadowSpillInitialPlacement;
+
 /*
  * Dense schedule storage used by the complete compiled candidate evaluator.
  * Every identifier is the corresponding dense task or alias index in the
@@ -125,7 +130,25 @@ typedef struct ShadowSpillPressureFitContextOptions {
     uint32_t prefetch_rule_count;
     uint8_t evaluate_coalesced;
     uint32_t max_repair_attempts;
+    uint8_t initial_placement;
 } ShadowSpillPressureFitContextOptions;
+
+/*
+ * Schedule-invariant input for the high-level compiled PressureFit path.
+ * The simulation topology carries the selected tasks plus the declared
+ * initial/final residency.  The planner derives the dense analytic residency
+ * problem and initial seed internally before evaluating the unchanged
+ * candidate portfolio.
+ */
+typedef struct ShadowSpillPressureFitProgramContext {
+    uint32_t abi_version;
+    const ShadowSpillSimulationProgram *simulation;
+    const uint32_t *device_priority;
+
+    /* JSON-escaped identifier payloads, without surrounding quotes. */
+    const char *const *alias_json_names;
+    const char *const *task_json_names;
+} ShadowSpillPressureFitProgramContext;
 
 typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_VALID = 0,
@@ -247,6 +270,19 @@ shadowspill_reduce_residency(
 SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
 shadowspill_evaluate_pressurefit_context(
     const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitContextOptions *options,
+    ShadowSpillPressureFitContextResult *result
+);
+
+/*
+ * Derive one dense residency context from a selected simulation program and
+ * evaluate the complete deterministic PressureFit candidate portfolio.
+ * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
+ * explicitly, but avoids materializing alias-by-boundary matrices in Python.
+ */
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_evaluate_pressurefit_program_context(
+    const ShadowSpillPressureFitProgramContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
 );

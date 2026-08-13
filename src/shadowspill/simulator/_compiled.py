@@ -12,6 +12,7 @@ from shadowspill.ir import (
     MemorySchedule,
     Program,
     RecomputationSelection,
+    ResidencySpec,
     ResourceKind,
     TaskSpec,
 )
@@ -131,8 +132,16 @@ def compile_simulation_template(
     config: SimulationConfig,
     *,
     selected_tasks: tuple[TaskSpec, ...] | None = None,
+    initial_residency: tuple[ResidencySpec, ...] = (),
+    final_residency: tuple[ResidencySpec, ...] = (),
 ) -> CompiledSimulationTemplate:
-    """Project schedule-invariant program geometry exactly once."""
+    """Project schedule-invariant program geometry exactly once.
+
+    The optional residency declarations describe the planning boundary, not a
+    candidate schedule.  They let the compiled planner derive dense planning
+    facts directly from this immutable topology.  Candidate binding replaces
+    these arrays with the selected schedule before simulation.
+    """
 
     configured = {item.device_id: item for item in config.devices}
     device_ids = tuple(item.device_id for item in program.devices)
@@ -232,6 +241,39 @@ def compile_simulation_template(
     mutation_offsets_buffer = u32(mutation_offsets)
     mutation_buffer = u32(mutation_values)
     mutation_delta_buffer = u64(mutation_deltas)
+
+    def residency_arrays(
+        values: tuple[ResidencySpec, ...],
+        *,
+        field: str,
+    ) -> tuple[ctypes.Array[ctypes.c_uint32], ctypes.Array[ctypes.c_uint8]]:
+        seen: set[str] = set()
+        aliases: list[int] = []
+        locations: list[int] = []
+        for index, value in enumerate(values):
+            if value.alias_group_id not in alias_index:
+                raise ValueError(
+                    f"{field}[{index}] contains unknown alias group "
+                    f"{value.alias_group_id!r}"
+                )
+            if value.alias_group_id in seen:
+                raise ValueError(
+                    f"{field}[{index}] duplicates alias group "
+                    f"{value.alias_group_id!r}"
+                )
+            seen.add(value.alias_group_id)
+            aliases.append(alias_index[value.alias_group_id])
+            locations.append(_LOCATION_CODE[value.location])
+        return u32(tuple(aliases)), u8(tuple(locations))
+
+    initial_aliases, initial_locations = residency_arrays(
+        initial_residency,
+        field="initial_residency",
+    )
+    final_aliases, final_locations = residency_arrays(
+        final_residency,
+        field="final_residency",
+    )
     empty_u32 = u32(())
     empty_u8 = u8(())
     c_program = CProgram(
@@ -240,8 +282,8 @@ def compile_simulation_template(
         alias_count=len(alias_ids),
         task_count=len(tasks),
         action_count=0,
-        initial_count=0,
-        final_count=0,
+        initial_count=len(initial_residency),
+        final_count=len(final_residency),
         dependency_count=len(dependency_values),
         input_count=len(input_values),
         output_count=len(output_values),
@@ -269,10 +311,10 @@ def compile_simulation_template(
         action_trigger_tasks=empty_u32,
         action_aliases=empty_u32,
         action_kinds=empty_u8,
-        initial_aliases=empty_u32,
-        initial_locations=empty_u8,
-        final_aliases=empty_u32,
-        final_locations=empty_u8,
+        initial_aliases=initial_aliases,
+        initial_locations=initial_locations,
+        final_aliases=final_aliases,
+        final_locations=final_locations,
     )
     return CompiledSimulationTemplate(
         c_program,

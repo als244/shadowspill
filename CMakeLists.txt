@@ -63,6 +63,7 @@ install(
 add_library(
   shadowspill_planner
   SHARED
+  planner/src/context.c
   planner/src/digest.c
   planner/src/portfolio.c
   planner/src/residency.c

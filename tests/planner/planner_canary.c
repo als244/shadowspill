@@ -229,11 +229,16 @@ int main(void) {
     const uint64_t context_task_workspace[] = {0U};
     const uint32_t context_input_offsets[] = {0U, 1U};
     const uint32_t context_input_aliases[] = {0U};
+    const uint32_t context_initial_aliases[] = {0U};
+    const uint8_t context_initial_locations[] = {
+        SHADOWSPILL_MEMORY_DEVICE,
+    };
     const ShadowSpillSimulationProgram context_simulation = {
         .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 1U,
         .task_count = 1U,
+        .initial_count = 1U,
         .input_count = 1U,
         .host_capacity_bytes = 64U,
         .devices = &context_device,
@@ -251,6 +256,8 @@ int main(void) {
         .input_aliases = context_input_aliases,
         .output_offsets = empty_offsets,
         .mutation_offsets = empty_offsets,
+        .initial_aliases = context_initial_aliases,
+        .initial_locations = context_initial_locations,
     };
     const char *context_alias_names[] = {"alias"};
     const char *context_task_names[] = {"task"};
@@ -287,5 +294,28 @@ int main(void) {
         return EXIT_FAILURE;
     }
     shadowspill_pressurefit_context_result_destroy(&context_result);
+
+    const ShadowSpillPressureFitProgramContext program_context = {
+        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .simulation = &context_simulation,
+        .device_priority = context_priority,
+        .alias_json_names = context_alias_names,
+        .task_json_names = context_task_names,
+    };
+    ShadowSpillPressureFitContextResult program_context_result = {0};
+    if (shadowspill_evaluate_pressurefit_program_context(
+            &program_context,
+            &context_options,
+            &program_context_result
+        ) != SHADOWSPILL_PLANNER_OK ||
+        program_context_result.candidate_count != 1U ||
+        program_context_result.selected_candidate_index != 0U ||
+        program_context_result.selected_schedule.action_count != 1U ||
+        program_context_result.selected_schedule.action_kinds[0] !=
+            SHADOWSPILL_MEMORY_RELEASE) {
+        shadowspill_pressurefit_context_result_destroy(&program_context_result);
+        return EXIT_FAILURE;
+    }
+    shadowspill_pressurefit_context_result_destroy(&program_context_result);
     return EXIT_SUCCESS;
 }

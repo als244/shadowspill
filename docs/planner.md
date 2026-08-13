@@ -70,12 +70,13 @@ spaces. This keeps search finite without introducing operation-specific rules.
 
 ## Compiled boundary
 
-Python constructs each resolved recomputation context and remains the readable
-semantic authority. `libshadowspill_planner.so` then evaluates that context's
-complete policy portfolio in dense records: residency reduction and repair,
-interval refinement, action emission, simulator replay, schedule hashing,
-diagnostics, and context-local selection. Only the globally selected schedule
-is materialized as Python IR.
+Python resolves the bounded recomputation portfolio and projects each selected
+task topology into the simulator ABI. `libshadowspill_planner.so` derives the
+dense access, mutation, reservation, capacity, and seed records directly from
+that topology, then evaluates the complete policy portfolio: residency
+reduction and repair, interval refinement, action emission, simulator replay,
+schedule hashing, diagnostics, and context-local selection. Only the globally
+selected schedule is materialized as Python IR.
 
 The Python candidate path remains an independently executable differential
 oracle when the compiled planner is unavailable. Native and Python paths must

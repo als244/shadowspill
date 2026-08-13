@@ -19,6 +19,20 @@ from shadowspill.planner import PressureFitInfeasibleError, pressurefit
 from ._examples import config
 
 
+def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
+    resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(AliasGroupSpec("input_storage", "cuda_0", 61),),
+        objects=(ObjectSpec("input", "input_storage", 0, 61),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(TaskSpec("consume", resource, "profile", inputs=("input",)),),
+    )
+
+    with pytest.raises(ValueError, match="has no initial residency"):
+        pressurefit(program, initial_residency=(), config=config(122))
+
+
 def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = Program(
