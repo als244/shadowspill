@@ -246,7 +246,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         );
         /*
          * Publish destination priority at the host trigger boundary. The
-         * dispatcher may run ahead of the trigger's CUDA event, but its later
+         * dispatcher may run ahead of the trigger's completion event, but its
          * malloc callbacks must not overtake this causal capacity promise.
          */
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
