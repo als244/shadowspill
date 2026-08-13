@@ -274,7 +274,20 @@ maximum simultaneously-live anonymous extent set, not allocation volume.
 Returned task storages are identified through a read-only exact pointer lookup
 and excluded from workspace without promoting them into permanent runtime
 objects. Content-addressed profiling invokes this machinery once per structural
-ABI; a warm cache launches no compilation or profiling kernels.
+ABI. A warm profile cache launches no profiling kernels; executable
+construction remains a separate compiler-cache concern because the returned
+callable is process-local.
+
+`PlanReport.diagnostics.phases` attributes this work without overlapping
+clocks. `compiled_entrypoint_construction` covers compiler construction of
+unique graph ABIs, `unique_stage_warmup_profiling` covers provider first-use
+warmup, calibrated samples, and workspace auditing for profile-cache misses,
+`cached_entrypoint_warmup` covers the warmup needed when a profile was loaded
+but its process-local callable was newly built, and
+`profile_cache_and_entrypoint_orchestration` is the measured remainder for
+cache I/O and callable adoption. In particular, slow provider JIT or
+autotuning encountered by the first warmup is reported as warmup/profiling,
+not misidentified as repeated stage profiling.
 
 Repeated stage occurrences also reuse AOT graph code before compilation. The
 reuse key includes the canonical pre-AOT graph, guarded tensor geometry,

@@ -213,6 +213,7 @@ def build_training(
                 ),
             )
             installed.library.shadowspill_pytorch_allocator_wait_idle()
+        timer.attribute_compilation_and_profiling(profiler)
 
         with timer.measure("program_lowering"):
             measurements = {

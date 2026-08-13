@@ -147,8 +147,18 @@ def _planning_breakdown(
     """Return non-overlapping public planning phases for matrix comparisons."""
 
     lowering_aot = phase_seconds.get("capture_lowering", 0.0)
-    profiling = phase_seconds.get("structural_profiling", 0.0)
-    compilation = phase_seconds.get("compilation", 0.0)
+    profiling = phase_seconds.get(
+        "unique_stage_warmup_profiling",
+        phase_seconds.get("structural_profiling", 0.0),
+    )
+    compilation = phase_seconds.get(
+        "compiled_entrypoint_construction",
+        phase_seconds.get("compilation", 0.0),
+    )
+    cached_warmup = phase_seconds.get("cached_entrypoint_warmup", 0.0)
+    profile_orchestration = phase_seconds.get(
+        "profile_cache_and_entrypoint_orchestration", 0.0
+    )
     program_lowering = phase_seconds.get("program_lowering", 0.0)
     pressurefit = phase_seconds.get("pressurefit_simulation", 0.0)
     admission = phase_seconds.get("host_admission", 0.0) + phase_seconds.get(
@@ -158,6 +168,8 @@ def _planning_breakdown(
         lowering_aot
         + profiling
         + compilation
+        + cached_warmup
+        + profile_orchestration
         + program_lowering
         + pressurefit
         + admission
@@ -165,7 +177,9 @@ def _planning_breakdown(
     return {
         "lowering_aot": lowering_aot,
         "profiling": profiling,
-        "compiled_entrypoint_finalization": compilation,
+        "compiled_entrypoint_construction": compilation,
+        "cached_entrypoint_warmup": cached_warmup,
+        "profile_cache_and_entrypoint_orchestration": profile_orchestration,
         "canonical_program_lowering": program_lowering,
         "pressurefit": pressurefit,
         "physical_admission": admission,
@@ -379,7 +393,10 @@ def _planned_worker(
             f"planned {model_implementation}/{family}: "
             f"total={planning_seconds:.3f}s, "
             f"lowering_aot={planning_phases.get('capture_lowering', 0.0):.3f}s, "
-            f"profiling={planning_phases.get('structural_profiling', 0.0):.3f}s, "
+            "compilation="
+            f"{planning_phases.get('compiled_entrypoint_construction', 0.0):.3f}s, "
+            "profiling="
+            f"{planning_phases.get('unique_stage_warmup_profiling', 0.0):.3f}s, "
             "pressurefit="
             f"{planning_phases.get('pressurefit_simulation', 0.0):.3f}s",
             flush=True,

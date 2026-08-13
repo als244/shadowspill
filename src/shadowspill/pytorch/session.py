@@ -72,6 +72,38 @@ class _PhaseTimer:
             flush=True,
         )
 
+    def attribute_compilation_and_profiling(
+        self, profiler: CudaTaskProfiler
+    ) -> None:
+        """Replace two coarse intervals with disjoint measured work classes."""
+
+        names = {"structural_profiling", "compilation"}
+        indexed = [
+            (index, name, duration)
+            for index, (name, duration) in enumerate(self.values)
+            if name in names
+        ]
+        if {name for _index, name, _duration in indexed} != names:
+            raise RuntimeError("planning profile intervals are incomplete")
+        combined = sum(duration for _index, _name, duration in indexed)
+        compilation = profiler.compilation_wall_time_ns
+        profiling = profiler.profiling_wall_time_ns
+        cached_warmup = profiler.entrypoint_warmup_wall_time_ns
+        measured = compilation + profiling + cached_warmup
+        if measured > combined:
+            raise RuntimeError(
+                "compiler/profile subphase clocks exceed their enclosing intervals"
+            )
+        replacement = [
+            ("compiled_entrypoint_construction", compilation),
+            ("unique_stage_warmup_profiling", profiling),
+            ("cached_entrypoint_warmup", cached_warmup),
+            ("profile_cache_and_entrypoint_orchestration", combined - measured),
+        ]
+        first = min(index for index, _name, _duration in indexed)
+        retained = [item for item in self.values if item[0] not in names]
+        self.values = retained[:first] + replacement + retained[first:]
+
 
 class _MeasuredPhase:
     def __init__(self, timer: _PhaseTimer, name: str) -> None:
@@ -155,6 +187,7 @@ def build_forward(
             ),
         )
         installed.library.shadowspill_pytorch_allocator_wait_idle()
+    timer.attribute_compilation_and_profiling(profiler)
 
     with timer.measure("program_lowering"):
         measurements = {

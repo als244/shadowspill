@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -12,11 +13,38 @@ from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.runtime import _adapter_path
 from shadowspill.pytorch.session import (
+    _PhaseTimer,
     _simulation_capacity,
     _spill_pool_estimate,
     _validate_forward_request,
     _workspace_reserve,
 )
+
+
+def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> None:
+    timer = _PhaseTimer(verbose=False)
+    timer.values = [
+        ("capture_lowering", 11),
+        ("structural_profiling", 100),
+        ("compilation", 20),
+        ("program_lowering", 13),
+    ]
+    profiler = SimpleNamespace(
+        compilation_wall_time_ns=40,
+        profiling_wall_time_ns=60,
+        entrypoint_warmup_wall_time_ns=5,
+    )
+
+    timer.attribute_compilation_and_profiling(profiler)  # type: ignore[arg-type]
+
+    assert timer.values == [
+        ("capture_lowering", 11),
+        ("compiled_entrypoint_construction", 40),
+        ("unique_stage_warmup_profiling", 60),
+        ("cached_entrypoint_warmup", 5),
+        ("profile_cache_and_entrypoint_orchestration", 15),
+        ("program_lowering", 13),
+    ]
 
 
 def test_forward_request_and_admission_helpers_reject_invalid_values() -> None:

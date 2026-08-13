@@ -188,12 +188,37 @@ class CudaTaskProfiler:
         self._telemetry_capacity = telemetry_capacity
         self._next_task_id = 1 << 62
         self._executables: dict[str, CompiledTask] = {}
+        self._compilation_wall_time_ns = 0
+        self._profiling_wall_time_ns = 0
+        self._entrypoint_warmup_wall_time_ns = 0
+
+    @property
+    def compilation_wall_time_ns(self) -> int:
+        """Wall time spent constructing unique compiled entrypoints."""
+
+        return self._compilation_wall_time_ns
+
+    @property
+    def profiling_wall_time_ns(self) -> int:
+        """Wall time spent warming, measuring, and auditing cache misses."""
+
+        return self._profiling_wall_time_ns
+
+    @property
+    def entrypoint_warmup_wall_time_ns(self) -> int:
+        """Warmup required only for entrypoints whose profile was cached."""
+
+        return self._entrypoint_warmup_wall_time_ns
 
     def measure(self, artifact: ProfilableArtifact) -> TaskMeasurement:
         """Measure one compiled graph or bounded eager optimizer task."""
 
         if isinstance(artifact, OpaqueOptimizerArtifact):
-            return self._measure_opaque_optimizer(artifact)
+            profiling_started = time.perf_counter_ns()
+            measurement = self._measure_opaque_optimizer(artifact)
+            profiling_wall = time.perf_counter_ns() - profiling_started
+            self._profiling_wall_time_ns += profiling_wall
+            return replace(measurement, profiling_wall_time_ns=profiling_wall)
         if not isinstance(artifact, GraphArtifact):
             raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
 
@@ -212,6 +237,7 @@ class CudaTaskProfiler:
                 measurement,
                 profiling_wall_time_ns=time.perf_counter_ns() - profiling_started,
             )
+            self._profiling_wall_time_ns += measurement.profiling_wall_time_ns
         except AllocationTelemetryError as exc:
             self._executables.pop(digest, None)
             raise AllocationTelemetryError(
@@ -468,11 +494,10 @@ class CudaTaskProfiler:
                     digest,
                 )
             if executable is None:
-                executable = compile_artifact(
-                    artifact, device_ordinal=self._device_ordinal
-                )
+                executable = self._compile_artifact(artifact)
                 if stream is None:
                     stream = torch.cuda.current_stream(self._device_ordinal)
+                warmup_started = time.perf_counter_ns()
                 for _ in range(self._warmups):
                     task_id = self._open_profile_task(stream)
                     try:
@@ -486,6 +511,9 @@ class CudaTaskProfiler:
                 self._diagnose_allocator_idle(
                     context=f"compiled entrypoint {digest}",
                 )
+                self._entrypoint_warmup_wall_time_ns += (
+                    time.perf_counter_ns() - warmup_started
+                )
             result[digest] = executable.function
             manifests[digest] = executable.manifest
         return CompiledTaskSet(result, manifests)
@@ -494,9 +522,16 @@ class CudaTaskProfiler:
         digest = artifact.compatibility_digest
         executable = self._executables.get(digest)
         if executable is None:
-            executable = compile_artifact(artifact, device_ordinal=self._device_ordinal)
+            executable = self._compile_artifact(artifact)
             self._executables[digest] = executable
         return executable
+
+    def _compile_artifact(self, artifact: GraphArtifact) -> CompiledTask:
+        started = time.perf_counter_ns()
+        try:
+            return compile_artifact(artifact, device_ordinal=self._device_ordinal)
+        finally:
+            self._compilation_wall_time_ns += time.perf_counter_ns() - started
 
     def _measure_workspace(
         self, executable: Callable[[], object], stream: torch.cuda.Stream

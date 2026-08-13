@@ -148,7 +148,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
         phase_names = {item.name for item in plan_diagnostics.phases}
         if (
             "pressurefit_simulation" not in phase_names
-            or "compilation" not in phase_names
+            or "compiled_entrypoint_construction" not in phase_names
+            or "unique_stage_warmup_profiling" not in phase_names
         ):
             raise AssertionError("plan diagnostic omitted a required phase")
         if not plan_diagnostics.unique_stages:
