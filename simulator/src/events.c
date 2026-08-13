@@ -80,14 +80,9 @@ int shadowspill_has_pending_work(
     const ShadowSpillSimulationWork *work
 ) {
     if (work->completed_tasks < program->task_count ||
-        work->submitted_actions < program->action_count) {
+        work->submitted_actions < program->action_count ||
+        work->pending_transfers != 0U) {
         return 1;
-    }
-    for (uint32_t index = 0; index < program->action_count; ++index) {
-        if (work->transfers[index].state == SHADOWSPILL_TRANSFER_QUEUED ||
-            work->transfers[index].state == SHADOWSPILL_TRANSFER_ACTIVE) {
-            return 1;
-        }
     }
     return 0;
 }

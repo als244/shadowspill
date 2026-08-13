@@ -21,6 +21,8 @@ int shadowspill_allocate_work(
     );
     work->active_fetch = malloc(program->device_count * sizeof(*work->active_fetch));
     work->active_evict = malloc(program->device_count * sizeof(*work->active_evict));
+    work->fetch_cursor = calloc(program->device_count, sizeof(*work->fetch_cursor));
+    work->evict_cursor = calloc(program->device_count, sizeof(*work->evict_cursor));
     work->fetch_sequence = calloc(program->device_count, sizeof(*work->fetch_sequence));
     work->evict_sequence = calloc(program->device_count, sizeof(*work->evict_sequence));
     work->device_object_bytes = calloc(
@@ -40,7 +42,8 @@ int shadowspill_allocate_work(
     );
     if (work->aliases == NULL || work->tasks == NULL ||
         work->transfers == NULL || work->active_fetch == NULL ||
-        work->active_evict == NULL || work->fetch_sequence == NULL ||
+        work->active_evict == NULL || work->fetch_cursor == NULL ||
+        work->evict_cursor == NULL || work->fetch_sequence == NULL ||
         work->evict_sequence == NULL || work->device_object_bytes == NULL ||
         work->device_workspace_bytes == NULL ||
         work->device_object_peaks == NULL ||
@@ -61,6 +64,8 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->transfers);
     free(work->active_fetch);
     free(work->active_evict);
+    free(work->fetch_cursor);
+    free(work->evict_cursor);
     free(work->fetch_sequence);
     free(work->evict_sequence);
     free(work->device_object_bytes);

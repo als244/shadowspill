@@ -62,25 +62,6 @@ static uint64_t transfer_runtime_ns(
     return runtime;
 }
 
-static int earlier_queued_transfer(
-    const ShadowSpillSimulationProgram *program,
-    const ShadowSpillSimulationWork *work,
-    uint32_t transfer,
-    uint32_t device,
-    uint8_t direction
-) {
-    for (uint32_t index = 0; index < transfer; ++index) {
-        const ShadowSpillTransferState *candidate = &work->transfers[index];
-        if (candidate->state == SHADOWSPILL_TRANSFER_QUEUED &&
-            candidate->device == device &&
-            candidate->direction == direction) {
-            return 1;
-        }
-    }
-    (void)program;
-    return 0;
-}
-
 static int try_start_direction(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
@@ -90,16 +71,20 @@ static int try_start_direction(
     int32_t *active = direction == SHADOWSPILL_TRANSFER_FETCH
         ? &work->active_fetch[device]
         : &work->active_evict[device];
+    uint32_t *cursor = direction == SHADOWSPILL_TRANSFER_FETCH
+        ? &work->fetch_cursor[device]
+        : &work->evict_cursor[device];
     if (*active >= 0) {
         return 0;
     }
-    for (uint32_t index = 0; index < program->action_count; ++index) {
+    for (uint32_t index = *cursor; index < work->submitted_actions; ++index) {
         ShadowSpillTransferState *transfer = &work->transfers[index];
         if (transfer->state != SHADOWSPILL_TRANSFER_QUEUED ||
-            transfer->device != device || transfer->direction != direction ||
-            earlier_queued_transfer(program, work, index, device, direction)) {
+            transfer->device != device || transfer->direction != direction) {
+            *cursor = index + 1U;
             continue;
         }
+        *cursor = index;
         uint32_t alias = transfer->alias;
         ShadowSpillAliasState *state = &work->aliases[alias];
         if (direction == SHADOWSPILL_TRANSFER_FETCH) {
@@ -129,6 +114,7 @@ static int try_start_direction(
             transfer->end_ns = UINT64_MAX;
         }
         *active = (int32_t)index;
+        *cursor = index + 1U;
         shadowspill_update_peaks(program, work);
         return 1;
     }
@@ -285,6 +271,7 @@ static int submit_action(
         state->fetch_pending = 1U;
     }
     transfer->state = SHADOWSPILL_TRANSFER_QUEUED;
+    work->pending_transfers += 1U;
     shadowspill_update_peaks(program, work);
     return 1;
 }
@@ -368,6 +355,7 @@ int shadowspill_complete_transfer(
         }
     }
     transfer->state = SHADOWSPILL_TRANSFER_COMPLETE;
+    work->pending_transfers -= 1U;
     *active = -1;
     if (!append_transfer_interval(program, work, result, index)) {
         shadowspill_set_error(

@@ -52,6 +52,8 @@ typedef struct ShadowSpillSimulationWork {
     ShadowSpillTransferState *transfers;
     int32_t *active_fetch;
     int32_t *active_evict;
+    uint32_t *fetch_cursor;
+    uint32_t *evict_cursor;
     uint32_t *fetch_sequence;
     uint32_t *evict_sequence;
     uint64_t *device_object_bytes;
@@ -64,6 +66,7 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t now_ns;
     uint32_t completed_tasks;
     uint32_t submitted_actions;
+    uint32_t pending_transfers;
 } ShadowSpillSimulationWork;
 
 int shadowspill_add_overflow_u64(
