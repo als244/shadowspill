@@ -2394,3 +2394,8 @@ the ignored internal progress log before this tracked summary is updated.
   monolithic public module. Ruff, strict mypy, and the full PyTorch test suite
   pass; no planner, simulator, schedule, arithmetic, or runtime behavior was
   changed.
+- Final caller audit removed three unused qualification-only timing forwarding
+  methods from `PlannedTrainStep` and two dead executor collectors beneath
+  them. All remaining private top-level functions and methods have at least one
+  concrete source, test, or qualification caller; package `__all__` exports
+  were also mechanically verified to resolve.

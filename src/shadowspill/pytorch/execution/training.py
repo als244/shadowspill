@@ -456,16 +456,6 @@ class TrainingExecutor:
         self._armed_span_timing = None
         return result
 
-    def collect_compute_seconds(self) -> float:
-        """Synchronize and return the armed compute-only interval."""
-
-        return self.collect_execution_timing().compute_seconds
-
-    def collect_execution_timing(self) -> ExecutionTiming:
-        """Synchronize and return one armed per-task timing decomposition."""
-
-        return self.collect_step_diagnostics().timing
-
     def collect_step_diagnostics(self) -> StepDiagnostics:
         """Synchronize and resolve the structured trace for one real call."""
 

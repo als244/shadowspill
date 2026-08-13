@@ -12,11 +12,7 @@ import torch.nn as nn
 
 from shadowspill.pytorch.diagnostics.plan import PlanReport
 from shadowspill.pytorch.diagnostics.step import DiagnosticsHandle, StepResult
-from shadowspill.pytorch.execution import (
-    ExecutionTiming,
-    ForwardExecutor,
-    TrainingExecutor,
-)
+from shadowspill.pytorch.execution import ForwardExecutor, TrainingExecutor
 from shadowspill.pytorch.guards import InputSignature, validate_training_inputs
 from shadowspill.pytorch.materialization import (
     MaterializedForwardState,
@@ -185,21 +181,6 @@ class PlannedTrainStep:
         )
         self._pending_diagnostics = diagnostics
         return StepResult(objectives, metrics, self._step, diagnostics)
-
-    def _arm_compute_timing(self) -> None:
-        """Arm qualification-only first-task-to-final-optimizer timing."""
-
-        self._executor.arm_compute_timing()
-
-    def _collect_compute_seconds(self) -> float:
-        """Collect a previously armed qualification timing interval."""
-
-        return self._executor.collect_compute_seconds()
-
-    def _collect_execution_timing(self) -> ExecutionTiming:
-        """Collect qualification-only per-task and per-phase timings."""
-
-        return self._executor.collect_execution_timing()
 
     def _arm_selected_span_timing(self) -> None:
         """Arm production-like two-event task-span timing."""
