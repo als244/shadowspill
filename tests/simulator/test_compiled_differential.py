@@ -125,6 +125,7 @@ def test_compiled_and_python_capacity_diagnostics_agree(capacity: int) -> None:
 
     python_error = python_caught.value
     compiled_error = compiled_caught.value
+    assert str(compiled_error) == str(python_error)
     assert compiled_error.kind == python_error.kind
     assert compiled_error.task_id == python_error.task_id
     assert compiled_error.location == python_error.location

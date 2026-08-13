@@ -26,6 +26,7 @@ from ._capi import (
     CTransferInterval,
     load_simulator_library,
 )
+from ._diagnostics import simulation_failure_detail, simulation_status_kind
 from .model import (
     DeviceMemoryPeak,
     SimulationConfig,
@@ -56,23 +57,6 @@ _STALL_REASONS = (
     (1 << 2, "source-readiness"),
     (1 << 3, "host-capacity"),
 )
-_STATUS_KIND = {
-    1: "invalid-argument",
-    2: "allocation-failure",
-    3: "initial-device-capacity",
-    4: "initial-host-capacity",
-    5: "task-input-deadlock",
-    6: "task-device-capacity",
-    7: "prefetch-device-capacity",
-    8: "offload-host-capacity",
-    9: "transfer-deadlock",
-    10: "invalid-release",
-    11: "release-transfer-conflict",
-    12: "invalid-offload",
-    13: "invalid-prefetch",
-    14: "final-residency",
-    15: "internal-error",
-}
 
 
 def _u32_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
@@ -382,13 +366,20 @@ def _raise_error(
     result: CResult,
     projection: _Projection,
 ) -> None:
-    library = load_simulator_library()
-    encoded = library.shadowspill_simulation_status_string(status)
-    message = encoded.decode("utf-8") if encoded else f"simulator status {status}"
     alias = _optional_name(projection.alias_ids, int(result.error_alias))
+    message = simulation_failure_detail(
+        status,
+        time_ns=int(result.error_time_ns),
+        error_device=int(result.error_device),
+        error_location=int(result.error_location),
+        capacity_bytes=int(result.error_capacity_bytes),
+        used_bytes=int(result.error_used_bytes),
+        requested_bytes=int(result.error_requested_bytes),
+        device_ids=projection.device_ids,
+    )
     raise SimulationInfeasibleError(
         message,
-        kind=_STATUS_KIND.get(status, "unknown"),
+        kind=simulation_status_kind(status),
         time_ns=int(result.error_time_ns),
         task_id=_optional_name(projection.task_ids, int(result.error_task)),
         alias_group_ids=(() if alias is None else (alias,)),
