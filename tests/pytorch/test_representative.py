@@ -9,11 +9,11 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.compilation.representative import (
-    materialize_representative_inputs,
-)
 from shadowspill.pytorch.contracts import CaptureError, TensorSpec
 from shadowspill.pytorch.materialization import representative_cpu_inputs
+from shadowspill.pytorch.profiling.inputs import (
+    materialize_representative_inputs,
+)
 
 
 class _Add(nn.Module):

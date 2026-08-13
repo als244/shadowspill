@@ -55,6 +55,15 @@ class TaskHostTimestamps:
     after_task_exit_ns: int
 
 
+@dataclass(slots=True)
+class _ExecutionBuffers:
+    description: ExecutionDescription
+    input_ids: Any
+    updates: Any
+    actions: Any
+    encoded_labels: tuple[bytes | None, ...]
+
+
 def _dense_id(value: str, prefix: str) -> int:
     if not value.startswith(prefix):
         raise PlanningError(f"dense identity {value!r} does not start with {prefix!r}")
@@ -62,6 +71,16 @@ def _dense_id(value: str, prefix: str) -> int:
     if not suffix.isdigit():
         raise PlanningError(f"dense identity {value!r} has a nonnumeric suffix")
     return int(suffix)
+
+
+def _action_labels(
+    actions: tuple[MemoryAction, ...],
+    labels: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    resolved = ("",) * len(actions) if labels is None else labels
+    if len(resolved) != len(actions):
+        raise ValueError("action trace labels must align with ordered actions")
+    return resolved
 
 
 class RuntimeBridge:
@@ -109,91 +128,125 @@ class RuntimeBridge:
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
-        if action_trace_labels is None:
-            action_trace_labels = ("",) * len(actions)
-        if len(action_trace_labels) != len(actions):
-            raise ValueError("action trace labels must align with ordered actions")
+        labels = _action_labels(actions, action_trace_labels)
+        runtime_inputs = self._runtime_inputs(input_alias_ids)
+        mutations = self._runtime_mutations(task.mutations)
+        action_pairs = self._runtime_actions(actions, labels)
+        for alias_id in self._referenced_aliases(
+            runtime_inputs,
+            mutations,
+            action_pairs,
+        ):
+            self.register_placeholder(alias_id)
+        buffers = self._execution_buffers(
+            task,
+            runtime_inputs,
+            mutations,
+            action_pairs,
+        )
+        self._require(
+            self.library.shadowspill_pytorch_admit_execution(
+                ctypes.byref(buffers.description)
+            ),
+            f"admit execution {task.task_id}",
+        )
+        self._admitted_tasks[task.task_id] = runtime_inputs
+        return self._resolve_execution_handle(task.task_id)
 
-        runtime_inputs = tuple(
+    def _runtime_inputs(self, input_alias_ids: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
             alias_id for alias_id in input_alias_ids if self.requires_storage(alias_id)
         )
-        mutation_values = tuple(
-            item
-            for item in task.mutations
-            if self.requires_storage(self.alias_for_object(item.object_id))
+
+    def _runtime_mutations(
+        self,
+        mutations: tuple[MutationSpec, ...],
+    ) -> tuple[MutationSpec, ...]:
+        return tuple(
+            mutation
+            for mutation in mutations
+            if self.requires_storage(self.alias_for_object(mutation.object_id))
         )
-        runtime_action_pairs = tuple(
+
+    def _runtime_actions(
+        self,
+        actions: tuple[MemoryAction, ...],
+        labels: tuple[str, ...],
+    ) -> tuple[tuple[MemoryAction, str], ...]:
+        return tuple(
             (action, label)
-            for action, label in zip(actions, action_trace_labels, strict=True)
+            for action, label in zip(actions, labels, strict=True)
             if self.requires_storage(action.alias_group_id)
         )
-        referenced_aliases = tuple(
+
+    def _referenced_aliases(
+        self,
+        inputs: tuple[str, ...],
+        mutations: tuple[MutationSpec, ...],
+        actions: tuple[tuple[MemoryAction, str], ...],
+    ) -> tuple[str, ...]:
+        return tuple(
             dict.fromkeys(
                 (
-                    *runtime_inputs,
-                    *(
-                        self.alias_for_object(item.object_id)
-                        for item in mutation_values
-                    ),
-                    *(item.alias_group_id for item, _ in runtime_action_pairs),
+                    *inputs,
+                    *(self.alias_for_object(item.object_id) for item in mutations),
+                    *(action.alias_group_id for action, _label in actions),
                 )
             )
         )
-        for alias_id in referenced_aliases:
-            self.register_placeholder(alias_id)
-        identifiers = (ctypes.c_uint64 * len(runtime_inputs))(
-            *(_dense_id(value, "alias_") for value in runtime_inputs)
+
+    def _execution_buffers(
+        self,
+        task: TaskSpec,
+        inputs: tuple[str, ...],
+        mutations: tuple[MutationSpec, ...],
+        actions: tuple[tuple[MemoryAction, str], ...],
+    ) -> _ExecutionBuffers:
+        input_ids = (ctypes.c_uint64 * len(inputs))(
+            *(_dense_id(value, "alias_") for value in inputs)
         )
-        updates = (ObjectUpdate * len(mutation_values))(
+        updates = (ObjectUpdate * len(mutations))(
             *(
                 ObjectUpdate(
                     _dense_id(self.alias_for_object(item.object_id), "alias_"),
                     item.version_delta,
                 )
-                for item in mutation_values
+                for item in mutations
             )
         )
-        runtime_actions_values = tuple(item for item, _ in runtime_action_pairs)
-        encoded_action_labels = tuple(
-            label.encode("utf-8") if label else None
-            for _, label in runtime_action_pairs
-        )
-        runtime_actions = (RuntimeAction * len(runtime_actions_values))(
+        labels = tuple(label.encode("utf-8") if label else None for _, label in actions)
+        action_values = (RuntimeAction * len(actions))(
             *(
                 RuntimeAction(
-                    _dense_id(item.alias_group_id, "alias_"),
-                    _ACTION_KIND[item.kind],
+                    _dense_id(action.alias_group_id, "alias_"),
+                    _ACTION_KIND[action.kind],
                     label,
                 )
-                for item, label in zip(
-                    runtime_actions_values, encoded_action_labels, strict=True
-                )
+                for (action, _text), label in zip(actions, labels, strict=True)
             )
         )
         description = ExecutionDescription(
             task_id=_dense_id(task.task_id, "task_"),
-            input_object_ids=identifiers if runtime_inputs else None,
-            input_count=len(runtime_inputs),
-            updates=updates if mutation_values else None,
-            update_count=len(mutation_values),
-            actions=runtime_actions if runtime_actions_values else None,
-            action_count=len(runtime_actions_values),
+            input_object_ids=input_ids if inputs else None,
+            input_count=len(inputs),
+            updates=updates if mutations else None,
+            update_count=len(mutations),
+            actions=action_values if actions else None,
+            action_count=len(actions),
         )
-        self._require(
-            self.library.shadowspill_pytorch_admit_execution(ctypes.byref(description)),
-            f"admit execution {task.task_id}",
-        )
-        self._admitted_tasks[task.task_id] = runtime_inputs
+        return _ExecutionBuffers(description, input_ids, updates, action_values, labels)
+
+    def _resolve_execution_handle(self, task_id: str) -> int:
         handle = ctypes.c_size_t()
         self._require(
             self.library.shadowspill_pytorch_resolve_execution(
-                _dense_id(task.task_id, "task_"), ctypes.byref(handle)
+                _dense_id(task_id, "task_"), ctypes.byref(handle)
             ),
-            f"resolve execution {task.task_id}",
+            f"resolve execution {task_id}",
         )
         if handle.value == 0:
             raise RuntimeExecutionError(
-                f"execution {task.task_id} resolved to a null handle"
+                f"execution {task_id} resolved to a null handle"
             )
         return int(handle.value)
 

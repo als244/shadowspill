@@ -97,61 +97,19 @@ def materialize_representative_inputs(
 ) -> RepresentativeInputSet:
     """Materialize exact state/user values and deterministic anonymous values."""
 
-    if len(artifact.example_arguments) != len(artifact.input_provenance):
-        raise CaptureError("task input provenance differs from the compiled tensor ABI")
-    if len(artifact.tensor_argument_alias_groups) != len(artifact.example_arguments):
-        raise CaptureError("task input alias groups differ from argument arity")
-
-    positions_by_group: dict[int, list[int]] = {}
-    for position, group in enumerate(artifact.tensor_argument_alias_groups):
-        positions_by_group.setdefault(group, []).append(position)
-
+    _validate_representative_artifact(artifact)
+    positions_by_group = _alias_group_positions(artifact)
     arguments: list[object | None] = [None] * len(artifact.example_arguments)
     summaries: list[RepresentativeInputSummary | None] = [None] * len(arguments)
     for group, positions in sorted(positions_by_group.items()):
-        examples = tuple(artifact.example_arguments[position] for position in positions)
-        if any(not isinstance(value, torch.Tensor) for value in examples):
-            raise CaptureError("compiled task tensor ABI contains a static argument")
-        tensors = tuple(value for value in examples if isinstance(value, torch.Tensor))
-        device_types = {value.device.type for value in tensors}
-        if len(device_types) != 1:
-            raise CaptureError("one task input alias group spans multiple devices")
-        target_device = (
-            torch.device("cuda", device_ordinal)
-            if next(iter(device_types)) == "cuda"
-            else torch.device(next(iter(device_types)))
-        )
-        storage_bytes = max(_minimum_storage_bytes(value) for value in tensors)
-        owner = torch.empty(storage_bytes, dtype=torch.uint8, device=target_device)
-
-        for position, example in zip(positions, tensors, strict=True):
-            provenance = artifact.input_provenance[position]
-            target = torch.empty(0, dtype=example.dtype, device=target_device).set_(
-                owner.untyped_storage(),
-                int(example.storage_offset()),
-                tuple(example.shape),
-                tuple(example.stride()),
-            )
-            value_policy = _populate_value(
-                target,
-                provenance,
-                structural_abi_key=artifact.compatibility_digest,
-                position=position,
-            )
-            target.requires_grad_(bool(example.requires_grad))
+        for position, target, summary in _materialize_alias_group(
+            artifact,
+            group,
+            positions,
+            device_ordinal=device_ordinal,
+        ):
             arguments[position] = target
-            summaries[position] = RepresentativeInputSummary(
-                position=position,
-                role=provenance.role,
-                source=provenance.source,
-                value_policy=value_policy,
-                dtype=str(example.dtype),
-                shape=tuple(example.shape),
-                stride=tuple(example.stride()),
-                storage_offset=int(example.storage_offset()),
-                alias_group=group,
-                consumer_targets=provenance.consumer_targets,
-            )
+            summaries[position] = summary
     if any(value is None for value in arguments) or any(
         value is None for value in summaries
     ):
@@ -161,6 +119,89 @@ def materialize_representative_inputs(
         policy_version=REPRESENTATIVE_VALUE_POLICY,
         arguments=tuple(value for value in arguments if value is not None),
         summaries=tuple(value for value in summaries if value is not None),
+    )
+
+
+def _validate_representative_artifact(artifact: GraphArtifact) -> None:
+    if len(artifact.example_arguments) != len(artifact.input_provenance):
+        raise CaptureError("task input provenance differs from the compiled tensor ABI")
+    if len(artifact.tensor_argument_alias_groups) != len(artifact.example_arguments):
+        raise CaptureError("task input alias groups differ from argument arity")
+
+
+def _alias_group_positions(artifact: GraphArtifact) -> dict[int, list[int]]:
+    positions: dict[int, list[int]] = {}
+    for position, group in enumerate(artifact.tensor_argument_alias_groups):
+        positions.setdefault(group, []).append(position)
+    return positions
+
+
+def _materialize_alias_group(
+    artifact: GraphArtifact,
+    group: int,
+    positions: list[int],
+    *,
+    device_ordinal: int,
+) -> tuple[tuple[int, torch.Tensor, RepresentativeInputSummary], ...]:
+    examples = tuple(artifact.example_arguments[position] for position in positions)
+    if any(not isinstance(value, torch.Tensor) for value in examples):
+        raise CaptureError("compiled task tensor ABI contains a static argument")
+    tensors = tuple(value for value in examples if isinstance(value, torch.Tensor))
+    target_device = _representative_device(tensors, device_ordinal)
+    owner = torch.empty(
+        max(_minimum_storage_bytes(value) for value in tensors),
+        dtype=torch.uint8,
+        device=target_device,
+    )
+    values: list[tuple[int, torch.Tensor, RepresentativeInputSummary]] = []
+    for position, example in zip(positions, tensors, strict=True):
+        target = torch.empty(0, dtype=example.dtype, device=target_device).set_(
+            owner.untyped_storage(),
+            int(example.storage_offset()),
+            tuple(example.shape),
+            tuple(example.stride()),
+        )
+        provenance = artifact.input_provenance[position]
+        policy = _populate_value(
+            target,
+            provenance,
+            structural_abi_key=artifact.compatibility_digest,
+            position=position,
+        )
+        target.requires_grad_(bool(example.requires_grad))
+        values.append(
+            (
+                position,
+                target,
+                RepresentativeInputSummary(
+                    position=position,
+                    role=provenance.role,
+                    source=provenance.source,
+                    value_policy=policy,
+                    dtype=str(example.dtype),
+                    shape=tuple(example.shape),
+                    stride=tuple(example.stride()),
+                    storage_offset=int(example.storage_offset()),
+                    alias_group=group,
+                    consumer_targets=provenance.consumer_targets,
+                ),
+            )
+        )
+    return tuple(values)
+
+
+def _representative_device(
+    tensors: tuple[torch.Tensor, ...],
+    device_ordinal: int,
+) -> torch.device:
+    device_types = {value.device.type for value in tensors}
+    if len(device_types) != 1:
+        raise CaptureError("one task input alias group spans multiple devices")
+    device_type = next(iter(device_types))
+    return (
+        torch.device("cuda", device_ordinal)
+        if device_type == "cuda"
+        else torch.device(device_type)
     )
 
 

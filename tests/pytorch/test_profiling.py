@@ -12,16 +12,16 @@ from shadowspill.pytorch.capture.artifacts import (
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.compilation.profiling import (
-    ProfileCache,
+from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.partition import partition_export
+from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
+    ProfileRepository,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
     profile_unique_artifacts,
 )
-from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.partition import partition_export
 
 
 class _Repeated(nn.Module):
@@ -87,7 +87,7 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
             persistent_extent_bytes=(32,),
         )
 
-    cache = ProfileCache(tmp_path)
+    cache = ProfileRepository(tmp_path)
     cold = profile_unique_artifacts(
         artifacts,
         environment=_environment(),
@@ -122,7 +122,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
         calls += 1
         return TaskMeasurement(1, 0, 0, (), (1,), "test")
 
-    cache = ProfileCache(tmp_path)
+    cache = ProfileRepository(tmp_path)
     profile_unique_artifacts(
         artifacts,
         environment=_environment(),
@@ -148,7 +148,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
 
 def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:
     artifact = _artifacts()[0]
-    cache = ProfileCache(tmp_path)
+    cache = ProfileRepository(tmp_path)
     calls = 0
 
     def measure(_artifact: GraphArtifact) -> TaskMeasurement:
@@ -202,7 +202,7 @@ def test_profiling_metadata_splits_measurements_without_recompiling_identity(
             persistent_extent_bytes=(32,),
         )
 
-    cache = ProfileCache(tmp_path)
+    cache = ProfileRepository(tmp_path)
     cold = profile_unique_artifacts(
         (artifact, artifact),
         environment=_environment(),

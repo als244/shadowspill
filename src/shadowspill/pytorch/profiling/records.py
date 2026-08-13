@@ -1,24 +1,17 @@
-"""Content-addressed profiling over unique structural graph ABIs."""
+"""Immutable measurements and structural profile identities."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import math
-import os
-import tempfile
-from collections.abc import Callable, Iterable, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Protocol
 
-from shadowspill.pytorch.compilation.representative import (
+from shadowspill.pytorch.profiling.inputs import (
     REPRESENTATIVE_VALUE_POLICY,
     RepresentativeInputSummary,
 )
-from shadowspill.pytorch.contracts import CaptureError
 
 # v10 records when a compiled output is physically served by a task input.
 # The optimized Inductor storage contract must already describe that alias;
@@ -145,29 +138,6 @@ class TaskOutputInputBinding:
             raise ValueError(
                 "cached output/input binding has an invalid schema"
             ) from exc
-
-
-class ProfilableArtifact(Protocol):
-    """Minimal identity shared by compiled graphs and bounded eager tasks."""
-
-    @property
-    def compatibility_digest(self) -> str: ...
-
-
-class PlanningArtifactRecorder(Protocol):
-    """Minimal callback used to publish persistent-cache evidence."""
-
-    def __call__(
-        self,
-        *,
-        category: str,
-        kind: str,
-        digest: str | None,
-        path: str | Path,
-        access: str,
-        schema: str | None,
-        dependencies: tuple[str, ...] = (),
-    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,197 +354,13 @@ class ProfilingResult:
     profiling_metadata_digests: tuple[str | None, ...] = ()
 
 
-class ProfileCache:
-    """Atomic per-key JSON cache with no dependency on planning task identity."""
-
-    def __init__(
-        self,
-        root: str | Path | None = None,
-        *,
-        compiled_manifest_root: str | Path | None = None,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
-        artifact_recorder: PlanningArtifactRecorder | None = None,
-    ) -> None:
-        configured = os.environ.get("SHADOWSPILL_PROFILE_CACHE")
-        selected = root if root is not None else configured
-        self.root = (
-            Path(selected).expanduser()
-            if selected is not None
-            else Path.home() / ".cache" / "shadowspill" / "profiles"
-        )
-        self.compiled_manifest_root = (
-            Path(compiled_manifest_root).expanduser()
-            if compiled_manifest_root is not None
-            else self.root / "compiled_manifests" / "v2"
-        )
-        self.read_enabled = read_enabled
-        self.write_enabled = write_enabled
-        self.overwrite = overwrite
-        self.artifact_recorder = artifact_recorder
-
-    def path(self, key: ProfileKey) -> Path:
-        return self.root / key.digest[:2] / f"{key.digest}.json"
-
-    def read(self, key: ProfileKey) -> TaskMeasurement | None:
-        if not self.read_enabled:
-            return None
-        path = self.path(key)
-        try:
-            value = json.loads(path.read_text())
-        except FileNotFoundError:
-            return None
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"profile cache entry {path} cannot be read") from exc
-        if not isinstance(value, dict) or value.get("schema") != PROFILE_SCHEMA:
-            raise ValueError(f"profile cache entry {path} has an invalid schema")
-        if value.get("key_digest") != key.digest:
-            raise ValueError(f"profile cache entry {path} has the wrong identity")
-        measurement = TaskMeasurement.from_dict(value.get("measurement"))
-        self._record(key, path, "read")
-        return measurement
-
-    def write(
-        self,
-        key: ProfileKey,
-        measurement: TaskMeasurement,
-        *,
-        replace_invalid: bool = False,
-    ) -> None:
-        if not self.write_enabled:
-            return
-        path = self.path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "schema": PROFILE_SCHEMA,
-            "key_digest": key.digest,
-            "measurement": measurement.to_dict(),
-        }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        if path.exists() and not self.overwrite and not replace_invalid:
-            try:
-                existing = path.read_text()
-            except OSError as exc:
-                raise ValueError(f"profile cache entry {path} cannot be read") from exc
-            if existing != encoded:
-                raise ValueError(
-                    "fresh profiling differs from an existing cache entry; "
-                    "use overwrite_plan=True or a new implementation_revision: "
-                    f"{path}"
-                )
-            self._record(key, path, "matched")
-            return
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{key.digest}.", suffix=".tmp", dir=path.parent
-        )
-        try:
-            with os.fdopen(descriptor, "w") as output:
-                output.write(encoded)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            with suppress(FileNotFoundError):
-                os.unlink(temporary)
-        self._record(key, path, "write")
-
-    def _record(self, key: ProfileKey, path: Path, access: str) -> None:
-        if self.artifact_recorder is None:
-            return
-        self.artifact_recorder(
-            category="profiling",
-            kind="task_measurement",
-            digest=key.digest,
-            path=path,
-            access=access,
-            schema=PROFILE_SCHEMA,
-            dependencies=(key.graph_digest,),
-        )
-
-
-def profile_unique_artifacts(
-    artifacts: Iterable[ProfilableArtifact],
-    *,
-    environment: ProfileEnvironment,
-    measure: Callable[[ProfilableArtifact], TaskMeasurement],
-    cache: ProfileCache,
-    validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None = None,
-    progress: Callable[[int, int, str, str], None] | None = None,
-    profiling_metadata_digests: Sequence[str | None] | None = None,
-) -> ProfilingResult:
-    """Measure each structural key once and scatter it to every occurrence."""
-
-    sequence = tuple(artifacts)
-    metadata = (
-        (None,) * len(sequence)
-        if profiling_metadata_digests is None
-        else tuple(profiling_metadata_digests)
-    )
-    if len(metadata) != len(sequence):
-        raise ValueError("profiling metadata must align with task artifacts")
-    by_key: dict[str, list[int]] = {}
-    key_objects: dict[str, ProfileKey] = {}
-    representatives: dict[str, ProfilableArtifact] = {}
-    position_key_digests: list[str] = []
-    for position, (artifact, metadata_digest) in enumerate(
-        zip(sequence, metadata, strict=True)
-    ):
-        key = ProfileKey(
-            artifact.compatibility_digest,
-            environment,
-            metadata_digest,
-        )
-        position_key_digests.append(key.digest)
-        by_key.setdefault(key.digest, []).append(position)
-        key_objects[key.digest] = key
-        representatives.setdefault(key.digest, artifact)
-    results: list[TaskMeasurement | None] = [None] * len(sequence)
-    hits = 0
-    misses = 0
-    persistent_bytes_by_graph: dict[str, int] = {}
-    ordered_digests = sorted(by_key)
-    for index, digest in enumerate(ordered_digests, start=1):
-        key = key_objects[digest]
-        measurement = cache.read(key)
-        replace_invalid = False
-        if measurement is not None and validate is not None:
-            try:
-                validate(representatives[digest], measurement)
-            except CaptureError:
-                if progress is not None:
-                    progress(index, len(ordered_digests), "cache-invalid", digest)
-                measurement = None
-                replace_invalid = True
-        if measurement is None:
-            if progress is not None:
-                progress(index, len(ordered_digests), "measuring", digest)
-            measurement = measure(representatives[digest])
-            if validate is not None:
-                validate(representatives[digest], measurement)
-            cache.write(key, measurement, replace_invalid=replace_invalid)
-            misses += 1
-        else:
-            if progress is not None:
-                progress(index, len(ordered_digests), "cache-hit", digest)
-            hits += 1
-        persistent_bytes = sum(measurement.persistent_extent_bytes)
-        persistent_bytes_by_graph[key.graph_digest] = max(
-            persistent_bytes_by_graph.get(key.graph_digest, 0),
-            persistent_bytes,
-        )
-        for position in by_key[digest]:
-            results[position] = measurement
-    if any(measurement is None for measurement in results):
-        raise AssertionError("profiling result scatter is incomplete")
-    return ProfilingResult(
-        measurements=tuple(
-            measurement for measurement in results if measurement is not None
-        ),
-        unique_keys=len(by_key),
-        cache_hits=hits,
-        cache_misses=misses,
-        fixed_slab_bytes=sum(persistent_bytes_by_graph.values()),
-        key_digests=tuple(position_key_digests),
-        profiling_metadata_digests=metadata,
-    )
+__all__ = [
+    "PROFILE_SCHEMA",
+    "ProfileEnvironment",
+    "ProfileKey",
+    "ProfilingResult",
+    "TaskAllocationEvent",
+    "TaskAllocationOperation",
+    "TaskMeasurement",
+    "TaskOutputInputBinding",
+]

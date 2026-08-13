@@ -19,22 +19,7 @@ from shadowspill.pytorch.capture.aot import (
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.compilation.compiler import (
-    CompiledTaskSet,
-    CudaTaskProfiler,
-    ResolvedTaskManifests,
-    profile_environment,
-    resolve_task_manifests,
-    validate_compiled_profile,
-)
-from shadowspill.pytorch.compilation.metadata import (
-    ProfilingMetadata,
-    training_profiling_metadata,
-)
-from shadowspill.pytorch.compilation.profiling import (
-    TaskMeasurement,
-    profile_unique_artifacts,
-)
+from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.diagnostics.builders import training_stage_inventory
 from shadowspill.pytorch.materialization.training import (
     TrainingMaterializedState,
@@ -46,6 +31,21 @@ from shadowspill.pytorch.optimizer import (
     capture_optimizer,
     training_parameter_stage_owners,
 )
+from shadowspill.pytorch.profiling import (
+    ProfileEnvironment,
+    ProfilingResult,
+    ResolvedTaskManifests,
+    TaskMeasurement,
+    profile_environment,
+    profile_unique_artifacts,
+    resolve_task_manifests,
+    validate_compiled_profile,
+)
+from shadowspill.pytorch.profiling.metadata import (
+    ProfilingMetadata,
+    training_profiling_metadata,
+)
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import AdmissionError, SlabReplay
@@ -329,6 +329,51 @@ def profile_training_tasks(
     """Compile/profile each unique graph-pair and optimizer structural ABI."""
 
     inventory = _training_task_inventory(captured, materialized.optimizer_capture)
+    _report_training_profile_inventory(
+        inventory,
+        materialized.optimizer_capture,
+        timer,
+    )
+    profiler = CudaTaskProfiler(
+        captured.installed.library,
+        device_ordinal=captured.device_ordinal,
+    )
+    environment = profile_environment(
+        device_ordinal=captured.device_ordinal,
+        provider_id="shadowspill.device_pool",
+        implementation_revision=artifact_cache.store.implementation_revision,
+    )
+    manifests = _resolve_training_manifests(
+        inventory,
+        profiler,
+        environment,
+        artifact_cache,
+        timer,
+    )
+    profiles = _profile_training_inventory(
+        inventory,
+        profiler,
+        environment,
+        manifests,
+        artifact_cache,
+        timer,
+    )
+    return TrainingProfileArtifacts(
+        inventory.compile_tasks,
+        inventory.profile_keys,
+        inventory.profile_tasks,
+        inventory.profile_metadata_digests,
+        profiler,
+        manifests,
+        profiles,
+    )
+
+
+def _report_training_profile_inventory(
+    inventory: _TrainingTaskInventory,
+    optimizer: OptimizerCapture,
+    timer: PlanningTimer,
+) -> None:
     optimizer_count = sum(
         not isinstance(item, GraphArtifact) or item.kind == "optimizer"
         for item in inventory.compile_tasks
@@ -340,23 +385,23 @@ def profile_training_tasks(
         f"unique={len(inventory.compile_tasks)}, "
         f"profile_variants={len(inventory.profile_tasks)}, "
         "optimizer_tasks="
-        f"{len(materialized.optimizer_capture.recurrent_tasks)}"
+        f"{len(optimizer.recurrent_tasks)}"
     )
-    profiler = CudaTaskProfiler(
-        captured.installed.library,
-        device_ordinal=captured.device_ordinal,
-    )
-    environment = profile_environment(
-        device_ordinal=captured.device_ordinal,
-        provider_id="shadowspill.device_pool",
-        implementation_revision=artifact_cache.store.implementation_revision,
-    )
+
+
+def _resolve_training_manifests(
+    inventory: _TrainingTaskInventory,
+    profiler: CudaTaskProfiler,
+    environment: ProfileEnvironment,
+    artifact_cache: PlanningArtifactRepositories,
+    timer: PlanningTimer,
+) -> ResolvedTaskManifests:
     with timer.measure("compiler_manifest"):
         manifests = resolve_task_manifests(
             inventory.compile_tasks,
             environment=environment,
             profile_cache=artifact_cache.profiles,
-            profiler=profiler,
+            compiler=profiler,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled manifest {index}/{total} {state}: {digest[:12]}"
             ),
@@ -365,8 +410,19 @@ def profile_training_tasks(
             "compiled manifest cache: "
             f"hits={manifests.cache_hits}, misses={manifests.cache_misses}"
         )
+    return manifests
+
+
+def _profile_training_inventory(
+    inventory: _TrainingTaskInventory,
+    profiler: CudaTaskProfiler,
+    environment: ProfileEnvironment,
+    manifests: ResolvedTaskManifests,
+    artifact_cache: PlanningArtifactRepositories,
+    timer: PlanningTimer,
+) -> ProfilingResult:
     with timer.measure("structural_profiling"):
-        profiles = profile_unique_artifacts(
+        return profile_unique_artifacts(
             inventory.profile_tasks,
             environment=environment,
             measure=profiler.measure,
@@ -381,15 +437,6 @@ def profile_training_tasks(
             ),
             profiling_metadata_digests=inventory.profile_metadata_digests,
         )
-    return TrainingProfileArtifacts(
-        inventory.compile_tasks,
-        inventory.profile_keys,
-        inventory.profile_tasks,
-        inventory.profile_metadata_digests,
-        profiler,
-        manifests,
-        profiles,
-    )
 
 
 def build_training_programs(

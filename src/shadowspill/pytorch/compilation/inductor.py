@@ -35,10 +35,10 @@ from torch._inductor.graph import GraphLowering
 from torch._inductor.utils import run_and_get_graph_lowering
 from torch._inductor.virtualized import V
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
-from torch.fx import GraphModule
+from torch.fx import GraphModule, Node
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.experimental.symbolic_shapes import ShapeEnv
-from torch.utils._pytree import tree_flatten, tree_unflatten
+from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.pytorch.capture.storage import (
     MutationBinding,
@@ -263,6 +263,175 @@ def _ordered_compilation_timings(
     return tuple((name, value) for name, value in ordered if value)
 
 
+@dataclass(slots=True)
+class _ManifestCompiler:
+    semantic_contract: TaskStorageContract
+    manifests: list[ExecutableTaskManifest]
+    canonicalize_input_aliases: bool
+    phase_timings: dict[str, int] | None
+
+    def __call__(
+        self,
+        optimized_graph: GraphModule,
+        optimized_inputs: Sequence[object],
+        **options: Any,
+    ) -> object:
+        alias_ns = self._normalize_input_aliases(optimized_graph, optimized_inputs)
+        inner_contract, optimized_contract, contract_ns = (
+            self._capture_optimized_contract(optimized_graph, optimized_inputs)
+        )
+        compiled, graph_lowerings = self._compile_graph(
+            optimized_graph, optimized_inputs, options
+        )
+        cache_key = self._capture_cache_key(compiled)
+        self._publish_manifest(
+            cache_key,
+            graph_lowerings,
+            optimized_graph,
+            inner_contract,
+            optimized_contract,
+            alias_ns + contract_ns,
+        )
+        return compiled
+
+    def _record(self, name: str, started_ns: int) -> int:
+        duration = time.perf_counter_ns() - started_ns
+        if self.phase_timings is not None:
+            self.phase_timings[name] = self.phase_timings.get(name, 0) + duration
+        return duration
+
+    def _normalize_input_aliases(
+        self,
+        graph: GraphModule,
+        inputs: Sequence[object],
+    ) -> int:
+        started_ns = time.perf_counter_ns()
+        if self.canonicalize_input_aliases:
+            _canonicalize_input_alias_outputs(
+                graph, self.semantic_contract, tuple(inputs)
+            )
+        return self._record("shadowspill_input_alias_normalization", started_ns)
+
+    def _capture_optimized_contract(
+        self,
+        graph: GraphModule,
+        inputs: Sequence[object],
+    ) -> tuple[TaskStorageContract, TaskStorageContract, int]:
+        started_ns = time.perf_counter_ns()
+        inner = capture_task_storage_contract(graph, tuple(inputs))
+        optimized = _project_callable_contract(graph, inner, self.semantic_contract)
+        _validate_value_abi(self.semantic_contract, optimized)
+        _ensure_tracing_shape_environment()
+        duration = self._record("shadowspill_optimized_contract", started_ns)
+        return inner, optimized, duration
+
+    def _compile_graph(
+        self,
+        graph: GraphModule,
+        inputs: Sequence[object],
+        options: Mapping[str, object],
+    ) -> tuple[object, list[GraphLowering]]:
+        started_ns = time.perf_counter_ns()
+        inner_backend: Any = compile_fx_inner
+        with _GRAPH_LOWERING_CAPTURE_LOCK:
+            compiled, graph_lowerings = run_and_get_graph_lowering(
+                lambda: inner_backend(graph, inputs, **options)
+            )
+        self._record("torch_inductor_core", started_ns)
+        return compiled, graph_lowerings
+
+    def _capture_cache_key(self, compiled: object) -> str | None:
+        started_ns = time.perf_counter_ns()
+        cache_key = _fx_graph_cache_key(compiled)
+        self._record("shadowspill_manifest_sidecar", started_ns)
+        return cache_key
+
+    def _publish_manifest(
+        self,
+        cache_key: str | None,
+        graph_lowerings: list[GraphLowering],
+        graph: GraphModule,
+        inner_contract: TaskStorageContract,
+        optimized_contract: TaskStorageContract,
+        capture_ns: int,
+    ) -> None:
+        if len(graph_lowerings) > 1:
+            raise CaptureError(
+                "Inductor exposed multiple GraphLowering results: "
+                f"observed={len(graph_lowerings)}"
+            )
+        if graph_lowerings:
+            self._publish_graph_manifest(
+                cache_key,
+                graph_lowerings[0],
+                graph,
+                inner_contract,
+                optimized_contract,
+                capture_ns,
+            )
+        elif cache_key is not None:
+            self._publish_cached_manifest(cache_key, optimized_contract, capture_ns)
+
+    def _publish_graph_manifest(
+        self,
+        cache_key: str | None,
+        graph_lowering: GraphLowering,
+        graph: GraphModule,
+        inner_contract: TaskStorageContract,
+        optimized_contract: TaskStorageContract,
+        capture_ns: int,
+    ) -> None:
+        started_ns = time.perf_counter_ns()
+        executable = _graph_lowering_contract(
+            graph_lowering,
+            graph,
+            inner_contract,
+            self.semantic_contract,
+        )
+        capture_ns += self._record("shadowspill_executable_contract", started_ns)
+        started_ns = time.perf_counter_ns()
+        manifest = _make_manifest(
+            self.semantic_contract,
+            optimized_contract,
+            executable.storage_contract,
+            executable.root_allocations,
+            capture_ns=capture_ns,
+        )
+        self.manifests.append(manifest)
+        self._record("shadowspill_manifest_assembly", started_ns)
+        if cache_key is not None:
+            started_ns = time.perf_counter_ns()
+            _store_cached_manifest(cache_key, manifest)
+            self._record("shadowspill_manifest_sidecar", started_ns)
+
+    def _publish_cached_manifest(
+        self,
+        cache_key: str,
+        optimized_contract: TaskStorageContract,
+        capture_ns: int,
+    ) -> None:
+        started_ns = time.perf_counter_ns()
+        cached = _load_cached_manifest(
+            cache_key,
+            self.semantic_contract,
+            optimized_contract=optimized_contract,
+            capture_ns=capture_ns,
+        )
+        self._record("shadowspill_manifest_sidecar", started_ns)
+        if cached is not None:
+            self.manifests.append(cached)
+
+
+def _ensure_tracing_shape_environment() -> None:
+    context = TracingContext.try_get()
+    if (
+        context is not None
+        and context.fake_mode is not None
+        and context.fake_mode.shape_env is None
+    ):
+        context.fake_mode.shape_env = ShapeEnv()
+
+
 def _manifest_inner_compile(
     semantic_contract: TaskStorageContract,
     manifests: list[ExecutableTaskManifest],
@@ -270,111 +439,14 @@ def _manifest_inner_compile(
     canonicalize_input_aliases: bool = False,
     phase_timings: dict[str, int] | None = None,
 ) -> Callable[..., object]:
-    """Build the common Inductor callback that publishes one physical ABI."""
+    """Return the compiler callback that publishes one physical ABI."""
 
-    inner_backend: Any = compile_fx_inner
-
-    def record(name: str, started: int) -> int:
-        duration = time.perf_counter_ns() - started
-        if phase_timings is not None:
-            phase_timings[name] = phase_timings.get(name, 0) + duration
-        return duration
-
-    def inner_compile(
-        optimized_graph: GraphModule,
-        optimized_inputs: Sequence[object],
-        **options: Any,
-    ) -> object:
-        alias_started = time.perf_counter_ns()
-        if canonicalize_input_aliases:
-            _canonicalize_input_alias_outputs(
-                optimized_graph,
-                semantic_contract,
-                tuple(optimized_inputs),
-            )
-        alias_ns = record("shadowspill_input_alias_normalization", alias_started)
-
-        contract_started = time.perf_counter_ns()
-        inner_contract = capture_task_storage_contract(
-            optimized_graph,
-            tuple(optimized_inputs),
-        )
-        optimized_contract = _project_callable_contract(
-            optimized_graph,
-            inner_contract,
-            semantic_contract,
-        )
-        _validate_value_abi(semantic_contract, optimized_contract)
-        tracing_context = TracingContext.try_get()
-        if (
-            tracing_context is not None
-            and tracing_context.fake_mode is not None
-            and tracing_context.fake_mode.shape_env is None
-        ):
-            tracing_context.fake_mode.shape_env = ShapeEnv()
-        optimized_contract_ns = record(
-            "shadowspill_optimized_contract", contract_started
-        )
-
-        inductor_started = time.perf_counter_ns()
-        with _GRAPH_LOWERING_CAPTURE_LOCK:
-            compiled, graph_lowerings = run_and_get_graph_lowering(
-                lambda: inner_backend(
-                    optimized_graph,
-                    optimized_inputs,
-                    **options,
-                )
-            )
-        record("torch_inductor_core", inductor_started)
-
-        sidecar_started = time.perf_counter_ns()
-        cache_key = _fx_graph_cache_key(compiled)
-        record("shadowspill_manifest_sidecar", sidecar_started)
-        if len(graph_lowerings) == 1:
-            executable_started = time.perf_counter_ns()
-            executable = _graph_lowering_contract(
-                graph_lowerings[0],
-                optimized_graph,
-                inner_contract,
-                semantic_contract,
-            )
-            executable_contract_ns = record(
-                "shadowspill_executable_contract", executable_started
-            )
-            manifest_started = time.perf_counter_ns()
-            manifest = _make_manifest(
-                semantic_contract,
-                optimized_contract,
-                executable.storage_contract,
-                executable.root_allocations,
-                capture_ns=(alias_ns + optimized_contract_ns + executable_contract_ns),
-            )
-            manifests.append(manifest)
-            record("shadowspill_manifest_assembly", manifest_started)
-            if cache_key is not None:
-                sidecar_started = time.perf_counter_ns()
-                _store_cached_manifest(cache_key, manifest)
-                record("shadowspill_manifest_sidecar", sidecar_started)
-            return compiled
-        if len(graph_lowerings) > 1:
-            raise CaptureError(
-                "Inductor exposed multiple GraphLowering results: "
-                f"observed={len(graph_lowerings)}"
-            )
-        if cache_key is not None:
-            sidecar_started = time.perf_counter_ns()
-            cached = _load_cached_manifest(
-                cache_key,
-                semantic_contract,
-                optimized_contract=optimized_contract,
-                capture_ns=alias_ns + optimized_contract_ns,
-            )
-            record("shadowspill_manifest_sidecar", sidecar_started)
-            if cached is not None:
-                manifests.append(cached)
-        return compiled
-
-    return inner_compile
+    return _ManifestCompiler(
+        semantic_contract,
+        manifests,
+        canonicalize_input_aliases,
+        phase_timings,
+    )
 
 
 def compile_inductor_task(
@@ -442,24 +514,60 @@ def compile_explicit_inductor_task(
     *,
     semantic_contract: TaskStorageContract,
 ) -> InductorCompilation:
-    """Compile an already-explicit task without a second AOTAutograd pass.
+    """Compile one explicit task without a second AOTAutograd pass."""
 
-    This is the differential candidate for ShadowSpill's production compiler
-    path.  It deliberately uses the same decomposition table and Inductor
-    forward compiler as ``compile_fx``, but normalizes the explicit FX task
-    directly and therefore never asks AOTAutograd to rediscover a forward or
-    backward program that ShadowSpill already owns.
-    """
+    timings: dict[str, int] = {}
+    fake_mode, fake_inputs = _prepare_explicit_inputs(example_inputs, timings)
+    normalized = _normalize_explicit_graph(
+        graph_module, fake_inputs, fake_mode, timings
+    )
+    output_leaves, output_spec = _normalize_explicit_output_abi(normalized, timings)
+    manifests: list[ExecutableTaskManifest] = []
+    inner_compile = _manifest_inner_compile(
+        semantic_contract,
+        manifests,
+        canonicalize_input_aliases=True,
+        phase_timings=timings,
+    )
+    compiler_config = _explicit_compiler_config(normalized, timings)
 
-    phase_timings: dict[str, int] = {}
+    def invoke() -> object:
+        return _invoke_explicit_compiler(
+            normalized,
+            fake_inputs,
+            fake_mode,
+            len(output_leaves),
+            compiler_config,
+            inner_compile,
+            timings,
+        )
 
-    def record(name: str, started: int) -> int:
-        duration = time.perf_counter_ns() - started
-        phase_timings[name] = phase_timings.get(name, 0) + duration
-        return duration
+    compiled = _compile_with_manifest_regeneration(
+        invoke, manifests, semantic_contract, timings
+    )
+    unboxed = _unbox_compiled_callable(compiled, output_spec, timings)
+    return InductorCompilation(
+        unboxed,
+        manifests[0],
+        _ordered_compilation_timings(timings),
+    )
 
-    input_started = time.perf_counter_ns()
-    source_graph = graph_module
+
+def _record_compilation_phase(
+    timings: dict[str, int],
+    name: str,
+    started_ns: int,
+) -> int:
+    duration = time.perf_counter_ns() - started_ns
+    timings[name] = timings.get(name, 0) + duration
+    return duration
+
+
+def _prepare_explicit_inputs(
+    example_inputs: Sequence[object],
+    timings: dict[str, int],
+) -> tuple[FakeTensorMode, tuple[object, ...]]:
+    started_ns = time.perf_counter_ns()
     fake_mode = detect_fake_mode(example_inputs)
     if fake_mode is None:
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -473,98 +581,146 @@ def compile_explicit_inductor_task(
         else value
         for value in example_inputs
     )
-    tracing_context = TracingContext(fake_mode)
-    record("shadowspill_compiler_input_setup", input_started)
+    _record_compilation_phase(timings, "shadowspill_compiler_input_setup", started_ns)
+    return fake_mode, fake_inputs
 
-    normalization_started = time.perf_counter_ns()
+
+def _normalize_explicit_graph(
+    graph_module: GraphModule,
+    fake_inputs: tuple[object, ...],
+    fake_mode: FakeTensorMode,
+    timings: dict[str, int],
+) -> GraphModule:
+    started_ns = time.perf_counter_ns()
     try:
-        with V.set_fake_mode(fake_mode), tracing(tracing_context):
+        with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
             normalized = make_fx(
-                source_graph,
+                graph_module,
                 decomposition_table=select_decomp_table(),
                 tracing_mode="fake",
                 _allow_non_fake_inputs=True,
             )(*fake_inputs)
-    except BaseException as exc:
+    except BaseException as error:
         raise CaptureError(
-            f"explicit Inductor task normalization failed: {exc}"
-        ) from exc
-    record("torch_decomposition_normalization", normalization_started)
+            f"explicit Inductor task normalization failed: {error}"
+        ) from error
+    _record_compilation_phase(timings, "torch_decomposition_normalization", started_ns)
+    return normalized
 
-    output_started = time.perf_counter_ns()
-    output_node = next(node for node in normalized.graph.nodes if node.op == "output")
+
+def _normalize_explicit_output_abi(
+    graph: GraphModule,
+    timings: dict[str, int],
+) -> tuple[list[object], TreeSpec]:
+    started_ns = time.perf_counter_ns()
+    output_node = next(node for node in graph.graph.nodes if node.op == "output")
     output_leaves, output_spec = tree_flatten(output_node.args[0])
     output_node.args = (tuple(output_leaves),)
-    normalized.graph.lint()
-    normalized.recompile()
-    record("shadowspill_output_abi_normalization", output_started)
-
-    manifests: list[ExecutableTaskManifest] = []
-    inner_compile = _manifest_inner_compile(
-        semantic_contract,
-        manifests,
-        canonicalize_input_aliases=True,
-        phase_timings=phase_timings,
+    graph.graph.lint()
+    graph.recompile()
+    _record_compilation_phase(
+        timings, "shadowspill_output_abi_normalization", started_ns
     )
-    config_started = time.perf_counter_ns()
-    compiler_config = create_compiler_config_extra(normalized)
-    record("torch_compiler_configuration", config_started)
+    return output_leaves, output_spec
 
-    def invoke_compiler() -> object:
-        nested_before = sum(phase_timings.values())
-        invocation_started = time.perf_counter_ns()
-        try:
-            with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
-                compiler = cast(Callable[..., object], compile_fx_forward)
-                return compiler(
-                    normalized,
-                    fake_inputs,
-                    num_orig_model_outputs=len(output_leaves),
-                    num_example_inputs=len(fake_inputs),
-                    compiler_config_extra=compiler_config,
-                    inner_compile=inner_compile,
-                    is_inference=True,
-                )
-        finally:
-            elapsed = time.perf_counter_ns() - invocation_started
-            nested_elapsed = sum(phase_timings.values()) - nested_before
-            phase_timings["torch_compile_fx_forward_orchestration"] = phase_timings.get(
-                "torch_compile_fx_forward_orchestration", 0
-            ) + max(0, elapsed - nested_elapsed)
 
+def _explicit_compiler_config(
+    graph: GraphModule,
+    timings: dict[str, int],
+) -> Any:
+    started_ns = time.perf_counter_ns()
+    config = create_compiler_config_extra(graph)
+    _record_compilation_phase(timings, "torch_compiler_configuration", started_ns)
+    return config
+
+
+def _invoke_explicit_compiler(
+    graph: GraphModule,
+    fake_inputs: tuple[object, ...],
+    fake_mode: FakeTensorMode,
+    output_count: int,
+    compiler_config: Any,
+    inner_compile: Callable[..., object],
+    timings: dict[str, int],
+) -> object:
+    nested_before = sum(timings.values())
+    started_ns = time.perf_counter_ns()
     try:
-        compiled = invoke_compiler()
-    except BaseException as exc:
-        raise CaptureError(f"explicit Inductor task compilation failed: {exc}") from exc
-
-    if not manifests:
-        sidecar_started = time.perf_counter_ns()
-        cache_key = _fx_graph_cache_key(compiled)
-        if cache_key is not None:
-            cached = _load_cached_manifest(
-                cache_key,
-                semantic_contract,
-                optimized_contract=None,
-                capture_ns=0,
+        with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
+            compiler = cast(Callable[..., object], compile_fx_forward)
+            return compiler(
+                graph,
+                fake_inputs,
+                num_orig_model_outputs=output_count,
+                num_example_inputs=len(fake_inputs),
+                compiler_config_extra=compiler_config,
+                inner_compile=inner_compile,
+                is_inference=True,
             )
-            if cached is not None:
-                manifests.append(cached)
-        record("shadowspill_manifest_sidecar", sidecar_started)
-        if not manifests:
-            try:
-                with inductor_config.patch({"force_disable_caches": True}):
-                    compiled = invoke_compiler()
-            except BaseException as exc:
-                raise CaptureError(
-                    f"explicit Inductor manifest regeneration failed: {exc}"
-                ) from exc
+    finally:
+        elapsed = time.perf_counter_ns() - started_ns
+        nested_elapsed = sum(timings.values()) - nested_before
+        timings["torch_compile_fx_forward_orchestration"] = timings.get(
+            "torch_compile_fx_forward_orchestration", 0
+        ) + max(0, elapsed - nested_elapsed)
+
+
+def _compile_with_manifest_regeneration(
+    invoke: Callable[[], object],
+    manifests: list[ExecutableTaskManifest],
+    semantic_contract: TaskStorageContract,
+    timings: dict[str, int],
+) -> object:
+    try:
+        compiled = invoke()
+    except BaseException as error:
+        raise CaptureError(
+            f"explicit Inductor task compilation failed: {error}"
+        ) from error
+    if not manifests:
+        _restore_explicit_manifest(compiled, manifests, semantic_contract, timings)
+    if not manifests:
+        try:
+            with inductor_config.patch({"force_disable_caches": True}):
+                compiled = invoke()
+        except BaseException as error:
+            raise CaptureError(
+                f"explicit Inductor manifest regeneration failed: {error}"
+            ) from error
     if len(manifests) != 1:
         raise CaptureError(
             "explicit Inductor compilation did not expose one root graph: "
             f"observed={len(manifests)}"
         )
+    return compiled
 
-    wrapper_started = time.perf_counter_ns()
+
+def _restore_explicit_manifest(
+    compiled: object,
+    manifests: list[ExecutableTaskManifest],
+    semantic_contract: TaskStorageContract,
+    timings: dict[str, int],
+) -> None:
+    started_ns = time.perf_counter_ns()
+    cache_key = _fx_graph_cache_key(compiled)
+    if cache_key is not None:
+        cached = _load_cached_manifest(
+            cache_key,
+            semantic_contract,
+            optimized_contract=None,
+            capture_ns=0,
+        )
+        if cached is not None:
+            manifests.append(cached)
+    _record_compilation_phase(timings, "shadowspill_manifest_sidecar", started_ns)
+
+
+def _unbox_compiled_callable(
+    compiled: object,
+    output_spec: TreeSpec,
+    timings: dict[str, int],
+) -> Callable[..., object]:
+    started_ns = time.perf_counter_ns()
     compiled_callable = cast(
         Callable[[list[object]], Sequence[object]],
         compiled,
@@ -574,12 +730,8 @@ def compile_explicit_inductor_task(
         values = compiled_callable(list(arguments))
         return tree_unflatten(list(values), output_spec)
 
-    record("shadowspill_callable_wrapper", wrapper_started)
-    return InductorCompilation(
-        unboxed,
-        manifests[0],
-        _ordered_compilation_timings(phase_timings),
-    )
+    _record_compilation_phase(timings, "shadowspill_callable_wrapper", started_ns)
+    return unboxed
 
 
 def _canonicalize_input_alias_outputs(
@@ -610,43 +762,14 @@ def _canonicalize_input_alias_outputs(
         root = root_by_id[view.root_id]
         if root.kind is not StorageRootKind.INPUT:
             continue
-        source_position = root.source_input
-        if source_position is None:
-            raise AssertionError("input storage root omitted its source position")
-        source = example_inputs[source_position]
-        if not isinstance(source, torch.Tensor):
-            raise CaptureError("compiled input alias refers to a non-tensor argument")
-        if view.dtype != str(source.dtype):
-            raise CaptureError(
-                "direct compilation cannot express a dtype-changing input view: "
-                f"leaf={leaf_index}, input={source_position}, "
-                f"source={source.dtype}, output={view.dtype}"
-            )
-        itemsize = source.element_size()
-        if view.offset_bytes % itemsize:
-            raise CaptureError(
-                "input-alias output offset is not element aligned: "
-                f"leaf={leaf_index}, bytes={view.offset_bytes}, itemsize={itemsize}"
-            )
-        placeholder = placeholders[source_position]
-        source_offset_bytes = int(source.storage_offset()) * itemsize
-        if (
-            view.shape == tuple(int(value) for value in source.shape)
-            and view.stride == tuple(int(value) for value in source.stride())
-            and view.offset_bytes == source_offset_bytes
-        ):
-            replacement = placeholder
-        else:
-            with graph_module.graph.inserting_before(output_node):
-                replacement = graph_module.graph.call_function(
-                    torch.ops.aten.as_strided.default,
-                    args=(
-                        placeholder,
-                        view.shape,
-                        view.stride,
-                        view.offset_bytes // itemsize,
-                    ),
-                )
+        replacement = _input_alias_output(
+            graph_module,
+            output_node,
+            placeholders,
+            example_inputs,
+            root,
+            view,
+        )
         if replacement is not leaf:
             leaves[leaf_index] = replacement
             changed = True
@@ -654,6 +777,61 @@ def _canonicalize_input_alias_outputs(
         output_node.args = (tree_unflatten(leaves, spec),)
         graph_module.graph.lint()
         graph_module.recompile()
+
+
+def _input_alias_output(
+    graph_module: GraphModule,
+    output_node: Node,
+    placeholders: tuple[Node, ...],
+    example_inputs: tuple[object, ...],
+    root: StorageRoot,
+    view: OutputView,
+) -> Node:
+    source_position = root.source_input
+    if source_position is None:
+        raise AssertionError("input storage root omitted its source position")
+    source = example_inputs[source_position]
+    if not isinstance(source, torch.Tensor):
+        raise CaptureError("compiled input alias refers to a non-tensor argument")
+    _validate_input_alias_view(view, source, source_position)
+    itemsize = source.element_size()
+    placeholder = placeholders[source_position]
+    source_offset_bytes = int(source.storage_offset()) * itemsize
+    if (
+        view.shape == tuple(int(value) for value in source.shape)
+        and view.stride == tuple(int(value) for value in source.stride())
+        and view.offset_bytes == source_offset_bytes
+    ):
+        return placeholder
+    with graph_module.graph.inserting_before(output_node):
+        return graph_module.graph.call_function(
+            torch.ops.aten.as_strided.default,
+            args=(
+                placeholder,
+                view.shape,
+                view.stride,
+                view.offset_bytes // itemsize,
+            ),
+        )
+
+
+def _validate_input_alias_view(
+    view: OutputView,
+    source: torch.Tensor,
+    source_position: int,
+) -> None:
+    if view.dtype != str(source.dtype):
+        raise CaptureError(
+            "direct compilation cannot express a dtype-changing input view: "
+            f"leaf={view.leaf_index}, input={source_position}, "
+            f"source={source.dtype}, output={view.dtype}"
+        )
+    itemsize = source.element_size()
+    if view.offset_bytes % itemsize:
+        raise CaptureError(
+            "input-alias output offset is not element aligned: "
+            f"leaf={view.leaf_index}, bytes={view.offset_bytes}, itemsize={itemsize}"
+        )
 
 
 def _make_manifest(
@@ -763,6 +941,24 @@ def _project_callable_contract(
 ) -> TaskStorageContract:
     """Remove compiler-private saved outputs using Inductor's ABI metadata."""
 
+    roots, output_views = _project_visible_outputs(
+        optimized_graph,
+        inner_contract,
+        semantic_contract,
+    )
+    mutations = _project_callable_mutations(
+        semantic_contract.mutations,
+        roots,
+        output_views,
+    )
+    return _make_storage_contract(roots, output_views, mutations)
+
+
+def _project_visible_outputs(
+    optimized_graph: GraphModule,
+    inner_contract: TaskStorageContract,
+    semantic_contract: TaskStorageContract,
+) -> tuple[tuple[StorageRoot, ...], tuple[OutputView, ...]]:
     visible = _visible_output_indices(optimized_graph)
     inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
     visible_views = tuple(
@@ -777,7 +973,6 @@ def _project_callable_contract(
             f"semantic={len(semantic_views)}, executable={len(visible_views)}, "
             f"visible_indices={visible}"
         )
-
     inner_root_by_id = {root.root_id: root for root in inner_contract.roots}
     selected_root_ids = tuple(dict.fromkeys(view.root_id for view in visible_views))
     dense_root_id = {
@@ -791,10 +986,17 @@ def _project_callable_contract(
         _copy_view(executable, semantic.leaf_index, dense_root_id[executable.root_id])
         for executable, semantic in zip(visible_views, semantic_views, strict=True)
     )
+    return roots, output_views
+
+
+def _project_callable_mutations(
+    mutations: tuple[MutationBinding, ...],
+    roots: tuple[StorageRoot, ...],
+    output_views: tuple[OutputView, ...],
+) -> tuple[MutationBinding, ...]:
     view_by_leaf = {view.leaf_index: view for view in output_views}
     root_by_id = {root.root_id: root for root in roots}
-    mutations: list[MutationBinding] = []
-    for mutation in semantic_contract.mutations:
+    for mutation in mutations:
         leaf = mutation.replacement_output_leaf
         if leaf is not None:
             view = view_by_leaf.get(leaf)
@@ -813,19 +1015,7 @@ def _project_callable_contract(
                     f"leaf={leaf}, expected={mutation.input_position}, "
                     f"actual={root.source_input}"
                 )
-        mutations.append(mutation)
-    identity = {
-        "roots": [root.identity() for root in roots],
-        "output_views": [view.identity() for view in output_views],
-        "mutations": [mutation.identity() for mutation in mutations],
-    }
-    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return TaskStorageContract(
-        roots,
-        output_views,
-        tuple(mutations),
-        hashlib.sha256(encoded.encode()).hexdigest(),
-    )
+    return mutations
 
 
 def _graph_lowering_contract(
@@ -834,14 +1024,32 @@ def _graph_lowering_contract(
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
 ) -> _GraphLoweringManifest:
-    """Project Inductor's final returned buffers into a storage contract.
+    """Project Inductor's returned buffers into an executable storage ABI."""
 
-    Post-gradient FX still describes value provenance. During lowering and
-    fusion Inductor may realize disjoint views of one FX value into separate
-    returned buffers. ``GraphLowering.graph_outputs`` is the last structured
-    representation that names the storage roots used by the generated wrapper.
-    """
+    visible, outputs = _select_graph_outputs(
+        graph, optimized_graph, inner_contract, semantic_contract
+    )
+    input_position_by_name = _graph_input_positions(graph, optimized_graph)
+    records = _lower_graph_outputs(
+        graph,
+        outputs,
+        visible,
+        inner_contract,
+        semantic_contract,
+    )
+    roots, allocations = _build_executable_roots(graph, records, input_position_by_name)
+    output_views = _lowered_output_views(records, roots)
+    mutations = _project_mutations(semantic_contract, roots, output_views)
+    contract = _make_storage_contract(roots, output_views, mutations)
+    return _GraphLoweringManifest(contract, allocations)
 
+
+def _select_graph_outputs(
+    graph: GraphLowering,
+    optimized_graph: GraphModule,
+    inner_contract: TaskStorageContract,
+    semantic_contract: TaskStorageContract,
+) -> tuple[tuple[int, ...], tuple[Any, ...]]:
     visible = _visible_output_indices(optimized_graph)
     if graph.graph_outputs is None:
         raise CaptureError("Inductor GraphLowering omitted task outputs")
@@ -849,173 +1057,257 @@ def _graph_lowering_contract(
         raise CaptureError(
             "Inductor callable-visible output index exceeds GraphLowering ABI"
         )
-    inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
-    selected_outputs = tuple(
-        graph.graph_outputs[index] for index in visible if index in inner_view_by_leaf
+    inner_leaves = {view.leaf_index for view in inner_contract.output_views}
+    outputs = tuple(
+        graph.graph_outputs[index] for index in visible if index in inner_leaves
     )
-    semantic_views = tuple(
-        sorted(semantic_contract.output_views, key=lambda view: view.leaf_index)
-    )
-    if len(selected_outputs) != len(semantic_views):
+    if len(outputs) != len(semantic_contract.output_views):
         raise CaptureError(
             "GraphLowering callable-visible tensor output count changed: "
-            f"semantic={len(semantic_views)}, "
-            f"executable={len(selected_outputs)}"
+            f"semantic={len(semantic_contract.output_views)}, "
+            f"executable={len(outputs)}"
         )
+    return visible, outputs
 
+
+def _graph_input_positions(
+    graph: GraphLowering,
+    optimized_graph: GraphModule,
+) -> dict[str, int]:
     placeholders = tuple(
         node for node in optimized_graph.graph.nodes if node.op == "placeholder"
     )
-    input_position_by_name = {
+    return {
         node.name: index
         for index, node in enumerate(placeholders)
         if node.name in graph.graph_inputs
     }
+
+
+def _lower_graph_outputs(
+    graph: GraphLowering,
+    outputs: tuple[Any, ...],
+    visible: tuple[int, ...],
+    inner_contract: TaskStorageContract,
+    semantic_contract: TaskStorageContract,
+) -> tuple[_LoweredOutput, ...]:
+    inner_view_by_leaf = {view.leaf_index: view for view in inner_contract.output_views}
     optimized_views = tuple(
         inner_view_by_leaf[index] for index in visible if index in inner_view_by_leaf
     )
-    optimized_root_by_id = {root.root_id: root for root in inner_contract.roots}
+    semantic_views = tuple(
+        sorted(semantic_contract.output_views, key=lambda view: view.leaf_index)
+    )
+    root_by_id = {root.root_id: root for root in inner_contract.roots}
+    return tuple(
+        _lower_graph_output(
+            graph,
+            semantic_view,
+            optimized_view,
+            output,
+            root_by_id[optimized_view.root_id],
+        )
+        for semantic_view, optimized_view, output in zip(
+            semantic_views, optimized_views, outputs, strict=True
+        )
+    )
 
-    records: list[_LoweredOutput] = []
-    for semantic_view, optimized_view, output in zip(
-        semantic_views,
-        optimized_views,
-        selected_outputs,
-        strict=True,
+
+def _lower_graph_output(
+    graph: GraphLowering,
+    semantic_view: OutputView,
+    optimized_view: OutputView,
+    output: Any,
+    provenance: StorageRoot,
+) -> _LoweredOutput:
+    if not output.has_tensor_output():
+        raise CaptureError(
+            "GraphLowering replaced a tensor output with a non-tensor value: "
+            f"leaf={semantic_view.leaf_index}"
+        )
+    root_name, shape, stride, dtype, offset_bytes, span_bytes = _graph_output_geometry(
+        graph, semantic_view, output
+    )
+    _validate_graph_output_geometry(semantic_view, shape, stride, dtype)
+    return _LoweredOutput(
+        semantic_view=semantic_view,
+        optimized_view=optimized_view,
+        provenance=provenance,
+        root_name=root_name,
+        offset_bytes=offset_bytes,
+        span_bytes=span_bytes,
+        shape=shape,
+        stride=stride,
+        dtype=str(dtype),
+    )
+
+
+def _graph_output_geometry(
+    graph: GraphLowering,
+    semantic_view: OutputView,
+    output: Any,
+) -> tuple[str, tuple[int, ...], tuple[int, ...], torch.dtype, int, int]:
+    try:
+        root_name = str(output.get_name())
+        layout = output.get_layout()
+        dtype = output.get_dtype()
+        shape = tuple(
+            _static_int(graph, value, "output shape") for value in output.get_size()
+        )
+        stride = tuple(
+            _static_int(graph, value, "output stride") for value in output.get_stride()
+        )
+        offset_elements = _static_int(graph, layout.offset, "output offset")
+    except (AttributeError, NotImplementedError, TypeError) as error:
+        raise CaptureError(
+            "Inductor GraphLowering output has no concrete strided layout: "
+            f"leaf={semantic_view.leaf_index}, type={type(output).__name__}"
+        ) from error
+    if offset_elements < 0 or any(value < 0 for value in (*shape, *stride)):
+        raise CaptureError(
+            "Inductor GraphLowering produced a negative output geometry: "
+            f"leaf={semantic_view.leaf_index}"
+        )
+    item_size = torch.empty((), device="meta", dtype=dtype).element_size()
+    return (
+        root_name,
+        shape,
+        stride,
+        dtype,
+        offset_elements * item_size,
+        _span_bytes(shape, stride, item_size),
+    )
+
+
+def _validate_graph_output_geometry(
+    expected: OutputView,
+    shape: tuple[int, ...],
+    stride: tuple[int, ...],
+    dtype: torch.dtype,
+) -> None:
+    significant_strides_match = all(
+        extent <= 1 or actual == expected_stride
+        for extent, actual, expected_stride in zip(
+            shape, stride, expected.stride, strict=True
+        )
+    )
+    expected_geometry = (
+        expected.shape,
+        expected.stride,
+        expected.dtype,
+        expected.layout,
+    )
+    actual_geometry = (shape, stride, str(dtype), str(torch.strided))
+    if (
+        shape != expected.shape
+        or str(dtype) != expected.dtype
+        or str(torch.strided) != expected.layout
+        or not significant_strides_match
     ):
-        if not output.has_tensor_output():
-            raise CaptureError(
-                "GraphLowering replaced a tensor output with a non-tensor value: "
-                f"leaf={semantic_view.leaf_index}"
-            )
-        try:
-            root_name = str(output.get_name())
-            layout = output.get_layout()
-            dtype = output.get_dtype()
-            shape = tuple(
-                _static_int(graph, value, "output shape") for value in output.get_size()
-            )
-            stride = tuple(
-                _static_int(graph, value, "output stride")
-                for value in output.get_stride()
-            )
-            offset_elements = _static_int(graph, layout.offset, "output offset")
-        except (AttributeError, NotImplementedError, TypeError) as exc:
-            raise CaptureError(
-                "Inductor GraphLowering output has no concrete strided layout: "
-                f"leaf={semantic_view.leaf_index}, type={type(output).__name__}"
-            ) from exc
-        if offset_elements < 0 or any(value < 0 for value in (*shape, *stride)):
-            raise CaptureError(
-                "Inductor GraphLowering produced a negative output geometry: "
-                f"leaf={semantic_view.leaf_index}"
-            )
-        item_size = torch.empty((), device="meta", dtype=dtype).element_size()
-        offset_bytes = offset_elements * item_size
-        span_bytes = _span_bytes(shape, stride, item_size)
-        expected_geometry = (
-            semantic_view.shape,
-            semantic_view.stride,
-            semantic_view.dtype,
-            semantic_view.layout,
-        )
-        same_significant_strides = all(
-            extent <= 1 or actual == expected
-            for extent, actual, expected in zip(
-                shape,
-                stride,
-                semantic_view.stride,
-                strict=True,
-            )
-        )
-        if (
-            shape != semantic_view.shape
-            or str(dtype) != semantic_view.dtype
-            or str(torch.strided) != semantic_view.layout
-            or not same_significant_strides
-        ):
-            actual_geometry = (shape, stride, str(dtype), str(torch.strided))
-            raise CaptureError(
-                "GraphLowering changed task output geometry: "
-                f"leaf={semantic_view.leaf_index}, expected={expected_geometry}, "
-                f"actual={actual_geometry}"
-            )
-        records.append(
-            _LoweredOutput(
-                semantic_view=semantic_view,
-                optimized_view=optimized_view,
-                provenance=optimized_root_by_id[optimized_view.root_id],
-                root_name=root_name,
-                offset_bytes=offset_bytes,
-                span_bytes=span_bytes,
-                shape=shape,
-                stride=stride,
-                dtype=str(dtype),
-            )
+        raise CaptureError(
+            "GraphLowering changed task output geometry: "
+            f"leaf={expected.leaf_index}, expected={expected_geometry}, "
+            f"actual={actual_geometry}"
         )
 
-    root_order = tuple(dict.fromkeys(record.root_name for record in records))
-    root_id_by_name = {name: index for index, name in enumerate(root_order)}
+
+def _build_executable_roots(
+    graph: GraphLowering,
+    records: tuple[_LoweredOutput, ...],
+    input_position_by_name: Mapping[str, int],
+) -> tuple[tuple[StorageRoot, ...], tuple[ExecutableRootAllocation, ...]]:
+    root_names = tuple(dict.fromkeys(record.root_name for record in records))
+    root_id_by_name = {name: index for index, name in enumerate(root_names)}
     roots: list[StorageRoot] = []
-    root_allocations: list[ExecutableRootAllocation] = []
-    for name in root_order:
+    allocations: list[ExecutableRootAllocation] = []
+    for name in root_names:
         members = tuple(record for record in records if record.root_name == name)
-        provenance = members[0].provenance
-        minimum_span = max(
-            record.offset_bytes + record.span_bytes for record in members
+        root, allocation = _build_executable_root(
+            graph,
+            name,
+            root_id_by_name[name],
+            members,
+            input_position_by_name.get(name),
         )
-        source_input = input_position_by_name.get(name)
-        if source_input is not None:
-            roots.append(
-                StorageRoot(
-                    root_id_by_name[name],
-                    StorageRootKind.INPUT,
-                    source_input,
-                    None,
-                    None,
-                    None,
-                    minimum_span,
-                )
-            )
-            root_allocations.append(ExecutableRootAllocation(root_id_by_name[name], 0))
-            continue
-        try:
-            buffer: Any = graph.get_buffer(name)
-            allocation_elements = _static_int(
-                graph,
-                graph.get_allocation_storage_size(buffer),
-                "output allocation storage length",
-            )
-            allocation_item_size = torch.empty(
-                (), device="meta", dtype=buffer.get_dtype()
-            ).element_size()
-        except (AttributeError, NotImplementedError, RuntimeError, TypeError) as exc:
-            raise CaptureError(
-                f"Inductor GraphLowering output has no allocation extent: root={name}"
-            ) from exc
-        allocation_bytes = allocation_elements * allocation_item_size
-        if allocation_bytes < minimum_span:
-            raise CaptureError(
-                "Inductor output allocation is smaller than its returned views: "
-                f"root={name}, allocation={allocation_bytes}, "
-                f"minimum_span={minimum_span}"
-            )
-        roots.append(
-            StorageRoot(
-                root_id_by_name[name],
-                StorageRootKind.FRESH,
-                None,
-                provenance.producer_node or f"inductor_{name}",
-                provenance.producer_target or "inductor.output_buffer",
-                provenance.producer_result or 0,
-                minimum_span,
-            )
-        )
-        root_allocations.append(
-            ExecutableRootAllocation(root_id_by_name[name], allocation_bytes)
-        )
+        roots.append(root)
+        allocations.append(allocation)
+    return tuple(roots), tuple(allocations)
 
-    output_views = tuple(
+
+def _build_executable_root(
+    graph: GraphLowering,
+    name: str,
+    root_id: int,
+    members: tuple[_LoweredOutput, ...],
+    source_input: int | None,
+) -> tuple[StorageRoot, ExecutableRootAllocation]:
+    minimum_span = max(record.offset_bytes + record.span_bytes for record in members)
+    if source_input is not None:
+        return (
+            StorageRoot(
+                root_id,
+                StorageRootKind.INPUT,
+                source_input,
+                None,
+                None,
+                None,
+                minimum_span,
+            ),
+            ExecutableRootAllocation(root_id, 0),
+        )
+    allocation_bytes = _graph_buffer_extent(graph, name)
+    if allocation_bytes < minimum_span:
+        raise CaptureError(
+            "Inductor output allocation is smaller than its returned views: "
+            f"root={name}, allocation={allocation_bytes}, "
+            f"minimum_span={minimum_span}"
+        )
+    provenance = members[0].provenance
+    return (
+        StorageRoot(
+            root_id,
+            StorageRootKind.FRESH,
+            None,
+            provenance.producer_node or f"inductor_{name}",
+            provenance.producer_target or "inductor.output_buffer",
+            provenance.producer_result or 0,
+            minimum_span,
+        ),
+        ExecutableRootAllocation(root_id, allocation_bytes),
+    )
+
+
+def _graph_buffer_extent(graph: GraphLowering, name: str) -> int:
+    try:
+        buffer: Any = graph.get_buffer(name)
+        elements = _static_int(
+            graph,
+            graph.get_allocation_storage_size(buffer),
+            "output allocation storage length",
+        )
+        item_size = torch.empty(
+            (), device="meta", dtype=buffer.get_dtype()
+        ).element_size()
+    except (AttributeError, NotImplementedError, RuntimeError, TypeError) as error:
+        raise CaptureError(
+            f"Inductor GraphLowering output has no allocation extent: root={name}"
+        ) from error
+    return elements * item_size
+
+
+def _lowered_output_views(
+    records: tuple[_LoweredOutput, ...],
+    roots: tuple[StorageRoot, ...],
+) -> tuple[OutputView, ...]:
+    root_id_by_name = {
+        name: root.root_id
+        for name, root in zip(
+            dict.fromkeys(record.root_name for record in records),
+            roots,
+            strict=True,
+        )
+    }
+    return tuple(
         OutputView(
             leaf_index=record.semantic_view.leaf_index,
             root_id=root_id_by_name[record.root_name],
@@ -1028,21 +1320,24 @@ def _graph_lowering_contract(
         )
         for record in records
     )
-    mutations = _project_mutations(semantic_contract, tuple(roots), output_views)
+
+
+def _make_storage_contract(
+    roots: tuple[StorageRoot, ...],
+    output_views: tuple[OutputView, ...],
+    mutations: tuple[MutationBinding, ...],
+) -> TaskStorageContract:
     identity = {
         "roots": [root.identity() for root in roots],
         "output_views": [view.identity() for view in output_views],
         "mutations": [mutation.identity() for mutation in mutations],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return _GraphLoweringManifest(
-        TaskStorageContract(
-            tuple(roots),
-            output_views,
-            mutations,
-            hashlib.sha256(encoded.encode()).hexdigest(),
-        ),
-        tuple(root_allocations),
+    return TaskStorageContract(
+        roots,
+        output_views,
+        mutations,
+        hashlib.sha256(encoded.encode()).hexdigest(),
     )
 
 
@@ -1054,7 +1349,7 @@ def _visible_output_indices(graph: GraphModule) -> tuple[int, ...]:
     if output is None:
         raise CaptureError("optimized Inductor graph has no output node")
     raw_visible = output.meta.get("user_visible_output_idxs")
-    if not isinstance(raw_visible, (tuple, list)) or any(
+    if not isinstance(raw_visible, tuple | list) or any(
         not isinstance(index, int) or index < 0 for index in raw_visible
     ):
         raise CaptureError("Inductor did not publish callable-visible output indices")

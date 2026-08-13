@@ -330,218 +330,356 @@ class ObjectSnapshot(ctypes.Structure):
 def configure_adapter_library(library: Any) -> None:
     """Assign every non-callback adapter signature in one place."""
 
-    library.shadowspill_pytorch_adapter_capabilities.argtypes = [
-        ctypes.POINTER(AdapterCapabilities)
-    ]
-    library.shadowspill_pytorch_adapter_capabilities.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_profile_range_begin.argtypes = [ctypes.c_char_p]
-    library.shadowspill_pytorch_profile_range_begin.restype = ctypes.c_uint64
-    library.shadowspill_pytorch_profile_range_end.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_profile_range_end.restype = None
-    library.shadowspill_pytorch_profiler_annotations_set.argtypes = [ctypes.c_uint8]
-    library.shadowspill_pytorch_profiler_annotations_set.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_physical_admission.argtypes = [
-        ctypes.POINTER(PhysicalAdmission)
-    ]
-    library.shadowspill_pytorch_physical_admission.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_physical_memory.argtypes = [
-        ctypes.POINTER(PhysicalMemory)
-    ]
-    library.shadowspill_pytorch_physical_memory.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_seal_physical_budget.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    library.shadowspill_pytorch_seal_physical_budget.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_resize_spill_pool.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_resize_spill_pool.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_check_physical_budget.argtypes = []
-    library.shadowspill_pytorch_check_physical_budget.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocator_bootstrap.argtypes = [
-        ctypes.POINTER(AdapterConfig)
-    ]
-    library.shadowspill_pytorch_allocator_bootstrap.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocator_statistics.argtypes = [
-        ctypes.POINTER(AdapterStatistics)
-    ]
-    library.shadowspill_pytorch_allocator_statistics.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocator_failure.argtypes = [
-        ctypes.POINTER(AdapterFailure)
-    ]
-    library.shadowspill_pytorch_allocator_failure.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocator_wait_idle.argtypes = []
-    library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_calibrate_transfer_capabilities.argtypes = [
-        ctypes.POINTER(TransferCalibrationConfig),
-        ctypes.POINTER(TransferRouteKey),
+    _configure_capabilities(library)
+    _configure_profiler(library)
+    _configure_physical_memory(library)
+    _configure_allocator(library)
+    _configure_transfer_calibration(library)
+    _configure_debug_timing(library)
+    _configure_telemetry(library)
+    _configure_trace(library)
+    _configure_objects(library)
+    _configure_task_boundaries(library)
+    _configure_execution(library)
+
+
+def _signature(
+    library: Any,
+    name: str,
+    argument_types: list[object],
+    result_type: object,
+) -> None:
+    function = getattr(library, name)
+    function.argtypes = argument_types
+    function.restype = result_type
+
+
+def _configure_capabilities(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_adapter_capabilities",
+        [ctypes.POINTER(AdapterCapabilities)],
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_calibrate_transfer_capabilities.restype = (
-        ctypes.c_uint32
     )
-    library.shadowspill_pytorch_transfer_profiles.argtypes = [
-        ctypes.POINTER(TransferProfile),
+
+
+def _configure_profiler(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_profile_range_begin",
+        [ctypes.c_char_p],
+        ctypes.c_uint64,
+    )
+    _signature(
+        library, "shadowspill_pytorch_profile_range_end", [ctypes.c_uint64], None
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_profiler_annotations_set",
+        [ctypes.c_uint8],
         ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32),
-        ctypes.POINTER(ctypes.c_uint64),
-    ]
-    library.shadowspill_pytorch_transfer_profiles.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_debug_task_timing_enable.argtypes = [ctypes.c_uint32]
-    library.shadowspill_pytorch_debug_task_timing_enable.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_debug_task_timing_read.argtypes = [
-        ctypes.POINTER(TaskHostTiming),
+    )
+
+
+def _configure_physical_memory(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_physical_admission",
+        [ctypes.POINTER(PhysicalAdmission)],
         ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32),
-    ]
-    library.shadowspill_pytorch_debug_task_timing_read.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_debug_task_timing_disable.argtypes = []
-    library.shadowspill_pytorch_debug_task_timing_disable.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_task_labels_configure.argtypes = [
-        ctypes.POINTER(ctypes.c_char_p),
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_physical_memory",
+        [ctypes.POINTER(PhysicalMemory)],
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_task_labels_configure.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocation_telemetry_start.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_allocation_telemetry_start.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocation_telemetry_stop.argtypes = []
-    library.shadowspill_pytorch_allocation_telemetry_stop.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocation_telemetry_read.argtypes = [
-        ctypes.POINTER(AllocationEvent),
-        ctypes.c_uint64,
-        ctypes.POINTER(ctypes.c_uint64),
-    ]
-    library.shadowspill_pytorch_allocation_telemetry_read.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_trace_prepare.argtypes = [ctypes.POINTER(TraceConfig)]
-    library.shadowspill_pytorch_trace_prepare.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_trace_begin.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_trace_begin.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_trace_end.argtypes = []
-    library.shadowspill_pytorch_trace_end.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_trace_read.argtypes = [
-        ctypes.POINTER(TraceSummary),
-        ctypes.POINTER(TraceEvent),
-        ctypes.c_uint64,
-        ctypes.POINTER(AllocationEvent),
-        ctypes.c_uint64,
-    ]
-    library.shadowspill_pytorch_trace_read.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_allocation_for_pointer.argtypes = [
-        ctypes.c_uint64,
-        ctypes.POINTER(Allocation),
-    ]
-    library.shadowspill_pytorch_allocation_for_pointer.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_register_host_object.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint8,
-        ctypes.c_uint64,
-    ]
-    library.shadowspill_pytorch_register_host_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_register_placeholder_object.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint8,
-    ]
-    library.shadowspill_pytorch_register_placeholder_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_write_spill_object.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    library.shadowspill_pytorch_write_spill_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_read_spill_object.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    library.shadowspill_pytorch_read_spill_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_unregister_object.argtypes = [ctypes.c_uint64]
-    library.shadowspill_pytorch_unregister_object.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_bind_registered_allocation.argtypes = [
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_seal_physical_budget",
+        [ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_resize_spill_pool",
+        [ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library, "shadowspill_pytorch_check_physical_budget", [], ctypes.c_uint32
+    )
+
+
+def _configure_allocator(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_allocator_bootstrap",
+        [ctypes.POINTER(AdapterConfig)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_allocator_statistics",
+        [ctypes.POINTER(AdapterStatistics)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_allocator_failure",
+        [ctypes.POINTER(AdapterFailure)],
+        ctypes.c_uint32,
+    )
+    _signature(library, "shadowspill_pytorch_allocator_wait_idle", [], ctypes.c_uint32)
+    _signature(
+        library,
+        "shadowspill_pytorch_allocation_for_pointer",
+        [ctypes.c_uint64, ctypes.POINTER(Allocation)],
+        ctypes.c_uint32,
+    )
+
+
+def _configure_transfer_calibration(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_calibrate_transfer_capabilities",
+        [
+            ctypes.POINTER(TransferCalibrationConfig),
+            ctypes.POINTER(TransferRouteKey),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_transfer_profiles",
+        [
+            ctypes.POINTER(TransferProfile),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    )
+
+
+def _configure_debug_timing(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_debug_task_timing_enable",
+        [ctypes.c_uint32],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_debug_task_timing_read",
+        [
+            ctypes.POINTER(TaskHostTiming),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library, "shadowspill_pytorch_debug_task_timing_disable", [], ctypes.c_uint32
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_task_labels_configure",
+        [ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint32],
+        ctypes.c_uint32,
+    )
+
+
+def _configure_telemetry(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_allocation_telemetry_start",
+        [ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library, "shadowspill_pytorch_allocation_telemetry_stop", [], ctypes.c_uint32
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_allocation_telemetry_read",
+        [
+            ctypes.POINTER(AllocationEvent),
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    )
+
+
+def _configure_trace(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_trace_prepare",
+        [ctypes.POINTER(TraceConfig)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library, "shadowspill_pytorch_trace_begin", [ctypes.c_uint64], ctypes.c_uint32
+    )
+    _signature(library, "shadowspill_pytorch_trace_end", [], ctypes.c_uint32)
+    _signature(
+        library,
+        "shadowspill_pytorch_trace_read",
+        [
+            ctypes.POINTER(TraceSummary),
+            ctypes.POINTER(TraceEvent),
+            ctypes.c_uint64,
+            ctypes.POINTER(AllocationEvent),
+            ctypes.c_uint64,
+        ],
+        ctypes.c_uint32,
+    )
+
+
+def _configure_objects(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_register_host_object",
+        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_register_placeholder_object",
+        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_write_spill_object",
+        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_read_spill_object",
+        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_unregister_object",
+        [ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    binding = [
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.POINTER(ObjectBinding),
     ]
-    library.shadowspill_pytorch_bind_registered_allocation.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_replace_registered_allocation.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
-    ]
-    library.shadowspill_pytorch_replace_registered_allocation.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_transfer_output_to_caller.argtypes = [
-        ctypes.c_uint64,
-        ctypes.POINTER(Allocation),
-    ]
-    library.shadowspill_pytorch_transfer_output_to_caller.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_promote_allocation.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
-    ]
-    library.shadowspill_pytorch_promote_allocation.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_before_task.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ctypes.c_uint64),
+    _signature(
+        library,
+        "shadowspill_pytorch_bind_registered_allocation",
+        binding,
         ctypes.c_uint32,
-        ctypes.POINTER(ObjectBinding),
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_replace_registered_allocation",
+        binding,
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_before_task.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_after_task.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ObjectUpdate),
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_transfer_output_to_caller",
+        [ctypes.c_uint64, ctypes.POINTER(Allocation)],
         ctypes.c_uint32,
-        ctypes.POINTER(RuntimeAction),
+    )
+    _signature(
+        library, "shadowspill_pytorch_promote_allocation", binding, ctypes.c_uint32
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_object_snapshot",
+        [ctypes.c_uint64, ctypes.POINTER(ObjectSnapshot)],
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_after_task.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_admit_execution.argtypes = [
-        ctypes.POINTER(ExecutionDescription)
-    ]
-    library.shadowspill_pytorch_admit_execution.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_clear_execution_plan.argtypes = []
-    library.shadowspill_pytorch_clear_execution_plan.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_resolve_execution.argtypes = [
-        ctypes.c_uint64,
-        ctypes.POINTER(ctypes.c_size_t),
-    ]
-    library.shadowspill_pytorch_resolve_execution.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_before_execution.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ObjectBinding),
+    )
+
+
+def _configure_task_boundaries(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_before_task",
+        [
+            ctypes.c_uint64,
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_uint32,
+            ctypes.POINTER(ObjectBinding),
+            ctypes.c_uint32,
+        ],
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_before_execution.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_after_execution.argtypes = [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-    ]
-    library.shadowspill_pytorch_after_execution.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_before_execution_handle.argtypes = [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ObjectBinding),
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_after_task",
+        [
+            ctypes.c_uint64,
+            ctypes.c_size_t,
+            ctypes.POINTER(ObjectUpdate),
+            ctypes.c_uint32,
+            ctypes.POINTER(RuntimeAction),
+            ctypes.c_uint32,
+        ],
         ctypes.c_uint32,
-    ]
-    library.shadowspill_pytorch_before_execution_handle.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_after_execution_handle.argtypes = [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-    ]
-    library.shadowspill_pytorch_after_execution_handle.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_object_snapshot.argtypes = [
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectSnapshot),
-    ]
-    library.shadowspill_pytorch_object_snapshot.restype = ctypes.c_uint32
-    library.shadowspill_pytorch_abort_task_range.argtypes = []
-    library.shadowspill_pytorch_abort_task_range.restype = None
+    )
+    _signature(library, "shadowspill_pytorch_abort_task_range", [], None)
+
+
+def _configure_execution(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_admit_execution",
+        [ctypes.POINTER(ExecutionDescription)],
+        ctypes.c_uint32,
+    )
+    _signature(library, "shadowspill_pytorch_clear_execution_plan", [], ctypes.c_uint32)
+    _signature(
+        library,
+        "shadowspill_pytorch_resolve_execution",
+        [ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_before_execution",
+        [
+            ctypes.c_uint64,
+            ctypes.c_size_t,
+            ctypes.POINTER(ObjectBinding),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_after_execution",
+        [ctypes.c_uint64, ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_before_execution_handle",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_size_t,
+            ctypes.POINTER(ObjectBinding),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_after_execution_handle",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t],
+        ctypes.c_uint32,
+    )

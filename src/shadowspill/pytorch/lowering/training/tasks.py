@@ -211,48 +211,22 @@ class _TrainingTaskEmitter:
             for object_id in destinations
             if object_id not in first_destinations
         )
-        dependencies = list(
-            dict.fromkeys(
-                (
-                    self.forward_ids[(position, stage_index, variant)],
-                    *downstream_ids,
-                )
-            )
+        dependencies = self._backward_dependencies(
+            position,
+            stage_index,
+            variant,
+            item,
+            downstream_ids,
+            mutated,
         )
-        for slot in item.backward_inputs:
-            object_id = slot.object_id
-            dependencies.extend(self.object_producers.get(object_id, ()))
-            dependencies.extend(self.initial_writers.get(object_id, ()))
-            dependencies.extend(self.latest_contributors.get(object_id, ()))
-        for object_id in mutated:
-            dependencies.extend(self.initial_writers[object_id])
-            dependencies.extend(self.latest_contributors[object_id])
-        mutation_bytes = sum(
-            self.objects.catalog.object_size(object_id) for object_id in mutated
-        )
-        inputs = [slot.object_id for slot in item.backward_inputs]
-        inputs.extend(mutated)
-        input_aliases = {
-            self.objects.catalog.alias_id(object_id) for object_id in inputs
-        }
-        task = TaskSpec(
+        task = self._backward_task(
             task_id,
-            ResourceSpec(self.device_id, ResourceKind.COMPUTE),
-            self.profiles.profile_id(
-                item.pair.backward,
-                mutation_bytes,
-                metadata_digest=metadata_digest,
-            ),
-            dependencies=_unique(dependencies),
-            inputs=_unique(inputs),
-            outputs=tuple(
-                object_id
-                for object_id in destinations
-                if object_id in first_destinations
-                and self.objects.catalog.alias_id(object_id) not in input_aliases
-            ),
-            mutations=tuple(MutationSpec(object_id) for object_id in mutated),
-            phase="backward",
+            item,
+            destinations,
+            mutated,
+            first_destinations,
+            dependencies,
+            metadata_digest,
         )
         self.tasks.append(task)
         self._record_producers(task)
@@ -271,6 +245,71 @@ class _TrainingTaskEmitter:
             )
         )
         self.all_backward_ids.append(task_id)
+
+    def _backward_dependencies(
+        self,
+        position: int,
+        stage_index: int,
+        variant: str,
+        item: PreparedStageVariant,
+        downstream_ids: tuple[str, ...],
+        mutated: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        dependencies = list(
+            dict.fromkeys(
+                (
+                    self.forward_ids[(position, stage_index, variant)],
+                    *downstream_ids,
+                )
+            )
+        )
+        for slot in item.backward_inputs:
+            object_id = slot.object_id
+            dependencies.extend(self.object_producers.get(object_id, ()))
+            dependencies.extend(self.initial_writers.get(object_id, ()))
+            dependencies.extend(self.latest_contributors.get(object_id, ()))
+        for object_id in mutated:
+            dependencies.extend(self.initial_writers[object_id])
+            dependencies.extend(self.latest_contributors[object_id])
+        return _unique(dependencies)
+
+    def _backward_task(
+        self,
+        task_id: str,
+        item: PreparedStageVariant,
+        destinations: tuple[str, ...],
+        mutated: tuple[str, ...],
+        first_destinations: set[str],
+        dependencies: tuple[str, ...],
+        metadata_digest: str | None,
+    ) -> TaskSpec:
+        mutation_bytes = sum(
+            self.objects.catalog.object_size(object_id) for object_id in mutated
+        )
+        inputs = [slot.object_id for slot in item.backward_inputs]
+        inputs.extend(mutated)
+        input_aliases = {
+            self.objects.catalog.alias_id(object_id) for object_id in inputs
+        }
+        return TaskSpec(
+            task_id,
+            ResourceSpec(self.device_id, ResourceKind.COMPUTE),
+            self.profiles.profile_id(
+                item.pair.backward,
+                mutation_bytes,
+                metadata_digest=metadata_digest,
+            ),
+            dependencies=dependencies,
+            inputs=_unique(inputs),
+            outputs=tuple(
+                object_id
+                for object_id in destinations
+                if object_id in first_destinations
+                and self.objects.catalog.alias_id(object_id) not in input_aliases
+            ),
+            mutations=tuple(MutationSpec(object_id) for object_id in mutated),
+            phase="backward",
+        )
 
     def _publish_contributors(
         self,
@@ -437,9 +476,161 @@ def _append_optimizer_tasks(
 ) -> tuple[str, ...]:
     """Append dependency-closed optimizer components in semantic order."""
 
-    if optimizer.recurrent is None:
-        raise CaptureError("optimizer has no recurrent artifact")
-    object_by_name = {
+    appender = _OptimizerTaskAppender(
+        tasks,
+        entrypoints,
+        optimizer,
+        optimizer_objects,
+        gradients,
+        optimizer_phase=optimizer_phase,
+        dependencies=dependencies,
+        device_id=device_id,
+        profile_id=profile_id,
+        components=components,
+        object_dependencies=object_dependencies,
+    )
+    return appender.append()
+
+
+class _OptimizerTaskAppender:
+    def __init__(
+        self,
+        tasks: list[TaskSpec],
+        entrypoints: list[TrainingTaskEntrypoint],
+        optimizer: OptimizerCapture,
+        optimizer_objects: tuple[OptimizerObjectBinding, ...],
+        gradients: tuple[GradientBinding, ...],
+        *,
+        optimizer_phase: Literal["initial", "recurrent"],
+        dependencies: tuple[str, ...],
+        device_id: str,
+        profile_id: Callable[..., str],
+        components: tuple[OptimizerTask, ...] | None,
+        object_dependencies: dict[str, tuple[str, ...]] | None,
+    ) -> None:
+        if optimizer.recurrent is None:
+            raise CaptureError("optimizer has no recurrent artifact")
+        self.tasks = tasks
+        self.entrypoints = entrypoints
+        self.optimizer = optimizer
+        self.optimizer_objects = optimizer_objects
+        self.optimizer_phase = optimizer_phase
+        self.dependencies = dependencies
+        self.device_id = device_id
+        self.profile_id = profile_id
+        self.components = components
+        self.object_dependencies = object_dependencies or {}
+        self.object_by_name = _optimizer_object_ids(gradients, optimizer_objects)
+        self.binding_by_name = {item.name: item for item in optimizer_objects}
+
+    def append(self) -> tuple[str, ...]:
+        components = self._selected_components()
+        if not components:
+            raise CaptureError("optimizer has no executable task components")
+        task_ids: list[str] = []
+        preceding = self.dependencies
+        for component in components:
+            task = self._task(component, preceding)
+            self.tasks.append(task)
+            self.entrypoints.append(self._entrypoint(component, task.task_id))
+            task_ids.append(task.task_id)
+            preceding = _unique((*self.dependencies, task.task_id))
+        return tuple(task_ids)
+
+    def _selected_components(self) -> tuple[OptimizerTask, ...]:
+        lazy_outputs = any(
+            item.created_on_first_step for item in self.optimizer_objects
+        )
+        if self.optimizer_phase == "initial" and lazy_outputs:
+            assert self.optimizer.recurrent is not None
+            return (
+                OptimizerTask(
+                    self.optimizer.recurrent,
+                    tuple(binding.name for binding in self.optimizer.bindings),
+                    self.optimizer.mutation_names,
+                ),
+            )
+        return (
+            self.optimizer.recurrent_tasks
+            if self.components is None
+            else self.components
+        )
+
+    def _task(
+        self,
+        component: OptimizerTask,
+        preceding: tuple[str, ...],
+    ) -> TaskSpec:
+        task_id = f"task_{len(self.tasks):06d}"
+        objects = self._component_objects(component)
+        outputs = self._component_outputs(component)
+        dependencies = _unique(
+            (
+                *preceding,
+                *(
+                    dependency
+                    for object_id in objects
+                    for dependency in self.object_dependencies.get(object_id, ())
+                ),
+            )
+        )
+        return TaskSpec(
+            task_id,
+            ResourceSpec(self.device_id, ResourceKind.COMPUTE),
+            self.profile_id(component.artifact),
+            dependencies=dependencies,
+            inputs=tuple(
+                object_id for object_id in objects if object_id not in outputs
+            ),
+            outputs=outputs,
+            mutations=tuple(
+                MutationSpec(self.object_by_name[name])
+                for name in component.mutation_names
+                if name in self.object_by_name
+                and self.object_by_name[name] not in outputs
+            ),
+            phase="optimizer",
+        )
+
+    def _component_objects(self, component: OptimizerTask) -> tuple[str, ...]:
+        return tuple(
+            self.object_by_name[name]
+            for name in component.binding_names
+            if name in self.object_by_name
+        )
+
+    def _component_outputs(self, component: OptimizerTask) -> tuple[str, ...]:
+        if self.optimizer_phase != "initial":
+            return ()
+        return tuple(
+            self.object_by_name[name]
+            for name in component.mutation_names
+            if name in self.binding_by_name
+            and self.binding_by_name[name].created_on_first_step
+        )
+
+    @staticmethod
+    def _entrypoint(
+        component: OptimizerTask,
+        task_id: str,
+    ) -> TrainingTaskEntrypoint:
+        return TrainingTaskEntrypoint(
+            task_id,
+            "optimizer",
+            None,
+            None,
+            component.artifact,
+            (),
+            (),
+            optimizer_binding_names=component.binding_names,
+        )
+
+
+def _optimizer_object_ids(
+    gradients: tuple[GradientBinding, ...],
+    optimizer_objects: tuple[OptimizerObjectBinding, ...],
+) -> dict[str, str]:
+    return {
         **{item.parameter_name: item.parameter_object_id for item in gradients},
         **{
             f"gradient.{item.parameter_name}": item.gradient_object_id
@@ -447,87 +638,6 @@ def _append_optimizer_tasks(
         },
         **{item.name: item.object_id for item in optimizer_objects},
     }
-    object_binding = {item.name: item for item in optimizer_objects}
-    has_lazy_outputs = any(item.created_on_first_step for item in optimizer_objects)
-    selected_components = (
-        (
-            OptimizerTask(
-                optimizer.recurrent,
-                tuple(binding.name for binding in optimizer.bindings),
-                optimizer.mutation_names,
-            ),
-        )
-        if optimizer_phase == "initial" and has_lazy_outputs
-        else optimizer.recurrent_tasks
-        if components is None
-        else components
-    )
-    if not selected_components:
-        raise CaptureError("optimizer has no executable task components")
-
-    result: list[str] = []
-    preceding = dependencies
-    producer_dependencies = object_dependencies or {}
-    for component in selected_components:
-        task_id = f"task_{len(tasks):06d}"
-        component_objects = tuple(
-            object_by_name[name]
-            for name in component.binding_names
-            if name in object_by_name
-        )
-        outputs = tuple(
-            object_by_name[name]
-            for name in component.mutation_names
-            if name in object_binding
-            and optimizer_phase == "initial"
-            and object_binding[name].created_on_first_step
-        )
-        mutations = tuple(
-            MutationSpec(object_by_name[name])
-            for name in component.mutation_names
-            if name in object_by_name and object_by_name[name] not in outputs
-        )
-        task_dependencies = _unique(
-            (
-                *preceding,
-                *(
-                    dependency
-                    for object_id in component_objects
-                    for dependency in producer_dependencies.get(object_id, ())
-                ),
-            )
-        )
-        tasks.append(
-            TaskSpec(
-                task_id,
-                ResourceSpec(device_id, ResourceKind.COMPUTE),
-                profile_id(component.artifact),
-                dependencies=task_dependencies,
-                inputs=tuple(
-                    object_id
-                    for object_id in component_objects
-                    if object_id not in outputs
-                ),
-                outputs=outputs,
-                mutations=mutations,
-                phase="optimizer",
-            )
-        )
-        entrypoints.append(
-            TrainingTaskEntrypoint(
-                task_id,
-                "optimizer",
-                None,
-                None,
-                component.artifact,
-                (),
-                (),
-                optimizer_binding_names=component.binding_names,
-            )
-        )
-        result.append(task_id)
-        preceding = _unique((*dependencies, task_id))
-    return tuple(result)
 
 
 def _object_dependencies(

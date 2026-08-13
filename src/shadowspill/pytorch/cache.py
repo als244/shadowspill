@@ -336,37 +336,53 @@ class PlanningCache:
         manifest_path = directory / "manifest.json"
         if not self.save_plan:
             return artifact_path
-        if (
-            artifact_path.exists()
-            and manifest_path.exists()
-            and not self.overwrite_plan
+        if self._match_export_archive(
+            directory,
+            artifact_path,
+            manifest_path,
+            digest,
         ):
-            manifest = _read_json(manifest_path)
-            if (
-                manifest.get("schema") != _EXPORT_SCHEMA
-                or manifest.get("digest") != digest
-            ):
-                raise ValueError(f"Export cache entry {directory} is invalid")
-            self.record(
-                category="pytorch",
-                kind="export_manifest",
-                digest=digest,
-                path=manifest_path,
-                access="read",
-                schema=_EXPORT_SCHEMA,
-            )
-            self.record(
-                category="pytorch",
-                kind="exported_program",
-                digest=digest,
-                path=artifact_path,
-                access="matched",
-                schema=_EXPORT_SCHEMA,
-            )
             return artifact_path
+        self._write_export_archive(
+            exported_program,
+            artifact_path,
+            manifest_path,
+            digest,
+            metadata,
+        )
+        self._record_export_archive(artifact_path, manifest_path, digest, "write")
+        return artifact_path
 
+    def _match_export_archive(
+        self,
+        directory: Path,
+        artifact_path: Path,
+        manifest_path: Path,
+        digest: str,
+    ) -> bool:
+        if (
+            not artifact_path.exists()
+            or not manifest_path.exists()
+            or self.overwrite_plan
+        ):
+            return False
+        manifest = _read_json(manifest_path)
+        if manifest.get("schema") != _EXPORT_SCHEMA or manifest.get("digest") != digest:
+            raise ValueError(f"Export cache entry {directory} is invalid")
+        self._record_export_archive(artifact_path, manifest_path, digest, "matched")
+        return True
+
+    @staticmethod
+    def _write_export_archive(
+        exported_program: Any,
+        artifact_path: Path,
+        manifest_path: Path,
+        digest: str,
+        metadata: Mapping[str, object],
+    ) -> None:
         import torch
 
+        directory = artifact_path.parent
         directory.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
             prefix=".exported_program.", suffix=".pt2", dir=directory
@@ -387,14 +403,33 @@ class PlanningCache:
                 "metadata": dict(metadata),
             },
         )
+
+    def _record_export_archive(
+        self,
+        artifact_path: Path,
+        manifest_path: Path,
+        digest: str,
+        artifact_access: str,
+    ) -> None:
+        if artifact_access == "matched":
+            self.record(
+                category="pytorch",
+                kind="export_manifest",
+                digest=digest,
+                path=manifest_path,
+                access="read",
+                schema=_EXPORT_SCHEMA,
+            )
         self.record(
             category="pytorch",
             kind="exported_program",
             digest=digest,
             path=artifact_path,
-            access="write",
+            access=artifact_access,
             schema=_EXPORT_SCHEMA,
         )
+        if artifact_access == "matched":
+            return
         self.record(
             category="pytorch",
             kind="export_manifest",
@@ -403,7 +438,6 @@ class PlanningCache:
             access="write",
             schema=_EXPORT_SCHEMA,
         )
-        return artifact_path
 
     def archive_program(self, program: Program) -> Path:
         """Persist the exact canonical Program supplied to PressureFit."""

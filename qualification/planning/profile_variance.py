@@ -23,14 +23,14 @@ from shadowspill.pytorch.compilation.compiler import (
     compile_artifact,
     materialize_example_arguments,
 )
-from shadowspill.pytorch.compilation.representative import (
-    materialize_representative_inputs,
-)
 from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.materialization.training import (
     representative_training_arguments,
 )
 from shadowspill.pytorch.partition import partition_training_capture
+from shadowspill.pytorch.profiling.inputs import (
+    materialize_representative_inputs,
+)
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 
 

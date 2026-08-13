@@ -378,6 +378,14 @@ boundary without a provider-specific branch.
 
 ## Compilation and profiling
 
+Compilation and profiling are separate packages and artifact boundaries.
+`pytorch.compilation` constructs process-local callables and reconciles
+Inductor's physical output layout with the offline semantic contract.
+`pytorch.profiling` owns representative values, value-sensitive metadata,
+measurement policy, workspace telemetry, structural profile keys, and profile
+cache records. Profiling consumes compiled artifacts; compilation does not own
+profiling policy or profile persistence.
+
 The private PyTorch artifact retains representative arguments only for task
 compilation; those framework values never enter canonical ShadowSpill IR or its
 serialized cache identity. Real CUDA representatives preserve shared storages,

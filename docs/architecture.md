@@ -101,13 +101,20 @@ pytorch/graph_pairs/
 └── training.py        training-only composition after partitioning
 
 pytorch/compilation/
-├── compiler.py        structural task compilation and isolated measurement
+├── compiler.py        stateless explicit-task executable construction
 ├── inductor.py        narrow version-pinned Inductor adapter
-├── layout.py          semantic-contract/physical-layout reconciliation
-├── profiling.py       measurements, structural keys, and profile repository
-├── representative.py deterministic value-bearing task inputs
+└── layout.py          semantic-contract/physical-layout reconciliation
+
+pytorch/profiling/
+├── inputs.py          deterministic value-bearing task inputs
 ├── metadata.py        value-sensitive profiling metadata
-└── *_repository.py    compiler artifact persistence, never cache policy
+├── records.py         immutable keys, measurements, and allocation events
+├── executables.py     warmed callable ownership and occurrence values
+├── profiler.py        isolated CUDA timing/workspace orchestration
+├── manifests.py       physical-manifest reconciliation and lookup
+├── manifest_repository.py compiled-manifest persistence
+├── runner.py          unique-ABI profile orchestration
+└── repository.py      profile artifact serialization and lookup
 
 pytorch/optimizer/
 ├── artifacts.py       optimizer tensor/task records

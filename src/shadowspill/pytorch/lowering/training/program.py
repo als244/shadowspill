@@ -9,8 +9,8 @@ import torch.nn as nn
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
-from shadowspill.pytorch.compilation.profiling import TaskMeasurement
 from shadowspill.pytorch.optimizer import OptimizerCapture
+from shadowspill.pytorch.profiling import TaskMeasurement
 
 from ...contracts import CaptureError
 from ...graph_pairs import PartitionedTrainingCapture

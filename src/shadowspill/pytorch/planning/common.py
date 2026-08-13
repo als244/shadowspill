@@ -9,8 +9,11 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.pytorch.compilation.compiler import CudaTaskProfiler
-from shadowspill.pytorch.compilation.profiling import ProfilingResult, TaskMeasurement
+from shadowspill.pytorch.profiling import (
+    ProfilingResult,
+    TaskMeasurement,
+)
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 

@@ -19,20 +19,20 @@ from shadowspill.pytorch.capture.artifacts import (
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.compilation.compiler import (
-    CompiledTaskSet,
-    CudaTaskProfiler,
+from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
+from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
+from shadowspill.pytorch.profiling import (
     ResolvedTaskManifests,
     profile_environment,
+    profile_unique_artifacts,
     resolve_task_manifests,
     validate_compiled_profile,
 )
-from shadowspill.pytorch.compilation.metadata import (
+from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     canonicalize_profiling_metadata,
 )
-from shadowspill.pytorch.compilation.profiling import profile_unique_artifacts
-from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import AdmissionError, SlabReplay
 
@@ -214,7 +214,7 @@ def profile_forward_tasks(
             captured.tasks,
             environment=environment,
             profile_cache=artifact_cache.profiles,
-            profiler=profiler,
+            compiler=profiler,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled manifest {index}/{total} {state}: {digest[:12]}"
             ),

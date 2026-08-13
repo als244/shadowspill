@@ -1,8 +1,6 @@
-"""Structural task compilation, physical layout, and isolated profiling.
+"""Structural task compilation, Inductor manifests, and physical layout.
 
-Compilation modules intentionally remain explicit imports.  In particular,
-runtime allocation telemetry depends on the lightweight profiling records,
-while the compiler itself consumes that telemetry.  Keeping this package
-initializer side-effect free makes that dependency direction visible and
-prevents import-order cycles.
+Task measurement and representative values live in :mod:`shadowspill.pytorch.profiling`.
+This initializer remains side-effect free so compiler internals and profiling
+records keep an explicit, cycle-free dependency boundary.
 """

@@ -15,10 +15,8 @@ from shadowspill.pytorch.compilation import compiler as compiler_module
 from shadowspill.pytorch.compilation import inductor as inductor_module
 from shadowspill.pytorch.compilation.compiler import (
     CompiledTask,
-    CudaTaskProfiler,
     compile_artifact,
     materialize_example_arguments,
-    profile_environment,
 )
 from shadowspill.pytorch.compilation.inductor import (
     ExecutableRootAllocation,
@@ -26,11 +24,17 @@ from shadowspill.pytorch.compilation.inductor import (
     compile_explicit_inductor_task,
     compile_inductor_task,
 )
-from shadowspill.pytorch.compilation.representative import (
-    materialize_representative_inputs,
-)
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.profiling import (
+    TaskMeasurement,
+    profile_environment,
+)
+from shadowspill.pytorch.profiling import profiler as profiler_module
+from shadowspill.pytorch.profiling.inputs import (
+    materialize_representative_inputs,
+)
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.abi import Allocation
 from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 
@@ -218,7 +222,7 @@ def test_manifest_hydration_restores_arguments_before_measurement() -> None:
 
     def measure(executable: Any, **_options: object) -> Any:
         observed_arguments.append(len(executable.example_arguments))
-        return compiler_module.TaskMeasurement(1, 0, 0, (), (1,), "test")
+        return TaskMeasurement(1, 0, 0, (), (1,), "test")
 
     profiler._measure_callable = measure  # type: ignore[method-assign]
 
@@ -243,7 +247,7 @@ def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
     )
     with torch.no_grad():
         outputs = executable.function(*representatives.arguments)
-    assert isinstance(outputs, (tuple, list))
+    assert isinstance(outputs, tuple | list)
     assert len(outputs) == len(captured.mutation_names)
 
 
@@ -352,20 +356,20 @@ def test_workspace_boundary_always_stops_telemetry(
     calls: list[str] = []
     sentinel = object()
     monkeypatch.setattr(
-        compiler_module,
+        profiler_module,
         "start_allocation_telemetry",
         lambda library, capacity: calls.append(f"start:{capacity}"),
     )
     monkeypatch.setattr(
-        compiler_module,
+        profiler_module,
         "stop_allocation_telemetry",
         lambda library: calls.append("stop"),
     )
     monkeypatch.setattr(
-        compiler_module, "read_allocation_telemetry", lambda library: ()
+        profiler_module, "read_allocation_telemetry", lambda library: ()
     )
     monkeypatch.setattr(
-        compiler_module,
+        profiler_module,
         "summarize_task_workspace",
         lambda events, **options: sentinel,
     )
@@ -406,16 +410,16 @@ def test_workspace_releases_disposable_results_before_after_task(
             return 0
 
     monkeypatch.setattr(
-        compiler_module, "start_allocation_telemetry", lambda *a, **k: None
+        profiler_module, "start_allocation_telemetry", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        compiler_module, "stop_allocation_telemetry", lambda *a, **k: None
+        profiler_module, "stop_allocation_telemetry", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        compiler_module, "read_allocation_telemetry", lambda library: ()
+        profiler_module, "read_allocation_telemetry", lambda library: ()
     )
     monkeypatch.setattr(
-        compiler_module,
+        profiler_module,
         "summarize_task_workspace",
         lambda events, **options: object(),
     )
@@ -569,7 +573,7 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
 def test_measurement_releases_cuda_examples_between_structural_abis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.pytorch.compilation.profiling import TaskMeasurement
+    from shadowspill.pytorch.profiling import TaskMeasurement
 
     artifact = _artifact()
     examples = [torch.ones(8)]

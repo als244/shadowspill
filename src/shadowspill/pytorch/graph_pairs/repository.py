@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.compilation.profiling import PlanningArtifactRecorder
+from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 
 from ..contracts import CaptureError
 from ..partition.artifacts import StageExample

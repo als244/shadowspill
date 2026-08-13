@@ -13,7 +13,7 @@ from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import PressureFitOptions
 from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
-from shadowspill.pytorch.compilation.profiling import ProfileCache
+from shadowspill.pytorch.profiling import ProfileRepository
 from shadowspill.simulator import SimulationConfig
 
 from ..cache import PlanningCache
@@ -25,7 +25,7 @@ class PlanningArtifactRepositories:
     """Typed lookup/write boundary for one planning call's artifacts."""
 
     store: PlanningCache
-    profiles: ProfileCache
+    profiles: ProfileRepository
     pressurefit: PressureFitCache
     graph_pairs: GraphPairRepository
 
@@ -94,7 +94,7 @@ def open_artifact_repositories(store: PlanningCache) -> PlanningArtifactReposito
 
     return PlanningArtifactRepositories(
         store=store,
-        profiles=ProfileCache(
+        profiles=ProfileRepository(
             store.profile_measurements,
             compiled_manifest_root=store.compiled_manifests,
             read_enabled=store.read_enabled,

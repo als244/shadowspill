@@ -1,0 +1,81 @@
+"""Mutable timing state used only while one execution trace is armed."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+
+from shadowspill.ir import MemoryAction
+from shadowspill.pytorch.lowering.training import TrainingTaskEntrypoint
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+
+
+@dataclass(slots=True)
+class ArmedTaskTiming:
+    """Reusable event and host-clock state for one execution task."""
+
+    entrypoint: TrainingTaskEntrypoint
+    expected_profile_seconds: float
+    execution_ordinal: int
+    semantic_name: str
+    readiness_event: torch.cuda.Event
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    host_started_ns: int = 0
+    host_finished_ns: int = 0
+    host_before_finished_ns: int = 0
+    host_after_started_ns: int = 0
+    host_stream_resolution_ns: int = 0
+    host_readiness_marker_ns: int = 0
+    host_native_before_task_ns: int = 0
+    host_input_lookup_ns: int = 0
+    host_storage_rebind_ns: int = 0
+    host_generation_publish_ns: int = 0
+    host_argument_assembly_ns: int = 0
+    host_rebind_ns: int = 0
+    host_dispatch_ns: int = 0
+    host_output_flatten_ns: int = 0
+    host_output_classification_ns: int = 0
+    host_output_adoption_ns: int = 0
+    host_output_state_publish_ns: int = 0
+    host_gradient_accumulation_ns: int = 0
+    host_output_publish_ns: int = 0
+    host_dematerialize_ns: int = 0
+    host_postprocess_ns: int = 0
+    host_native_after_task_ns: int = 0
+    host_cleanup_ns: int = 0
+
+
+@dataclass(slots=True)
+class ArmedExecutionTiming:
+    """Mutable trace state spanning one complete planned invocation."""
+
+    origin_event: torch.cuda.Event
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    tasks: dict[str, ArmedTaskTiming]
+    task_order: tuple[str, ...]
+    started: bool = False
+    finished: bool = False
+    host_call_started_ns: int = 0
+    host_call_finished_ns: int = 0
+    host_startup_wait_ns: int = 0
+    host_initial_actions_ns: int = 0
+    stream: torch.cuda.Stream | None = None
+    statistics_before: AdapterStatistics | None = None
+    actions: tuple[MemoryAction, ...] = ()
+    trace_setup_ns: int = 0
+
+
+@dataclass(slots=True)
+class ArmedSpanTiming:
+    """Two-event production-like selected-task timing bracket."""
+
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    started: bool = False
+    finished: bool = False
+
+
+__all__ = ["ArmedExecutionTiming", "ArmedSpanTiming", "ArmedTaskTiming"]

@@ -13,15 +13,16 @@ from shadowspill.planner import PressureFitResult
 from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.compilation.compiler import (
-    CompiledTaskSet,
-    CudaTaskProfiler,
-    ResolvedTaskManifests,
-)
-from shadowspill.pytorch.compilation.metadata import ProfilingMetadata
-from shadowspill.pytorch.compilation.profiling import ProfilingResult, TaskMeasurement
+from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTaskArtifact
+from shadowspill.pytorch.profiling import (
+    ProfilingMetadata,
+    ProfilingResult,
+    ResolvedTaskManifests,
+    TaskMeasurement,
+)
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.simulator import SimulationConfig
 

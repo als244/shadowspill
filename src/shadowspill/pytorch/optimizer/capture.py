@@ -46,6 +46,44 @@ class _OptimizerDiscovery:
     representative_values: dict[str, torch.Tensor]
 
 
+@dataclass(frozen=True, slots=True)
+class _DiscoveryBaseline:
+    state_structure: object
+    state_dict: dict[str, Any]
+    parameters: tuple[tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _OptimizerComponent:
+    nodes: tuple[torch.fx.Node, ...]
+    input_positions: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _OptimizerComponentGroup:
+    completion_stage: int | None
+    components: tuple[_OptimizerComponent, ...]
+
+
+class _DisjointSets:
+    """Minimal union-find used to find independent optimizer updates."""
+
+    def __init__(self, size: int) -> None:
+        self._parents = list(range(size))
+
+    def find(self, index: int) -> int:
+        while self._parents[index] != index:
+            self._parents[index] = self._parents[self._parents[index]]
+            index = self._parents[index]
+        return index
+
+    def union(self, left: int, right: int) -> None:
+        left_root = self.find(left)
+        right_root = self.find(right)
+        if left_root != right_root:
+            self._parents[right_root] = left_root
+
+
 def capture_optimizer(
     named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
@@ -107,6 +145,46 @@ def _discover_optimizer_state(
 ) -> _OptimizerDiscovery | OptimizerCapture:
     """Discover lazy tensor state on an isolated optimizer copy."""
 
+    copied = _copy_discovery_sandbox(inventory, optimizer)
+    if isinstance(copied, OptimizerCapture):
+        return copied
+    sandbox, sandbox_parameters, names = copied
+    _seed_discovery_gradients(
+        inventory.actual_parameters,
+        sandbox_parameters,
+    )
+    baseline = _discovery_baseline(sandbox, sandbox_parameters, names)
+    step = _run_discovery_step(
+        inventory.optimizer_type,
+        sandbox,
+        names,
+        baseline,
+    )
+    if isinstance(step, OptimizerCapture):
+        return step
+    sandbox, names, initialized_state, representative_values = step
+    return _finish_optimizer_discovery(
+        inventory,
+        optimizer,
+        sandbox,
+        names,
+        baseline,
+        initialized_state,
+        representative_values,
+    )
+
+
+def _copy_discovery_sandbox(
+    inventory: _OptimizerInventory,
+    optimizer: torch.optim.Optimizer,
+) -> (
+    tuple[
+        torch.optim.Optimizer,
+        tuple[torch.nn.Parameter, ...],
+        dict[int, str],
+    ]
+    | OptimizerCapture
+):
     try:
         sandbox = _copy_optimizer(optimizer)
     except BaseException as exc:
@@ -114,105 +192,171 @@ def _discover_optimizer_state(
             inventory.optimizer_type,
             f"optimizer cannot be copied for capture: {exc}",
         )
-    sandbox_parameters = _optimizer_parameters(sandbox)
-    if len(sandbox_parameters) != len(inventory.actual_parameters):
+    parameters = _optimizer_parameters(sandbox)
+    if len(parameters) != len(inventory.actual_parameters):
         raise CaptureError("copied optimizer changed its parameter inventory")
-    name_by_actual_id = {
+    actual_names = {
         id(parameter): name
         for name, parameter in inventory.canonical_parameters.items()
     }
-    name_by_sandbox_id = {
-        id(sandbox_parameter): name_by_actual_id[id(actual_parameter)]
-        for actual_parameter, sandbox_parameter in zip(
-            inventory.actual_parameters, sandbox_parameters, strict=True
+    names = {
+        id(copied_parameter): actual_names[id(actual_parameter)]
+        for actual_parameter, copied_parameter in zip(
+            inventory.actual_parameters,
+            parameters,
+            strict=True,
         )
-        if id(actual_parameter) in name_by_actual_id
+        if id(actual_parameter) in actual_names
     }
-    for actual_parameter, sandbox_parameter in zip(
-        inventory.actual_parameters, sandbox_parameters, strict=True
-    ):
-        if not sandbox_parameter.requires_grad or sandbox_parameter.grad is not None:
-            continue
-        if actual_parameter.grad is None:
-            sandbox_parameter.grad = torch.ones_like(sandbox_parameter)
-        else:
-            sandbox_parameter.grad = actual_parameter.grad.detach().clone()
+    return sandbox, parameters, names
 
-    before_structure = _state_structure(sandbox, name_by_sandbox_id)
-    before_state = copy.deepcopy(sandbox.state_dict())
-    before_parameters = tuple(
+
+def _seed_discovery_gradients(
+    actual_parameters: tuple[torch.nn.Parameter, ...],
+    sandbox_parameters: tuple[torch.nn.Parameter, ...],
+) -> None:
+    for actual, sandbox in zip(
+        actual_parameters,
+        sandbox_parameters,
+        strict=True,
+    ):
+        if not sandbox.requires_grad or sandbox.grad is not None:
+            continue
+        sandbox.grad = (
+            torch.ones_like(sandbox)
+            if actual.grad is None
+            else actual.grad.detach().clone()
+        )
+
+
+def _discovery_baseline(
+    sandbox: torch.optim.Optimizer,
+    parameters: tuple[torch.nn.Parameter, ...],
+    names: Mapping[int, str],
+) -> _DiscoveryBaseline:
+    snapshots = tuple(
         (
             parameter,
             parameter.detach().clone(),
             None if parameter.grad is None else parameter.grad.detach().clone(),
         )
-        for parameter in sandbox_parameters
+        for parameter in parameters
     )
-    initialized_state_dict: dict[str, Any] | None
-    representative_values: dict[str, torch.Tensor] = {}
+    return _DiscoveryBaseline(
+        _state_structure(sandbox, names),
+        copy.deepcopy(sandbox.state_dict()),
+        snapshots,
+    )
+
+
+def _run_discovery_step(
+    optimizer_type: str,
+    sandbox: torch.optim.Optimizer,
+    names: dict[int, str],
+    baseline: _DiscoveryBaseline,
+) -> (
+    tuple[
+        torch.optim.Optimizer,
+        dict[int, str],
+        dict[str, Any] | None,
+        dict[str, torch.Tensor],
+    ]
+    | OptimizerCapture
+):
     try:
         with torch.no_grad():
             sandbox.step()
     except BaseException as exc:
-        # CUDA-only registered operators commonly reject the CPU discovery
-        # sandbox *after* creating lazy optimizer state.  That state inventory
-        # is still authoritative.  Re-run capture with FakeTensor CUDA values
-        # so the operator's registered fake/meta contract describes the
-        # recurrent task without allocating a second real model.
-        after_structure = _state_structure(sandbox, name_by_sandbox_id)
-        if after_structure == before_structure:
-            return _empty_opaque_capture(
-                inventory.optimizer_type,
-                f"optimizer discovery step failed: {exc}",
-            )
-        try:
-            _complete_failed_state_discovery(
-                sandbox,
-                name_by_sandbox_id,
-                before_parameters,
-            )
-            initialized_state_dict = sandbox.state_dict()
-            representative_values = _representative_optimizer_values(
-                sandbox,
-                name_by_sandbox_id,
-            )
-            sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
-                sandbox, name_by_sandbox_id
-            )
-        except BaseException as fake_exc:
-            return _empty_opaque_capture(
-                inventory.optimizer_type,
-                (
-                    f"optimizer discovery step failed: {exc}; "
-                    f"fake CUDA inventory failed: {fake_exc}"
-                ),
-            )
-    else:
-        initialized_state_dict = None
-    after_structure = _state_structure(sandbox, name_by_sandbox_id)
-    first_step_is_opaque = after_structure != before_structure
-    before_state_names = _state_tensor_names(optimizer, name_by_actual_id)
-    after_state_names = _state_tensor_names(sandbox, name_by_sandbox_id)
+        return _recover_failed_discovery(
+            optimizer_type,
+            sandbox,
+            names,
+            baseline,
+            exc,
+        )
+    return sandbox, names, None, {}
+
+
+def _recover_failed_discovery(
+    optimizer_type: str,
+    sandbox: torch.optim.Optimizer,
+    names: dict[int, str],
+    baseline: _DiscoveryBaseline,
+    failure: BaseException,
+) -> (
+    tuple[
+        torch.optim.Optimizer,
+        dict[int, str],
+        dict[str, Any],
+        dict[str, torch.Tensor],
+    ]
+    | OptimizerCapture
+):
+    # CUDA-only registered operators may reject CPU execution after creating
+    # lazy state. The state inventory remains valid and can be fakeified.
+    if _state_structure(sandbox, names) == baseline.state_structure:
+        return _empty_opaque_capture(
+            optimizer_type,
+            f"optimizer discovery step failed: {failure}",
+        )
+    try:
+        _complete_failed_state_discovery(sandbox, names, baseline.parameters)
+        state = sandbox.state_dict()
+        representative = _representative_optimizer_values(sandbox, names)
+        fake_sandbox, fake_names = _fake_cuda_optimizer(sandbox, names)
+        return fake_sandbox, fake_names, state, representative
+    except BaseException as fake_failure:
+        return _empty_opaque_capture(
+            optimizer_type,
+            (
+                f"optimizer discovery step failed: {failure}; "
+                f"fake CUDA inventory failed: {fake_failure}"
+            ),
+        )
+
+
+def _finish_optimizer_discovery(
+    inventory: _OptimizerInventory,
+    optimizer: torch.optim.Optimizer,
+    sandbox: torch.optim.Optimizer,
+    names: dict[int, str],
+    baseline: _DiscoveryBaseline,
+    initialized_state: dict[str, Any] | None,
+    representative_values: dict[str, torch.Tensor],
+) -> _OptimizerDiscovery:
+    first_step_is_opaque = _state_structure(sandbox, names) != baseline.state_structure
+    actual_names = {
+        id(parameter): name
+        for name, parameter in inventory.canonical_parameters.items()
+    }
+    before_state_names = _state_tensor_names(optimizer, actual_names)
+    after_state_names = _state_tensor_names(sandbox, names)
     created_state_names = tuple(
         sorted(set(after_state_names) - set(before_state_names))
     )
     if not first_step_is_opaque:
-        sandbox.load_state_dict(before_state)
-        with torch.no_grad():
-            for parameter, value, gradient in before_parameters:
-                parameter.copy_(value)
-                if gradient is not None and parameter.grad is not None:
-                    parameter.grad.copy_(gradient)
-
+        _restore_discovery_baseline(sandbox, baseline)
     return _OptimizerDiscovery(
         optimizer_type=inventory.optimizer_type,
         sandbox=sandbox,
-        name_by_sandbox_id=name_by_sandbox_id,
+        name_by_sandbox_id=names,
         first_step_is_opaque=first_step_is_opaque,
         created_state_names=created_state_names,
-        initialized_state_dict=initialized_state_dict,
+        initialized_state_dict=initialized_state,
         representative_values=representative_values,
     )
+
+
+def _restore_discovery_baseline(
+    sandbox: torch.optim.Optimizer,
+    baseline: _DiscoveryBaseline,
+) -> None:
+    sandbox.load_state_dict(baseline.state_dict)
+    with torch.no_grad():
+        for parameter, value, gradient in baseline.parameters:
+            parameter.copy_(value)
+            if gradient is not None and parameter.grad is not None:
+                parameter.grad.copy_(gradient)
 
 
 def _capture_recurrent_optimizer(
@@ -223,21 +367,55 @@ def _capture_recurrent_optimizer(
 ) -> OptimizerCapture:
     """Capture the stable recurrent update or publish a bounded opaque task."""
 
-    sandbox = discovery.sandbox
-    name_by_sandbox_id = discovery.name_by_sandbox_id
-
     if _has_optimizer_step_hooks(optimizer):
-        hook_bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
-        hook_artifact = OpaqueOptimizerArtifact.capture(sandbox, hook_bindings)
-        return _opaque_optimizer_capture(
-            discovery,
-            hook_artifact,
-            hook_bindings,
-            reason="optimizer step hooks require ordinary eager execution",
-        )
+        return _hooked_optimizer_capture(discovery)
+    opaque = _prepare_recurrent_sandbox(discovery)
+    if opaque is not None:
+        return opaque
+    captured = _capture_optimizer_artifact(discovery)
+    if isinstance(captured, OptimizerCapture):
+        return captured
+    artifact, bindings = captured
+    recurrent_tasks = _partition_optimizer_graph(
+        artifact,
+        bindings,
+        parameter_stage_owners=parameter_stage_owners,
+    )
+    return OptimizerCapture(
+        optimizer_type=discovery.optimizer_type,
+        first_step_is_opaque=discovery.first_step_is_opaque,
+        created_state_names=discovery.created_state_names,
+        recurrent=artifact,
+        recurrent_tasks=recurrent_tasks,
+        bindings=bindings,
+        mutation_names=tuple(binding.name for binding in bindings if binding.mutable),
+        initialized_state_dict=discovery.initialized_state_dict,
+    )
 
+
+def _hooked_optimizer_capture(
+    discovery: _OptimizerDiscovery,
+) -> OptimizerCapture:
+    bindings = _tensor_bindings(
+        discovery.sandbox,
+        discovery.name_by_sandbox_id,
+    )
+    artifact = OpaqueOptimizerArtifact.capture(discovery.sandbox, bindings)
+    return _opaque_optimizer_capture(
+        discovery,
+        artifact,
+        bindings,
+        reason="optimizer step hooks require ordinary eager execution",
+    )
+
+
+def _prepare_recurrent_sandbox(
+    discovery: _OptimizerDiscovery,
+) -> OptimizerCapture | None:
     if discovery.initialized_state_dict is None:
-        probe_bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
+        sandbox = discovery.sandbox
+        names = discovery.name_by_sandbox_id
+        probe_bindings = _tensor_bindings(sandbox, names)
         probe_snapshots = {
             id(binding.tensor): binding.tensor.detach().clone()
             for binding in probe_bindings
@@ -259,13 +437,20 @@ def _capture_recurrent_optimizer(
         _restore_binding_values(probe_bindings, probe_snapshots)
         discovery.representative_values = _representative_optimizer_values(
             sandbox,
-            name_by_sandbox_id,
+            names,
         )
-        sandbox, name_by_sandbox_id = _fake_cuda_optimizer(sandbox, name_by_sandbox_id)
+        sandbox, names = _fake_cuda_optimizer(sandbox, names)
         discovery.sandbox = sandbox
-        discovery.name_by_sandbox_id = name_by_sandbox_id
+        discovery.name_by_sandbox_id = names
+    return None
 
-    bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
+
+def _capture_optimizer_artifact(
+    discovery: _OptimizerDiscovery,
+) -> tuple[GraphArtifact, tuple[OptimizerTensorBinding, ...]] | OptimizerCapture:
+    sandbox = discovery.sandbox
+    names = discovery.name_by_sandbox_id
+    bindings = _tensor_bindings(sandbox, names)
     snapshots = {
         id(binding.tensor): binding.tensor.detach().clone() for binding in bindings
     }
@@ -294,22 +479,7 @@ def _capture_recurrent_optimizer(
         )
     finally:
         torch.set_grad_enabled(grad_enabled)
-    mutations = tuple(binding.name for binding in bindings if binding.mutable)
-    recurrent_tasks = _partition_optimizer_graph(
-        artifact,
-        bindings,
-        parameter_stage_owners=parameter_stage_owners,
-    )
-    return OptimizerCapture(
-        optimizer_type=discovery.optimizer_type,
-        first_step_is_opaque=discovery.first_step_is_opaque,
-        created_state_names=discovery.created_state_names,
-        recurrent=artifact,
-        recurrent_tasks=recurrent_tasks,
-        bindings=bindings,
-        mutation_names=mutations,
-        initialized_state_dict=discovery.initialized_state_dict,
-    )
+    return artifact, bindings
 
 
 def _opaque_optimizer_capture(
@@ -792,54 +962,79 @@ def _partition_optimizer_graph(
     *,
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[OptimizerTask, ...]:
-    """Group dependency-closed updates by their training-stage frontier.
+    """Partition dependency-closed updates at their backward-ready frontier."""
 
-    The FX graph determines independent update components.  When stage
-    provenance is available, components are combined by the earliest stage
-    whose backward completion makes every involved parameter gradient final.
-    Because backward executes in reverse stage order, that frontier is the
-    minimum contributing stage index.  No optimizer- or model-specific naming
-    policy participates in the grouping.
-    """
+    placeholders, operations = _optimizer_graph_nodes(artifact, bindings)
+    if len(operations) < 2:
+        return (_whole_optimizer_task(artifact, bindings, parameter_stage_owners),)
+    components = _optimizer_components(placeholders, operations, bindings)
+    if len(components) == 1:
+        return (_whole_optimizer_task(artifact, bindings, parameter_stage_owners),)
+    groups = _group_optimizer_components(components, bindings, parameter_stage_owners)
+    return tuple(
+        _build_optimizer_component_task(
+            artifact, bindings, placeholders, operations, group
+        )
+        for group in groups
+    )
 
-    graph_module = artifact.graph_module
+
+def _optimizer_graph_nodes(
+    artifact: GraphArtifact,
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> tuple[tuple[torch.fx.Node, ...], tuple[torch.fx.Node, ...]]:
     placeholders = tuple(
-        node for node in graph_module.graph.nodes if node.op == "placeholder"
+        node for node in artifact.graph_module.graph.nodes if node.op == "placeholder"
     )
     if len(placeholders) != len(bindings):
         raise CaptureError("optimizer placeholder inventory changed after lifting")
     operations = tuple(
         node
-        for node in graph_module.graph.nodes
+        for node in artifact.graph_module.graph.nodes
         if node.op not in {"placeholder", "output"}
     )
-    if len(operations) < 2:
-        return (
-            OptimizerTask(
-                artifact,
-                tuple(binding.name for binding in bindings),
-                tuple(binding.name for binding in bindings if binding.mutable),
-                _completion_stage(bindings, parameter_stage_owners),
+    return placeholders, operations
+
+
+def _whole_optimizer_task(
+    artifact: GraphArtifact,
+    bindings: tuple[OptimizerTensorBinding, ...],
+    parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
+) -> OptimizerTask:
+    return OptimizerTask(
+        artifact,
+        tuple(binding.name for binding in bindings),
+        tuple(binding.name for binding in bindings if binding.mutable),
+        _completion_stage(bindings, parameter_stage_owners),
+    )
+
+
+def _optimizer_components(
+    placeholders: tuple[torch.fx.Node, ...],
+    operations: tuple[torch.fx.Node, ...],
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> tuple[_OptimizerComponent, ...]:
+    positions = {node: index for index, node in enumerate(operations)}
+    sets = _DisjointSets(len(operations))
+    dependencies = _optimizer_dependencies(operations, positions, sets)
+    _join_mutable_consumers(placeholders, bindings, positions, dependencies, sets)
+    component_nodes = _ordered_component_nodes(operations, positions, sets)
+    return tuple(
+        _OptimizerComponent(
+            nodes=nodes,
+            input_positions=_component_input_positions(
+                nodes, placeholders, dependencies
             ),
         )
+        for nodes in component_nodes
+    )
 
-    operation_ids = {node: index for index, node in enumerate(operations)}
-    parent = list(range(len(operations)))
 
-    def find(index: int) -> int:
-        while parent[index] != index:
-            parent[index] = parent[parent[index]]
-            index = parent[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        left_root, right_root = find(left), find(right)
-        if left_root != right_root:
-            parent[right_root] = left_root
-
-    placeholder_dependencies: dict[torch.fx.Node, set[int]] = {
-        placeholder: set() for placeholder in placeholders
-    }
+def _optimizer_dependencies(
+    operations: tuple[torch.fx.Node, ...],
+    positions: Mapping[torch.fx.Node, int],
+    sets: _DisjointSets,
+) -> dict[torch.fx.Node, set[torch.fx.Node]]:
     dependencies_by_operation: dict[torch.fx.Node, set[torch.fx.Node]] = {}
     for operation in operations:
         dependencies: set[torch.fx.Node] = set()
@@ -849,142 +1044,168 @@ def _partition_optimizer_graph(
             if dependency in dependencies:
                 continue
             dependencies.add(dependency)
-            if dependency in operation_ids:
-                union(operation_ids[operation], operation_ids[dependency])
-            if dependency.op == "placeholder":
-                placeholder_dependencies[dependency].add(operation_ids[operation])
-            else:
+            if dependency in positions:
+                sets.union(positions[operation], positions[dependency])
+            if dependency.op != "placeholder":
                 stack.extend(dependency.all_input_nodes)
         dependencies_by_operation[operation] = dependencies
+    return dependencies_by_operation
 
+
+def _join_mutable_consumers(
+    placeholders: tuple[torch.fx.Node, ...],
+    bindings: tuple[OptimizerTensorBinding, ...],
+    positions: Mapping[torch.fx.Node, int],
+    dependencies: Mapping[torch.fx.Node, set[torch.fx.Node]],
+    sets: _DisjointSets,
+) -> None:
     for placeholder, binding in zip(placeholders, bindings, strict=True):
         if not binding.mutable:
             continue
-        consumers = sorted(placeholder_dependencies[placeholder])
+        consumers = sorted(
+            positions[operation]
+            for operation, required in dependencies.items()
+            if placeholder in required
+        )
         for consumer in consumers[1:]:
-            union(consumers[0], consumer)
+            sets.union(consumers[0], consumer)
 
+
+def _ordered_component_nodes(
+    operations: tuple[torch.fx.Node, ...],
+    positions: Mapping[torch.fx.Node, int],
+    sets: _DisjointSets,
+) -> tuple[tuple[torch.fx.Node, ...], ...]:
     components: dict[int, list[torch.fx.Node]] = {}
     for operation in operations:
-        components.setdefault(find(operation_ids[operation]), []).append(operation)
-    ordered_components = tuple(
+        components.setdefault(sets.find(positions[operation]), []).append(operation)
+    return tuple(
         tuple(nodes)
         for _root, nodes in sorted(
             components.items(),
-            key=lambda item: min(operation_ids[node] for node in item[1]),
+            key=lambda item: min(positions[node] for node in item[1]),
         )
     )
-    if len(ordered_components) == 1:
-        return (
-            OptimizerTask(
-                artifact,
-                tuple(binding.name for binding in bindings),
-                tuple(binding.name for binding in bindings if binding.mutable),
-                _completion_stage(bindings, parameter_stage_owners),
-            ),
-        )
 
-    component_positions: list[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]]] = []
-    for component in ordered_components:
-        required_placeholders = {
-            dependency
-            for operation in component
-            for dependency in dependencies_by_operation[operation]
-            if dependency.op == "placeholder"
-        }
-        positions = tuple(
-            index
-            for index, placeholder in enumerate(placeholders)
-            if placeholder in required_placeholders
-        )
-        component_positions.append((component, positions))
 
-    grouped_members: tuple[
-        tuple[
-            int | None,
-            tuple[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]], ...],
-        ],
-        ...,
-    ]
+def _component_input_positions(
+    nodes: tuple[torch.fx.Node, ...],
+    placeholders: tuple[torch.fx.Node, ...],
+    dependencies: Mapping[torch.fx.Node, set[torch.fx.Node]],
+) -> tuple[int, ...]:
+    required = {
+        dependency
+        for operation in nodes
+        for dependency in dependencies[operation]
+        if dependency.op == "placeholder"
+    }
+    return tuple(
+        index
+        for index, placeholder in enumerate(placeholders)
+        if placeholder in required
+    )
+
+
+def _group_optimizer_components(
+    components: tuple[_OptimizerComponent, ...],
+    bindings: tuple[OptimizerTensorBinding, ...],
+    parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
+) -> tuple[_OptimizerComponentGroup, ...]:
     if parameter_stage_owners is None:
-        grouped_members = tuple(
-            (None, ((component, positions),))
-            for component, positions in component_positions
+        return tuple(
+            _OptimizerComponentGroup(None, (component,)) for component in components
         )
-    else:
-        grouped: dict[
-            int | None, list[tuple[tuple[torch.fx.Node, ...], tuple[int, ...]]]
-        ] = {}
-        for component, positions in component_positions:
-            completion_stage = _completion_stage(
-                tuple(bindings[position] for position in positions),
-                parameter_stage_owners,
-            )
-            grouped.setdefault(completion_stage, []).append((component, positions))
-        grouped_members = tuple(
-            (completion_stage, tuple(members))
-            for completion_stage, members in sorted(
-                grouped.items(),
-                key=lambda item: (
-                    item[0] is None,
-                    -(item[0] if item[0] is not None else -1),
-                ),
-            )
+    grouped: dict[int | None, list[_OptimizerComponent]] = defaultdict(list)
+    for component in components:
+        bound = tuple(bindings[index] for index in component.input_positions)
+        grouped[_completion_stage(bound, parameter_stage_owners)].append(component)
+    return tuple(
+        _OptimizerComponentGroup(completion_stage, tuple(members))
+        for completion_stage, members in sorted(
+            grouped.items(),
+            key=lambda item: (
+                item[0] is None,
+                -(item[0] if item[0] is not None else -1),
+            ),
         )
+    )
 
-    tasks: list[OptimizerTask] = []
-    for completion_stage, members in grouped_members:
-        component_nodes = {
-            node for component, _positions in members for node in component
-        }
-        positions = tuple(
-            sorted({position for _component, values in members for position in values})
+
+def _build_optimizer_component_task(
+    artifact: GraphArtifact,
+    bindings: tuple[OptimizerTensorBinding, ...],
+    placeholders: tuple[torch.fx.Node, ...],
+    operations: tuple[torch.fx.Node, ...],
+    group: _OptimizerComponentGroup,
+) -> OptimizerTask:
+    positions = tuple(
+        sorted(
+            {
+                position
+                for component in group.components
+                for position in component.input_positions
+            }
         )
-        component_graph = torch.fx.Graph()
-        environment: dict[torch.fx.Node, torch.fx.Node] = {}
-        for local_index, position in enumerate(positions):
-            original = placeholders[position]
-            environment[original] = component_graph.placeholder(
-                f"optimizer_tensor_{local_index:04d}"
-            )
-        for operation in operations:
-            if operation not in component_nodes:
-                continue
-            copied = component_graph.create_node(
-                operation.op,
-                operation.target,
-                torch.fx.map_arg(operation.args, environment.__getitem__),
-                torch.fx.map_arg(operation.kwargs, environment.__getitem__),
-                type_expr=operation.type,
-            )
-            copied.meta = copy.copy(operation.meta)
-            environment[operation] = copied
-        mutable_positions = tuple(
-            position for position in positions if bindings[position].mutable
+    )
+    component_nodes = {
+        node for component in group.components for node in component.nodes
+    }
+    graph = _copy_optimizer_component_graph(
+        placeholders, operations, positions, component_nodes, bindings
+    )
+    component_artifact = GraphArtifact.capture(
+        kind="optimizer",
+        graph_module=GraphModule(artifact.graph_module, graph),
+        example_inputs=tuple(
+            artifact.example_arguments[position] for position in positions
+        ),
+        input_provenance=tuple(
+            artifact.input_provenance[position] for position in positions
+        ),
+    )
+    mutable_positions = tuple(
+        position for position in positions if bindings[position].mutable
+    )
+    return OptimizerTask(
+        component_artifact,
+        tuple(bindings[position].name for position in positions),
+        tuple(bindings[position].name for position in mutable_positions),
+        group.completion_stage,
+    )
+
+
+def _copy_optimizer_component_graph(
+    placeholders: tuple[torch.fx.Node, ...],
+    operations: tuple[torch.fx.Node, ...],
+    positions: tuple[int, ...],
+    component_nodes: set[torch.fx.Node],
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> torch.fx.Graph:
+    graph = torch.fx.Graph()
+    environment: dict[torch.fx.Node, torch.fx.Node] = {}
+    for local_index, position in enumerate(positions):
+        environment[placeholders[position]] = graph.placeholder(
+            f"optimizer_tensor_{local_index:04d}"
         )
-        component_graph.output(
-            tuple(environment[placeholders[position]] for position in mutable_positions)
+    for operation in operations:
+        if operation not in component_nodes:
+            continue
+        copied = graph.create_node(
+            operation.op,
+            operation.target,
+            torch.fx.map_arg(operation.args, environment.__getitem__),
+            torch.fx.map_arg(operation.kwargs, environment.__getitem__),
+            type_expr=operation.type,
         )
-        component_module = GraphModule(graph_module, component_graph)
-        component_artifact = GraphArtifact.capture(
-            kind="optimizer",
-            graph_module=component_module,
-            example_inputs=tuple(
-                artifact.example_arguments[position] for position in positions
-            ),
-            input_provenance=tuple(
-                artifact.input_provenance[position] for position in positions
-            ),
-        )
-        tasks.append(
-            OptimizerTask(
-                component_artifact,
-                tuple(bindings[position].name for position in positions),
-                tuple(bindings[position].name for position in mutable_positions),
-                completion_stage,
-            )
-        )
-    return tuple(tasks)
+        copied.meta = copy.copy(operation.meta)
+        environment[operation] = copied
+    mutable_positions = tuple(
+        position for position in positions if bindings[position].mutable
+    )
+    graph.output(
+        tuple(environment[placeholders[position]] for position in mutable_positions)
+    )
+    return graph
 
 
 def _representative_optimizer_values(

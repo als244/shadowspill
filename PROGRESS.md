@@ -2399,3 +2399,39 @@ the ignored internal progress log before this tracked summary is updated.
   them. All remaining private top-level functions and methods have at least one
   concrete source, test, or qualification caller; package `__all__` exports
   were also mechanically verified to resolve.
+
+## 2026-08-13 — Readable PyTorch orchestration and profiling ownership
+
+- Decomposed the remaining mixed-responsibility frontend implementations into
+  focused capture, compiled-layout, diagnostics, execution-boundary,
+  materialization, optimizer, admission, and runtime-adapter helpers. The
+  public planning functions remain short linear orchestrators over immutable
+  artifacts; forward and training share the same capture/profile/Program/
+  PressureFit/admission shape without hiding mode-specific semantics.
+- Created a dedicated `pytorch/profiling/` package. Stateless explicit-task
+  compilation remains in `pytorch/compilation/`; representative values,
+  profiling metadata, structural keys, device conditioning, CUDA-event timing,
+  workspace telemetry, warmed executable ownership, manifest reconciliation,
+  and measurement persistence now have explicit profiling owners.
+- Finding: re-exporting the CUDA profiler from `profiling/__init__.py` caused a
+  real import cycle because neutral runtime telemetry imports only immutable
+  allocation-event records. Fix: the package initializer exports lightweight
+  records/repository APIs only, while planning imports the profiler
+  implementation explicitly. Runtime telemetry has no dependency on profiler
+  execution.
+- Preserved the earlier single-cache-policy decision. `pytorch/cache.py` is the
+  only `cache.py`; profiling and compiled-manifest persistence are named typed
+  repositories and receive their read/write/overwrite policy from planning.
+- Split process-local executable ownership into `ProfileExecutableStore`.
+  Compilation no longer owns representative CUDA values or profiling cache
+  lifecycle, and the store eagerly drops occurrence-local values after each
+  isolated measurement while retaining selected compiled code.
+- Removed the obsolete compilation-owned profiling, representative-input, and
+  profiling-metadata modules after updating every production, qualification,
+  and test import. Architecture and frontend documentation now state the
+  dependency direction explicitly.
+- Validation: Ruff passes across source, tests, and qualification tools; strict
+  mypy passes over 127 source files; the complete Python suite passes with only
+  expected CUDA skips; and all 20 native/CUDA/PyTorch CTest canaries pass.
+  No Program topology, PressureFit policy, transfer trigger, arithmetic, or
+  runtime synchronization behavior was intentionally changed.

@@ -5,21 +5,29 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from shadowspill.ir import (
     AliasGroupSpec,
     ExecutionPlan,
     ObjectSpec,
     Program,
+    TaskProfile,
     TaskSpec,
 )
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
+from shadowspill.pytorch.capture.storage import (
+    MutationBinding,
+    OutputView,
+    StorageRoot,
+    TaskStorageContract,
+)
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.compilation.layout import (
+    CompiledTaskLayout,
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
-from shadowspill.pytorch.compilation.profiling import TaskMeasurement
 from shadowspill.pytorch.diagnostics.plan import (
     PlanAllocationEvent,
     PlanCompiledOutputView,
@@ -36,14 +44,54 @@ from shadowspill.pytorch.diagnostics.plan import (
 )
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
+    GraphPairVariant,
     PartitionedTrainingCapture,
 )
-from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
+from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.lowering.profiles import ProfileMeasurementKey
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingTaskEntrypoint,
 )
+from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
+from shadowspill.pytorch.profiling import TaskMeasurement
+
+
+@dataclass(frozen=True, slots=True)
+class _TrainingInventoryIndex:
+    program: Program
+    task_by_id: Mapping[str, TaskSpec]
+    profile_by_id: Mapping[str, TaskProfile]
+    entrypoint_by_key: Mapping[tuple[int, int, str, str], TrainingTaskEntrypoint]
+    selected_ids: frozenset[str]
+    execution_ordinal: Mapping[str, int]
+    occurrence_keys: Mapping[tuple[int, int], str]
+    stages_by_key: Mapping[str, tuple[tuple[int, int, DifferentiatedStage], ...]]
+    unique_id_by_key: Mapping[str, str]
+    chosen_by_occurrence: Mapping[tuple[int, int], str]
+
+
+@dataclass(frozen=True, slots=True)
+class _ForwardInventoryIndex:
+    task_by_id: Mapping[str, TaskSpec]
+    profile_by_id: Mapping[str, TaskProfile]
+    selected_ids: frozenset[str]
+    execution_ordinal: Mapping[str, int]
+    unique_id_by_key: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class _GraphProfileContext:
+    artifact: GraphArtifact
+    direction: str
+    task: TaskSpec
+    profile: TaskProfile
+    measurement: TaskMeasurement
+    manifest: ExecutableTaskManifest
+    layout: CompiledTaskLayout
+    inputs: tuple[PlanObjectFootprint, ...]
+    mutations: tuple[PlanObjectFootprint, ...]
+    outputs: tuple[PlanObjectFootprint, ...]
 
 
 def training_stage_inventory(
@@ -54,193 +102,328 @@ def training_stage_inventory(
     manifests: Mapping[str, ExecutableTaskManifest],
     profiling_metadata_digests: tuple[str, ...] | None = None,
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
-    """Describe task occurrences and all legal structural graph pairs."""
+    """Describe task occurrences and every legal structural graph pair."""
 
+    index = _index_training_inventory(captures, lowered, execution_plan)
+    task_map = _training_task_inventory(
+        lowered,
+        index,
+        measurements,
+        manifests,
+        profiling_metadata_digests,
+    )
+    unique_stages = tuple(
+        _training_unique_stage(
+            structural_key,
+            index,
+            measurements,
+            manifests,
+            profiling_metadata_digests,
+        )
+        for structural_key in sorted(index.stages_by_key)
+    )
+    return task_map, unique_stages
+
+
+def _index_training_inventory(
+    captures: tuple[PartitionedTrainingCapture, ...],
+    lowered: LoweredTrainingProgram,
+    execution_plan: ExecutionPlan,
+) -> _TrainingInventoryIndex:
     program = lowered.program
-    task_by_id = {item.task_id: item for item in program.tasks}
-    profile_by_id = {item.profile_id: item for item in program.profiles}
-
-    def metadata_for(entrypoint: TrainingTaskEntrypoint) -> str | None:
-        if entrypoint.microbatch is None or profiling_metadata_digests is None:
-            return None
-        return profiling_metadata_digests[entrypoint.microbatch]
-
-    def measurement_for(
-        artifact: GraphArtifact,
-        entrypoint: TrainingTaskEntrypoint,
-    ) -> TaskMeasurement:
-        metadata_digest = metadata_for(entrypoint)
-        measurement = measurements.get((artifact.compatibility_digest, metadata_digest))
-        if measurement is None and profiling_metadata_digests is None:
-            measurement = measurements.get(artifact.compatibility_digest)
-        if measurement is None:
-            raise ValueError(
-                "diagnostic profile is missing "
-                f"artifact={artifact.compatibility_digest}, "
-                f"profiling_metadata={metadata_digest}"
-            )
-        return measurement
-
-    entrypoint_by_key = {
-        _entrypoint_key(item): item
-        for item in lowered.entrypoints
-        if item.stage_index is not None and item.variant is not None
-    }
-    selected_tasks = execution_plan.program.selected_tasks(execution_plan.selections)
-    selected_ids = {item.task_id for item in selected_tasks}
-    execution_ordinal = {
-        item.task_id: index for index, item in enumerate(selected_tasks)
-    }
-    occurrence_keys: dict[tuple[int, int], str] = {}
-    stage_by_key: dict[str, list[tuple[int, int, DifferentiatedStage]]] = {}
-    for microbatch, capture in enumerate(captures):
-        for stage_index, stage in enumerate(capture.stages):
-            structural_key = _stage_key(stage)
-            occurrence_keys[(microbatch, stage_index)] = structural_key
-            stage_by_key.setdefault(structural_key, []).append(
-                (microbatch, stage_index, stage)
-            )
+    selected = execution_plan.program.selected_tasks(execution_plan.selections)
+    occurrence_keys, stages_by_key = _index_training_occurrences(captures)
     unique_id_by_key = {
         key: f"unique_stage_{index:04d}"
-        for index, key in enumerate(sorted(stage_by_key))
+        for index, key in enumerate(sorted(stages_by_key))
     }
-    chosen_by_occurrence: dict[tuple[int, int], str] = {}
+    selected_ids = frozenset(task.task_id for task in selected)
+    return _TrainingInventoryIndex(
+        program=program,
+        task_by_id={task.task_id: task for task in program.tasks},
+        profile_by_id={profile.profile_id: profile for profile in program.profiles},
+        entrypoint_by_key={
+            _entrypoint_key(entrypoint): entrypoint
+            for entrypoint in lowered.entrypoints
+            if entrypoint.stage_index is not None and entrypoint.variant is not None
+        },
+        selected_ids=selected_ids,
+        execution_ordinal={task.task_id: index for index, task in enumerate(selected)},
+        occurrence_keys=occurrence_keys,
+        stages_by_key=stages_by_key,
+        unique_id_by_key=unique_id_by_key,
+        chosen_by_occurrence=_chosen_training_variants(lowered, selected_ids),
+    )
+
+
+def _index_training_occurrences(
+    captures: tuple[PartitionedTrainingCapture, ...],
+) -> tuple[
+    dict[tuple[int, int], str],
+    dict[str, tuple[tuple[int, int, DifferentiatedStage], ...]],
+]:
+    occurrence_keys: dict[tuple[int, int], str] = {}
+    grouped: dict[str, list[tuple[int, int, DifferentiatedStage]]] = {}
+    for microbatch, capture in enumerate(captures):
+        for stage_index, stage in enumerate(capture.stages):
+            key = _stage_key(stage)
+            occurrence_keys[microbatch, stage_index] = key
+            grouped.setdefault(key, []).append((microbatch, stage_index, stage))
+    return occurrence_keys, {
+        key: tuple(occurrences) for key, occurrences in grouped.items()
+    }
+
+
+def _chosen_training_variants(
+    lowered: LoweredTrainingProgram,
+    selected_ids: frozenset[str],
+) -> dict[tuple[int, int], str]:
+    chosen: dict[tuple[int, int], str] = {}
     for entrypoint in lowered.entrypoints:
         if (
-            entrypoint.microbatch is None
-            or entrypoint.stage_index is None
-            or entrypoint.variant is None
-            or entrypoint.phase != "forward"
-            or entrypoint.task_id not in selected_ids
+            entrypoint.microbatch is not None
+            and entrypoint.stage_index is not None
+            and entrypoint.variant is not None
+            and entrypoint.phase == "forward"
+            and entrypoint.task_id in selected_ids
         ):
-            continue
-        chosen_by_occurrence[(entrypoint.microbatch, entrypoint.stage_index)] = (
-            entrypoint.variant
-        )
+            chosen[entrypoint.microbatch, entrypoint.stage_index] = entrypoint.variant
+    return chosen
 
-    task_map: list[PlanTaskStage] = []
+
+def _training_task_inventory(
+    lowered: LoweredTrainingProgram,
+    index: _TrainingInventoryIndex,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digests: tuple[str, ...] | None,
+) -> tuple[PlanTaskStage, ...]:
     auxiliary_ordinals: dict[str, int] = {}
+    tasks: list[PlanTaskStage] = []
     for entrypoint in lowered.entrypoints:
-        artifact = entrypoint.artifact
-        structural_abi = (
-            artifact.compatibility_digest if artifact is not None else "opaque"
+        auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
+        tasks.append(
+            _training_task_stage(
+                entrypoint,
+                index,
+                measurements,
+                manifests,
+                metadata_digests,
+                auxiliary_ordinal,
+            )
         )
-        if entrypoint.microbatch is not None and entrypoint.stage_index is not None:
-            occurrence = (entrypoint.microbatch, entrypoint.stage_index)
-            structural_key = occurrence_keys[occurrence]
-            stage_occurrence_id = (
-                f"microbatch_{entrypoint.microbatch:04d}."
-                f"stage_{entrypoint.stage_index:04d}"
-            )
-            unique_stage_id = unique_id_by_key[structural_key]
-            chosen = chosen_by_occurrence.get(occurrence)
-            semantic_name = (
-                f"{stage_occurrence_id}.{entrypoint.phase}.{entrypoint.variant}"
-            )
-        else:
-            stage_occurrence_id = None
-            unique_stage_id = f"auxiliary_abi_{structural_abi[:16]}"
-            chosen = None
-            auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
+        if entrypoint.microbatch is None or entrypoint.stage_index is None:
             auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
-            semantic_name = f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}"
-        if isinstance(artifact, GraphArtifact):
-            executable_manifest = manifests[artifact.compatibility_digest]
-            executable_contract = executable_manifest.storage_contract
-            contract_digest: str | None = artifact.storage_contract.compatibility_digest
-            executable_contract_digest: str | None = (
-                executable_contract.compatibility_digest
-            )
-            compiled_layout_digest: str | None = reconcile_compiled_task_layout(
-                executable_contract,
-                measurement_for(artifact, entrypoint),
-                root_allocations=executable_manifest.root_allocations,
-            ).compatibility_digest
-        else:
-            contract_digest = None
-            executable_contract_digest = None
-            compiled_layout_digest = None
-        ordinal = execution_ordinal.get(entrypoint.task_id)
-        task_profile = profile_by_id[task_by_id[entrypoint.task_id].profile_id]
-        task_map.append(
-            PlanTaskStage(
-                task_id=entrypoint.task_id,
-                execution_ordinal=ordinal,
-                execution_task_id=(
-                    None if ordinal is None else f"execution_{ordinal:06d}"
-                ),
-                semantic_name=semantic_name,
-                phase=entrypoint.phase,
-                microbatch=entrypoint.microbatch,
-                stage_occurrence_id=stage_occurrence_id,
-                unique_stage_id=unique_stage_id,
-                structural_abi_key=structural_abi,
-                semantic_contract_digest=contract_digest,
-                executable_contract_digest=executable_contract_digest,
-                compiled_layout_digest=compiled_layout_digest,
-                graph_pair_variant=entrypoint.variant,
-                chosen_graph_pair_variant=chosen,
-                selected=entrypoint.task_id in selected_ids,
-                profile_compatibility_digest=task_profile.compatibility_digest,
-                profiling_metadata_digest=metadata_for(entrypoint),
-            )
-        )
+    return tuple(tasks)
 
-    unique_stages: list[PlanUniqueStage] = []
-    for structural_key in sorted(stage_by_key):
-        occurrences = stage_by_key[structural_key]
-        microbatch, stage_index, representative = occurrences[0]
-        graph_pairs: list[PlanGraphPair] = []
-        for option in representative.graph_pairs.variants:
-            variant = option.option_id
-            pair = option.pair
-            forward_entrypoint = entrypoint_by_key[
-                (microbatch, stage_index, variant, "forward")
-            ]
-            backward_entrypoint = entrypoint_by_key[
-                (microbatch, stage_index, variant, "backward")
-            ]
-            graph_pairs.append(
-                PlanGraphPair(
-                    variant=variant,
-                    memory_budget=option.memory_budget,
-                    recomputation=pair.recomputation,
-                    saved_value_count=pair.saved_value_count,
-                    specialized_unit_tangent_count=(
-                        pair.specialized_unit_tangent_count
-                    ),
-                    forward=_graph_profile(
-                        pair.forward,
-                        "forward",
-                        task_by_id[forward_entrypoint.task_id],
-                        program,
-                        measurement_for(pair.forward, forward_entrypoint),
-                        manifests[pair.forward.compatibility_digest],
-                    ),
-                    backward=_graph_profile(
-                        pair.backward,
-                        "backward",
-                        task_by_id[backward_entrypoint.task_id],
-                        program,
-                        measurement_for(pair.backward, backward_entrypoint),
-                        manifests[pair.backward.compatibility_digest],
-                    ),
-                )
-            )
-        unique_stages.append(
-            PlanUniqueStage(
-                unique_stage_id=unique_id_by_key[structural_key],
-                structural_key=structural_key,
-                module_targets=tuple(
-                    dict.fromkeys(
-                        stage.example.stage.module_target for _, _, stage in occurrences
-                    )
-                ),
-                occurrence_count=len(occurrences),
-                graph_pairs=tuple(graph_pairs),
-            )
+
+def _training_task_stage(
+    entrypoint: TrainingTaskEntrypoint,
+    index: _TrainingInventoryIndex,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digests: tuple[str, ...] | None,
+    auxiliary_ordinal: int,
+) -> PlanTaskStage:
+    artifact = entrypoint.artifact
+    structural_abi = artifact.compatibility_digest if artifact is not None else "opaque"
+    occurrence = _training_occurrence_identity(
+        entrypoint, structural_abi, auxiliary_ordinal, index
+    )
+    contract_digests = _task_contract_digests(
+        artifact,
+        entrypoint,
+        measurements,
+        manifests,
+        metadata_digests,
+    )
+    ordinal = index.execution_ordinal.get(entrypoint.task_id)
+    task = index.task_by_id[entrypoint.task_id]
+    profile = index.profile_by_id[task.profile_id]
+    return PlanTaskStage(
+        task_id=entrypoint.task_id,
+        execution_ordinal=ordinal,
+        execution_task_id=None if ordinal is None else f"execution_{ordinal:06d}",
+        semantic_name=occurrence[0],
+        phase=entrypoint.phase,
+        microbatch=entrypoint.microbatch,
+        stage_occurrence_id=occurrence[1],
+        unique_stage_id=occurrence[2],
+        structural_abi_key=structural_abi,
+        semantic_contract_digest=contract_digests[0],
+        executable_contract_digest=contract_digests[1],
+        compiled_layout_digest=contract_digests[2],
+        graph_pair_variant=entrypoint.variant,
+        chosen_graph_pair_variant=occurrence[3],
+        selected=entrypoint.task_id in index.selected_ids,
+        profile_compatibility_digest=profile.compatibility_digest,
+        profiling_metadata_digest=_metadata_for(entrypoint, metadata_digests),
+    )
+
+
+def _training_occurrence_identity(
+    entrypoint: TrainingTaskEntrypoint,
+    structural_abi: str,
+    auxiliary_ordinal: int,
+    index: _TrainingInventoryIndex,
+) -> tuple[str, str | None, str, str | None]:
+    if entrypoint.microbatch is None or entrypoint.stage_index is None:
+        return (
+            f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}",
+            None,
+            f"auxiliary_abi_{structural_abi[:16]}",
+            None,
         )
-    return tuple(task_map), tuple(unique_stages)
+    occurrence = entrypoint.microbatch, entrypoint.stage_index
+    stage_id = (
+        f"microbatch_{entrypoint.microbatch:04d}.stage_{entrypoint.stage_index:04d}"
+    )
+    structural_key = index.occurrence_keys[occurrence]
+    return (
+        f"{stage_id}.{entrypoint.phase}.{entrypoint.variant}",
+        stage_id,
+        index.unique_id_by_key[structural_key],
+        index.chosen_by_occurrence.get(occurrence),
+    )
+
+
+def _task_contract_digests(
+    artifact: OptimizerTaskArtifact | None,
+    entrypoint: TrainingTaskEntrypoint,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digests: tuple[str, ...] | None,
+) -> tuple[str | None, str | None, str | None]:
+    if not isinstance(artifact, GraphArtifact):
+        return None, None, None
+    manifest = manifests[artifact.compatibility_digest]
+    measurement = _training_measurement(
+        artifact, entrypoint, measurements, metadata_digests
+    )
+    layout = reconcile_compiled_task_layout(
+        manifest.storage_contract,
+        measurement,
+        root_allocations=manifest.root_allocations,
+    )
+    return (
+        artifact.storage_contract.compatibility_digest,
+        manifest.storage_contract.compatibility_digest,
+        layout.compatibility_digest,
+    )
+
+
+def _training_unique_stage(
+    structural_key: str,
+    index: _TrainingInventoryIndex,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digests: tuple[str, ...] | None,
+) -> PlanUniqueStage:
+    occurrences = index.stages_by_key[structural_key]
+    microbatch, stage_index, representative = occurrences[0]
+    graph_pairs = tuple(
+        _training_graph_pair(
+            option,
+            microbatch,
+            stage_index,
+            index,
+            measurements,
+            manifests,
+            metadata_digests,
+        )
+        for option in representative.graph_pairs.variants
+    )
+    return PlanUniqueStage(
+        unique_stage_id=index.unique_id_by_key[structural_key],
+        structural_key=structural_key,
+        module_targets=tuple(
+            dict.fromkeys(
+                stage.example.stage.module_target for _, _, stage in occurrences
+            )
+        ),
+        occurrence_count=len(occurrences),
+        graph_pairs=graph_pairs,
+    )
+
+
+def _training_graph_pair(
+    option: GraphPairVariant,
+    microbatch: int,
+    stage_index: int,
+    index: _TrainingInventoryIndex,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digests: tuple[str, ...] | None,
+) -> PlanGraphPair:
+    variant = option.option_id
+    pair = option.pair
+    forward_entrypoint = index.entrypoint_by_key[
+        microbatch, stage_index, variant, "forward"
+    ]
+    backward_entrypoint = index.entrypoint_by_key[
+        microbatch, stage_index, variant, "backward"
+    ]
+    return PlanGraphPair(
+        variant=variant,
+        memory_budget=option.memory_budget,
+        recomputation=pair.recomputation,
+        saved_value_count=pair.saved_value_count,
+        specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
+        forward=_graph_profile(
+            pair.forward,
+            "forward",
+            index.task_by_id[forward_entrypoint.task_id],
+            index.program,
+            _training_measurement(
+                pair.forward,
+                forward_entrypoint,
+                measurements,
+                metadata_digests,
+            ),
+            manifests[pair.forward.compatibility_digest],
+        ),
+        backward=_graph_profile(
+            pair.backward,
+            "backward",
+            index.task_by_id[backward_entrypoint.task_id],
+            index.program,
+            _training_measurement(
+                pair.backward,
+                backward_entrypoint,
+                measurements,
+                metadata_digests,
+            ),
+            manifests[pair.backward.compatibility_digest],
+        ),
+    )
+
+
+def _training_measurement(
+    artifact: GraphArtifact,
+    entrypoint: TrainingTaskEntrypoint,
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
+    metadata_digests: tuple[str, ...] | None,
+) -> TaskMeasurement:
+    metadata = _metadata_for(entrypoint, metadata_digests)
+    measurement = measurements.get((artifact.compatibility_digest, metadata))
+    if measurement is None and metadata_digests is None:
+        measurement = measurements.get(artifact.compatibility_digest)
+    if measurement is None:
+        raise ValueError(
+            "diagnostic profile is missing "
+            f"artifact={artifact.compatibility_digest}, "
+            f"profiling_metadata={metadata}"
+        )
+    return measurement
+
+
+def _metadata_for(
+    entrypoint: TrainingTaskEntrypoint,
+    metadata_digests: tuple[str, ...] | None,
+) -> str | None:
+    if entrypoint.microbatch is None or metadata_digests is None:
+        return None
+    return metadata_digests[entrypoint.microbatch]
 
 
 def forward_stage_inventory(
@@ -253,92 +436,130 @@ def forward_stage_inventory(
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe deduplicated inference stages and task occurrences."""
 
-    task_by_id = {item.task_id: item for item in lowered.program.tasks}
-    selected_tasks = execution_plan.program.selected_tasks(execution_plan.selections)
-    selected_ids = {item.task_id for item in selected_tasks}
-    execution_ordinal = {
-        item.task_id: index for index, item in enumerate(selected_tasks)
-    }
-    profile_by_id = {item.profile_id: item for item in lowered.program.profiles}
-    keys = sorted({item.artifact.compatibility_digest for item in lowered.entrypoints})
-    unique_id_by_key = {
-        key: f"unique_stage_{index:04d}" for index, key in enumerate(keys)
-    }
-    task_map = tuple(
-        PlanTaskStage(
-            task_id=entrypoint.task_id,
-            execution_ordinal=execution_ordinal.get(entrypoint.task_id),
-            execution_task_id=(
-                f"execution_{execution_ordinal[entrypoint.task_id]:06d}"
-                if entrypoint.task_id in execution_ordinal
-                else None
-            ),
-            semantic_name=f"stage_{index:04d}.forward.inference",
-            phase="forward",
-            microbatch=None,
-            stage_occurrence_id=f"stage_{index:04d}",
-            unique_stage_id=unique_id_by_key[entrypoint.artifact.compatibility_digest],
-            structural_abi_key=entrypoint.artifact.compatibility_digest,
-            semantic_contract_digest=(
-                entrypoint.artifact.storage_contract.compatibility_digest
-            ),
-            executable_contract_digest=manifests[
-                entrypoint.artifact.compatibility_digest
-            ].storage_contract.compatibility_digest,
-            compiled_layout_digest=reconcile_compiled_task_layout(
-                manifests[entrypoint.artifact.compatibility_digest].storage_contract,
-                measurements[entrypoint.artifact.compatibility_digest],
-                root_allocations=manifests[
-                    entrypoint.artifact.compatibility_digest
-                ].root_allocations,
-            ).compatibility_digest,
-            graph_pair_variant="inference",
-            chosen_graph_pair_variant="inference",
-            selected=entrypoint.task_id in selected_ids,
-            profile_compatibility_digest=profile_by_id[
-                task_by_id[entrypoint.task_id].profile_id
-            ].compatibility_digest,
-            profiling_metadata_digest=profiling_metadata_digest,
+    index = _index_forward_inventory(lowered, execution_plan)
+    tasks = tuple(
+        _forward_task_stage(
+            occurrence,
+            entrypoint,
+            lowered,
+            index,
+            measurements,
+            manifests,
+            profiling_metadata_digest,
         )
-        for index, entrypoint in enumerate(lowered.entrypoints)
+        for occurrence, entrypoint in enumerate(lowered.entrypoints)
     )
-    unique_stages: list[PlanUniqueStage] = []
-    for key in keys:
-        occurrences = tuple(
-            item
-            for item in lowered.entrypoints
-            if item.artifact.compatibility_digest == key
-        )
-        representative = occurrences[0]
-        unique_stages.append(
-            PlanUniqueStage(
-                unique_stage_id=unique_id_by_key[key],
-                structural_key=key,
-                module_targets=tuple(
-                    dict.fromkeys(item.module_target for item in occurrences)
-                ),
-                occurrence_count=len(occurrences),
-                graph_pairs=(
-                    PlanGraphPair(
-                        variant="inference",
-                        memory_budget=None,
-                        recomputation=False,
-                        saved_value_count=0,
-                        specialized_unit_tangent_count=0,
-                        forward=_graph_profile(
-                            representative.artifact,
-                            "forward",
-                            task_by_id[representative.task_id],
-                            lowered.program,
-                            measurements[key],
-                            manifests[key],
-                        ),
-                        backward=None,
-                    ),
-                ),
-            )
-        )
-    return task_map, tuple(unique_stages)
+    unique_stages = tuple(
+        _forward_unique_stage(key, lowered, index, measurements, manifests)
+        for key in sorted(index.unique_id_by_key)
+    )
+    return tasks, unique_stages
+
+
+def _index_forward_inventory(
+    lowered: LoweredForwardProgram,
+    execution_plan: ExecutionPlan,
+) -> _ForwardInventoryIndex:
+    selected = execution_plan.program.selected_tasks(execution_plan.selections)
+    keys = sorted(
+        {entrypoint.artifact.compatibility_digest for entrypoint in lowered.entrypoints}
+    )
+    return _ForwardInventoryIndex(
+        task_by_id={task.task_id: task for task in lowered.program.tasks},
+        profile_by_id={
+            profile.profile_id: profile for profile in lowered.program.profiles
+        },
+        selected_ids=frozenset(task.task_id for task in selected),
+        execution_ordinal={task.task_id: index for index, task in enumerate(selected)},
+        unique_id_by_key={
+            key: f"unique_stage_{index:04d}" for index, key in enumerate(keys)
+        },
+    )
+
+
+def _forward_task_stage(
+    occurrence: int,
+    entrypoint: TaskEntrypoint,
+    lowered: LoweredForwardProgram,
+    index: _ForwardInventoryIndex,
+    measurements: Mapping[str, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+    metadata_digest: str | None,
+) -> PlanTaskStage:
+    key = entrypoint.artifact.compatibility_digest
+    manifest = manifests[key]
+    layout = reconcile_compiled_task_layout(
+        manifest.storage_contract,
+        measurements[key],
+        root_allocations=manifest.root_allocations,
+    )
+    ordinal = index.execution_ordinal.get(entrypoint.task_id)
+    task = index.task_by_id[entrypoint.task_id]
+    profile = index.profile_by_id[task.profile_id]
+    return PlanTaskStage(
+        task_id=entrypoint.task_id,
+        execution_ordinal=ordinal,
+        execution_task_id=None if ordinal is None else f"execution_{ordinal:06d}",
+        semantic_name=f"stage_{occurrence:04d}.forward.inference",
+        phase="forward",
+        microbatch=None,
+        stage_occurrence_id=f"stage_{occurrence:04d}",
+        unique_stage_id=index.unique_id_by_key[key],
+        structural_abi_key=key,
+        semantic_contract_digest=(
+            entrypoint.artifact.storage_contract.compatibility_digest
+        ),
+        executable_contract_digest=(manifest.storage_contract.compatibility_digest),
+        compiled_layout_digest=layout.compatibility_digest,
+        graph_pair_variant="inference",
+        chosen_graph_pair_variant="inference",
+        selected=entrypoint.task_id in index.selected_ids,
+        profile_compatibility_digest=profile.compatibility_digest,
+        profiling_metadata_digest=metadata_digest,
+    )
+
+
+def _forward_unique_stage(
+    key: str,
+    lowered: LoweredForwardProgram,
+    index: _ForwardInventoryIndex,
+    measurements: Mapping[str, TaskMeasurement],
+    manifests: Mapping[str, ExecutableTaskManifest],
+) -> PlanUniqueStage:
+    occurrences = tuple(
+        entrypoint
+        for entrypoint in lowered.entrypoints
+        if entrypoint.artifact.compatibility_digest == key
+    )
+    representative = occurrences[0]
+    task = index.task_by_id[representative.task_id]
+    profile = _graph_profile(
+        representative.artifact,
+        "forward",
+        task,
+        lowered.program,
+        measurements[key],
+        manifests[key],
+    )
+    return PlanUniqueStage(
+        unique_stage_id=index.unique_id_by_key[key],
+        structural_key=key,
+        module_targets=tuple(
+            dict.fromkeys(entrypoint.module_target for entrypoint in occurrences)
+        ),
+        occurrence_count=len(occurrences),
+        graph_pairs=(
+            PlanGraphPair(
+                variant="inference",
+                memory_budget=None,
+                recomputation=False,
+                saved_value_count=0,
+                specialized_unit_tangent_count=0,
+                forward=profile,
+                backward=None,
+            ),
+        ),
+    )
 
 
 def _stage_key(stage: DifferentiatedStage) -> str:
@@ -392,177 +613,227 @@ def _graph_profile(
     measurement: TaskMeasurement,
     manifest: ExecutableTaskManifest,
 ) -> PlanGraphProfile:
+    inputs, mutations, outputs = _task_footprints(program, task)
+    context = _GraphProfileContext(
+        artifact=artifact,
+        direction=direction,
+        task=task,
+        profile=_task_profile(program, task),
+        measurement=measurement,
+        manifest=manifest,
+        layout=reconcile_compiled_task_layout(
+            manifest.storage_contract,
+            measurement,
+            root_allocations=manifest.root_allocations,
+        ),
+        inputs=inputs,
+        mutations=mutations,
+        outputs=outputs,
+    )
+    return _build_graph_profile(context)
+
+
+def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
+    artifact = context.artifact
+    contract = context.manifest.storage_contract
+    measurement = context.measurement
+    return PlanGraphProfile(
+        direction=context.direction,
+        structural_abi_key=artifact.compatibility_digest,
+        semantic_contract_digest=artifact.storage_contract.compatibility_digest,
+        semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
+        semantic_roots=_plan_storage_roots(artifact.storage_contract),
+        semantic_output_views=_plan_output_views(artifact.storage_contract),
+        semantic_mutations=_plan_mutations(artifact.storage_contract),
+        executable_contract_digest=contract.compatibility_digest,
+        executable_contract_capture_ns=context.manifest.contract_capture_ns,
+        executable_roots=_plan_storage_roots(contract),
+        executable_output_views=_plan_output_views(contract),
+        executable_mutations=_plan_mutations(contract),
+        compiled_layout_digest=context.layout.compatibility_digest,
+        compiled_roots=_plan_compiled_roots(context.layout),
+        compiled_output_views=_plan_compiled_views(context.layout),
+        physical_profile_wall_time_ns=measurement.profiling_wall_time_ns,
+        representative_task_id=context.task.task_id,
+        runtime_ns=measurement.runtime_ns,
+        samples_ns=measurement.samples_ns,
+        provenance=measurement.provenance,
+        representative_inputs=_plan_representative_inputs(measurement),
+        profile_phase_timings_ns=measurement.phase_timings_ns,
+        timing_relative_mad=measurement.timing_relative_mad,
+        timing_half_drift=measurement.timing_half_drift,
+        timing_unstable=measurement.timing_unstable,
+        inputs=context.inputs,
+        mutations=context.mutations,
+        outputs=context.outputs,
+        input_logical_bytes=_logical_bytes(context.inputs),
+        input_allocation_bytes=_unique_allocation_bytes(context.inputs),
+        mutation_logical_bytes=_logical_bytes(context.mutations),
+        mutation_allocation_bytes=_unique_allocation_bytes(context.mutations),
+        output_logical_bytes=_logical_bytes(context.outputs),
+        output_allocation_bytes=_unique_allocation_bytes(context.outputs),
+        workspace_requested_bytes=measurement.workspace_requested_bytes,
+        workspace_charged_bytes=measurement.workspace_charged_bytes,
+        replacement_transition_bytes=replacement_transition_bytes(
+            contract, context.layout
+        ),
+        task_workspace_bytes=context.profile.workspace_bytes,
+        workspace_extent_bytes=measurement.workspace_extent_bytes,
+        persistent_extent_bytes=measurement.persistent_extent_bytes,
+        allocation_timeline=_plan_allocation_timeline(measurement),
+    )
+
+
+def _task_profile(program: Program, task: TaskSpec) -> TaskProfile:
+    return next(
+        profile for profile in program.profiles if profile.profile_id == task.profile_id
+    )
+
+
+def _task_footprints(
+    program: Program,
+    task: TaskSpec,
+) -> tuple[
+    tuple[PlanObjectFootprint, ...],
+    tuple[PlanObjectFootprint, ...],
+    tuple[PlanObjectFootprint, ...],
+]:
     objects = {item.object_id: item for item in program.objects}
     aliases = {item.alias_group_id: item for item in program.alias_groups}
 
-    def footprints(object_ids: tuple[str, ...]) -> tuple[PlanObjectFootprint, ...]:
+    def resolve(object_ids: tuple[str, ...]) -> tuple[PlanObjectFootprint, ...]:
         return tuple(
             _footprint(objects[object_id], aliases[objects[object_id].alias_group_id])
             for object_id in object_ids
         )
 
-    inputs = footprints(task.inputs)
-    mutations = footprints(tuple(item.object_id for item in task.mutations))
-    outputs = footprints(task.outputs)
-    profile = next(
-        item for item in program.profiles if item.profile_id == task.profile_id
+    return (
+        resolve(task.inputs),
+        resolve(tuple(item.object_id for item in task.mutations)),
+        resolve(task.outputs),
     )
-    storage_contract = manifest.storage_contract
-    layout = reconcile_compiled_task_layout(
-        storage_contract,
-        measurement,
-        root_allocations=manifest.root_allocations,
+
+
+def _plan_storage_roots(
+    contract: TaskStorageContract,
+) -> tuple[PlanStorageRoot, ...]:
+    return tuple(_plan_storage_root(root) for root in contract.roots)
+
+
+def _plan_storage_root(root: StorageRoot) -> PlanStorageRoot:
+    return PlanStorageRoot(
+        root_id=root.root_id,
+        kind=root.kind.value,
+        source_input=root.source_input,
+        producer_node=root.producer_node,
+        producer_target=root.producer_target,
+        producer_result=root.producer_result,
+        minimum_span_bytes=root.minimum_span_bytes,
     )
-    return PlanGraphProfile(
-        direction=direction,
-        structural_abi_key=artifact.compatibility_digest,
-        semantic_contract_digest=(artifact.storage_contract.compatibility_digest),
-        semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
-        semantic_roots=tuple(
-            PlanStorageRoot(
-                root_id=item.root_id,
-                kind=item.kind.value,
-                source_input=item.source_input,
-                producer_node=item.producer_node,
-                producer_target=item.producer_target,
-                producer_result=item.producer_result,
-                minimum_span_bytes=item.minimum_span_bytes,
-            )
-            for item in artifact.storage_contract.roots
-        ),
-        semantic_output_views=tuple(
-            PlanOutputView(
-                leaf_index=item.leaf_index,
-                root_id=item.root_id,
-                offset_bytes=item.offset_bytes,
-                span_bytes=item.span_bytes,
-                shape=item.shape,
-                stride=item.stride,
-                dtype=item.dtype,
-                layout=item.layout,
-            )
-            for item in artifact.storage_contract.output_views
-        ),
-        semantic_mutations=tuple(
-            PlanMutationBinding(
-                input_position=item.input_position,
-                replacement_output_leaf=item.replacement_output_leaf,
-                producer_node=item.producer_node,
-                producer_target=item.producer_target,
-                argument_name=item.argument_name,
-            )
-            for item in artifact.storage_contract.mutations
-        ),
-        executable_contract_digest=storage_contract.compatibility_digest,
-        executable_contract_capture_ns=manifest.contract_capture_ns,
-        executable_roots=tuple(
-            PlanStorageRoot(
-                root_id=item.root_id,
-                kind=item.kind.value,
-                source_input=item.source_input,
-                producer_node=item.producer_node,
-                producer_target=item.producer_target,
-                producer_result=item.producer_result,
-                minimum_span_bytes=item.minimum_span_bytes,
-            )
-            for item in storage_contract.roots
-        ),
-        executable_output_views=tuple(
-            PlanOutputView(
-                leaf_index=item.leaf_index,
-                root_id=item.root_id,
-                offset_bytes=item.offset_bytes,
-                span_bytes=item.span_bytes,
-                shape=item.shape,
-                stride=item.stride,
-                dtype=item.dtype,
-                layout=item.layout,
-            )
-            for item in storage_contract.output_views
-        ),
-        executable_mutations=tuple(
-            PlanMutationBinding(
-                input_position=item.input_position,
-                replacement_output_leaf=item.replacement_output_leaf,
-                producer_node=item.producer_node,
-                producer_target=item.producer_target,
-                argument_name=item.argument_name,
-            )
-            for item in storage_contract.mutations
-        ),
-        compiled_layout_digest=layout.compatibility_digest,
-        compiled_roots=tuple(
-            PlanCompiledRoot(
-                root_id=item.root_id,
-                allocation_ordinal=item.allocation_ordinal,
-                requested_bytes=item.requested_bytes,
-                charged_bytes=item.charged_bytes,
-            )
-            for item in layout.roots
-        ),
-        compiled_output_views=tuple(
-            PlanCompiledOutputView(
-                leaf_index=item.leaf_index,
-                root_id=item.root_id,
-                allocation_ordinal=item.allocation_ordinal,
-                offset_bytes=item.offset_bytes,
-            )
-            for item in layout.output_views
-        ),
-        physical_profile_wall_time_ns=measurement.profiling_wall_time_ns,
-        representative_task_id=task.task_id,
-        runtime_ns=measurement.runtime_ns,
-        samples_ns=measurement.samples_ns,
-        provenance=measurement.provenance,
-        representative_inputs=tuple(
-            PlanRepresentativeInput(
-                position=item.position,
-                role=item.role.value,
-                source=item.source,
-                value_policy=item.value_policy,
-                dtype=item.dtype,
-                shape=item.shape,
-                stride=item.stride,
-                storage_offset=item.storage_offset,
-                alias_group=item.alias_group,
-                consumer_targets=item.consumer_targets,
-            )
-            for item in measurement.representative_inputs
-        ),
-        profile_phase_timings_ns=measurement.phase_timings_ns,
-        timing_relative_mad=measurement.timing_relative_mad,
-        timing_half_drift=measurement.timing_half_drift,
-        timing_unstable=measurement.timing_unstable,
-        inputs=inputs,
-        mutations=mutations,
-        outputs=outputs,
-        input_logical_bytes=sum(item.logical_size_bytes for item in inputs),
-        input_allocation_bytes=_unique_allocation_bytes(inputs),
-        mutation_logical_bytes=sum(item.logical_size_bytes for item in mutations),
-        mutation_allocation_bytes=_unique_allocation_bytes(mutations),
-        output_logical_bytes=sum(item.logical_size_bytes for item in outputs),
-        output_allocation_bytes=_unique_allocation_bytes(outputs),
-        workspace_requested_bytes=measurement.workspace_requested_bytes,
-        workspace_charged_bytes=measurement.workspace_charged_bytes,
-        replacement_transition_bytes=replacement_transition_bytes(
-            storage_contract, layout
-        ),
-        task_workspace_bytes=profile.workspace_bytes,
-        workspace_extent_bytes=measurement.workspace_extent_bytes,
-        persistent_extent_bytes=measurement.persistent_extent_bytes,
-        allocation_timeline=tuple(
-            PlanAllocationEvent(
-                allocation_ordinal=event.allocation_ordinal,
-                operation=event.operation.value,
-                requested_bytes=event.requested_bytes,
-                charged_bytes=event.charged_bytes,
-                output_leaf_indices=event.output_leaf_indices,
-                output_view_offsets=event.output_view_offsets,
-                reuses_ordinal=event.reuses_ordinal,
-            )
-            for event in measurement.allocation_trace
-        ),
+
+
+def _plan_output_views(
+    contract: TaskStorageContract,
+) -> tuple[PlanOutputView, ...]:
+    return tuple(_plan_output_view(view) for view in contract.output_views)
+
+
+def _plan_output_view(view: OutputView) -> PlanOutputView:
+    return PlanOutputView(
+        leaf_index=view.leaf_index,
+        root_id=view.root_id,
+        offset_bytes=view.offset_bytes,
+        span_bytes=view.span_bytes,
+        shape=view.shape,
+        stride=view.stride,
+        dtype=view.dtype,
+        layout=view.layout,
     )
+
+
+def _plan_mutations(
+    contract: TaskStorageContract,
+) -> tuple[PlanMutationBinding, ...]:
+    return tuple(_plan_mutation(mutation) for mutation in contract.mutations)
+
+
+def _plan_mutation(mutation: MutationBinding) -> PlanMutationBinding:
+    return PlanMutationBinding(
+        input_position=mutation.input_position,
+        replacement_output_leaf=mutation.replacement_output_leaf,
+        producer_node=mutation.producer_node,
+        producer_target=mutation.producer_target,
+        argument_name=mutation.argument_name,
+    )
+
+
+def _plan_compiled_roots(
+    layout: CompiledTaskLayout,
+) -> tuple[PlanCompiledRoot, ...]:
+    return tuple(
+        PlanCompiledRoot(
+            root_id=root.root_id,
+            allocation_ordinal=root.allocation_ordinal,
+            requested_bytes=root.requested_bytes,
+            charged_bytes=root.charged_bytes,
+        )
+        for root in layout.roots
+    )
+
+
+def _plan_compiled_views(
+    layout: CompiledTaskLayout,
+) -> tuple[PlanCompiledOutputView, ...]:
+    return tuple(
+        PlanCompiledOutputView(
+            leaf_index=view.leaf_index,
+            root_id=view.root_id,
+            allocation_ordinal=view.allocation_ordinal,
+            offset_bytes=view.offset_bytes,
+        )
+        for view in layout.output_views
+    )
+
+
+def _plan_representative_inputs(
+    measurement: TaskMeasurement,
+) -> tuple[PlanRepresentativeInput, ...]:
+    return tuple(
+        PlanRepresentativeInput(
+            position=item.position,
+            role=item.role.value,
+            source=item.source,
+            value_policy=item.value_policy,
+            dtype=item.dtype,
+            shape=item.shape,
+            stride=item.stride,
+            storage_offset=item.storage_offset,
+            alias_group=item.alias_group,
+            consumer_targets=item.consumer_targets,
+        )
+        for item in measurement.representative_inputs
+    )
+
+
+def _plan_allocation_timeline(
+    measurement: TaskMeasurement,
+) -> tuple[PlanAllocationEvent, ...]:
+    return tuple(
+        PlanAllocationEvent(
+            allocation_ordinal=event.allocation_ordinal,
+            operation=event.operation.value,
+            requested_bytes=event.requested_bytes,
+            charged_bytes=event.charged_bytes,
+            output_leaf_indices=event.output_leaf_indices,
+            output_view_offsets=event.output_view_offsets,
+            reuses_ordinal=event.reuses_ordinal,
+        )
+        for event in measurement.allocation_trace
+    )
+
+
+def _logical_bytes(values: tuple[PlanObjectFootprint, ...]) -> int:
+    return sum(item.logical_size_bytes for item in values)
 
 
 def _footprint(

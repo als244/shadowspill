@@ -199,85 +199,42 @@ class GraphArtifact:
             tensor_positions,
             input_provenance,
         )
-        tensor_arguments = tuple(
-            value for value in example_inputs if isinstance(value, torch.Tensor)
-        )
+        tensor_arguments = _tensor_arguments(example_inputs)
         tensor_inputs = tuple(
             TensorGeometry.from_tensor(value) for value in tensor_arguments
         )
-        alias_group_by_storage: dict[int, int] = {}
-        tensor_alias_groups = tuple(
-            alias_group_by_storage.setdefault(
-                live_storage_identity(value), len(alias_group_by_storage)
-            )
-            for value in tensor_arguments
-        )
-        operators = tuple(
-            sorted(
-                {
-                    str(node.target)
-                    for node in graph_module.graph.nodes
-                    if node.op in {"call_function", "call_method", "call_module"}
-                }
-            )
-        )
-        output_node = next(
-            node for node in graph_module.graph.nodes if node.op == "output"
-        )
-        outputs, _ = tree_flatten(output_node.args[0])
-        contract_started = time.perf_counter_ns()
-        compact_position = {
-            original: compact for compact, original in enumerate(tensor_positions)
-        }
-        compact_mutations: list[ExplicitMutation] = []
-        for mutation in explicit_mutations:
-            try:
-                input_position = compact_position[mutation.input_position]
-            except KeyError as exc:
-                raise ValueError(
-                    "functional mutation target was specialized as static"
-                ) from exc
-            compact_mutations.append(
-                ExplicitMutation(
-                    input_position,
-                    mutation.output_leaf_index,
-                    mutation.target,
-                )
-            )
-        storage_contract = capture_task_storage_contract(
+        tensor_alias_groups = _tensor_alias_groups(tensor_arguments)
+        operators = _operator_targets(graph_module)
+        output_count = _output_count(graph_module)
+        storage_contract, contract_capture_ns = _capture_artifact_storage(
             graph_module,
             example_inputs,
-            explicit_mutations=tuple(compact_mutations),
+            _compact_mutations(explicit_mutations, tensor_positions),
         )
-        contract_capture_ns = time.perf_counter_ns() - contract_started
-        identity = {
-            "kind": kind,
-            "graph": _canonical_graph(graph_module),
-            "inputs": [geometry.identity() for geometry in tensor_inputs],
-            "argument_count": len(example_inputs),
-            "tensor_argument_positions": tensor_positions,
-            "tensor_argument_alias_groups": tensor_alias_groups,
-            "output_count": len(outputs),
-            "operators": operators,
-            "storage_contract": storage_contract.identity(),
-            "storage_contract_digest": storage_contract.compatibility_digest,
-            "torch": torch.__version__,
-            "cuda": torch.version.cuda,
-        }
-        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        digest = _artifact_digest(
+            kind,
+            graph_module,
+            tensor_inputs,
+            len(example_inputs),
+            tensor_positions,
+            tensor_alias_groups,
+            output_count,
+            operators,
+            storage_contract,
+        )
         return cls(
             kind=kind,
             graph_module=graph_module,
             tensor_inputs=tensor_inputs,
             argument_count=len(example_inputs),
-            output_count=len(outputs),
+            output_count=output_count,
             operator_targets=operators,
             tensor_argument_positions=tensor_positions,
             tensor_argument_alias_groups=tensor_alias_groups,
             input_provenance=provenance,
             storage_contract=storage_contract,
             storage_contract_capture_ns=contract_capture_ns,
-            compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
+            compatibility_digest=digest,
             example_arguments=example_inputs,
         )
 
@@ -329,6 +286,107 @@ class GraphArtifact:
             example_arguments=example_arguments,
             input_provenance=provenance,
         )
+
+
+def _tensor_arguments(values: tuple[object, ...]) -> tuple[torch.Tensor, ...]:
+    return tuple(value for value in values if isinstance(value, torch.Tensor))
+
+
+def _tensor_alias_groups(values: tuple[torch.Tensor, ...]) -> tuple[int, ...]:
+    group_by_storage: dict[int, int] = {}
+    return tuple(
+        group_by_storage.setdefault(
+            live_storage_identity(value),
+            len(group_by_storage),
+        )
+        for value in values
+    )
+
+
+def _operator_targets(graph_module: GraphModule) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(node.target)
+                for node in graph_module.graph.nodes
+                if node.op in {"call_function", "call_method", "call_module"}
+            }
+        )
+    )
+
+
+def _output_count(graph_module: GraphModule) -> int:
+    output_node = next(node for node in graph_module.graph.nodes if node.op == "output")
+    outputs, _ = tree_flatten(output_node.args[0])
+    return len(outputs)
+
+
+def _compact_mutations(
+    mutations: tuple[ExplicitMutation, ...],
+    tensor_positions: tuple[int, ...],
+) -> tuple[ExplicitMutation, ...]:
+    compact_position = {
+        original: compact for compact, original in enumerate(tensor_positions)
+    }
+    compact: list[ExplicitMutation] = []
+    for mutation in mutations:
+        try:
+            input_position = compact_position[mutation.input_position]
+        except KeyError as exc:
+            raise ValueError(
+                "functional mutation target was specialized as static"
+            ) from exc
+        compact.append(
+            ExplicitMutation(
+                input_position,
+                mutation.output_leaf_index,
+                mutation.target,
+            )
+        )
+    return tuple(compact)
+
+
+def _capture_artifact_storage(
+    graph_module: GraphModule,
+    example_inputs: tuple[object, ...],
+    mutations: tuple[ExplicitMutation, ...],
+) -> tuple[TaskStorageContract, int]:
+    started = time.perf_counter_ns()
+    contract = capture_task_storage_contract(
+        graph_module,
+        example_inputs,
+        explicit_mutations=mutations,
+    )
+    return contract, time.perf_counter_ns() - started
+
+
+def _artifact_digest(
+    kind: Literal["forward", "backward", "inference", "optimizer"],
+    graph_module: GraphModule,
+    tensor_inputs: tuple[TensorGeometry, ...],
+    argument_count: int,
+    tensor_positions: tuple[int, ...],
+    tensor_alias_groups: tuple[int, ...],
+    output_count: int,
+    operators: tuple[str, ...],
+    storage_contract: TaskStorageContract,
+) -> str:
+    identity = {
+        "kind": kind,
+        "graph": _canonical_graph(graph_module),
+        "inputs": [geometry.identity() for geometry in tensor_inputs],
+        "argument_count": argument_count,
+        "tensor_argument_positions": tensor_positions,
+        "tensor_argument_alias_groups": tensor_alias_groups,
+        "output_count": output_count,
+        "operators": operators,
+        "storage_contract": storage_contract.identity(),
+        "storage_contract_digest": storage_contract.compatibility_digest,
+        "torch": torch.__version__,
+        "cuda": torch.version.cuda,
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _normalize_input_provenance(

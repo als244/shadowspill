@@ -6,7 +6,7 @@ import copy
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
@@ -65,6 +65,55 @@ class TrainingCapture(TrainingObjectiveCapture):
 
     save_pair: AotGraphPair
     recompute_pair: AotGraphPair
+
+
+class _GraphPairCollector:
+    """Capture AOT compiler callbacks without mixing them into orchestration."""
+
+    def __init__(
+        self,
+        mutations: tuple[ExplicitMutation, ...],
+        input_provenance: tuple[TaskInputProvenance, ...] | None,
+    ) -> None:
+        self._mutations = mutations
+        self._input_provenance = input_provenance
+        self.forward: GraphArtifact | None = None
+        self.backward_graph: torch.fx.GraphModule | None = None
+        self.backward_inputs: tuple[object, ...] | None = None
+
+    def compile_forward(
+        self,
+        graph_module: torch.fx.GraphModule,
+        example_inputs: Sequence[object],
+    ) -> Any:
+        self.forward = GraphArtifact.capture(
+            kind="forward",
+            graph_module=graph_module,
+            example_inputs=tuple(example_inputs),
+            explicit_mutations=self._mutations,
+            input_provenance=self._input_provenance,
+        )
+        return make_boxed_func(graph_module.forward)
+
+    def compile_backward(
+        self,
+        graph_module: torch.fx.GraphModule,
+        example_inputs: Sequence[object],
+    ) -> Any:
+        self.backward_graph = graph_module
+        self.backward_inputs = tuple(example_inputs)
+        return make_boxed_func(graph_module.forward)
+
+    def require_complete(
+        self,
+    ) -> tuple[GraphArtifact, torch.fx.GraphModule, tuple[object, ...]]:
+        if (
+            self.forward is None
+            or self.backward_graph is None
+            or self.backward_inputs is None
+        ):
+            raise CaptureError("AOTAutograd did not emit a complete graph pair")
+        return self.forward, self.backward_graph, self.backward_inputs
 
 
 class _ObjectiveModule(nn.Module):
@@ -261,124 +310,146 @@ def capture_graph_pair(
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
 
-    if activation_memory_budget is not None:
-        if not recomputation:
-            raise ValueError(
-                "activation_memory_budget requires the min-cut partitioner"
-            )
-        if not 0.0 <= activation_memory_budget <= 1.0:
-            raise ValueError("activation_memory_budget must be between zero and one")
-
+    _validate_activation_budget(recomputation, activation_memory_budget)
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
-    tensor_provenance = (
-        None
-        if input_provenance is None
-        else tuple(
-            item
-            for value, item in zip(inputs, input_provenance, strict=True)
-            if isinstance(value, torch.Tensor)
-        )
+    tensor_provenance = _tensor_input_provenance(inputs, input_provenance)
+    capture_inputs = _capture_inputs(inputs)
+    collector = _GraphPairCollector(normalized_mutations, tensor_provenance)
+    roots = _execute_aot_capture(
+        graph_module,
+        capture_inputs,
+        collector,
+        recomputation=recomputation,
+        activation_memory_budget=activation_memory_budget,
+        root_output_positions=root_output_positions,
     )
-    capture_inputs = tuple(
-        value.detach().requires_grad_(value.requires_grad)
-        if isinstance(value, torch.Tensor)
-        else value
-        for value in inputs
+    forward, backward_graph, backward_inputs = collector.require_complete()
+    return _build_graph_pair(
+        forward,
+        backward_graph,
+        backward_inputs,
+        roots,
+        original_output,
+        recomputation=recomputation,
+        specialize_unit_tangents=specialize_unit_tangents,
     )
-    captured: dict[str, GraphArtifact] = {}
-    raw_backward: dict[str, object] = {}
 
-    def forward_compiler(
-        graph_module: torch.fx.GraphModule, example_inputs: Sequence[object]
-    ) -> Any:
-        captured["forward"] = GraphArtifact.capture(
-            kind="forward",
-            graph_module=graph_module,
-            example_inputs=tuple(example_inputs),
-            explicit_mutations=normalized_mutations,
-            input_provenance=tensor_provenance,
-        )
-        return make_boxed_func(graph_module.forward)
 
-    def backward_compiler(
-        graph_module: torch.fx.GraphModule, example_inputs: Sequence[object]
-    ) -> Any:
-        raw_backward["graph_module"] = graph_module
-        raw_backward["example_inputs"] = tuple(example_inputs)
-        return make_boxed_func(graph_module.forward)
-
+def _execute_aot_capture(
+    graph_module: torch.fx.GraphModule,
+    capture_inputs: tuple[object, ...],
+    collector: _GraphPairCollector,
+    *,
+    recomputation: bool,
+    activation_memory_budget: float | None,
+    root_output_positions: tuple[int, ...] | None,
+) -> tuple[torch.Tensor, ...]:
     try:
-        aot: Any = aot_function
-        if recomputation:
-            budget_scope = (
-                nullcontext()
-                if activation_memory_budget is None
-                else functorch_config.patch(
-                    activation_memory_budget=activation_memory_budget
-                )
-            )
-            with budget_scope:
-                compiled = aot(
-                    graph_module,
-                    fw_compiler=forward_compiler,
-                    bw_compiler=backward_compiler,
-                    partition_fn=min_cut_rematerialization_partition,
-                )
-                outputs = compiled(*capture_inputs)
-        else:
-            compiled = aot(
-                graph_module,
-                fw_compiler=forward_compiler,
-                bw_compiler=backward_compiler,
-            )
-            outputs = compiled(*capture_inputs)
-        output_values, _ = tree_flatten(outputs)
-        if root_output_positions is None:
-            roots = tuple(
-                value
-                for value in output_values
-                if isinstance(value, torch.Tensor)
-                and value.requires_grad
-                and (value.is_floating_point() or value.is_complex())
-            )
-        else:
-            roots = tuple(output_values[index] for index in root_output_positions)
-        if not roots:
-            raise CaptureError("training stage has no differentiable output")
-        differentiable_inputs = tuple(
-            value
-            for value in capture_inputs
-            if isinstance(value, torch.Tensor) and value.requires_grad
+        compiled = _aot_callable(
+            graph_module,
+            collector,
+            recomputation=recomputation,
+            activation_memory_budget=activation_memory_budget,
         )
-        if not differentiable_inputs:
-            raise CaptureError("training graph has no differentiable inputs or state")
-        torch.autograd.grad(
-            roots,
-            differentiable_inputs,
-            grad_outputs=tuple(torch.ones_like(root) for root in roots),
-            allow_unused=True,
-            materialize_grads=True,
-        )
+        outputs = compiled(*capture_inputs)
+        roots = _differentiable_roots(outputs, root_output_positions)
+        _trigger_backward_capture(roots, capture_inputs)
+        return roots
     except CaptureError:
         raise
     except BaseException as exc:
         mode = "recomputation" if recomputation else "save"
         raise CaptureError(f"AOTAutograd {mode} capture failed: {exc}") from exc
-    if set(captured) != {"forward"} or set(raw_backward) != {
-        "graph_module",
-        "example_inputs",
-    }:
-        raise CaptureError("AOTAutograd did not emit a complete graph pair")
+
+
+def _aot_callable(
+    graph_module: torch.fx.GraphModule,
+    collector: _GraphPairCollector,
+    *,
+    recomputation: bool,
+    activation_memory_budget: float | None,
+) -> Callable[..., object]:
+    aot: Any = aot_function
+    if not recomputation:
+        return cast(
+            Callable[..., object],
+            aot(
+                graph_module,
+                fw_compiler=collector.compile_forward,
+                bw_compiler=collector.compile_backward,
+            ),
+        )
+    budget_scope = (
+        nullcontext()
+        if activation_memory_budget is None
+        else functorch_config.patch(activation_memory_budget=activation_memory_budget)
+    )
+    with budget_scope:
+        return cast(
+            Callable[..., object],
+            aot(
+                graph_module,
+                fw_compiler=collector.compile_forward,
+                bw_compiler=collector.compile_backward,
+                partition_fn=min_cut_rematerialization_partition,
+            ),
+        )
+
+
+def _differentiable_roots(
+    outputs: object,
+    root_output_positions: tuple[int, ...] | None,
+) -> tuple[torch.Tensor, ...]:
+    output_values, _ = tree_flatten(outputs)
+    if root_output_positions is None:
+        roots = tuple(
+            value
+            for value in output_values
+            if isinstance(value, torch.Tensor)
+            and value.requires_grad
+            and (value.is_floating_point() or value.is_complex())
+        )
+    else:
+        roots = tuple(output_values[index] for index in root_output_positions)
+    if not roots or not all(isinstance(root, torch.Tensor) for root in roots):
+        raise CaptureError("training stage has no differentiable tensor output")
+    return roots
+
+
+def _trigger_backward_capture(
+    roots: tuple[torch.Tensor, ...],
+    capture_inputs: tuple[object, ...],
+) -> None:
+    differentiable_inputs = tuple(
+        value
+        for value in capture_inputs
+        if isinstance(value, torch.Tensor) and value.requires_grad
+    )
+    if not differentiable_inputs:
+        raise CaptureError("training graph has no differentiable inputs or state")
+    torch.autograd.grad(
+        roots,
+        differentiable_inputs,
+        grad_outputs=tuple(torch.ones_like(root) for root in roots),
+        allow_unused=True,
+        materialize_grads=True,
+    )
+
+
+def _build_graph_pair(
+    forward: GraphArtifact,
+    backward_graph: torch.fx.GraphModule,
+    backward_inputs: tuple[object, ...],
+    roots: tuple[torch.Tensor, ...],
+    original_output: object,
+    *,
+    recomputation: bool,
+    specialize_unit_tangents: bool,
+) -> AotGraphPair:
     original_output_count = len(tree_flatten(original_output)[0])
-    saved = max(0, captured["forward"].output_count - original_output_count)
-    backward_graph = raw_backward["graph_module"]
-    backward_inputs = raw_backward["example_inputs"]
-    if not isinstance(backward_graph, torch.fx.GraphModule) or not isinstance(
-        backward_inputs, tuple
-    ):
-        raise CaptureError("AOTAutograd backward capture has an invalid type")
+    saved = max(0, forward.output_count - original_output_count)
     backward_provenance = _backward_input_provenance(
-        captured["forward"],
+        forward,
         original_output_count=original_output_count,
         saved_value_count=saved,
         backward_argument_count=len(backward_inputs),
@@ -392,14 +463,48 @@ def capture_graph_pair(
     specialized_count = 0
     if specialize_unit_tangents:
         backward, specialized_count = _specialize_terminal_unit_tangents(
-            backward, tuple(roots)
+            backward, roots
         )
     return AotGraphPair(
-        forward=captured["forward"],
+        forward=forward,
         backward=backward,
         recomputation=recomputation,
         saved_value_count=saved,
         specialized_unit_tangent_count=specialized_count,
+    )
+
+
+def _validate_activation_budget(
+    recomputation: bool,
+    activation_memory_budget: float | None,
+) -> None:
+    if activation_memory_budget is None:
+        return
+    if not recomputation:
+        raise ValueError("activation_memory_budget requires the min-cut partitioner")
+    if not 0.0 <= activation_memory_budget <= 1.0:
+        raise ValueError("activation_memory_budget must be between zero and one")
+
+
+def _tensor_input_provenance(
+    inputs: Sequence[object],
+    provenance: tuple[TaskInputProvenance, ...] | None,
+) -> tuple[TaskInputProvenance, ...] | None:
+    if provenance is None:
+        return None
+    return tuple(
+        item
+        for value, item in zip(inputs, provenance, strict=True)
+        if isinstance(value, torch.Tensor)
+    )
+
+
+def _capture_inputs(inputs: Sequence[object]) -> tuple[object, ...]:
+    return tuple(
+        value.detach().requires_grad_(value.requires_grad)
+        if isinstance(value, torch.Tensor)
+        else value
+        for value in inputs
     )
 
 

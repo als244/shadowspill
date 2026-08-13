@@ -13,16 +13,14 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.compilation.compiler import (
-    CudaTaskProfiler,
-    profile_environment,
-)
-from shadowspill.pytorch.compilation.profiling import (
-    ProfileCache,
-    profile_unique_artifacts,
-)
 from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
+from shadowspill.pytorch.profiling import (
+    ProfileRepository,
+    profile_environment,
+    profile_unique_artifacts,
+)
+from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 
@@ -74,7 +72,7 @@ def main() -> int:
         sample_iterations=3,
     )
     with tempfile.TemporaryDirectory() as directory:
-        cache = ProfileCache(directory)
+        cache = ProfileRepository(directory)
         measured = profile_unique_artifacts(
             artifacts,
             environment=profile_environment(

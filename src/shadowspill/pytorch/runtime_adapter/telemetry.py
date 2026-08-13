@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
-from shadowspill.pytorch.compilation.profiling import (
+from shadowspill.pytorch.profiling.records import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskOutputInputBinding,
@@ -69,6 +69,167 @@ class TaskWorkspaceProfile:
     output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_allocation_ids: tuple[int, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
+
+
+@dataclass(slots=True)
+class _WorkspaceLiveSet:
+    live: dict[int, tuple[int, int]]
+    requested: int = 0
+    charged: int = 0
+    peak_requested: int = 0
+    peak_charged: int = 0
+    peak_extents: tuple[int, ...] = ()
+
+    def apply(self, event: CapturedAllocationEvent, ignored: set[int]) -> None:
+        if event.kind is AllocationEventKind.CREATED:
+            self._create(event, ignored)
+        elif event.kind is AllocationEventKind.LOGICAL_FREED:
+            self._free(event)
+        if self.charged > self.peak_charged:
+            self.peak_requested = self.requested
+            self.peak_charged = self.charged
+            self.peak_extents = tuple(sorted(item[1] for item in self.live.values()))
+
+    def _create(self, event: CapturedAllocationEvent, ignored: set[int]) -> None:
+        if event.allocation_id in ignored:
+            return
+        if event.allocation_id in self.live:
+            raise AllocationTelemetryError(
+                f"allocation {event.allocation_id} is created twice"
+            )
+        sizes = event.requested_bytes, event.charged_bytes
+        self.live[event.allocation_id] = sizes
+        self.requested += sizes[0]
+        self.charged += sizes[1]
+
+    def _free(self, event: CapturedAllocationEvent) -> None:
+        sizes = self.live.pop(event.allocation_id, None)
+        if sizes is None:
+            return
+        self.requested -= sizes[0]
+        self.charged -= sizes[1]
+
+
+class _TraceNormalizer:
+    """Normalize process allocation identities into one task-local timeline."""
+
+    def __init__(
+        self,
+        output_views: Mapping[int, tuple[tuple[int, int], ...]],
+        retained_allocation_ids: set[int],
+    ) -> None:
+        self.output_views = output_views
+        self.retained_allocation_ids = retained_allocation_ids
+        self.ordinal_by_id: dict[int, int] = {}
+        self.sizes_by_id: dict[int, tuple[int, int]] = {}
+        self.pending_by_span: dict[tuple[int, int], tuple[int, int]] = {}
+        self.pending_span_by_id: dict[int, tuple[int, int]] = {}
+        self.trace: list[TaskAllocationEvent] = []
+
+    def normalize(
+        self,
+        events: tuple[CapturedAllocationEvent, ...],
+    ) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
+        for event in events:
+            if event.kind is AllocationEventKind.CREATED:
+                self._create(event)
+            elif event.kind is AllocationEventKind.LOGICAL_FREED:
+                self._free(event)
+            elif event.kind is AllocationEventKind.RELEASED:
+                self._release(event)
+        persistent_ids = self._persistent_allocation_ids()
+        persistent_ordinals = {
+            self.ordinal_by_id[allocation_id] for allocation_id in persistent_ids
+        }
+        filtered = tuple(
+            event
+            for event in self.trace
+            if event.allocation_ordinal not in persistent_ordinals
+        )
+        return filtered, persistent_ids
+
+    def _create(self, event: CapturedAllocationEvent) -> None:
+        if event.allocation_id in self.ordinal_by_id:
+            raise AllocationTelemetryError(
+                f"allocation {event.allocation_id} is created twice"
+            )
+        ordinal = len(self.ordinal_by_id)
+        span = event.slab_offset, event.charged_bytes
+        pending = self.pending_by_span.pop(span, None)
+        if pending is not None:
+            self.pending_span_by_id.pop(pending[0], None)
+        self.ordinal_by_id[event.allocation_id] = ordinal
+        self.sizes_by_id[event.allocation_id] = (
+            event.requested_bytes,
+            event.charged_bytes,
+        )
+        views = self.output_views.get(event.allocation_id, ())
+        self.trace.append(
+            TaskAllocationEvent(
+                ordinal,
+                TaskAllocationOperation.ALLOCATE,
+                event.requested_bytes,
+                event.charged_bytes,
+                tuple(leaf_index for leaf_index, _offset in views),
+                tuple(offset for _leaf_index, offset in views),
+                None if pending is None else pending[1],
+            )
+        )
+
+    def _free(self, event: CapturedAllocationEvent) -> None:
+        ordinal = self.ordinal_by_id.get(event.allocation_id)
+        if ordinal is None or event.allocation_id in self.output_views:
+            return
+        requested, charged = self.sizes_by_id[event.allocation_id]
+        self.trace.append(
+            TaskAllocationEvent(
+                ordinal,
+                TaskAllocationOperation.FREE,
+                requested,
+                charged,
+            )
+        )
+        span = event.slab_offset, event.charged_bytes
+        self.pending_by_span[span] = event.allocation_id, ordinal
+        self.pending_span_by_id[event.allocation_id] = span
+
+    def _release(self, event: CapturedAllocationEvent) -> None:
+        span = self.pending_span_by_id.pop(event.allocation_id, None)
+        if span is None:
+            return
+        pending = self.pending_by_span.get(span)
+        if pending is not None and pending[0] == event.allocation_id:
+            del self.pending_by_span[span]
+
+    def _persistent_allocation_ids(self) -> tuple[int, ...]:
+        allocated = {
+            event.allocation_ordinal
+            for event in self.trace
+            if event.operation is TaskAllocationOperation.ALLOCATE
+        }
+        freed = {
+            event.allocation_ordinal
+            for event in self.trace
+            if event.operation is TaskAllocationOperation.FREE
+        }
+        outputs = {
+            event.allocation_ordinal
+            for event in self.trace
+            if event.output_leaf_indices
+        }
+        retained = {
+            self.ordinal_by_id[allocation_id]
+            for allocation_id in self.retained_allocation_ids
+            if allocation_id in self.ordinal_by_id
+        }
+        unexpected = allocated - freed - outputs - retained
+        allocation_id_by_ordinal = {
+            ordinal: allocation_id
+            for allocation_id, ordinal in self.ordinal_by_id.items()
+        }
+        return tuple(
+            allocation_id_by_ordinal[ordinal] for ordinal in sorted(unexpected)
+        )
 
 
 def start_allocation_telemetry(library: Any, *, capacity: int) -> None:
@@ -187,42 +348,15 @@ def summarize_task_workspace(
         if event.kind is AllocationEventKind.CREATED
         and event.allocation_id in persistent
     )
-    live: dict[int, tuple[int, int]] = {}
-    live_requested = 0
-    live_charged = 0
-    peak_requested = 0
-    peak_charged = 0
-    peak_extents: tuple[int, ...] = ()
+    live = _WorkspaceLiveSet({})
+    ignored = promoted | outputs | persistent
     for event in selected:
-        if event.kind is AllocationEventKind.CREATED:
-            if event.allocation_id in promoted or event.allocation_id in outputs:
-                continue
-            if event.allocation_id in persistent:
-                continue
-            if event.allocation_id in live:
-                raise AllocationTelemetryError(
-                    f"allocation {event.allocation_id} is created twice"
-                )
-            live[event.allocation_id] = (
-                event.requested_bytes,
-                event.charged_bytes,
-            )
-            live_requested += event.requested_bytes
-            live_charged += event.charged_bytes
-        elif event.kind is AllocationEventKind.LOGICAL_FREED:
-            retired = live.pop(event.allocation_id, None)
-            if retired is not None:
-                live_requested -= retired[0]
-                live_charged -= retired[1]
-        if live_charged > peak_charged:
-            peak_requested = live_requested
-            peak_charged = live_charged
-            peak_extents = tuple(sorted(item[1] for item in live.values()))
+        live.apply(event, ignored)
     return TaskWorkspaceProfile(
         task_id=task_id,
-        peak_requested_bytes=peak_requested,
-        peak_charged_bytes=peak_charged,
-        peak_extent_bytes=peak_extents,
+        peak_requested_bytes=live.peak_requested,
+        peak_charged_bytes=live.peak_charged,
+        peak_extent_bytes=live.peak_extents,
         promoted_allocation_ids=tuple(sorted(promoted)),
         output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
@@ -240,105 +374,5 @@ def _normalize_task_allocation_trace(
     retained_allocation_ids: set[int],
 ) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
     """Replace process allocation IDs with stable task-local ordinals."""
-
-    ordinal_by_id: dict[int, int] = {}
-    sizes_by_id: dict[int, tuple[int, int]] = {}
-    pending_by_span: dict[tuple[int, int], tuple[int, int]] = {}
-    pending_span_by_id: dict[int, tuple[int, int]] = {}
-    trace: list[TaskAllocationEvent] = []
-    for event in events:
-        if event.kind is AllocationEventKind.CREATED:
-            if event.allocation_id in ordinal_by_id:
-                raise AllocationTelemetryError(
-                    f"allocation {event.allocation_id} is created twice"
-                )
-            ordinal = len(ordinal_by_id)
-            pending = pending_by_span.pop(
-                (event.slab_offset, event.charged_bytes), None
-            )
-            if pending is not None:
-                pending_span_by_id.pop(pending[0], None)
-            ordinal_by_id[event.allocation_id] = ordinal
-            sizes_by_id[event.allocation_id] = (
-                event.requested_bytes,
-                event.charged_bytes,
-            )
-            trace.append(
-                TaskAllocationEvent(
-                    ordinal,
-                    TaskAllocationOperation.ALLOCATE,
-                    event.requested_bytes,
-                    event.charged_bytes,
-                    tuple(
-                        leaf_index
-                        for leaf_index, _offset in output_views.get(
-                            event.allocation_id, ()
-                        )
-                    ),
-                    tuple(
-                        offset
-                        for _leaf_index, offset in output_views.get(
-                            event.allocation_id, ()
-                        )
-                    ),
-                    None if pending is None else pending[1],
-                )
-            )
-        elif event.kind is AllocationEventKind.LOGICAL_FREED:
-            freed_ordinal = ordinal_by_id.get(event.allocation_id)
-            if freed_ordinal is None:
-                continue
-            if event.allocation_id in output_views:
-                continue
-            requested, charged = sizes_by_id[event.allocation_id]
-            trace.append(
-                TaskAllocationEvent(
-                    freed_ordinal,
-                    TaskAllocationOperation.FREE,
-                    requested,
-                    charged,
-                )
-            )
-            pending_by_span[(event.slab_offset, event.charged_bytes)] = (
-                event.allocation_id,
-                freed_ordinal,
-            )
-            pending_span_by_id[event.allocation_id] = (
-                event.slab_offset,
-                event.charged_bytes,
-            )
-        elif event.kind is AllocationEventKind.RELEASED:
-            original_span = pending_span_by_id.pop(event.allocation_id, None)
-            if original_span is not None:
-                pending = pending_by_span.get(original_span)
-                if pending is not None and pending[0] == event.allocation_id:
-                    del pending_by_span[original_span]
-    live = {
-        event.allocation_ordinal
-        for event in trace
-        if event.operation is TaskAllocationOperation.ALLOCATE
-    }
-    live.difference_update(
-        event.allocation_ordinal
-        for event in trace
-        if event.operation is TaskAllocationOperation.FREE
-    )
-    output_ordinals = {
-        event.allocation_ordinal for event in trace if event.output_leaf_indices
-    }
-    retained_ordinals = {
-        ordinal_by_id[allocation_id]
-        for allocation_id in retained_allocation_ids
-        if allocation_id in ordinal_by_id
-    }
-    unexpected = live - output_ordinals - retained_ordinals
-    allocation_id_by_ordinal = {
-        ordinal: allocation_id for allocation_id, ordinal in ordinal_by_id.items()
-    }
-    persistent_ids = tuple(
-        allocation_id_by_ordinal[ordinal] for ordinal in sorted(unexpected)
-    )
-    filtered = tuple(
-        event for event in trace if event.allocation_ordinal not in unexpected
-    )
-    return filtered, persistent_ids
+    normalizer = _TraceNormalizer(output_views, retained_allocation_ids)
+    return normalizer.normalize(events)

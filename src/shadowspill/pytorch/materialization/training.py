@@ -30,6 +30,9 @@ class _Registration:
     tensor: torch.Tensor
 
 
+_InitialSource = tuple[torch.Tensor, tuple[int, int] | None]
+
+
 class TrainingMaterializedState:
     """Own model, input, and fixed storages while preserving Tensor identities."""
 
@@ -347,8 +350,30 @@ class TrainingMaterializedState:
 
     def _materialize_initial(self) -> None:
         registrations = self._registrations()
+        entries = self._initial_sources(registrations)
+        retain = {
+            group.alias_group_id: group.retain_spill_copy
+            for group in self.layout.program.alias_groups
+        }
         registration_by_id = {id(item.tensor): item for item in registrations}
-        entries: dict[str, list[tuple[torch.Tensor, tuple[int, int] | None]]] = {}
+        aliases = (group.alias_group_id for group in self.layout.program.alias_groups)
+        for ordinal, alias_id in enumerate(aliases):
+            values = entries.get(alias_id)
+            if values:
+                self._materialize_initial_alias(
+                    alias_id,
+                    values,
+                    registration_by_id,
+                    retain_spill_copy=retain[alias_id],
+                    ordinal=ordinal,
+                )
+        self.bridge.wait_idle()
+
+    def _initial_sources(
+        self,
+        registrations: tuple[_Registration, ...],
+    ) -> dict[str, list[_InitialSource]]:
+        entries: dict[str, list[_InitialSource]] = {}
         for item in registrations:
             alias_id = self.bridge.alias_for_object(item.binding.object_id)
             self._model_aliases.add(alias_id)
@@ -371,66 +396,109 @@ class TrainingMaterializedState:
                     )
             slot_maps.append(slots)
         self._user_alias_by_position = tuple(slot_maps)
+        return entries
 
-        retain = {
-            group.alias_group_id: group.retain_spill_copy
-            for group in self.layout.program.alias_groups
-        }
-        for ordinal, alias_id in enumerate(
-            group.alias_group_id for group in self.layout.program.alias_groups
-        ):
-            values = entries.get(alias_id)
-            if not values:
-                continue
-            source = values[0][0]
-            self.bridge.register_host_tensor(
-                alias_id, source, retain_spill_copy=retain[alias_id]
+    def _materialize_initial_alias(
+        self,
+        alias_id: str,
+        values: list[_InitialSource],
+        registrations: Mapping[int, _Registration],
+        *,
+        retain_spill_copy: bool,
+        ordinal: int,
+    ) -> None:
+        source = values[0][0]
+        self.bridge.register_host_tensor(
+            alias_id,
+            source,
+            retain_spill_copy=retain_spill_copy,
+        )
+        self._preserve_planning_cpu_owner(alias_id, source)
+        owner = torch.empty(
+            source.untyped_storage().nbytes(),
+            dtype=torch.uint8,
+            device=self.device,
+        )
+        views: dict[int, torch.Tensor] = {}
+        representative: torch.Tensor = owner
+        for source_tensor, root_position in values:
+            view = self._initial_cuda_view(
+                owner,
+                source_tensor,
+                registrations,
+                views,
             )
-            cpu_owner = torch.empty(0, dtype=torch.uint8, device="cpu")
-            cpu_owner.set_(source.untyped_storage())
-            if alias_id in self._model_aliases:
-                self._planning_cpu_owners[alias_id] = cpu_owner
-            owner = torch.empty(
-                source.untyped_storage().nbytes(), dtype=torch.uint8, device=self.device
+            self._publish_initial_view(
+                source_tensor,
+                view,
+                root_position,
+                registrations,
             )
-            views: dict[int, torch.Tensor] = {}
-            representative: torch.Tensor = owner
-            for source_tensor, root_position in values:
-                view = views.get(id(source_tensor))
-                if view is None:
-                    view = self._cuda_view(owner, source_tensor)
-                    registered = registration_by_id.get(id(source_tensor))
-                    if registered is not None:
-                        source_tensor.data = view
-                        view = source_tensor
-                    views[id(source_tensor)] = view
-                if root_position is None:
-                    registered = registration_by_id.get(id(source_tensor))
-                    if registered is not None:
-                        self.object_tensors[registered.binding.object_id] = view
-                representative = view
-                if root_position is not None:
-                    position, index = root_position
-                    slot = next(
-                        item
-                        for item in self.layout.root_input_slots[position]
-                        if item.leaf_index == index
-                    )
-                    self.object_tensors[slot.object_id] = view
-                    mutable = list(self._flat_arguments[position])
-                    mutable[index] = view
-                    self._flat_arguments = (
-                        *self._flat_arguments[:position],
-                        tuple(mutable),
-                        *self._flat_arguments[position + 1 :],
-                    )
-            binding = self.bridge.bind_registered_tensor(alias_id, owner)
-            self.object_store[alias_id] = representative
-            self.generations[alias_id] = binding.generation
-            self._release_placeholder(
-                alias_id, representative, binding.generation, ordinal
-            )
-        self.bridge.wait_idle()
+            representative = view
+        binding = self.bridge.bind_registered_tensor(alias_id, owner)
+        self.object_store[alias_id] = representative
+        self.generations[alias_id] = binding.generation
+        self._release_placeholder(
+            alias_id,
+            representative,
+            binding.generation,
+            ordinal,
+        )
+
+    def _preserve_planning_cpu_owner(
+        self,
+        alias_id: str,
+        source: torch.Tensor,
+    ) -> None:
+        if alias_id not in self._model_aliases:
+            return
+        owner = torch.empty(0, dtype=torch.uint8, device="cpu")
+        owner.set_(source.untyped_storage())
+        self._planning_cpu_owners[alias_id] = owner
+
+    def _initial_cuda_view(
+        self,
+        owner: torch.Tensor,
+        source: torch.Tensor,
+        registrations: Mapping[int, _Registration],
+        views: dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        existing = views.get(id(source))
+        if existing is not None:
+            return existing
+        view = self._cuda_view(owner, source)
+        if id(source) in registrations:
+            source.data = view
+            view = source
+        views[id(source)] = view
+        return view
+
+    def _publish_initial_view(
+        self,
+        source: torch.Tensor,
+        view: torch.Tensor,
+        root_position: tuple[int, int] | None,
+        registrations: Mapping[int, _Registration],
+    ) -> None:
+        if root_position is None:
+            registered = registrations.get(id(source))
+            if registered is not None:
+                self.object_tensors[registered.binding.object_id] = view
+            return
+        position, index = root_position
+        slot = next(
+            item
+            for item in self.layout.root_input_slots[position]
+            if item.leaf_index == index
+        )
+        self.object_tensors[slot.object_id] = view
+        mutable = list(self._flat_arguments[position])
+        mutable[index] = view
+        self._flat_arguments = (
+            *self._flat_arguments[:position],
+            tuple(mutable),
+            *self._flat_arguments[position + 1 :],
+        )
 
     def _release_placeholder(
         self, alias_id: str, tensor: torch.Tensor, generation: int, ordinal: int

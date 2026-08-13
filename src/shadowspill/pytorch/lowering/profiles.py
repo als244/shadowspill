@@ -13,8 +13,8 @@ from shadowspill.pytorch.compilation.layout import (
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
-from shadowspill.pytorch.compilation.profiling import TaskMeasurement
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
+from shadowspill.pytorch.profiling import TaskMeasurement
 
 from ..contracts import CaptureError
 

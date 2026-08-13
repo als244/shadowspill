@@ -11,7 +11,11 @@ from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
 from ...contracts import CaptureError
-from ...graph_pairs import DifferentiatedStage, PartitionedTrainingCapture
+from ...graph_pairs import (
+    DifferentiatedStage,
+    GraphPairVariant,
+    PartitionedTrainingCapture,
+)
 from ..catalog import ObjectCatalog, TensorSlot
 from ..profiles import TaskProfileCatalog
 from ..task_binding import (
@@ -227,87 +231,154 @@ def _prepare_stage_variants(
     metadata_digest: str | None,
     parameter_ids: set[str],
 ) -> dict[str, PreparedStageVariant]:
-    variants: dict[str, PreparedStageVariant] = {}
     canonical_outputs = boundaries.object_ids[position][stage_index]
     terminal = stage_index == len(boundaries.object_ids[position]) - 1
-    for option in stage.graph_pairs.variants:
-        variant = option.option_id
-        pair = option.pair
-        forward_inputs = resolve_stage_input_slots(
-            stage.example,
-            pair.forward,
-            root_objects=boundaries.root_objects[position],
-            stage_outputs=tuple(
-                {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
-                for ids in boundaries.object_ids[position][:stage_index]
-            ),
-            compact_leaf_indices=True,
-        )
-        (
-            forward_outputs,
-            residuals,
-            mutations,
-            replacement_leaves,
-            forward_handoffs,
-        ) = _stage_forward_outputs(
-            pair,
-            forward_inputs,
-            canonical_outputs,
-            objects.catalog,
-            profiles.layout(pair.forward, metadata_digest),
-            profiles.contract(pair.forward),
-            context=(
-                f"microbatch={position}, stage={stage_index}, "
-                f"variant={variant}, "
-                f"artifact={pair.forward.compatibility_digest}"
-            ),
-        )
-        backward_inputs = _stage_backward_inputs(
+    return {
+        option.option_id: _prepare_stage_variant(
             position,
+            stage_index,
             stage,
-            pair,
-            forward_outputs,
+            option,
+            objects,
+            boundaries,
+            profiles,
+            metadata_digest,
+            parameter_ids,
             canonical_outputs,
-            boundaries.cotangents,
-            boundaries.fixed_tensors,
-            objects.catalog,
             terminal=terminal,
         )
-        try:
-            contributions, backward_handoffs = _stage_backward_contributions(
-                position,
-                pair,
-                forward_inputs,
-                backward_inputs,
-                parameter_ids,
-                objects.gradient_by_parameter,
-                boundaries.cotangents,
-                objects.catalog,
-                profiles.layout(pair.backward, metadata_digest),
-                profiles.contract(pair.backward),
-            )
-        except CaptureError as exc:
-            raise CaptureError(
-                "backward layout reconciliation failed for "
-                f"microbatch={position}, stage={stage_index}, "
-                f"variant={variant}, artifact="
-                f"{pair.backward.compatibility_digest[:12]}: {exc}"
-            ) from exc
-        variants[variant] = PreparedStageVariant(
-            stage,
+        for option in stage.graph_pairs.variants
+    }
+
+
+def _prepare_stage_variant(
+    position: int,
+    stage_index: int,
+    stage: DifferentiatedStage,
+    option: GraphPairVariant,
+    objects: TrainingObjects,
+    boundaries: TrainingBoundaries,
+    profiles: TaskProfileCatalog,
+    metadata_digest: str | None,
+    parameter_ids: set[str],
+    canonical_outputs: tuple[str, ...],
+    *,
+    terminal: bool,
+) -> PreparedStageVariant:
+    pair = option.pair
+    forward_inputs = _variant_forward_inputs(
+        position,
+        stage_index,
+        stage,
+        pair,
+        boundaries,
+    )
+    forward = _stage_forward_outputs(
+        pair,
+        forward_inputs,
+        canonical_outputs,
+        objects.catalog,
+        profiles.layout(pair.forward, metadata_digest),
+        profiles.contract(pair.forward),
+        context=(
+            f"microbatch={position}, stage={stage_index}, "
+            f"variant={option.option_id}, "
+            f"artifact={pair.forward.compatibility_digest}"
+        ),
+    )
+    forward_outputs, residuals, mutations, replacement_leaves, handoffs = forward
+    backward_inputs = _stage_backward_inputs(
+        position,
+        stage,
+        pair,
+        forward_outputs,
+        canonical_outputs,
+        boundaries.cotangents,
+        boundaries.fixed_tensors,
+        objects.catalog,
+        terminal=terminal,
+    )
+    contributions, backward_handoffs = _variant_backward_contributions(
+        position,
+        stage_index,
+        option,
+        forward_inputs,
+        backward_inputs,
+        objects,
+        boundaries,
+        profiles,
+        metadata_digest,
+        parameter_ids,
+    )
+    return PreparedStageVariant(
+        stage,
+        pair,
+        forward_inputs,
+        forward_outputs,
+        backward_inputs,
+        contributions,
+        residuals,
+        stage.example.stage.user_output_indices,
+        mutations,
+        replacement_leaves,
+        handoffs,
+        backward_handoffs,
+    )
+
+
+def _variant_forward_inputs(
+    position: int,
+    stage_index: int,
+    stage: DifferentiatedStage,
+    pair: AotGraphPair,
+    boundaries: TrainingBoundaries,
+) -> tuple[TensorSlot, ...]:
+    stage_outputs = tuple(
+        {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
+        for ids in boundaries.object_ids[position][:stage_index]
+    )
+    return resolve_stage_input_slots(
+        stage.example,
+        pair.forward,
+        root_objects=boundaries.root_objects[position],
+        stage_outputs=stage_outputs,
+        compact_leaf_indices=True,
+    )
+
+
+def _variant_backward_contributions(
+    position: int,
+    stage_index: int,
+    option: GraphPairVariant,
+    forward_inputs: tuple[TensorSlot, ...],
+    backward_inputs: tuple[TensorSlot, ...],
+    objects: TrainingObjects,
+    boundaries: TrainingBoundaries,
+    profiles: TaskProfileCatalog,
+    metadata_digest: str | None,
+    parameter_ids: set[str],
+) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
+    pair = option.pair
+    try:
+        return _stage_backward_contributions(
+            position,
             pair,
             forward_inputs,
-            forward_outputs,
             backward_inputs,
-            contributions,
-            residuals,
-            stage.example.stage.user_output_indices,
-            mutations,
-            replacement_leaves,
-            forward_handoffs,
-            backward_handoffs,
+            parameter_ids,
+            objects.gradient_by_parameter,
+            boundaries.cotangents,
+            objects.catalog,
+            profiles.layout(pair.backward, metadata_digest),
+            profiles.contract(pair.backward),
         )
-    return variants
+    except CaptureError as exc:
+        raise CaptureError(
+            "backward layout reconciliation failed for "
+            f"microbatch={position}, stage={stage_index}, "
+            f"variant={option.option_id}, artifact="
+            f"{pair.backward.compatibility_digest[:12]}: {exc}"
+        ) from exc
 
 
 def _stage_forward_outputs(

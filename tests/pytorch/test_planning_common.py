@@ -9,7 +9,6 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import PlanningError, TensorSpec
-from shadowspill.pytorch.compilation.profiling import TaskMeasurement
 from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.planning.common import (
     PlanningTimer,
@@ -19,6 +18,7 @@ from shadowspill.pytorch.planning.common import (
     validate_cpu_model,
     workspace_reserve,
 )
+from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
 

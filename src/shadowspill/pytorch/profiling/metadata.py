@@ -44,7 +44,7 @@ def training_profiling_metadata(
         return tuple(
             canonicalize_profiling_metadata(None) for _ in range(microbatch_count)
         )
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+    if isinstance(value, str | bytes) or not isinstance(value, Sequence):
         raise TypeError("profiling_metadata must be a sequence or None")
     if len(value) != microbatch_count:
         raise ValueError(
@@ -54,7 +54,7 @@ def training_profiling_metadata(
 
 
 def _normalize(value: object, path: str) -> object:
-    if value is None or isinstance(value, (bool, int, str)):
+    if value is None or isinstance(value, bool | int | str):
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
@@ -67,7 +67,7 @@ def _normalize(value: object, path: str) -> object:
                 raise TypeError(f"{path} mapping keys must be non-empty strings")
             result[key] = _normalize(item, f"{path}.{key}")
         return {key: result[key] for key in sorted(result)}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes):
         return [
             _normalize(item, f"{path}[{index}]") for index, item in enumerate(value)
         ]

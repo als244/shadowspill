@@ -14,6 +14,8 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
 from ...partition import PartitionedExport, StageExample
 from ..catalog import ObjectCatalog, TensorSlot
@@ -34,31 +36,79 @@ def emit_forward_tasks(
     *,
     device_id: str,
 ) -> ForwardTaskGraph:
-    tasks: list[TaskSpec] = []
-    entrypoints: list[TaskEntrypoint] = []
-    produced_aliases: set[str] = set()
-    public_outputs: list[str] = []
-    stage_outputs: list[dict[int, str]] = []
-    for index, (stage, artifact, contract, layout, profile_id) in enumerate(
-        zip(
-            partitioned.stages,
-            artifacts,
-            physical.contracts,
-            physical.layouts,
-            physical.profile_ids,
+    return _ForwardTaskEmitter(
+        partitioned,
+        artifacts,
+        objects,
+        physical,
+        device_id=device_id,
+    ).build()
+
+
+class _ForwardTaskEmitter:
+    def __init__(
+        self,
+        partitioned: PartitionedExport,
+        artifacts: tuple[GraphArtifact, ...],
+        objects: ForwardObjects,
+        physical: ForwardPhysicalLayout,
+        *,
+        device_id: str,
+    ) -> None:
+        self.partitioned = partitioned
+        self.artifacts = artifacts
+        self.objects = objects
+        self.physical = physical
+        self.device_id = device_id
+        self.tasks: list[TaskSpec] = []
+        self.entrypoints: list[TaskEntrypoint] = []
+        self.produced_aliases: set[str] = set()
+        self.public_outputs: list[str] = []
+        self.stage_outputs: list[dict[int, str]] = []
+
+    def build(self) -> ForwardTaskGraph:
+        for index, values in enumerate(self._stages()):
+            self._emit_stage(index, *values)
+        return ForwardTaskGraph(
+            tuple(self.tasks),
+            tuple(self.entrypoints),
+            frozenset(self.produced_aliases),
+            tuple(self.public_outputs),
+        )
+
+    def _stages(
+        self,
+    ) -> zip[
+        tuple[
+            StageExample,
+            GraphArtifact,
+            TaskStorageContract,
+            CompiledTaskLayout,
+            str,
+        ]
+    ]:
+        return zip(
+            self.partitioned.stages,
+            self.artifacts,
+            self.physical.contracts,
+            self.physical.layouts,
+            self.physical.profile_ids,
             strict=True,
         )
-    ):
-        input_slots = resolve_stage_input_slots(
-            stage,
-            artifact,
-            root_objects=objects.root_objects,
-            stage_outputs=tuple(stage_outputs),
-            compact_leaf_indices=False,
-        )
+
+    def _emit_stage(
+        self,
+        index: int,
+        stage: StageExample,
+        artifact: GraphArtifact,
+        contract: TaskStorageContract,
+        layout: CompiledTaskLayout,
+        profile_id: str,
+    ) -> None:
+        input_slots = self._stage_inputs(stage, artifact)
         input_objects = tuple(dict.fromkeys(slot.object_id for slot in input_slots))
         resolver = TaskBindingResolver(
-            objects.catalog,
+            self.objects.catalog,
             artifact,
             input_slots,
             layout,
@@ -67,31 +117,19 @@ def emit_forward_tasks(
         output_slots, outputs = _bind_forward_outputs(
             stage,
             resolver,
-            objects.catalog,
+            self.objects.catalog,
             input_objects,
-            produced_aliases,
-            public_outputs,
+            self.produced_aliases,
+            self.public_outputs,
         )
-        stage_outputs.append({slot.leaf_index: slot.object_id for slot in output_slots})
-        task_id = f"task_{index:06d}"
-        tasks.append(
-            TaskSpec(
-                task_id,
-                ResourceSpec(device_id, ResourceKind.COMPUTE),
-                profile_id,
-                dependencies=() if index == 0 else (f"task_{index - 1:06d}",),
-                inputs=input_objects,
-                outputs=outputs,
-                mutations=tuple(
-                    MutationSpec(object_id)
-                    for object_id in resolver.mutation_object_ids
-                ),
-                phase="forward",
-            )
+        self.stage_outputs.append(
+            {slot.leaf_index: slot.object_id for slot in output_slots}
         )
-        entrypoints.append(
+        task = self._task(index, profile_id, input_objects, outputs, resolver)
+        self.tasks.append(task)
+        self.entrypoints.append(
             TaskEntrypoint(
-                task_id,
+                task.task_id,
                 stage.stage.module_target,
                 artifact,
                 input_slots,
@@ -100,12 +138,41 @@ def emit_forward_tasks(
                 resolver.storage_handoffs,
             )
         )
-    return ForwardTaskGraph(
-        tuple(tasks),
-        tuple(entrypoints),
-        frozenset(produced_aliases),
-        tuple(public_outputs),
-    )
+
+    def _stage_inputs(
+        self,
+        stage: StageExample,
+        artifact: GraphArtifact,
+    ) -> tuple[TensorSlot, ...]:
+        return resolve_stage_input_slots(
+            stage,
+            artifact,
+            root_objects=self.objects.root_objects,
+            stage_outputs=tuple(self.stage_outputs),
+            compact_leaf_indices=False,
+        )
+
+    def _task(
+        self,
+        index: int,
+        profile_id: str,
+        inputs: tuple[str, ...],
+        outputs: tuple[str, ...],
+        resolver: TaskBindingResolver,
+    ) -> TaskSpec:
+        task_id = f"task_{index:06d}"
+        return TaskSpec(
+            task_id,
+            ResourceSpec(self.device_id, ResourceKind.COMPUTE),
+            profile_id,
+            dependencies=() if index == 0 else (f"task_{index - 1:06d}",),
+            inputs=inputs,
+            outputs=outputs,
+            mutations=tuple(
+                MutationSpec(object_id) for object_id in resolver.mutation_object_ids
+            ),
+            phase="forward",
+        )
 
 
 def _bind_forward_outputs(

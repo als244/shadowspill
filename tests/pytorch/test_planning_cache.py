@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from shadowspill.pytorch.cache import PlanningCache
-from shadowspill.pytorch.compilation.metadata import (
+from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
     training_profiling_metadata,
 )

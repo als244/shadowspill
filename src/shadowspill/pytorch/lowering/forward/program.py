@@ -10,7 +10,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
-from shadowspill.pytorch.compilation.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling import TaskMeasurement
 
 from ...contracts import CaptureError
 from ...partition import PartitionedExport
@@ -82,20 +82,68 @@ def resolve_forward_profiles(
     | None,
     profile_compatibility_digests: tuple[str, ...] | None,
 ) -> ForwardPhysicalLayout:
+    occurrence_keys, profile_digests = _forward_profile_identities(
+        partitioned,
+        artifacts,
+        measurements,
+        profile_compatibility_digests,
+    )
+    profiles = _forward_profile_catalog(
+        artifacts,
+        measurements,
+        occurrence_keys,
+        profile_digests,
+        storage_contracts=storage_contracts,
+        compiled_root_allocations=compiled_root_allocations,
+    )
+    return ForwardPhysicalLayout(
+        tuple(profiles.contract(artifact) for artifact in artifacts),
+        tuple(
+            profiles.layout(artifact, occurrence_key)
+            for artifact, occurrence_key in zip(
+                artifacts,
+                occurrence_keys,
+                strict=True,
+            )
+        ),
+        profiles,
+        _forward_profile_ids(profiles, artifacts, occurrence_keys),
+    )
+
+
+def _forward_profile_identities(
+    partitioned: PartitionedExport,
+    artifacts: tuple[GraphArtifact, ...],
+    measurements: tuple[TaskMeasurement, ...],
+    compatibility_digests: tuple[str, ...] | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     stage_count = len(partitioned.stages)
     if len(artifacts) != stage_count or len(measurements) != stage_count:
         raise CaptureError("stage, artifact, and measurement counts must match")
-    profile_digests = (
+    digests = (
         tuple(item.compatibility_digest for item in artifacts)
-        if profile_compatibility_digests is None
-        else profile_compatibility_digests
+        if compatibility_digests is None
+        else compatibility_digests
     )
-    if len(profile_digests) != stage_count:
+    if len(digests) != stage_count:
         raise CaptureError("profile identities must align with forward stages")
-    occurrence_keys = tuple(
-        f"forward_position_{index:06d}" for index in range(stage_count)
+    return (
+        tuple(f"forward_position_{index:06d}" for index in range(stage_count)),
+        digests,
     )
-    profile_catalog = TaskProfileCatalog(
+
+
+def _forward_profile_catalog(
+    artifacts: tuple[GraphArtifact, ...],
+    measurements: tuple[TaskMeasurement, ...],
+    occurrence_keys: tuple[str, ...],
+    profile_digests: tuple[str, ...],
+    *,
+    storage_contracts: Mapping[str, TaskStorageContract] | None,
+    compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
+    | None,
+) -> TaskProfileCatalog:
+    return TaskProfileCatalog(
         {
             (artifact.compatibility_digest, occurrence_key): measurement
             for artifact, occurrence_key, measurement in zip(
@@ -118,19 +166,17 @@ def resolve_forward_profiles(
         },
         metadata_enabled=True,
     )
-    contracts = tuple(profile_catalog.contract(artifact) for artifact in artifacts)
-    layouts = tuple(
-        profile_catalog.layout(artifact, occurrence_key)
-        for artifact, occurrence_key in zip(
-            artifacts,
-            occurrence_keys,
-            strict=True,
-        )
-    )
-    profile_ids = tuple(
-        profile_catalog.profile_id(
+
+
+def _forward_profile_ids(
+    profiles: TaskProfileCatalog,
+    artifacts: tuple[GraphArtifact, ...],
+    occurrence_keys: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        profiles.profile_id(
             artifact,
-            profile_catalog.mutation_transition_bytes(artifact, occurrence_key),
+            profiles.mutation_transition_bytes(artifact, occurrence_key),
             metadata_digest=occurrence_key,
         )
         for artifact, occurrence_key in zip(
@@ -138,12 +184,6 @@ def resolve_forward_profiles(
             occurrence_keys,
             strict=True,
         )
-    )
-    return ForwardPhysicalLayout(
-        contracts,
-        layouts,
-        profile_catalog,
-        profile_ids,
     )
 
 

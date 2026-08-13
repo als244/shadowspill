@@ -10,16 +10,16 @@ from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.compilation.profiling import (
-    TaskAllocationEvent,
-    TaskAllocationOperation,
-    TaskMeasurement,
-)
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
 )
 from shadowspill.pytorch.partition import partition_export
+from shadowspill.pytorch.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskMeasurement,
+)
 from shadowspill.simulator import SimulationConfig
 
 
