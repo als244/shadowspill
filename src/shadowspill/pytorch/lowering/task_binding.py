@@ -8,16 +8,16 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.ir import ObjectRole, Persistence
-
-from ..capture import GraphArtifact
-from ..compiled_layout import CompiledTaskLayout
-from ..contracts import CaptureError
-from ..output_contract import (
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.storage import (
     OutputView,
     StorageRoot,
     StorageRootKind,
     TaskStorageContract,
 )
+from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
+
+from ..contracts import CaptureError
 from ..partition import StageExample
 from .catalog import ObjectCatalog, TensorSlot, _view_extent_bytes
 

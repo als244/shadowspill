@@ -8,7 +8,7 @@ from .artifacts import (
 )
 from .capture import capture_training_stages
 from .repository import GraphPairRepository
-from .training import partition_training_capture, training_parameter_stage_owners
+from .training import partition_training_capture
 
 __all__ = [
     "DifferentiatedStage",
@@ -18,5 +18,4 @@ __all__ = [
     "PartitionedTrainingCapture",
     "capture_training_stages",
     "partition_training_capture",
-    "training_parameter_stage_owners",
 ]

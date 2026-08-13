@@ -8,8 +8,8 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.pytorch._abi import AdapterFailure
-from shadowspill.pytorch._allocator import install_allocator
+from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 NO_PROGRESS = 4
 REQUEST_BYTES = 128 << 20

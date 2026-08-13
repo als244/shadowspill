@@ -4,13 +4,13 @@ import pytest
 
 from shadowspill.ir import MutationSpec, ResourceKind, ResourceSpec, TaskSpec
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.pytorch.profiling import (
+from shadowspill.pytorch.compilation.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
     TaskOutputInputBinding,
 )
-from shadowspill.pytorch.spatial_admission import (
+from shadowspill.pytorch.planning.admission.spatial import (
     TaskOutputBinding,
     _task_allocation_events,
     _validate_profile_workspace,

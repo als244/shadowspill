@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from torch.utils._pytree import TreeSpec
 
 from shadowspill.ir import Program, ResidencySpec, TaskSpec
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
-from ...capture import GraphArtifact
-from ...compiled_layout import CompiledTaskLayout
-from ...output_contract import TaskStorageContract
 from ..catalog import ObjectCatalog, RegistrationBinding, TensorSlot
 from ..profiles import TaskProfileCatalog
 from ..task_binding import TaskStorageHandoff

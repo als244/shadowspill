@@ -13,15 +13,13 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import PressureFitResult
-from shadowspill.runtime import AdmissionError, SlabReplay
-
-from .._allocator import InstalledAllocator
-from .._plan_diagnostics import training_stage_inventory
-from .._profiling_metadata import ProfilingMetadata, training_profiling_metadata
-from ..aot import TrainingObjectiveCapture, capture_training_objective
-from ..cache import PlanningCache
-from ..capture import GraphArtifact
-from ..compiler import (
+from shadowspill.pytorch.capture.aot import (
+    TrainingObjectiveCapture,
+    capture_training_objective,
+)
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.compilation.compiler import (
     CompiledTaskSet,
     CudaTaskProfiler,
     ResolvedTaskManifests,
@@ -29,12 +27,37 @@ from ..compiler import (
     resolve_task_manifests,
     validate_compiled_profile,
 )
+from shadowspill.pytorch.compilation.metadata import (
+    ProfilingMetadata,
+    training_profiling_metadata,
+)
+from shadowspill.pytorch.compilation.profiling import (
+    TaskMeasurement,
+    profile_unique_artifacts,
+)
+from shadowspill.pytorch.diagnostics.builders import training_stage_inventory
+from shadowspill.pytorch.materialization.training import (
+    TrainingMaterializedState,
+    representative_training_arguments,
+)
+from shadowspill.pytorch.optimizer import (
+    OptimizerCapture,
+    OptimizerTaskArtifact,
+    capture_optimizer,
+    training_parameter_stage_owners,
+)
+from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
+from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.runtime import AdmissionError, SlabReplay
+
+from ..cache import PlanningCache
+from ..callables import PlannedTrainStep
 from ..contracts import ObjectiveResult, PlanningError
-from ..fake import fake_cuda_inputs, fake_cuda_model
+from ..diagnostics import PlanReport
+from ..execution import TrainingExecutor
 from ..graph_pairs import (
     PartitionedTrainingCapture,
     partition_training_capture,
-    training_parameter_stage_owners,
 )
 from ..guards import InputSignature, capture_training_signatures
 from ..lowering.profiles import CompiledLayoutIndex, ProfileMeasurementKey
@@ -45,24 +68,17 @@ from ..lowering.training import (
     lower_training_storage_layout,
 )
 from ..materialization import representative_cpu_inputs
-from ..optimizer import OptimizerCapture, OptimizerTaskArtifact, capture_optimizer
 from ..partition import (
     PartitionSpec,
 )
-from ..profiling import TaskMeasurement, profile_unique_artifacts
-from ..public import PlannedTrainStep, PlanReport
-from ..runtime import PlanMemory
-from ..runtime_bridge import RuntimeBridge
-from ..spatial_admission import (
+from ..runtime_adapter import PlanMemory
+from .admission import (
     output_bindings_for_entrypoints,
+    physical_admission,
+    reconcile_spill_pool,
     replay_selected_schedule,
+    seal_physical_budget,
 )
-from ..training_executor import TrainingExecutor
-from ..training_materialization import (
-    TrainingMaterializedState,
-    representative_training_arguments,
-)
-from .admission import physical_admission, reconcile_spill_pool, seal_physical_budget
 from .artifacts import (
     TrainingAdmissionArtifacts,
     TrainingCaptureArtifacts,

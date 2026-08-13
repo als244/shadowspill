@@ -11,11 +11,11 @@ import torch.nn as nn
 
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import PressureFitResult
+from shadowspill.pytorch.compilation.metadata import ProfilingMetadata
+from shadowspill.pytorch.compilation.profiling import ProfilingResult
 
-from .._profiling_metadata import ProfilingMetadata
 from ..cache import PlanningCache
-from ..profiling import ProfilingResult
-from ..public import (
+from ..diagnostics import (
     PlanCacheArtifact,
     PlanCompilerProfile,
     PlanDiagnostics,
@@ -25,7 +25,7 @@ from ..public import (
     PlanTaskStage,
     PlanUniqueStage,
 )
-from ..runtime import PlanMemory
+from ..runtime_adapter import PlanMemory
 
 
 def cache_artifacts(cache: PlanningCache) -> tuple[PlanCacheArtifact, ...]:

@@ -13,8 +13,8 @@ import torch.nn as nn
 
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import InputGuardError, Runtime, plan_forward
-from shadowspill.pytorch._abi import AdapterStatistics
-from shadowspill.pytorch._allocator import installed_allocator
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
 
 
 class _ForwardModel(nn.Module):

@@ -9,13 +9,13 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.pytorch._abi import (
+from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     ObjectBinding,
     ObjectSnapshot,
     RuntimeAction,
 )
-from shadowspill.pytorch._allocator import install_allocator
+from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 ELEMENTS = 16 << 20
 BYTES_PER_OBJECT = ELEMENTS * 4

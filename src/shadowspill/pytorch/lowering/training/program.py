@@ -7,12 +7,13 @@ from typing import Literal
 
 import torch.nn as nn
 
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
+from shadowspill.pytorch.compilation.profiling import TaskMeasurement
+from shadowspill.pytorch.optimizer import OptimizerCapture
+
 from ...contracts import CaptureError
 from ...graph_pairs import PartitionedTrainingCapture
-from ...inductor_adapter import ExecutableRootAllocation
-from ...optimizer import OptimizerCapture
-from ...output_contract import TaskStorageContract
-from ...profiling import TaskMeasurement
 from ..profiles import CompiledLayoutIndex, ProfileMeasurementKey, TaskProfileCatalog
 from ..program import execution_device_id, publish_program
 from .artifacts import LoweredTrainingProgram

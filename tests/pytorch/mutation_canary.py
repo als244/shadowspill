@@ -56,9 +56,7 @@ def main() -> int:
         if len(task.mutations) != 1:
             raise AssertionError("buffer update was not lowered as a task mutation")
         diagnostics = planned.plan_report.diagnostics
-        if len(diagnostics.task_stage_map) != 1 or len(
-            diagnostics.unique_stages
-        ) != 1:
+        if len(diagnostics.task_stage_map) != 1 or len(diagnostics.unique_stages) != 1:
             raise AssertionError("mutation task diagnostics are incomplete")
         profile = diagnostics.unique_stages[0].graph_pairs[0].forward
         if (
@@ -67,8 +65,7 @@ def main() -> int:
             or profile.replacement_transition_bytes
             != model.running.untyped_storage().nbytes()
             or profile.task_workspace_bytes
-            != profile.workspace_charged_bytes
-            + profile.replacement_transition_bytes
+            != profile.workspace_charged_bytes + profile.replacement_transition_bytes
         ):
             raise AssertionError("functional-mutation diagnostics are inconsistent")
         for _ in range(3):

@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan_step
-from shadowspill.pytorch import optimizer as optimizer_module
+from shadowspill.pytorch.optimizer import capture as optimizer_module
 
 from .runtime_test_support import public_test_runtime
 

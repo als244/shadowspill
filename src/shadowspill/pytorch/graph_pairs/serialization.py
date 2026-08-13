@@ -13,10 +13,16 @@ from typing import Literal, TypeGuard
 import torch
 from torch.fx.passes.fake_tensor_prop import FakeTensorProp
 
-from ..capture import AotGraphPair, GraphArtifact, TaskInputProvenance, TensorGeometry
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+    TaskInputProvenance,
+    TensorGeometry,
+)
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.fx_graph import SerializedFxGraph
+
 from ..contracts import CaptureError
-from ..fx_graph_cache import SerializedFxGraph
-from ..output_contract import TaskStorageContract
 from .artifacts import GraphPairVariant
 
 

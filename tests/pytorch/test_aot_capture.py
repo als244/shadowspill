@@ -6,19 +6,19 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch import CaptureError, ObjectiveError, ObjectiveResult
-from shadowspill.pytorch import aot as aot_module
-from shadowspill.pytorch.aot import (
+from shadowspill.pytorch.capture import aot as aot_module
+from shadowspill.pytorch.capture.aot import (
     capture_forward,
     capture_training,
     capture_training_objective,
     inference_artifact,
 )
-from shadowspill.pytorch.capture import (
+from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 
 
 class _Network(nn.Module):
@@ -69,7 +69,7 @@ def test_objective_export_does_not_construct_a_whole_model_vjp(
     replica = fake_cuda_model(model, mode)
     inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
     monkeypatch.setattr(
-        "shadowspill.pytorch.aot._capture_pair",
+        "shadowspill.pytorch.capture.aot._capture_pair",
         lambda *arguments, **options: pytest.fail(
             f"unexpected whole-model AOT capture {arguments}, {options}"
         ),

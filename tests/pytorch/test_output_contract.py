@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.pytorch.output_contract import (
+from shadowspill.pytorch.capture.storage import (
     ExplicitMutation,
     StorageRootKind,
     TaskStorageContract,
@@ -79,9 +79,7 @@ def test_views_of_fresh_intermediate_share_one_compact_bundle() -> None:
 
 def test_distinct_outputs_do_not_alias_from_example_storage_coincidence() -> None:
     class Pair(nn.Module):
-        def forward(
-            self, value: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def forward(self, value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             return torch.sin(value), torch.cos(value)
 
     value = torch.randn(8)
@@ -294,7 +292,7 @@ def test_registered_custom_mutation_schema_controls_semantic_write() -> None:
 def test_semantic_extraction_has_no_compiler_profiler_or_allocator_dependency() -> None:
     import inspect
 
-    import shadowspill.pytorch.output_contract as module
+    import shadowspill.pytorch.capture.storage as module
 
     source = inspect.getsource(module)
     assert "torch._inductor" not in source

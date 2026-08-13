@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
 from shadowspill.pytorch import TensorSpec
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 
 
 class _AliasedModule(nn.Module):

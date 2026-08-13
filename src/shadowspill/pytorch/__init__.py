@@ -1,5 +1,7 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
+from .api import plan_forward, plan_step
+from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
     CaptureError,
     InputGuardError,
@@ -8,8 +10,7 @@ from .contracts import (
     PlanningError,
     TensorSpec,
 )
-from .partition import PartitionPolicy, PartitionSpec
-from .public import (
+from .diagnostics import (
     DiagnosticsHandle,
     ExecutionTiming,
     PlanAllocationEvent,
@@ -21,8 +22,6 @@ from .public import (
     PlanGraphPair,
     PlanGraphProfile,
     PlanMutationBinding,
-    PlannedForward,
-    PlannedTrainStep,
     PlanObjectFootprint,
     PlanOutputView,
     PlanPhaseTiming,
@@ -33,10 +32,9 @@ from .public import (
     PlanUniqueStage,
     StepDiagnostics,
     StepResult,
-    plan_forward,
-    plan_step,
 )
-from .runtime import (
+from .partition import PartitionPolicy, PartitionSpec
+from .runtime_adapter import (
     MemoryPool,
     Runtime,
     RuntimeConfigurationError,

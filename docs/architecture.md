@@ -69,7 +69,20 @@ The frontend cold path is organized around immutable artifacts rather than a
 stateful planning coordinator:
 
 ```text
-pytorch/cache.py       central cache root, policy, and artifact ledger
+pytorch/
+├── api.py             public plan_forward()/plan_step() orchestration
+├── callables.py       lifecycle-owning planned callable objects
+├── contracts.py       public errors and input/objective value contracts
+├── guards.py          fixed-shape input signature validation
+└── cache.py           central cache root, policy, and artifact ledger
+
+pytorch/capture/
+├── aot.py             Export and AOTAutograd capture boundaries
+├── artifacts.py       immutable semantic graph artifacts
+├── storage.py         offline alias/view/mutation storage contract
+├── schema.py          dispatcher-schema normalization
+├── fake.py            geometry-only FakeTensor construction
+└── live_storage.py    live frontend tensor/view identity helpers
 
 pytorch/partition/
 ├── api.py             short Stage-construction orchestrator
@@ -87,12 +100,28 @@ pytorch/graph_pairs/
 ├── repository.py      structural-ABI persistence and reuse
 └── training.py        training-only composition after partitioning
 
+pytorch/compilation/
+├── compiler.py        structural task compilation and isolated measurement
+├── inductor.py        narrow version-pinned Inductor adapter
+├── layout.py          semantic-contract/physical-layout reconciliation
+├── profiling.py       measurements, structural keys, and profile repository
+├── representative.py deterministic value-bearing task inputs
+├── metadata.py        value-sensitive profiling metadata
+└── *_repository.py    compiler artifact persistence, never cache policy
+
+pytorch/optimizer/
+├── artifacts.py       optimizer tensor/task records
+├── capture.py         readable validation → discovery → recurrent capture
+└── staging.py         parameter ownership at semantic stage boundaries
+
 pytorch/planning/
 ├── artifacts.py   immutable values passed between planning phases
 ├── forward.py     forward capture → profile → Program → PressureFit composition
 ├── training.py    training capture → profile → Program → PressureFit composition
 ├── repositories.py typed artifact-repository construction
-├── admission.py   physical-cap checks and pool sealing
+├── admission/
+│   ├── physical.py physical-cap checks and pool sealing
+│   └── spatial.py exact annotated slab-timeline replay
 ├── reporting.py   PlanReport construction and lineage publication
 └── common.py      validation, phase timing, and capacity calculations
 
@@ -114,6 +143,30 @@ pytorch/lowering/
     ├── tasks.py     forward/backward/optimizer task emission
     ├── residency.py initial/final residency derivation
     └── artifacts.py immutable phase values
+
+pytorch/materialization/
+├── forward.py         forward model/input storage ownership
+└── training.py        accumulated-training and optimizer storage ownership
+
+pytorch/execution/
+├── forward.py         ordinary forward task dispatch
+├── training.py        centralized before/run/after training dispatch
+└── records.py         immutable predecoded repeated-path records
+
+pytorch/diagnostics/
+├── plan.py            immutable PlanReport/PlanDiagnostics values
+├── builders.py        deterministic report inventory construction
+├── execution.py       immutable task/allocator/transfer timing records
+└── step.py            StepResult and deferred DiagnosticsHandle
+
+pytorch/runtime_adapter/
+├── runtime.py         public PyTorch runtime configuration
+├── bridge.py          neutral-runtime execution bridge
+├── allocator.py       pluggable allocator installation
+├── abi.py             declarative compiled ABI definitions
+├── telemetry.py       allocation trace decoding
+├── trace.py           runtime trace decoding
+└── transfer_labels.py semantic fetch/evict labels
 ```
 
 Partitioning ends when ordered `Stage` occurrences and their boundary
@@ -141,3 +194,9 @@ Artifact-specific repositories retain their domain names and serialization
 contracts instead of introducing more generic `cache.py` modules. Cache code
 cannot capture, compile, lower, plan, or admit a model—it only resolves or
 persists artifacts at those explicit boundaries.
+
+The package root deliberately contains no implementation catch-all such as
+`public.py`, `runtime_bridge.py`, or `training_executor.py`. Its six files are
+only public orchestration, public contracts/guards, cache policy, and stable
+exports. Test-only numerical oracles live under `tests/`, not in the installed
+frontend.

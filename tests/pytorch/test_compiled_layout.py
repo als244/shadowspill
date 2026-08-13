@@ -4,16 +4,16 @@ import pytest
 import torch
 from torch.fx.experimental.proxy_tensor import make_fx
 
-from shadowspill.pytorch.compiled_layout import reconcile_compiled_task_layout
-from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.inductor_adapter import ExecutableRootAllocation
-from shadowspill.pytorch.output_contract import capture_task_storage_contract
-from shadowspill.pytorch.profiling import (
+from shadowspill.pytorch.capture.storage import capture_task_storage_contract
+from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
+from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
+from shadowspill.pytorch.compilation.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from shadowspill.pytorch.contracts import CaptureError
 
 
 def _measurement(

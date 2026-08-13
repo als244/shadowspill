@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch.aot import capture_training
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.aot import capture_training
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairRepository,
@@ -64,8 +64,7 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
     assert len(stages) == 4
     assert all(
         tuple(
-            (item.option_id, item.memory_budget)
-            for item in stage.graph_pairs.variants
+            (item.option_id, item.memory_budget) for item in stage.graph_pairs.variants
         )
         == (("save", None), ("recompute", 1.0))
         for stage in stages

@@ -6,12 +6,12 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.ir import ObjectRole, Persistence
+from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
-from ...capture import AotGraphPair
-from ...compiled_layout import CompiledTaskLayout
 from ...contracts import CaptureError
 from ...graph_pairs import DifferentiatedStage, PartitionedTrainingCapture
-from ...output_contract import TaskStorageContract
 from ..catalog import ObjectCatalog, TensorSlot
 from ..profiles import TaskProfileCatalog
 from ..task_binding import (

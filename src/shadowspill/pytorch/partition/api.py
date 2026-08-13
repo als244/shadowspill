@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-from ..aot import ExportCapture
+from shadowspill.pytorch.capture.aot import ExportCapture
+
 from .artifacts import PartitionedExport
 from .policy import PartitionSpec, resolve_partition_assignments
 from .provenance import build_stage_examples, root_input_provenance

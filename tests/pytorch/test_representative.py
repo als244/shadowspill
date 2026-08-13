@@ -4,14 +4,16 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch.capture import (
+from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
     TaskInputRole,
 )
+from shadowspill.pytorch.compilation.representative import (
+    materialize_representative_inputs,
+)
 from shadowspill.pytorch.contracts import CaptureError, TensorSpec
 from shadowspill.pytorch.materialization import representative_cpu_inputs
-from shadowspill.pytorch.representative import materialize_representative_inputs
 
 
 class _Add(nn.Module):

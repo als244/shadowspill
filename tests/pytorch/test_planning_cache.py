@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch._profiling_metadata import (
+from shadowspill.pytorch.cache import PlanningCache
+from shadowspill.pytorch.compilation.metadata import (
     canonicalize_profiling_metadata,
     training_profiling_metadata,
 )
-from shadowspill.pytorch.cache import PlanningCache
 
 
 def test_profiling_metadata_is_canonical_and_position_aligned() -> None:

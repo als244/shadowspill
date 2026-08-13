@@ -10,14 +10,20 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch._allocator import install_allocator
-from shadowspill.pytorch.aot import capture_forward
-from shadowspill.pytorch.capture import capture_forward_stage_artifacts
-from shadowspill.pytorch.compiler import CudaTaskProfiler, profile_environment
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.aot import capture_forward
+from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.compilation.compiler import (
+    CudaTaskProfiler,
+    profile_environment,
+)
+from shadowspill.pytorch.compilation.profiling import (
+    ProfileCache,
+    profile_unique_artifacts,
+)
 from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
-from shadowspill.pytorch.profiling import ProfileCache, profile_unique_artifacts
+from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 
 class _Repeated(nn.Module):

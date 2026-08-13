@@ -11,13 +11,20 @@ from torch.utils._pytree import TreeSpec
 from shadowspill.ir import ExecutionPlan
 from shadowspill.planner import PressureFitResult
 from shadowspill.planner._cache import CachedPressureFitResult
+from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.compilation.compiler import (
+    CompiledTaskSet,
+    CudaTaskProfiler,
+    ResolvedTaskManifests,
+)
+from shadowspill.pytorch.compilation.metadata import ProfilingMetadata
+from shadowspill.pytorch.compilation.profiling import ProfilingResult, TaskMeasurement
+from shadowspill.pytorch.materialization.training import TrainingMaterializedState
+from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTaskArtifact
+from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.simulator import SimulationConfig
 
-from .._allocator import InstalledAllocator
-from .._profiling_metadata import ProfilingMetadata
-from ..aot import ExportCapture, TrainingObjectiveCapture
-from ..capture import GraphArtifact
-from ..compiler import CompiledTaskSet, CudaTaskProfiler, ResolvedTaskManifests
 from ..graph_pairs import PartitionedTrainingCapture
 from ..guards import InputSignature
 from ..lowering.forward import LoweredForwardProgram
@@ -26,10 +33,7 @@ from ..lowering.training import (
     LoweredTrainingProgram,
     TrainingStorageLayout,
 )
-from ..optimizer import OptimizerCapture, OptimizerTaskArtifact
 from ..partition import PartitionedExport
-from ..profiling import ProfilingResult, TaskMeasurement
-from ..training_materialization import TrainingMaterializedState
 
 
 @dataclass(frozen=True, slots=True)

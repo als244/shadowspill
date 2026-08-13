@@ -7,10 +7,15 @@ from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule
 from torch.utils._pytree import tree_flatten
 
-from ..aot import ExportCapture
-from ..capture import TaskInputProvenance, TaskInputRole, TensorGeometry
+from shadowspill.pytorch.capture.aot import ExportCapture
+from shadowspill.pytorch.capture.artifacts import (
+    TaskInputProvenance,
+    TaskInputRole,
+    TensorGeometry,
+)
+from shadowspill.pytorch.capture.storage import ExplicitMutation
+
 from ..contracts import CaptureError
-from ..output_contract import ExplicitMutation
 from .artifacts import Stage, StageExample, StageValueSource
 from .sources import stage_value_source
 from .split import SplitExportGraph

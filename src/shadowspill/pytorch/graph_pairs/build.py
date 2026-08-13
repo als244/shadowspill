@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from ..aot import capture_graph_pair
-from ..capture import GraphArtifact
+from shadowspill.pytorch.capture.aot import capture_graph_pair
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+
 from ..partition.artifacts import StageExample
 from .artifacts import GraphPairPortfolio, GraphPairVariant
 

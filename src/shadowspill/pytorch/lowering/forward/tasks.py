@@ -13,8 +13,8 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskSpec,
 )
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
-from ...capture import GraphArtifact
 from ...partition import PartitionedExport, StageExample
 from ..catalog import ObjectCatalog, TensorSlot
 from ..task_binding import TaskBindingResolver, resolve_stage_input_slots

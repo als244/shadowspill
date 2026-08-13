@@ -7,10 +7,10 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.export.graph_signature import InputKind
 
 from shadowspill.pytorch import ObjectiveResult
-from shadowspill.pytorch.aot import TrainingCapture, capture_training
+from shadowspill.pytorch.capture.aot import TrainingCapture, capture_training
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.training import ObjectivePairExecutor
+from tests.pytorch.training_oracle import ObjectivePairExecutor
 
 
 class _Model(nn.Module):

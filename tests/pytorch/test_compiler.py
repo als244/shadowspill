@@ -10,27 +10,29 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import compiler as compiler_module
-from shadowspill.pytorch import inductor_adapter as inductor_module
-from shadowspill.pytorch._abi import Allocation
-from shadowspill.pytorch._telemetry import AllocationTelemetryError
-from shadowspill.pytorch.capture import GraphArtifact
-from shadowspill.pytorch.compiler import (
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.compilation import compiler as compiler_module
+from shadowspill.pytorch.compilation import inductor as inductor_module
+from shadowspill.pytorch.compilation.compiler import (
     CompiledTask,
     CudaTaskProfiler,
     compile_artifact,
     materialize_example_arguments,
     profile_environment,
 )
-from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.inductor_adapter import (
+from shadowspill.pytorch.compilation.inductor import (
     ExecutableRootAllocation,
     ExecutableTaskManifest,
     compile_explicit_inductor_task,
     compile_inductor_task,
 )
+from shadowspill.pytorch.compilation.representative import (
+    materialize_representative_inputs,
+)
+from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.pytorch.representative import materialize_representative_inputs
+from shadowspill.pytorch.runtime_adapter.abi import Allocation
+from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 
 
 class _Add(nn.Module):
@@ -567,7 +569,7 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
 def test_measurement_releases_cuda_examples_between_structural_abis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.pytorch.profiling import TaskMeasurement
+    from shadowspill.pytorch.compilation.profiling import TaskMeasurement
 
     artifact = _artifact()
     examples = [torch.ones(8)]

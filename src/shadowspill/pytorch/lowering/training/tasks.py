@@ -13,9 +13,9 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskSpec,
 )
+from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTask
 
 from ...contracts import CaptureError
-from ...optimizer import OptimizerCapture, OptimizerTask
 from ..profiles import TaskProfileCatalog
 from .artifacts import (
     GradientBinding,

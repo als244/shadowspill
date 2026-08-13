@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from torch.fx import GraphModule
 
-from ..capture import TaskInputProvenance
-from ..output_contract import ExplicitMutation
+from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
+from shadowspill.pytorch.capture.storage import ExplicitMutation
 
 
 @dataclass(frozen=True, slots=True)

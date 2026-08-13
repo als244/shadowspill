@@ -17,16 +17,21 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from qualification.numerical.cases import build_case
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import Runtime
-from shadowspill.pytorch._abi import AdapterStatistics
-from shadowspill.pytorch.aot import capture_training_objective
-from shadowspill.pytorch.compiler import compile_artifact, materialize_example_arguments
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.aot import capture_training_objective
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.compilation.compiler import (
+    compile_artifact,
+    materialize_example_arguments,
+)
+from shadowspill.pytorch.compilation.representative import (
+    materialize_representative_inputs,
+)
 from shadowspill.pytorch.materialization import representative_cpu_inputs
-from shadowspill.pytorch.partition import partition_training_capture
-from shadowspill.pytorch.representative import materialize_representative_inputs
-from shadowspill.pytorch.training_materialization import (
+from shadowspill.pytorch.materialization.training import (
     representative_training_arguments,
 )
+from shadowspill.pytorch.partition import partition_training_capture
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 
 
 def _arguments(tokens: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:

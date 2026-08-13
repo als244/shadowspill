@@ -7,12 +7,12 @@ import torch.nn as nn
 from torch.export.graph_signature import InputKind
 
 from shadowspill.ir import ObjectRole, Persistence
+from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.live_storage import live_view_key
+from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTensorRole
 
-from ..._live_storage import live_view_key
-from ...aot import TrainingObjectiveCapture
 from ...contracts import CaptureError
 from ...graph_pairs import PartitionedTrainingCapture
-from ...optimizer import OptimizerCapture, OptimizerTensorRole
 from ..catalog import ObjectCatalog, TensorSlot, register_model_state
 from ..program import execution_device_id, publish_storage_program
 from .artifacts import (

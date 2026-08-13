@@ -2375,3 +2375,22 @@ the ignored internal progress log before this tracked summary is updated.
   that embedded the base-Conda Python interpreter and failed before tests on an
   incompatible Torch private API. Reconfiguring that same tree explicitly with
   the pinned `shadowspill` interpreter made all eight PyTorch canaries pass.
+
+## 2026-08-13 — PyTorch frontend package ownership cleanup
+
+- Replaced the flat 36-module PyTorch package root with explicit capture,
+  compilation, optimizer, materialization, execution, diagnostics, admission,
+  and runtime-adapter packages. Public imports remain stable; private flat
+  implementation paths were intentionally removed.
+- `plan_forward()`/`plan_step()`, planned callable lifecycle, plan diagnostics,
+  and step diagnostics now have separate focused modules. Runtime telemetry and
+  compiler dependencies are explicit, with a side-effect-free compilation
+  package initializer preventing an import cycle.
+- Optimizer capture now reads as validation, isolated state discovery, and
+  recurrent graph/opaque-task publication. Training execution predecodes an
+  immutable `PlanRun` outside the repeated path. Parameter stage ownership now
+  belongs to optimizer staging rather than graph-pair construction.
+- Pruned the installed test-only objective-pair executor and the obsolete
+  monolithic public module. Ruff, strict mypy, and the full PyTorch test suite
+  pass; no planner, simulator, schedule, arithmetic, or runtime behavior was
+  changed.

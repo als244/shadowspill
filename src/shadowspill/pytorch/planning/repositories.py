@@ -12,12 +12,12 @@ from dataclasses import dataclass
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import PressureFitOptions
 from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
+from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
+from shadowspill.pytorch.compilation.profiling import ProfileCache
 from shadowspill.simulator import SimulationConfig
 
-from ..aot import ExportCapture, export_capture_digest
 from ..cache import PlanningCache
 from ..graph_pairs import GraphPairRepository
-from ..profiling import ProfileCache
 
 
 @dataclass(frozen=True, slots=True)

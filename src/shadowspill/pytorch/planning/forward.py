@@ -13,14 +13,13 @@ from torch.utils._pytree import TreeSpec, tree_flatten
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner._cache import CachedPressureFitResult
-from shadowspill.runtime import AdmissionError, SlabReplay
-
-from .._plan_diagnostics import forward_stage_inventory
-from .._profiling_metadata import ProfilingMetadata, canonicalize_profiling_metadata
-from ..aot import ExportCapture, capture_forward
-from ..cache import PlanningCache
-from ..capture import GraphArtifact, capture_forward_stage_artifacts
-from ..compiler import (
+from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
+from shadowspill.pytorch.capture.artifacts import (
+    GraphArtifact,
+    capture_forward_stage_artifacts,
+)
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.compilation.compiler import (
     CompiledTaskSet,
     CudaTaskProfiler,
     ResolvedTaskManifests,
@@ -28,9 +27,20 @@ from ..compiler import (
     resolve_task_manifests,
     validate_compiled_profile,
 )
+from shadowspill.pytorch.compilation.metadata import (
+    ProfilingMetadata,
+    canonicalize_profiling_metadata,
+)
+from shadowspill.pytorch.compilation.profiling import profile_unique_artifacts
+from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
+from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.runtime import AdmissionError, SlabReplay
+
+from ..cache import PlanningCache
+from ..callables import PlannedForward
 from ..contracts import PlanningError
-from ..executor import ForwardExecutor
-from ..fake import fake_cuda_inputs, fake_cuda_model
+from ..diagnostics import PlanReport
+from ..execution import ForwardExecutor
 from ..guards import InputSignature, capture_input_signature
 from ..lowering.forward import LoweredForwardProgram, lower_partitioned_forward_program
 from ..materialization import (
@@ -43,15 +53,14 @@ from ..partition import (
     PartitionSpec,
     partition_export,
 )
-from ..profiling import profile_unique_artifacts
-from ..public import PlannedForward, PlanReport
-from ..runtime import PlanMemory
-from ..runtime_bridge import RuntimeBridge
-from ..spatial_admission import (
+from ..runtime_adapter import PlanMemory
+from .admission import (
     output_bindings_for_entrypoints,
+    physical_admission,
+    reconcile_spill_pool,
     replay_selected_schedule,
+    seal_physical_budget,
 )
-from .admission import physical_admission, reconcile_spill_pool, seal_physical_budget
 from .artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import torch
 
-from ..aot import rebind_backward_input_provenance
-from ..capture import AotGraphPair
+from shadowspill.pytorch.capture.aot import rebind_backward_input_provenance
+from shadowspill.pytorch.capture.artifacts import AotGraphPair
+
 from ..contracts import CaptureError
 from ..partition.artifacts import StageExample
 from .artifacts import GraphPairPortfolio, GraphPairVariant

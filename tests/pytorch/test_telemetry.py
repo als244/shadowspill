@@ -4,8 +4,8 @@ import ctypes
 
 import pytest
 
-from shadowspill.pytorch._abi import AllocationEvent as CAllocationEvent
-from shadowspill.pytorch._telemetry import (
+from shadowspill.pytorch.runtime_adapter.abi import AllocationEvent as CAllocationEvent
+from shadowspill.pytorch.runtime_adapter.telemetry import (
     AllocationCategory,
     AllocationEventKind,
     AllocationTelemetryError,

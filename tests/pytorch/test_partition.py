@@ -6,10 +6,10 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx import GraphModule
 
-from shadowspill.pytorch.aot import capture_forward
-from shadowspill.pytorch.capture import capture_forward_stage_artifacts
+from shadowspill.pytorch.capture.aot import capture_forward
+from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.partition import (
     partition_export,
 )

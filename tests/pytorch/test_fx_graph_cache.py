@@ -6,8 +6,8 @@ import pytest
 import torch
 from torch.fx import Graph, GraphModule
 
+from shadowspill.pytorch.compilation.fx_graph import SerializedFxGraph
 from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.fx_graph_cache import SerializedFxGraph
 
 
 def _factory_output_graph() -> GraphModule:

@@ -5,9 +5,10 @@ import copy
 import pytest
 import torch
 
-from shadowspill.pytorch import optimizer as optimizer_module
 from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
 
 
 def _initialized(
@@ -353,7 +354,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
 
 def test_optimizer_option_identity_covers_bounded_containers() -> None:
     marker = object()
-    identity = optimizer_module._optimizer_value_identity(
+    identity = optimizer_value_identity(
         {
             "tensor": torch.ones(2),
             "tuple": (1, None),

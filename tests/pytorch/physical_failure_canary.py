@@ -6,8 +6,8 @@ import ctypes
 import sys
 from pathlib import Path
 
-from shadowspill.pytorch._abi import AdapterFailure, AdapterStatistics
-from shadowspill.pytorch._allocator import install_allocator
+from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, AdapterStatistics
+from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 MIB = 1 << 20
 PLAN_VIOLATION = 6

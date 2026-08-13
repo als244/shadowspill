@@ -7,7 +7,10 @@ import pytest
 import torch
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
-from shadowspill.pytorch.runtime_bridge import RuntimeBridge, RuntimeExecutionError
+from shadowspill.pytorch.runtime_adapter.bridge import (
+    RuntimeBridge,
+    RuntimeExecutionError,
+)
 from tests.ir._examples import representative_program
 
 
@@ -18,7 +21,7 @@ class _FailureLibrary:
     def shadowspill_pytorch_allocator_failure(self, output: object) -> int:
         failure = ctypes.cast(output, ctypes.POINTER(ctypes.c_uint8))
         del failure
-        from shadowspill.pytorch._abi import AdapterFailure
+        from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 
         result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
         result.status = 4

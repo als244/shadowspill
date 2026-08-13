@@ -9,10 +9,16 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import RecomputationSelection
 from shadowspill.planner import pressurefit
-from shadowspill.pytorch.aot import capture_training
-from shadowspill.pytorch.capture import GraphArtifact
+from shadowspill.pytorch.capture.aot import capture_training
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.compilation.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskMeasurement,
+    TaskOutputInputBinding,
+)
 from shadowspill.pytorch.contracts import CaptureError
-from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.graph_pairs import GraphPairVariant, partition_training_capture
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
@@ -20,12 +26,6 @@ from shadowspill.pytorch.lowering.training import (
     lower_training_storage_layout,
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.pytorch.profiling import (
-    TaskAllocationEvent,
-    TaskAllocationOperation,
-    TaskMeasurement,
-    TaskOutputInputBinding,
-)
 from shadowspill.simulator import SimulationConfig
 
 

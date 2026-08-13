@@ -9,10 +9,14 @@ import torch
 import torch.nn as nn
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec, Persistence
+from shadowspill.pytorch.capture.live_storage import (
+    live_storage_bytes,
+    live_storage_identity,
+    live_view_key,
+)
+from shadowspill.pytorch.capture.storage import OutputView
 
-from .._live_storage import live_storage_bytes, live_storage_identity, live_view_key
 from ..contracts import CaptureError
-from ..output_contract import OutputView
 
 
 @dataclass(frozen=True, slots=True)

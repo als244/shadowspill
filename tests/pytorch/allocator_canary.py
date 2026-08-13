@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.pytorch._abi import (
+from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterCapabilities,
     AdapterStatistics,
     Allocation,
@@ -18,7 +18,10 @@ from shadowspill.pytorch._abi import (
     PhysicalMemory,
     RuntimeAction,
 )
-from shadowspill.pytorch._allocator import install_allocator, resize_spill_pool
+from shadowspill.pytorch.runtime_adapter.allocator import (
+    install_allocator,
+    resize_spill_pool,
+)
 
 
 def main() -> int:

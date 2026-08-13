@@ -9,13 +9,13 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.pytorch.compilation.compiler import CudaTaskProfiler
+from shadowspill.pytorch.compilation.profiling import ProfilingResult, TaskMeasurement
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
-from ..compiler import CudaTaskProfiler
 from ..contracts import PlanningError
-from ..profiling import ProfilingResult, TaskMeasurement
-from ..runtime import PlanMemory
+from ..runtime_adapter import PlanMemory
 
 _MIB = 1 << 20
 _SPILL_LEEWAY_MINIMUM = 256 * _MIB

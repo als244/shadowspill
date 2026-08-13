@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch._abi import (
+from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterCapabilities,
     AdapterConfig,
     AdapterFailure,
@@ -27,7 +27,7 @@ from shadowspill.pytorch._abi import (
     TraceSummary,
     configure_adapter_library,
 )
-from shadowspill.pytorch._allocator import (
+from shadowspill.pytorch.runtime_adapter.allocator import (
     AllocatorInstallError,
     InstalledAllocator,
     _function_pointer,
@@ -117,9 +117,7 @@ def test_adapter_signatures_are_configured_together() -> None:
     library = _Library()
     configure_adapter_library(library)
     assert library.shadowspill_pytorch_adapter_capabilities.restype is ctypes.c_uint32
-    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [
-        ctypes.c_char_p
-    ]
+    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [ctypes.c_char_p]
     assert library.shadowspill_pytorch_profile_range_end.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_physical_admission.argtypes == [
         ctypes.POINTER(PhysicalAdmission)

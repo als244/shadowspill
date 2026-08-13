@@ -5,18 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from shadowspill.ir import TaskProfile
-
-from ..capture import GraphArtifact
-from ..compiled_layout import (
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
+from shadowspill.pytorch.compilation.layout import (
     CompiledTaskLayout,
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
+from shadowspill.pytorch.compilation.profiling import TaskMeasurement
+from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
+
 from ..contracts import CaptureError
-from ..inductor_adapter import ExecutableRootAllocation
-from ..optimizer import OptimizerTaskArtifact
-from ..output_contract import TaskStorageContract
-from ..profiling import TaskMeasurement
 
 ProfileMeasurementKey = str | tuple[str, str | None]
 ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact

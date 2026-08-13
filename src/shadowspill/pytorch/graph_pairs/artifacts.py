@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..aot import TrainingObjectiveCapture
-from ..capture import AotGraphPair
+from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.artifacts import AotGraphPair
+
 from ..partition.artifacts import PartitionedExport, StageExample
 
 
