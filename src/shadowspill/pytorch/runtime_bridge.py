@@ -1005,7 +1005,8 @@ class RuntimeBridge:
         self,
         aliases: Sequence[str],
         materialized_aliases: Sequence[str],
-        materialized_bindings: Sequence[ObjectBinding],
+        materialized_bindings: ctypes.Array[ObjectBinding]
+        | Sequence[ObjectBinding],
     ) -> tuple[ObjectBinding, ...]:
         if len(materialized_aliases) != len(materialized_bindings):
             raise RuntimeExecutionError("runtime binding count differs")
