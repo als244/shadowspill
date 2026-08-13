@@ -19,11 +19,13 @@ from .capture import (
     AotGraphPair,
     GraphArtifact,
     ObjectiveSchema,
+    TaskInputProvenance,
+    TaskInputRole,
     capture_objective_schema,
     normalize_objective_result,
 )
 from .contracts import CaptureError, ObjectiveError, ObjectiveResult
-from .output_contract import ExplicitMutation
+from .output_contract import ExplicitMutation, StorageRootKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +143,7 @@ def _export_mutations(
             argument_name = getattr(input_spec.arg, "name", None)
             if output.kind is OutputKind.USER_INPUT_MUTATION:
                 matches = (
-                    input_spec.kind is InputKind.USER_INPUT
-                    and argument_name == target
+                    input_spec.kind is InputKind.USER_INPUT and argument_name == target
                 )
             else:
                 expected = (
@@ -159,9 +160,7 @@ def _export_mutations(
                 f"output={output_index}, kind={output.kind.name}, "
                 f"target={target!r}, candidates={candidates}"
             )
-        result.append(
-            ExportMutation(output_index, candidates[0], output.kind, target)
-        )
+        result.append(ExportMutation(output_index, candidates[0], output.kind, target))
     return tuple(result)
 
 
@@ -222,6 +221,16 @@ def inference_artifact(capture: ExportCapture) -> GraphArtifact:
     )
 
 
+def export_capture_digest(capture: ExportCapture) -> str:
+    """Return the stable semantic/input ABI of one freshly exported graph."""
+
+    return GraphArtifact.input_compatibility_digest(
+        graph_module=capture.exported_program.graph_module,
+        example_inputs=capture.flat_inputs,
+        explicit_mutations=_explicit_mutations(capture),
+    )
+
+
 def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPair:
     graph_module = capture.exported_program.graph_module
     eager_output = graph_module(*capture.flat_inputs)
@@ -245,10 +254,20 @@ def capture_graph_pair(
     root_output_positions: tuple[int, ...] | None = None,
     specialize_unit_tangents: bool = False,
     explicit_mutations: tuple[ExplicitMutation, ...] = (),
+    input_provenance: tuple[TaskInputProvenance, ...] | None = None,
 ) -> AotGraphPair:
     """Differentiate one functional graph with a flat tensor/static ABI."""
 
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
+    tensor_provenance = (
+        None
+        if input_provenance is None
+        else tuple(
+            item
+            for value, item in zip(inputs, input_provenance, strict=True)
+            if isinstance(value, torch.Tensor)
+        )
+    )
     capture_inputs = tuple(
         value.detach().requires_grad_(value.requires_grad)
         if isinstance(value, torch.Tensor)
@@ -256,6 +275,7 @@ def capture_graph_pair(
         for value in inputs
     )
     captured: dict[str, GraphArtifact] = {}
+    raw_backward: dict[str, object] = {}
 
     def forward_compiler(
         graph_module: torch.fx.GraphModule, example_inputs: Sequence[object]
@@ -265,17 +285,15 @@ def capture_graph_pair(
             graph_module=graph_module,
             example_inputs=tuple(example_inputs),
             explicit_mutations=normalized_mutations,
+            input_provenance=tensor_provenance,
         )
         return make_boxed_func(graph_module.forward)
 
     def backward_compiler(
         graph_module: torch.fx.GraphModule, example_inputs: Sequence[object]
     ) -> Any:
-        captured["backward"] = GraphArtifact.capture(
-            kind="backward",
-            graph_module=graph_module,
-            example_inputs=tuple(example_inputs),
-        )
+        raw_backward["graph_module"] = graph_module
+        raw_backward["example_inputs"] = tuple(example_inputs)
         return make_boxed_func(graph_module.forward)
 
     try:
@@ -326,12 +344,32 @@ def capture_graph_pair(
     except BaseException as exc:
         mode = "recomputation" if recomputation else "save"
         raise CaptureError(f"AOTAutograd {mode} capture failed: {exc}") from exc
-    if set(captured) != {"forward", "backward"}:
+    if set(captured) != {"forward"} or set(raw_backward) != {
+        "graph_module",
+        "example_inputs",
+    }:
         raise CaptureError("AOTAutograd did not emit a complete graph pair")
     original_output_count = len(tree_flatten(original_output)[0])
     saved = max(0, captured["forward"].output_count - original_output_count)
+    backward_graph = raw_backward["graph_module"]
+    backward_inputs = raw_backward["example_inputs"]
+    if not isinstance(backward_graph, torch.fx.GraphModule) or not isinstance(
+        backward_inputs, tuple
+    ):
+        raise CaptureError("AOTAutograd backward capture has an invalid type")
+    backward_provenance = _backward_input_provenance(
+        captured["forward"],
+        original_output_count=original_output_count,
+        saved_value_count=saved,
+        backward_argument_count=len(backward_inputs),
+    )
+    backward = GraphArtifact.capture(
+        kind="backward",
+        graph_module=backward_graph,
+        example_inputs=backward_inputs,
+        input_provenance=backward_provenance,
+    )
     specialized_count = 0
-    backward = captured["backward"]
     if specialize_unit_tangents:
         backward, specialized_count = _specialize_terminal_unit_tangents(
             backward, tuple(roots)
@@ -342,6 +380,113 @@ def capture_graph_pair(
         recomputation=recomputation,
         saved_value_count=saved,
         specialized_unit_tangent_count=specialized_count,
+    )
+
+
+def _backward_input_provenance(
+    forward: GraphArtifact,
+    *,
+    original_output_count: int,
+    saved_value_count: int,
+    backward_argument_count: int,
+) -> tuple[TaskInputProvenance, ...]:
+    """Project saved forward values and terminal tangents onto backward inputs."""
+
+    if saved_value_count > backward_argument_count:
+        raise CaptureError("AOT backward has fewer arguments than saved values")
+    views = {item.leaf_index: item for item in forward.storage_contract.output_views}
+    result: list[TaskInputProvenance] = []
+    for offset in range(saved_value_count):
+        leaf_index = original_output_count + offset
+        view = views.get(leaf_index)
+        if view is None:
+            result.append(
+                TaskInputProvenance(
+                    TaskInputRole.RESIDUAL,
+                    f"forward_output_{leaf_index}",
+                )
+            )
+            continue
+        root = forward.storage_contract.roots[view.root_id]
+        if root.kind is StorageRootKind.INPUT:
+            assert root.source_input is not None
+            try:
+                source = forward.input_provenance[root.source_input]
+            except IndexError as exc:
+                raise CaptureError(
+                    "saved forward input root is outside the task ABI"
+                ) from exc
+            result.append(_saved_input_view_provenance(source, view))
+        else:
+            result.append(
+                TaskInputProvenance(
+                    TaskInputRole.RESIDUAL,
+                    f"forward_output_{leaf_index}",
+                )
+            )
+    result.extend(
+        TaskInputProvenance(TaskInputRole.TANGENT, f"tangent_{index}")
+        for index in range(backward_argument_count - saved_value_count)
+    )
+    return tuple(result)
+
+
+def rebind_backward_input_provenance(
+    pair: AotGraphPair,
+    forward: GraphArtifact,
+) -> tuple[TaskInputProvenance, ...]:
+    """Rebuild saved-value provenance for one occurrence-local forward ABI."""
+
+    original_output_count = forward.output_count - pair.saved_value_count
+    if original_output_count < 0:
+        raise CaptureError("AOT graph pair has an invalid saved-value count")
+    return _backward_input_provenance(
+        forward,
+        original_output_count=original_output_count,
+        saved_value_count=pair.saved_value_count,
+        backward_argument_count=pair.backward.argument_count,
+    )
+
+
+def _saved_input_view_provenance(
+    source: TaskInputProvenance,
+    view: Any,
+) -> TaskInputProvenance:
+    """Preserve authentic values through an AOT-saved input view."""
+
+    reference = source.representative_value
+    if reference is None:
+        return source
+    itemsize = reference.element_size()
+    if view.dtype != str(reference.dtype) or view.offset_bytes % itemsize:
+        raise CaptureError(
+            "saved input view is incompatible with its representative storage: "
+            f"source={source.source}, dtype={view.dtype}, "
+            f"offset_bytes={view.offset_bytes}"
+        )
+    storage_bytes = reference.untyped_storage().nbytes()
+    if view.offset_bytes + view.span_bytes > storage_bytes:
+        raise CaptureError(
+            "saved input view exceeds its representative storage: "
+            f"source={source.source}, required={view.offset_bytes + view.span_bytes}, "
+            f"available={storage_bytes}"
+        )
+    # This helper runs while the enclosing AOT capture owns a FakeTensorMode.
+    # The occurrence-local reference is intentionally a real CPU tensor, so
+    # construct its metadata-only view below Python dispatch.
+    with torch._C._DisableTorchDispatch():
+        result = torch.empty(0, dtype=reference.dtype, device=reference.device)
+        result.set_(
+            reference.untyped_storage(),
+            view.offset_bytes // itemsize,
+            view.shape,
+            view.stride,
+        )
+    return TaskInputProvenance(
+        source.role,
+        source.source,
+        source.consumer_targets,
+        result,
     )
 
 
@@ -428,6 +573,7 @@ def _specialize_terminal_unit_tangents(
             kind="backward",
             graph_module=graph_module,
             example_inputs=backward.example_arguments[:-count],
+            input_provenance=backward.input_provenance[:-count],
         ),
         count,
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
@@ -15,6 +16,7 @@ import torch.nn as nn
 from shadowspill.ir import ExecutionPlan, MemoryAction, TaskProfile
 from shadowspill.planner import PressureFitResult
 
+from ._planning_cache import PlanningCache
 from .executor import ForwardExecutor
 from .guards import InputSignature, validate_training_inputs
 from .materialization import MaterializedForwardState
@@ -39,6 +41,70 @@ class PlanPhaseTiming:
             "name": self.name,
             "duration_ns": self.duration_ns,
             "duration_seconds": self.duration_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCompilerProfile:
+    """Non-overlapping compiler phases for one structural task ABI."""
+
+    structural_abi_key: str
+    phases: tuple[PlanPhaseTiming, ...]
+
+    @property
+    def total_wall_time_ns(self) -> int:
+        return sum(item.duration_ns for item in self.phases)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "structural_abi_key": self.structural_abi_key,
+            "phases": [item.as_dict() for item in self.phases],
+            "total_wall_time_ns": self.total_wall_time_ns,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanCacheArtifact:
+    """One persistent planning artifact touched by this planning call.
+
+    ``access`` distinguishes bytes actually read or written from an existing
+    artifact that merely matched a freshly produced in-memory result.  PyTorch
+    Inductor's implementation-private directory is reported as ``managed``.
+    """
+
+    category: str
+    kind: str
+    digest: str | None
+    path: str
+    access: str
+    schema: str | None = None
+    dependencies: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "category": self.category,
+            "kind": self.kind,
+            "digest": self.digest,
+            "path": self.path,
+            "access": self.access,
+            "schema": self.schema,
+            "dependencies": list(self.dependencies),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlanProfilingMetadata:
+    """Canonical planning-only workload metadata for one input position."""
+
+    position: int
+    digest: str
+    canonical_json: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "position": self.position,
+            "digest": self.digest,
+            "canonical_json": self.canonical_json,
         }
 
 
@@ -195,6 +261,36 @@ class PlanCompiledOutputView:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanRepresentativeInput:
+    """Content-free value provenance for one independently profiled input."""
+
+    position: int
+    role: str
+    source: str | None
+    value_policy: str
+    dtype: str
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    storage_offset: int
+    alias_group: int
+    consumer_targets: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "position": self.position,
+            "role": self.role,
+            "source": self.source,
+            "value_policy": self.value_policy,
+            "dtype": self.dtype,
+            "shape": list(self.shape),
+            "stride": list(self.stride),
+            "storage_offset": self.storage_offset,
+            "alias_group": self.alias_group,
+            "consumer_targets": list(self.consumer_targets),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PlanGraphProfile:
     """Measured cost and memory geometry for one executable graph ABI."""
 
@@ -218,6 +314,11 @@ class PlanGraphProfile:
     runtime_ns: int
     samples_ns: tuple[int, ...]
     provenance: str
+    representative_inputs: tuple[PlanRepresentativeInput, ...]
+    profile_phase_timings_ns: tuple[tuple[str, int], ...]
+    timing_relative_mad: float
+    timing_half_drift: float
+    timing_unstable: bool
     inputs: tuple[PlanObjectFootprint, ...]
     mutations: tuple[PlanObjectFootprint, ...]
     outputs: tuple[PlanObjectFootprint, ...]
@@ -245,13 +346,9 @@ class PlanGraphProfile:
             "semantic_output_views": [
                 item.as_dict() for item in self.semantic_output_views
             ],
-            "semantic_mutations": [
-                item.as_dict() for item in self.semantic_mutations
-            ],
+            "semantic_mutations": [item.as_dict() for item in self.semantic_mutations],
             "executable_contract_digest": self.executable_contract_digest,
-            "executable_contract_capture_ns": (
-                self.executable_contract_capture_ns
-            ),
+            "executable_contract_capture_ns": (self.executable_contract_capture_ns),
             "executable_roots": [item.as_dict() for item in self.executable_roots],
             "executable_output_views": [
                 item.as_dict() for item in self.executable_output_views
@@ -269,6 +366,15 @@ class PlanGraphProfile:
             "runtime_ns": self.runtime_ns,
             "samples_ns": list(self.samples_ns),
             "provenance": self.provenance,
+            "representative_inputs": [
+                item.as_dict() for item in self.representative_inputs
+            ],
+            "profile_phase_timings_ns": [
+                list(item) for item in self.profile_phase_timings_ns
+            ],
+            "timing_relative_mad": self.timing_relative_mad,
+            "timing_half_drift": self.timing_half_drift,
+            "timing_unstable": self.timing_unstable,
             "inputs": [item.as_dict() for item in self.inputs],
             "mutations": [item.as_dict() for item in self.mutations],
             "outputs": [item.as_dict() for item in self.outputs],
@@ -351,6 +457,8 @@ class PlanTaskStage:
     graph_pair_variant: str | None
     chosen_graph_pair_variant: str | None
     selected: bool
+    profile_compatibility_digest: str | None = None
+    profiling_metadata_digest: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -369,6 +477,8 @@ class PlanTaskStage:
             "graph_pair_variant": self.graph_pair_variant,
             "chosen_graph_pair_variant": self.chosen_graph_pair_variant,
             "selected": self.selected,
+            "profile_compatibility_digest": self.profile_compatibility_digest,
+            "profiling_metadata_digest": self.profiling_metadata_digest,
         }
 
 
@@ -395,6 +505,11 @@ class PlanDiagnostics:
     recomputation_cache_misses: int
     task_stage_map: tuple[PlanTaskStage, ...] = ()
     unique_stages: tuple[PlanUniqueStage, ...] = ()
+    compiler_phase_timings_ns: tuple[tuple[str, int], ...] = ()
+    compiler_profiles: tuple[PlanCompilerProfile, ...] = ()
+    cache_directories: tuple[tuple[str, str], ...] = ()
+    cache_artifacts: tuple[PlanCacheArtifact, ...] = ()
+    profiling_metadata: tuple[PlanProfilingMetadata, ...] = ()
 
     @property
     def measured_wall_time_ns(self) -> int:
@@ -413,6 +528,22 @@ class PlanDiagnostics:
                 "cache_hits": self.profile_cache_hits,
                 "cache_misses": self.profile_cache_misses,
             },
+            "compiler": {
+                "phases": [
+                    {"name": name, "duration_ns": duration}
+                    for name, duration in self.compiler_phase_timings_ns
+                ],
+                "measured_wall_time_ns": sum(
+                    duration for _name, duration in self.compiler_phase_timings_ns
+                ),
+                "structural_abis": {
+                    item.structural_abi_key: item.as_dict()
+                    for item in self.compiler_profiles
+                },
+            },
+            "cache_directories": dict(self.cache_directories),
+            "cache_artifacts": [item.as_dict() for item in self.cache_artifacts],
+            "profiling_metadata": [item.as_dict() for item in self.profiling_metadata],
             "capture": {
                 "stage_count": self.captured_stage_count,
                 "aot_unique_stage_abis": self.aot_unique_stage_abis,
@@ -812,11 +943,26 @@ def plan_forward(
     execution_device: int | str | torch.device | None = None,
     partition: str = "auto",
     verbose: bool = True,
+    planning_cachedir: str | os.PathLike[str] | None = None,
+    profiling_metadata: object = None,
+    save_plan: bool = True,
+    force_fresh: bool = False,
+    overwrite_plan: bool = False,
+    implementation_revision: str | None = None,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
     The runtime and pool roles are explicit. The original model remains
-    runtime-owned until the returned callable is closed.
+    runtime-owned until the returned callable is closed. ``profiling_metadata``
+    is a JSON-compatible, key-only description of value-sensitive profiling
+    behavior. It is not passed to the model or returned callable.
+
+    ``planning_cachedir`` selects the shared artifact store. ``force_fresh``
+    disables cache reads; ``save_plan`` controls writes; and
+    ``overwrite_plan`` replaces an existing identity only during a saved fresh
+    run. ``implementation_revision`` invalidates compiler/profile artifacts
+    when a lower-level custom implementation changes without changing its
+    exported graph.
     """
 
     from .session import build_forward
@@ -828,14 +974,24 @@ def plan_forward(
         spill_budget=spill_budget,
         execution_device=execution_device,
     )
+    cache = PlanningCache.resolve(
+        planning_cachedir,
+        save_plan=save_plan,
+        force_fresh=force_fresh,
+        overwrite_plan=overwrite_plan,
+        implementation_revision=implementation_revision,
+    )
     try:
-        return build_forward(
-            model,
-            example_inputs=example_inputs,
-            memory=memory,
-            partition=partition,
-            verbose=verbose,
-        )
+        with cache.activate_pytorch():
+            return build_forward(
+                model,
+                example_inputs=example_inputs,
+                memory=memory,
+                partition=partition,
+                verbose=verbose,
+                planning_cache=cache,
+                profiling_metadata=profiling_metadata,
+            )
     except BaseException as error:
         try:
             runtime._abort_plan()
@@ -859,12 +1015,23 @@ def plan_step(
     partition: str = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
+    planning_cachedir: str | os.PathLike[str] | None = None,
+    profiling_metadata: Sequence[object] | None = None,
+    save_plan: bool = True,
+    force_fresh: bool = False,
+    overwrite_plan: bool = False,
+    implementation_revision: str | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
     ``verbose=True`` reports each planning phase and unique structural ABI as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
+
+    ``profiling_metadata`` has one JSON-compatible entry per example
+    microbatch. It only distinguishes value-sensitive task measurements and
+    their downstream plans; it is never passed to the objective or runtime.
+    Cache policy arguments have the same meaning as :func:`plan_forward`.
     """
 
     from .training_session import build_training
@@ -876,17 +1043,27 @@ def plan_step(
         spill_budget=spill_budget,
         execution_device=execution_device,
     )
+    cache = PlanningCache.resolve(
+        planning_cachedir,
+        save_plan=save_plan,
+        force_fresh=force_fresh,
+        overwrite_plan=overwrite_plan,
+        implementation_revision=implementation_revision,
+    )
     try:
-        return build_training(
-            model,
-            objective=objective,
-            opt=opt,
-            example_inputs=example_inputs,
-            memory=memory,
-            partition=partition,
-            optimizer_ordering=optimizer_ordering,
-            verbose=verbose,
-        )
+        with cache.activate_pytorch():
+            return build_training(
+                model,
+                objective=objective,
+                opt=opt,
+                example_inputs=example_inputs,
+                memory=memory,
+                partition=partition,
+                optimizer_ordering=optimizer_ordering,
+                verbose=verbose,
+                planning_cache=cache,
+                profiling_metadata=profiling_metadata,
+            )
     except BaseException as error:
         try:
             runtime._abort_plan()
@@ -899,8 +1076,10 @@ __all__ = [
     "DiagnosticsHandle",
     "ExecutionTiming",
     "PlanAllocationEvent",
+    "PlanCacheArtifact",
     "PlanCompiledOutputView",
     "PlanCompiledRoot",
+    "PlanCompilerProfile",
     "PlanDiagnostics",
     "PlanGraphPair",
     "PlanGraphProfile",
@@ -908,6 +1087,7 @@ __all__ = [
     "PlanObjectFootprint",
     "PlanOutputView",
     "PlanPhaseTiming",
+    "PlanProfilingMetadata",
     "PlanReport",
     "PlanStorageRoot",
     "PlanTaskStage",

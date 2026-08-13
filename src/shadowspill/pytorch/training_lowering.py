@@ -56,6 +56,8 @@ from .output_contract import TaskStorageContract
 from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 
+ProfileMeasurementKey = str | tuple[str, str | None]
+
 
 @dataclass(frozen=True, slots=True)
 class GradientBinding:
@@ -204,7 +206,7 @@ def lower_training_storage_layout(
 def lower_partitioned_training_program(
     model: nn.Module,
     captures: tuple[PartitionedTrainingCapture, ...],
-    measurements: dict[str, TaskMeasurement],
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     optimizer: OptimizerCapture,
     *,
     storage_contracts: Mapping[str, TaskStorageContract] | None = None,
@@ -214,6 +216,8 @@ def lower_partitioned_training_program(
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     lowering_cache: TrainingLoweringCache | None = None,
+    profiling_metadata_digests: tuple[str, ...] | None = None,
+    profile_compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
 ) -> LoweredTrainingProgram:
     """Compose stage-local graph pairs into one accumulated training program."""
 
@@ -225,6 +229,15 @@ def lower_partitioned_training_program(
         raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     if optimizer_ordering not in {"stage_interleaved", "tail"}:
         raise CaptureError(f"unknown optimizer ordering {optimizer_ordering!r}")
+    metadata_by_position: tuple[str | None, ...]
+    if profiling_metadata_digests is None:
+        metadata_by_position = (None,) * len(captures)
+    else:
+        if len(profiling_metadata_digests) != len(captures):
+            raise CaptureError(
+                "profiling metadata must have one digest per training microbatch"
+            )
+        metadata_by_position = profiling_metadata_digests
     cache = lowering_cache or TrainingLoweringCache()
     device_id = f"cuda_{device_ordinal}"
     inventory = ObjectCatalog(device_id=device_id)
@@ -253,13 +266,35 @@ def lower_partitioned_training_program(
 
     def measurement_for(
         artifact: GraphArtifact | OptimizerTaskArtifact,
+        metadata_digest: str | None,
     ) -> TaskMeasurement:
-        measurement = measurements.get(artifact.compatibility_digest)
+        lookup = (artifact.compatibility_digest, metadata_digest)
+        measurement = measurements.get(lookup)
+        if measurement is None and profiling_metadata_digests is None:
+            measurement = measurements.get(artifact.compatibility_digest)
         if measurement is None:
             raise CaptureError(
-                f"training profile scatter is missing {artifact.compatibility_digest}"
+                "training profile scatter is missing "
+                f"artifact={artifact.compatibility_digest}, "
+                f"profiling_metadata={metadata_digest}"
             )
         return measurement
+
+    def profile_compatibility_digest(
+        artifact: GraphArtifact | OptimizerTaskArtifact,
+        metadata_digest: str | None,
+    ) -> str:
+        if profile_compatibility_digests is None:
+            return artifact.compatibility_digest
+        lookup = (artifact.compatibility_digest, metadata_digest)
+        try:
+            return profile_compatibility_digests[lookup]
+        except KeyError as exc:
+            raise CaptureError(
+                "training profile identity is missing "
+                f"artifact={artifact.compatibility_digest}, "
+                f"profiling_metadata={metadata_digest}"
+            ) from exc
 
     def root_allocations_for(
         artifact: GraphArtifact,
@@ -275,10 +310,14 @@ def lower_partitioned_training_program(
             ) from exc
 
     def profile_id(
-        artifact: GraphArtifact | OptimizerTaskArtifact, extra_workspace: int = 0
+        artifact: GraphArtifact | OptimizerTaskArtifact,
+        extra_workspace: int = 0,
+        *,
+        metadata_digest: str | None = None,
     ) -> str:
-        measurement = measurement_for(artifact)
-        key = f"{artifact.compatibility_digest}:{extra_workspace}"
+        measurement = measurement_for(artifact, metadata_digest)
+        compatibility_digest = profile_compatibility_digest(artifact, metadata_digest)
+        key = f"{compatibility_digest}:{extra_workspace}"
         existing = profile_by_digest.get(key)
         if existing is not None:
             return existing
@@ -289,13 +328,16 @@ def lower_partitioned_training_program(
                 result,
                 measurement.runtime_ns,
                 measurement.workspace_charged_bytes + extra_workspace,
-                artifact.compatibility_digest,
+                compatibility_digest,
             )
         )
         return result
 
-    def mutation_transition_bytes(artifact: GraphArtifact) -> int:
-        measurement = measurement_for(artifact)
+    def mutation_transition_bytes(
+        artifact: GraphArtifact,
+        metadata_digest: str | None,
+    ) -> int:
+        measurement = measurement_for(artifact, metadata_digest)
         contract = contract_for(artifact)
         layout = cache.layout(
             artifact,
@@ -305,11 +347,14 @@ def lower_partitioned_training_program(
         )
         return replacement_transition_bytes(contract, layout)
 
-    def compiled_layout_for(artifact: GraphArtifact) -> CompiledTaskLayout:
+    def compiled_layout_for(
+        artifact: GraphArtifact,
+        metadata_digest: str | None,
+    ) -> CompiledTaskLayout:
         return cache.layout(
             artifact,
             contract_for(artifact),
-            measurement_for(artifact),
+            measurement_for(artifact, metadata_digest),
             root_allocations_for(artifact),
         )
 
@@ -327,6 +372,7 @@ def lower_partitioned_training_program(
     public_objects_by_position: dict[int, tuple[str, ...]] = {}
 
     for position, capture in enumerate(captures):
+        metadata_digest = metadata_by_position[position]
         position_boundaries: list[tuple[str, ...]] = []
         for stage_index, stage in enumerate(capture.stages):
             leaves, _ = tree_flatten(stage.example.output)
@@ -359,7 +405,7 @@ def lower_partitioned_training_program(
                 inventory,
                 save_pair.forward,
                 save_inputs,
-                compiled_layout_for(save_pair.forward),
+                compiled_layout_for(save_pair.forward, metadata_digest),
                 storage_contract=contract_for(save_pair.forward),
             )
             ids: list[str] = []
@@ -421,6 +467,7 @@ def lower_partitioned_training_program(
 
     prepared: list[list[dict[str, _PreparedStageVariant]]] = []
     for position, capture in enumerate(captures):
+        metadata_digest = metadata_by_position[position]
         position_variants: list[dict[str, _PreparedStageVariant]] = []
         for stage_index, stage in enumerate(capture.stages):
             variants: dict[str, _PreparedStageVariant] = {}
@@ -455,7 +502,7 @@ def lower_partitioned_training_program(
                     forward_inputs,
                     canonical_outputs,
                     inventory,
-                    compiled_layout_for(pair.forward),
+                    compiled_layout_for(pair.forward, metadata_digest),
                     contract_for(pair.forward),
                     context=(
                         f"microbatch={position}, stage={stage_index}, "
@@ -485,7 +532,7 @@ def lower_partitioned_training_program(
                             gradient_by_parameter,
                             cotangent_by_activation,
                             inventory,
-                            compiled_layout_for(pair.backward),
+                            compiled_layout_for(pair.backward, metadata_digest),
                             contract_for(pair.backward),
                         )
                     )
@@ -555,6 +602,7 @@ def lower_partitioned_training_program(
         )
 
     for position, position_variants in enumerate(prepared):
+        metadata_digest = metadata_by_position[position]
         previous_forward_ids = completion_ids
         for stage_index, variants in enumerate(position_variants):
             current_ids: list[str] = []
@@ -573,7 +621,11 @@ def lower_partitioned_training_program(
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
                     profile_id(
                         item.pair.forward,
-                        mutation_transition_bytes(item.pair.forward),
+                        mutation_transition_bytes(
+                            item.pair.forward,
+                            metadata_digest,
+                        ),
+                        metadata_digest=metadata_digest,
                     ),
                     dependencies=_unique(dependencies),
                     inputs=_unique(slot.object_id for slot in item.forward_inputs),
@@ -658,7 +710,11 @@ def lower_partitioned_training_program(
                 task = TaskSpec(
                     task_id,
                     ResourceSpec(device_id, ResourceKind.COMPUTE),
-                    profile_id(item.pair.backward, mutation_bytes),
+                    profile_id(
+                        item.pair.backward,
+                        mutation_bytes,
+                        metadata_digest=metadata_digest,
+                    ),
                     dependencies=_unique(dependencies),
                     inputs=_unique(inputs),
                     outputs=tuple(

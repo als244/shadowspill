@@ -188,6 +188,8 @@ def summarize_task_workspace(
         and event.allocation_id in persistent
     )
     live: dict[int, tuple[int, int]] = {}
+    live_requested = 0
+    live_charged = 0
     peak_requested = 0
     peak_charged = 0
     peak_extents: tuple[int, ...] = ()
@@ -205,13 +207,16 @@ def summarize_task_workspace(
                 event.requested_bytes,
                 event.charged_bytes,
             )
+            live_requested += event.requested_bytes
+            live_charged += event.charged_bytes
         elif event.kind is AllocationEventKind.LOGICAL_FREED:
-            live.pop(event.allocation_id, None)
-        requested = sum(item[0] for item in live.values())
-        charged = sum(item[1] for item in live.values())
-        if charged > peak_charged:
-            peak_requested = requested
-            peak_charged = charged
+            retired = live.pop(event.allocation_id, None)
+            if retired is not None:
+                live_requested -= retired[0]
+                live_charged -= retired[1]
+        if live_charged > peak_charged:
+            peak_requested = live_requested
+            peak_charged = live_charged
             peak_extents = tuple(sorted(item[1] for item in live.values()))
     return TaskWorkspaceProfile(
         task_id=task_id,

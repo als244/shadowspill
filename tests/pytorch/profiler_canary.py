@@ -14,6 +14,7 @@ from shadowspill.pytorch._allocator import install_allocator
 from shadowspill.pytorch.aot import capture_forward
 from shadowspill.pytorch.compiler import CudaTaskProfiler, profile_environment
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import capture_forward_stages, partition_export
 from shadowspill.pytorch.profiling import ProfileCache, profile_unique_artifacts
 
@@ -38,12 +39,23 @@ def main() -> int:
         provider_headroom_bytes=512 << 20,
         spill_pool_bytes=64 << 20,
     )
+    real_model = _Repeated()
+    real_inputs = (torch.randn(16, 512),)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_Repeated(), mode)
-    inputs = fake_cuda_inputs([torch.randn(16, 512)], mode)
+    model = fake_cuda_model(real_model, mode)
+    inputs = fake_cuda_inputs(real_inputs, mode)
     with mode, torch.no_grad():
+        capture = capture_forward(model, inputs)
+        representative_roots = tuple(
+            value.detach() if isinstance(value, torch.Tensor) else value
+            for value in flat_runtime_arguments(capture, real_model, real_inputs)
+        )
         artifacts = capture_forward_stages(
-            partition_export(capture_forward(model, inputs), model)
+            partition_export(
+                capture,
+                model,
+                representative_root_inputs=representative_roots,
+            )
         )
     if len(artifacts) != 2:
         raise AssertionError("canary did not produce two task positions")

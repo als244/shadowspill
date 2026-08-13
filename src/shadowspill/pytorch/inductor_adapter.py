@@ -19,16 +19,26 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import torch
-from torch._guards import TracingContext
+from torch._guards import TracingContext, detect_fake_mode, tracing
 from torch._inductor import config as inductor_config
-from torch._inductor.compile_fx import compile_fx, compile_fx_inner
+from torch._inductor.compile_fx import (  # type: ignore[attr-defined]
+    compile_fx,
+    compile_fx_forward,
+    compile_fx_inner,
+    create_compiler_config_extra,
+    select_decomp_table,
+)
 from torch._inductor.graph import GraphLowering
 from torch._inductor.utils import run_and_get_graph_lowering
+from torch._inductor.virtualized import V
+from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 from torch.fx import GraphModule
+from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.experimental.symbolic_shapes import ShapeEnv
+from torch.utils._pytree import tree_flatten, tree_unflatten
 
 from ._inductor_manifest_cache import (
     CachedTaskManifest,
@@ -201,6 +211,7 @@ class InductorCompilation:
 
     function: Callable[..., object]
     manifest: ExecutableTaskManifest
+    phase_timings_ns: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,27 +234,67 @@ class _GraphLoweringManifest:
 
 
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
+_COMPILATION_PHASE_ORDER = (
+    "shadowspill_compiler_input_setup",
+    "torch_decomposition_normalization",
+    "shadowspill_output_abi_normalization",
+    "torch_compiler_configuration",
+    "shadowspill_input_alias_normalization",
+    "shadowspill_optimized_contract",
+    "torch_inductor_core",
+    "shadowspill_executable_contract",
+    "shadowspill_manifest_assembly",
+    "shadowspill_manifest_sidecar",
+    "torch_compile_fx_forward_orchestration",
+    "shadowspill_callable_wrapper",
+)
 
 
-def compile_inductor_task(
-    graph_module: GraphModule,
-    example_inputs: Sequence[object],
-    *,
+def _ordered_compilation_timings(
+    values: Mapping[str, int],
+) -> tuple[tuple[str, int], ...]:
+    """Return non-overlapping compiler phases in a stable public order."""
+
+    ordered = [(name, values.get(name, 0)) for name in _COMPILATION_PHASE_ORDER]
+    known = set(_COMPILATION_PHASE_ORDER)
+    ordered.extend(
+        sorted((name, value) for name, value in values.items() if name not in known)
+    )
+    return tuple((name, value) for name, value in ordered if value)
+
+
+def _manifest_inner_compile(
     semantic_contract: TaskStorageContract,
-) -> InductorCompilation:
-    """Compile and capture the callable-visible optimized output ABI."""
+    manifests: list[ExecutableTaskManifest],
+    *,
+    canonicalize_input_aliases: bool = False,
+    phase_timings: dict[str, int] | None = None,
+) -> Callable[..., object]:
+    """Build the common Inductor callback that publishes one physical ABI."""
 
-    manifests: list[ExecutableTaskManifest] = []
     inner_backend: Any = compile_fx_inner
-    compilation_started = time.perf_counter_ns()
-    source_graph = copy.deepcopy(graph_module)
+
+    def record(name: str, started: int) -> int:
+        duration = time.perf_counter_ns() - started
+        if phase_timings is not None:
+            phase_timings[name] = phase_timings.get(name, 0) + duration
+        return duration
 
     def inner_compile(
         optimized_graph: GraphModule,
         optimized_inputs: Sequence[object],
         **options: Any,
     ) -> object:
-        started = time.perf_counter_ns()
+        alias_started = time.perf_counter_ns()
+        if canonicalize_input_aliases:
+            _canonicalize_input_alias_outputs(
+                optimized_graph,
+                semantic_contract,
+                tuple(optimized_inputs),
+            )
+        alias_ns = record("shadowspill_input_alias_normalization", alias_started)
+
+        contract_started = time.perf_counter_ns()
         inner_contract = capture_task_storage_contract(
             optimized_graph,
             tuple(optimized_inputs),
@@ -260,11 +311,12 @@ def compile_inductor_task(
             and tracing_context.fake_mode is not None
             and tracing_context.fake_mode.shape_env is None
         ):
-            # Direct compile_fx creates a fixed-shape FakeTensorMode without a
-            # ShapeEnv. Inductor then bypasses only its inner FX graph cache.
-            # Attach the missing, empty environment to that exact compiler
-            # mode so caching does not change arguments or physical layout.
             tracing_context.fake_mode.shape_env = ShapeEnv()
+        optimized_contract_ns = record(
+            "shadowspill_optimized_contract", contract_started
+        )
+
+        inductor_started = time.perf_counter_ns()
         with _GRAPH_LOWERING_CAPTURE_LOCK:
             compiled, graph_lowerings = run_and_get_graph_lowering(
                 lambda: inner_backend(
@@ -273,25 +325,36 @@ def compile_inductor_task(
                     **options,
                 )
             )
+        record("torch_inductor_core", inductor_started)
+
+        sidecar_started = time.perf_counter_ns()
         cache_key = _fx_graph_cache_key(compiled)
+        record("shadowspill_manifest_sidecar", sidecar_started)
         if len(graph_lowerings) == 1:
+            executable_started = time.perf_counter_ns()
             executable = _graph_lowering_contract(
                 graph_lowerings[0],
                 optimized_graph,
                 inner_contract,
                 semantic_contract,
             )
-            capture_ns = time.perf_counter_ns() - started
+            executable_contract_ns = record(
+                "shadowspill_executable_contract", executable_started
+            )
+            manifest_started = time.perf_counter_ns()
             manifest = _make_manifest(
                 semantic_contract,
                 optimized_contract,
                 executable.storage_contract,
                 executable.root_allocations,
-                capture_ns=capture_ns,
+                capture_ns=(alias_ns + optimized_contract_ns + executable_contract_ns),
             )
             manifests.append(manifest)
+            record("shadowspill_manifest_assembly", manifest_started)
             if cache_key is not None:
+                sidecar_started = time.perf_counter_ns()
                 _store_cached_manifest(cache_key, manifest)
+                record("shadowspill_manifest_sidecar", sidecar_started)
             return compiled
         if len(graph_lowerings) > 1:
             raise CaptureError(
@@ -299,15 +362,33 @@ def compile_inductor_task(
                 f"observed={len(graph_lowerings)}"
             )
         if cache_key is not None:
+            sidecar_started = time.perf_counter_ns()
             cached = _load_cached_manifest(
                 cache_key,
                 semantic_contract,
                 optimized_contract=optimized_contract,
-                capture_ns=time.perf_counter_ns() - started,
+                capture_ns=alias_ns + optimized_contract_ns,
             )
+            record("shadowspill_manifest_sidecar", sidecar_started)
             if cached is not None:
                 manifests.append(cached)
         return compiled
+
+    return inner_compile
+
+
+def compile_inductor_task(
+    graph_module: GraphModule,
+    example_inputs: Sequence[object],
+    *,
+    semantic_contract: TaskStorageContract,
+) -> InductorCompilation:
+    """Compile and capture the callable-visible optimized output ABI."""
+
+    manifests: list[ExecutableTaskManifest] = []
+    compilation_started = time.perf_counter_ns()
+    source_graph = copy.deepcopy(graph_module)
+    inner_compile = _manifest_inner_compile(semantic_contract, manifests)
 
     def invoke_compiler() -> Any:
         compiler: Any = compile_fx
@@ -353,6 +434,226 @@ def compile_inductor_task(
             f"observed={len(manifests)}"
         )
     return InductorCompilation(compiled, manifests[0])
+
+
+def compile_explicit_inductor_task(
+    graph_module: GraphModule,
+    example_inputs: Sequence[object],
+    *,
+    semantic_contract: TaskStorageContract,
+) -> InductorCompilation:
+    """Compile an already-explicit task without a second AOTAutograd pass.
+
+    This is the differential candidate for ShadowSpill's production compiler
+    path.  It deliberately uses the same decomposition table and Inductor
+    forward compiler as ``compile_fx``, but normalizes the explicit FX task
+    directly and therefore never asks AOTAutograd to rediscover a forward or
+    backward program that ShadowSpill already owns.
+    """
+
+    phase_timings: dict[str, int] = {}
+
+    def record(name: str, started: int) -> int:
+        duration = time.perf_counter_ns() - started
+        phase_timings[name] = phase_timings.get(name, 0) + duration
+        return duration
+
+    input_started = time.perf_counter_ns()
+    source_graph = graph_module
+    fake_mode = detect_fake_mode(example_inputs)
+    if fake_mode is None:
+        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+    if fake_mode.shape_env is None:
+        fake_mode.shape_env = ShapeEnv()
+    fake_inputs = tuple(
+        value
+        if isinstance(value, FakeTensor) and value.fake_mode is fake_mode
+        else fake_mode.from_tensor(value)
+        if isinstance(value, torch.Tensor)
+        else value
+        for value in example_inputs
+    )
+    tracing_context = TracingContext(fake_mode)
+    record("shadowspill_compiler_input_setup", input_started)
+
+    normalization_started = time.perf_counter_ns()
+    try:
+        with V.set_fake_mode(fake_mode), tracing(tracing_context):
+            normalized = make_fx(
+                source_graph,
+                decomposition_table=select_decomp_table(),
+                tracing_mode="fake",
+                _allow_non_fake_inputs=True,
+            )(*fake_inputs)
+    except BaseException as exc:
+        raise CaptureError(
+            f"explicit Inductor task normalization failed: {exc}"
+        ) from exc
+    record("torch_decomposition_normalization", normalization_started)
+
+    output_started = time.perf_counter_ns()
+    output_node = next(node for node in normalized.graph.nodes if node.op == "output")
+    output_leaves, output_spec = tree_flatten(output_node.args[0])
+    output_node.args = (tuple(output_leaves),)
+    normalized.graph.lint()
+    normalized.recompile()
+    record("shadowspill_output_abi_normalization", output_started)
+
+    manifests: list[ExecutableTaskManifest] = []
+    inner_compile = _manifest_inner_compile(
+        semantic_contract,
+        manifests,
+        canonicalize_input_aliases=True,
+        phase_timings=phase_timings,
+    )
+    config_started = time.perf_counter_ns()
+    compiler_config = create_compiler_config_extra(normalized)
+    record("torch_compiler_configuration", config_started)
+
+    def invoke_compiler() -> object:
+        nested_before = sum(phase_timings.values())
+        invocation_started = time.perf_counter_ns()
+        try:
+            with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
+                compiler = cast(Callable[..., object], compile_fx_forward)
+                return compiler(
+                    normalized,
+                    fake_inputs,
+                    num_orig_model_outputs=len(output_leaves),
+                    num_example_inputs=len(fake_inputs),
+                    compiler_config_extra=compiler_config,
+                    inner_compile=inner_compile,
+                    is_inference=True,
+                )
+        finally:
+            elapsed = time.perf_counter_ns() - invocation_started
+            nested_elapsed = sum(phase_timings.values()) - nested_before
+            phase_timings["torch_compile_fx_forward_orchestration"] = phase_timings.get(
+                "torch_compile_fx_forward_orchestration", 0
+            ) + max(0, elapsed - nested_elapsed)
+
+    try:
+        compiled = invoke_compiler()
+    except BaseException as exc:
+        raise CaptureError(f"explicit Inductor task compilation failed: {exc}") from exc
+
+    if not manifests:
+        sidecar_started = time.perf_counter_ns()
+        cache_key = _fx_graph_cache_key(compiled)
+        if cache_key is not None:
+            cached = _load_cached_manifest(
+                cache_key,
+                semantic_contract,
+                optimized_contract=None,
+                capture_ns=0,
+            )
+            if cached is not None:
+                manifests.append(cached)
+        record("shadowspill_manifest_sidecar", sidecar_started)
+        if not manifests:
+            try:
+                with inductor_config.patch({"force_disable_caches": True}):
+                    compiled = invoke_compiler()
+            except BaseException as exc:
+                raise CaptureError(
+                    f"explicit Inductor manifest regeneration failed: {exc}"
+                ) from exc
+    if len(manifests) != 1:
+        raise CaptureError(
+            "explicit Inductor compilation did not expose one root graph: "
+            f"observed={len(manifests)}"
+        )
+
+    wrapper_started = time.perf_counter_ns()
+    compiled_callable = cast(
+        Callable[[list[object]], Sequence[object]],
+        compiled,
+    )
+
+    def unboxed(*arguments: object) -> object:
+        values = compiled_callable(list(arguments))
+        return tree_unflatten(list(values), output_spec)
+
+    record("shadowspill_callable_wrapper", wrapper_started)
+    return InductorCompilation(
+        unboxed,
+        manifests[0],
+        _ordered_compilation_timings(phase_timings),
+    )
+
+
+def _canonicalize_input_alias_outputs(
+    graph_module: GraphModule,
+    contract: TaskStorageContract,
+    example_inputs: tuple[object, ...],
+) -> None:
+    """Make every declared input-alias return explicit in the FX output ABI.
+
+    In-place operators may return their mutated argument, but direct Inductor
+    lowering can otherwise materialize that return as a second output buffer.
+    Publishing the input (or its exact view) expresses the already-declared
+    alias without adding a copy or changing the mutating operation itself.
+    """
+
+    output_node = next(node for node in graph_module.graph.nodes if node.op == "output")
+    leaves, spec = tree_flatten(output_node.args[0])
+    placeholders = tuple(
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    )
+    root_by_id = {root.root_id: root for root in contract.roots}
+    view_by_leaf = {view.leaf_index: view for view in contract.output_views}
+    changed = False
+    for leaf_index, leaf in enumerate(leaves):
+        view = view_by_leaf.get(leaf_index)
+        if view is None:
+            continue
+        root = root_by_id[view.root_id]
+        if root.kind is not StorageRootKind.INPUT:
+            continue
+        source_position = root.source_input
+        if source_position is None:
+            raise AssertionError("input storage root omitted its source position")
+        source = example_inputs[source_position]
+        if not isinstance(source, torch.Tensor):
+            raise CaptureError("compiled input alias refers to a non-tensor argument")
+        if view.dtype != str(source.dtype):
+            raise CaptureError(
+                "direct compilation cannot express a dtype-changing input view: "
+                f"leaf={leaf_index}, input={source_position}, "
+                f"source={source.dtype}, output={view.dtype}"
+            )
+        itemsize = source.element_size()
+        if view.offset_bytes % itemsize:
+            raise CaptureError(
+                "input-alias output offset is not element aligned: "
+                f"leaf={leaf_index}, bytes={view.offset_bytes}, itemsize={itemsize}"
+            )
+        placeholder = placeholders[source_position]
+        source_offset_bytes = int(source.storage_offset()) * itemsize
+        if (
+            view.shape == tuple(int(value) for value in source.shape)
+            and view.stride == tuple(int(value) for value in source.stride())
+            and view.offset_bytes == source_offset_bytes
+        ):
+            replacement = placeholder
+        else:
+            with graph_module.graph.inserting_before(output_node):
+                replacement = graph_module.graph.call_function(
+                    torch.ops.aten.as_strided.default,
+                    args=(
+                        placeholder,
+                        view.shape,
+                        view.stride,
+                        view.offset_bytes // itemsize,
+                    ),
+                )
+        if replacement is not leaf:
+            leaves[leaf_index] = replacement
+            changed = True
+    if changed:
+        output_node.args = (tree_unflatten(leaves, spec),)
+        graph_module.graph.lint()
+        graph_module.recompile()
 
 
 def _make_manifest(
@@ -907,5 +1208,6 @@ __all__ = [
     "ExecutableRootAllocation",
     "ExecutableTaskManifest",
     "InductorCompilation",
+    "compile_explicit_inductor_task",
     "compile_inductor_task",
 ]

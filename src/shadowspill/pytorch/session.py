@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 import torch
@@ -22,7 +23,9 @@ from shadowspill.simulator import SimulationConfig
 from ._abi import AdapterStatistics
 from ._allocator import InstalledAllocator
 from ._plan_diagnostics import forward_stage_inventory
-from .aot import capture_forward
+from ._planning_cache import PlanningCache
+from ._profiling_metadata import canonicalize_profiling_metadata
+from .aot import ExportCapture, capture_forward, export_capture_digest
 from .compiler import (
     CudaTaskProfiler,
     profile_environment,
@@ -34,13 +37,20 @@ from .executor import ForwardExecutor
 from .fake import fake_cuda_inputs, fake_cuda_model
 from .guards import capture_input_signature
 from .lowering import lower_forward_program
-from .materialization import MaterializedForwardState, representative_cpu_inputs
+from .materialization import (
+    MaterializedForwardState,
+    flat_runtime_arguments,
+    representative_cpu_inputs,
+)
 from .partition import capture_forward_stages, partition_export
 from .profiling import ProfileCache, profile_unique_artifacts
 from .public import (
+    PlanCacheArtifact,
+    PlanCompilerProfile,
     PlanDiagnostics,
     PlannedForward,
     PlanPhaseTiming,
+    PlanProfilingMetadata,
     PlanReport,
     PlanTaskStage,
     PlanUniqueStage,
@@ -135,11 +145,14 @@ def build_forward(
     memory: PlanMemory,
     partition: str,
     verbose: bool,
+    planning_cache: PlanningCache,
+    profiling_metadata: object,
 ) -> PlannedForward:
     """Construct a planned forward callable without mutating arithmetic."""
 
     started = time.perf_counter_ns()
     timer = _PhaseTimer(verbose=verbose)
+    workload = canonicalize_profiling_metadata(profiling_metadata)
     with timer.measure("validation"):
         _validate_forward_request(
             model,
@@ -165,14 +178,40 @@ def build_forward(
             example_output = fake_model(*fake_inputs)
             _output_leaves, output_tree_spec = tree_flatten(example_output)
             capture = capture_forward(fake_model, fake_inputs)
-            partitioned = partition_export(capture, fake_model, partition=partition)
+        with timer.measure("export_archival"):
+            _archive_export_capture(
+                planning_cache,
+                capture,
+                mode="forward",
+                position=0,
+            )
+        representative_roots = tuple(
+            value.detach() if isinstance(value, torch.Tensor) else value
+            for value in flat_runtime_arguments(capture, model, cpu_inputs)
+        )
+        with fake_mode, torch.no_grad():
+            partitioned = partition_export(
+                capture,
+                fake_model,
+                partition=partition,
+                representative_root_inputs=representative_roots,
+            )
             artifacts = capture_forward_stages(partitioned)
 
     profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
     environment = profile_environment(
-        device_ordinal=device_ordinal, provider_id="shadowspill.device_pool"
+        device_ordinal=device_ordinal,
+        provider_id="shadowspill.device_pool",
+        implementation_revision=planning_cache.implementation_revision,
     )
-    profile_cache = ProfileCache()
+    profile_cache = ProfileCache(
+        planning_cache.profile_measurements,
+        compiled_manifest_root=planning_cache.compiled_manifests,
+        read_enabled=planning_cache.read_enabled,
+        write_enabled=planning_cache.write_enabled,
+        overwrite=planning_cache.overwrite_plan,
+        artifact_recorder=planning_cache.record,
+    )
     with timer.measure("compiler_manifest"):
         resolved_manifests = resolve_task_manifests(
             artifacts,
@@ -197,6 +236,7 @@ def build_forward(
             progress=lambda index, total, state, digest: timer.progress(
                 f"structural profile {index}/{total} {state}: {digest[:12]}"
             ),
+            profiling_metadata_digests=(workload.digest,) * len(artifacts),
         )
     with timer.measure("compilation"):
         compiled_tasks = profiler.take_compiled_tasks(
@@ -223,6 +263,9 @@ def build_forward(
                 artifacts, profiles.measurements, strict=True
             )
         }
+        measurements_by_profile = dict(
+            zip(profiles.key_digests, profiles.measurements, strict=True)
+        )
         lowered = lower_forward_program(
             fake_model,
             partitioned,
@@ -237,6 +280,7 @@ def build_forward(
                 for digest, manifest in resolved_manifests.manifests.items()
             },
             device_ordinal=device_ordinal,
+            profile_compatibility_digests=profiles.key_digests,
         )
         workspace_reserve = _workspace_reserve(profiles.measurements)
         simulation_capacity = _simulation_capacity(
@@ -264,7 +308,14 @@ def build_forward(
         )
 
     with timer.measure("pressurefit_simulation"):
-        cached_selection = PressureFitCache().resolve(
+        planning_cache.archive_program(lowered.program)
+        cached_selection = PressureFitCache(
+            planning_cache.pressurefit_selections,
+            read_enabled=planning_cache.read_enabled,
+            write_enabled=planning_cache.write_enabled,
+            overwrite=planning_cache.overwrite_plan,
+            artifact_recorder=planning_cache.record,
+        ).resolve(
             lowered.program,
             initial_residency=lowered.initial_residency,
             final_residency=lowered.final_residency,
@@ -283,7 +334,7 @@ def build_forward(
         try:
             slab_replay = replay_selected_schedule(
                 selected,
-                measurements,
+                measurements_by_profile,
                 execution_pool_bytes=(
                     int(installed.admission.execution_pool_bytes)
                     - profiles.fixed_slab_bytes
@@ -345,6 +396,7 @@ def build_forward(
                 execution_plan,
                 measurements,
                 compiled_tasks.manifests,
+                profiling_metadata_digest=workload.digest,
             )
         with timer.measure("callable_construction"):
             executor = ForwardExecutor(
@@ -369,7 +421,18 @@ def build_forward(
             aot_unique_stage_abis=profiles.unique_keys,
             task_stage_map=task_stage_map,
             unique_stages=unique_stages,
+            compiler_phase_timings_ns=profiler.compilation_phase_timings_ns,
+            compiler_phase_timings_by_abi=(profiler.compilation_phase_timings_by_abi),
+            cache_directories=planning_cache.diagnostics(),
+            cache_artifacts=_public_cache_artifacts(planning_cache),
+            profiling_metadata=(workload,),
             memory=memory,
+        )
+        report = _finalize_plan_report(
+            model,
+            report,
+            planning_cache,
+            started=started,
         )
         return PlannedForward(model, signature, executor, state, report, memory.runtime)
     except BaseException:
@@ -541,6 +604,13 @@ def _forward_report(
     aot_graph_pair_cache_misses: int = 0,
     task_stage_map: tuple[PlanTaskStage, ...] = (),
     unique_stages: tuple[PlanUniqueStage, ...] = (),
+    compiler_phase_timings_ns: tuple[tuple[str, int], ...] = (),
+    compiler_phase_timings_by_abi: tuple[
+        tuple[str, tuple[tuple[str, int], ...]], ...
+    ] = (),
+    cache_directories: tuple[tuple[str, str], ...] = (),
+    cache_artifacts: tuple[PlanCacheArtifact, ...] = (),
+    profiling_metadata: tuple[Any, ...] = (),
     memory: PlanMemory,
 ) -> PlanReport:
     identity = {
@@ -549,6 +619,7 @@ def _forward_report(
         "artifacts": [
             entrypoint.abi_digest for entrypoint in execution_plan.entrypoints
         ],
+        "profiling_metadata": [item.digest for item in profiling_metadata],
     }
     capture_identity = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
@@ -562,7 +633,16 @@ def _forward_report(
     # Training historically retained the aggregate ``capture_lowering`` timing
     # as well as its three children for report compatibility. The structured
     # diagnostic publishes only mutually exclusive leaves.
-    nested_capture = any(name == "objective_export" for name, _ in timings)
+    nested_capture = any(
+        name
+        in {
+            "objective_export",
+            "export_archival",
+            "stage_partition_aot",
+            "storage_layout_lowering",
+        }
+        for name, _ in timings
+    )
     phases = tuple(
         PlanPhaseTiming(name, duration)
         for name, duration in timings
@@ -588,6 +668,20 @@ def _forward_report(
         recomputation_cache_misses=int(not recomputation_cache_hit),
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
+        compiler_phase_timings_ns=compiler_phase_timings_ns,
+        compiler_profiles=tuple(
+            PlanCompilerProfile(
+                structural_abi_key,
+                tuple(PlanPhaseTiming(name, duration) for name, duration in values),
+            )
+            for structural_abi_key, values in compiler_phase_timings_by_abi
+        ),
+        cache_directories=cache_directories,
+        cache_artifacts=cache_artifacts,
+        profiling_metadata=tuple(
+            PlanProfilingMetadata(index, item.digest, item.canonical_json)
+            for index, item in enumerate(profiling_metadata)
+        ),
     )
     return PlanReport(
         mode="forward",
@@ -632,6 +726,117 @@ def _forward_report(
 
 def _round_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
+
+
+def _public_cache_artifacts(
+    planning_cache: PlanningCache,
+) -> tuple[PlanCacheArtifact, ...]:
+    return tuple(
+        PlanCacheArtifact(
+            item.category,
+            item.kind,
+            item.digest,
+            str(item.path),
+            item.access,
+            item.schema,
+            item.dependencies,
+        )
+        for item in planning_cache.artifacts()
+    )
+
+
+def _finalize_plan_report(
+    model: nn.Module,
+    report: PlanReport,
+    planning_cache: PlanningCache,
+    *,
+    started: int,
+) -> PlanReport:
+    archival_started = time.perf_counter_ns()
+    artifacts_before_plan = _public_cache_artifacts(planning_cache)
+    planning_cache.archive_plan(
+        model_label=f"{type(model).__module__}.{type(model).__qualname__}",
+        capture_identity=report.capture_identity,
+        execution_plan=report.execution_plan,
+        initial_execution_plan=report.initial_execution_plan,
+        manifest={
+            "mode": report.mode,
+            "execution_pool": report.execution_pool,
+            "spill_pool": report.spill_pool,
+            "execution_budget_bytes": report.execution_budget_bytes,
+            "spill_budget_bytes": report.spill_budget_bytes,
+            "execution_device": report.execution_device,
+            "implementation_revision": planning_cache.implementation_revision,
+            "phase_timings_ns": [list(item) for item in report.phase_timings_ns],
+            "artifacts": [item.as_dict() for item in artifacts_before_plan],
+        },
+    )
+    archival_duration = time.perf_counter_ns() - archival_started
+    elapsed = time.perf_counter_ns() - started
+    phases = (
+        *report.diagnostics.phases,
+        PlanPhaseTiming("plan_archival", archival_duration),
+    )
+    measured = sum(item.duration_ns for item in phases)
+    if measured > elapsed:
+        raise RuntimeError(
+            "plan phase intervals overlap after archival: measured time exceeds wall"
+        )
+    diagnostics = replace(
+        report.diagnostics,
+        phases=phases,
+        total_wall_time_ns=elapsed,
+        unattributed_overhead_ns=elapsed - measured,
+        cache_artifacts=_public_cache_artifacts(planning_cache),
+    )
+    phase_timings = tuple(
+        item for item in report.phase_timings_ns if item[0] != "total"
+    )
+    return replace(
+        report,
+        diagnostics=diagnostics,
+        phase_timings_ns=(
+            *phase_timings,
+            ("plan_archival", archival_duration),
+            ("total", elapsed),
+        ),
+    )
+
+
+def _archive_export_capture(
+    planning_cache: PlanningCache,
+    capture: ExportCapture,
+    *,
+    mode: str,
+    position: int,
+) -> str:
+    digest = export_capture_digest(capture)
+    signature = capture.exported_program.graph_signature
+    planning_cache.archive_export(
+        capture.exported_program,
+        digest=digest,
+        metadata={
+            "mode": mode,
+            "position": position,
+            "input_specs": [
+                {
+                    "kind": item.kind.name,
+                    "target": item.target,
+                    "argument": getattr(item.arg, "name", None),
+                }
+                for item in signature.input_specs
+            ],
+            "output_specs": [
+                {
+                    "kind": item.kind.name,
+                    "target": item.target,
+                    "argument": getattr(item.arg, "name", None),
+                }
+                for item in signature.output_specs
+            ],
+        },
+    )
+    return digest
 
 
 __all__ = ["build_forward"]

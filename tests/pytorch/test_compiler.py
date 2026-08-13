@@ -26,8 +26,11 @@ from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.inductor_adapter import (
     ExecutableRootAllocation,
     ExecutableTaskManifest,
+    compile_explicit_inductor_task,
+    compile_inductor_task,
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.representative import materialize_representative_inputs
 
 
 class _Add(nn.Module):
@@ -108,7 +111,10 @@ def test_materialization_preserves_storage_alias_and_compiles() -> None:
     ) == (256,)
     output = executable()
     assert isinstance(output, torch.Tensor)
-    torch.testing.assert_close(output, torch.zeros_like(output))
+    torch.testing.assert_close(
+        output,
+        executable.example_arguments[0] + executable.example_arguments[1],
+    )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -157,6 +163,49 @@ def test_inductor_manifest_captures_post_grad_output_alias() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("module", [_Add(), _MultiplyByOne()])
+def test_explicit_inductor_path_matches_outer_aot_for_inference(
+    module: nn.Module,
+) -> None:
+    inputs = (
+        (torch.randn(8, 8), torch.randn(8, 8))
+        if isinstance(module, _Add)
+        else (torch.randn(8, 8),)
+    )
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(module),
+        example_inputs=inputs,
+    )
+    arguments = tuple(
+        value.detach() if isinstance(value, torch.Tensor) else value
+        for value in materialize_example_arguments(inputs, device_ordinal=0)
+    )
+
+    outer = compile_inductor_task(
+        artifact.graph_module,
+        arguments,
+        semantic_contract=artifact.storage_contract,
+    )
+    explicit = compile_explicit_inductor_task(
+        artifact.graph_module,
+        arguments,
+        semantic_contract=artifact.storage_contract,
+    )
+
+    torch.testing.assert_close(
+        explicit.function(*arguments),
+        outer.function(*arguments),
+    )
+    assert explicit.manifest.storage_contract == outer.manifest.storage_contract
+    assert explicit.manifest.root_allocations == outer.manifest.root_allocations
+    phase_names = {name for name, _duration in explicit.phase_timings_ns}
+    assert "torch_decomposition_normalization" in phase_names
+    assert "torch_inductor_core" in phase_names
+    assert all(duration > 0 for _name, duration in explicit.phase_timings_ns)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_manifest_hydration_restores_arguments_before_measurement() -> None:
     artifact = _artifact()
     profiler = CudaTaskProfiler(
@@ -187,9 +236,53 @@ def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
     assert captured.recurrent is not None
 
     executable = compile_artifact(captured.recurrent, device_ordinal=0)
-    outputs = executable()
+    representatives = materialize_representative_inputs(
+        captured.recurrent, device_ordinal=0
+    )
+    with torch.no_grad():
+        outputs = executable.function(*representatives.arguments)
     assert isinstance(outputs, (tuple, list))
     assert len(outputs) == len(captured.mutation_names)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_explicit_optimizer_preserves_outer_aot_mutation_abi() -> None:
+    model = nn.Sequential(nn.Linear(6, 10), nn.Linear(10, 3))
+    optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
+    for parameter in model.parameters():
+        parameter.grad = torch.zeros_like(parameter)
+    artifact = capture_optimizer(dict(model.named_parameters()), optimizer).recurrent
+    assert artifact is not None
+
+    outer_arguments = tuple(
+        value.detach() if isinstance(value, torch.Tensor) else value
+        for value in materialize_example_arguments(
+            artifact.example_arguments, device_ordinal=0
+        )
+    )
+    explicit_arguments = tuple(
+        value.detach() if isinstance(value, torch.Tensor) else value
+        for value in materialize_example_arguments(
+            artifact.example_arguments, device_ordinal=0
+        )
+    )
+    outer = compile_inductor_task(
+        artifact.graph_module,
+        outer_arguments,
+        semantic_contract=artifact.storage_contract,
+    )
+    explicit = compile_explicit_inductor_task(
+        artifact.graph_module,
+        explicit_arguments,
+        semantic_contract=artifact.storage_contract,
+    )
+
+    outer_outputs = outer.function(*outer_arguments)
+    explicit_outputs = explicit.function(*explicit_arguments)
+    torch.testing.assert_close(explicit_outputs, outer_outputs)
+    torch.testing.assert_close(explicit_arguments, outer_arguments)
+    assert explicit.manifest.storage_contract == outer.manifest.storage_contract
+    assert explicit.manifest.root_allocations == outer.manifest.root_allocations
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

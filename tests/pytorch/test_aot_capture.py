@@ -6,13 +6,18 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch import CaptureError, ObjectiveError, ObjectiveResult
+from shadowspill.pytorch import aot as aot_module
 from shadowspill.pytorch.aot import (
     capture_forward,
     capture_training,
     capture_training_objective,
     inference_artifact,
 )
-from shadowspill.pytorch.capture import GraphArtifact
+from shadowspill.pytorch.capture import (
+    GraphArtifact,
+    TaskInputProvenance,
+    TaskInputRole,
+)
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
 
 
@@ -79,12 +84,8 @@ def test_objective_schema_preserves_position_specific_static_metrics() -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_cuda_model(model, mode)
-    first_inputs = fake_cuda_inputs(
-        [torch.randn(4, 8), torch.randn(4, 8), 2], mode
-    )
-    second_inputs = fake_cuda_inputs(
-        [torch.randn(4, 8), torch.randn(4, 8), 3], mode
-    )
+    first_inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
+    second_inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 3], mode)
     with mode:
         first = capture_training_objective(replica, _objective, first_inputs)
         second = capture_training_objective(replica, _objective, second_inputs)
@@ -155,6 +156,35 @@ def test_artifact_rebind_preserves_contract_and_rejects_abi_changes() -> None:
     right_owner = torch.arange(20, dtype=torch.float32)
     with pytest.raises(CaptureError, match="aliases"):
         artifact.rebind_examples((left_owner[1:9], right_owner[2:10]))
+
+
+def test_saved_registered_state_preserves_its_aot_view_values() -> None:
+    class _Transpose(nn.Module):
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return value.t()
+
+    value = torch.arange(30, dtype=torch.float32).view(3, 10)
+    artifact = GraphArtifact.capture(
+        kind="forward",
+        graph_module=torch.fx.symbolic_trace(_Transpose()),
+        example_inputs=(value,),
+    )
+    view = artifact.storage_contract.output_views[0]
+    provenance = TaskInputProvenance(
+        TaskInputRole.PARAMETER,
+        "model.weight",
+        representative_value=value,
+    )
+
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    with mode:
+        saved = aot_module._saved_input_view_provenance(provenance, view)
+
+    assert saved.representative_value is not None
+    torch.testing.assert_close(saved.representative_value, value.t())
+    assert saved.representative_value.untyped_storage()._cdata == (
+        value.untyped_storage()._cdata
+    )
 
 
 def test_input_compatibility_digest_is_offline_and_alias_sensitive(

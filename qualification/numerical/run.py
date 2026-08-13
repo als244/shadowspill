@@ -44,6 +44,44 @@ def _meets_tensor_tolerance(metric: Any) -> bool:
     )
 
 
+def _state_tensor_at_path(state: object, path: str) -> torch.Tensor:
+    """Resolve one compare_states() tensor path for failure diagnostics."""
+
+    components = path.split("/")
+    if not components or components[0] != "state":
+        raise ValueError(f"invalid state metric path {path!r}")
+    value = state
+    for component in components[1:]:
+        if isinstance(value, dict):
+            value = value[component]
+        elif isinstance(value, (list, tuple)):
+            value = value[int(component)]
+        else:
+            raise ValueError(f"state metric path stops before {component!r}")
+    if not isinstance(value, torch.Tensor):
+        raise ValueError(f"state metric path {path!r} does not resolve to a tensor")
+    return value
+
+
+def _failure_tensor_values(
+    names: list[str], reference: object, actual: object
+) -> dict[str, dict[str, object]]:
+    """Keep bounded concrete values for failed numerical comparisons."""
+
+    result: dict[str, dict[str, object]] = {}
+    for name in names:
+        expected = _state_tensor_at_path(reference, name).detach().cpu().reshape(-1)
+        observed = _state_tensor_at_path(actual, name).detach().cpu().reshape(-1)
+        limit = min(64, expected.numel())
+        result[name] = {
+            "numel": expected.numel(),
+            "truncated": expected.numel() > limit,
+            "reference": expected[:limit].tolist(),
+            "actual": observed[:limit].tolist(),
+        }
+    return result
+
+
 def _optimizer_steps(checkpoint: object) -> dict[str, int]:
     if not isinstance(checkpoint, dict):
         return {}
@@ -90,6 +128,33 @@ def _case_options(values: list[str]) -> dict[str, Any]:
         if separator == "" or not name:
             raise ValueError("case options must use NAME=JSON")
         result[name] = _json_argument(encoded, description=f"case option {name!r}")
+    return result
+
+
+def _profiling_metadata(
+    case: Any,
+    supplied: list[object] | None,
+) -> list[object]:
+    """Return explicit value-sensitive workload classes for task profiling.
+
+    The built-in verification cases place packed sequence lengths in the third
+    microbatch position.  Custom cases can provide an arbitrary JSON list with
+    ``--profiling-metadata`` instead of relying on that convenience.
+    """
+
+    if supplied is not None:
+        if len(supplied) != len(case.microbatches):
+            raise ValueError("profiling metadata must have one entry per microbatch")
+        return supplied
+    result: list[object] = []
+    for microbatch in case.microbatches:
+        sequence_lengths = microbatch[2] if len(microbatch) > 2 else None
+        if isinstance(sequence_lengths, (list, tuple)) and all(
+            isinstance(value, int) for value in sequence_lengths
+        ):
+            result.append({"sequence_lengths": list(sequence_lengths)})
+        else:
+            result.append(None)
     return result
 
 
@@ -345,6 +410,12 @@ def _planned_worker(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
+    planning_cachedir: Path | None,
+    profiling_metadata: list[object] | None,
+    save_plan: bool,
+    force_fresh: bool,
+    overwrite_plan: bool,
+    implementation_revision: str | None,
 ) -> None:
     identity = _case_identity(
         model_name=family,
@@ -367,6 +438,7 @@ def _planned_worker(
         case_options=case_options,
     )
     with case.implementations():
+        workload_metadata = _profiling_metadata(case, profiling_metadata)
         runtime = Runtime(
             pools={
                 "execution": device(physical_capacity=device_budget),
@@ -383,6 +455,12 @@ def _planned_worker(
             execution="execution",
             spill="spill",
             optimizer_ordering=optimizer_ordering,
+            planning_cachedir=planning_cachedir,
+            profiling_metadata=workload_metadata,
+            save_plan=save_plan,
+            force_fresh=force_fresh,
+            overwrite_plan=overwrite_plan,
+            implementation_revision=implementation_revision,
         )
         planning_seconds = time.perf_counter() - planning_started
         planning_phases = {
@@ -401,9 +479,7 @@ def _planned_worker(
             f"{planning_phases.get('pressurefit_simulation', 0.0):.3f}s",
             flush=True,
         )
-        plan_report_path = result_path.with_name(
-            f"{result_path.stem}_plan_report.pt"
-        )
+        plan_report_path = result_path.with_name(f"{result_path.stem}_plan_report.pt")
         # Planning evidence is valuable even when the first runtime step finds
         # a contract violation. Persist the immutable report before execution
         # rather than losing an expensive cold-plan artifact on failure.
@@ -425,9 +501,7 @@ def _planned_worker(
             started = time.perf_counter()
             step_result = training(case.microbatches, runtime_trace=True)
             if step_result.diagnostics is None:
-                raise AssertionError(
-                    "runtime_trace=True omitted execution diagnostics"
-                )
+                raise AssertionError("runtime_trace=True omitted execution diagnostics")
             diagnostics = step_result.diagnostics.result()
             execution_timing = diagnostics.timing
             physical_statuses.append(_check_physical_budget())
@@ -457,9 +531,7 @@ def _planned_worker(
             replay_started = time.perf_counter()
             step_result = training(case.microbatches, runtime_trace=True)
             if step_result.diagnostics is None:
-                raise AssertionError(
-                    "runtime_trace=True omitted replay diagnostics"
-                )
+                raise AssertionError("runtime_trace=True omitted replay diagnostics")
             step_result.diagnostics.result()
             physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
@@ -538,6 +610,16 @@ def _planned_worker(
             "case_factory": case_factory,
             "case_options": case_options,
             "optimizer_ordering": optimizer_ordering,
+            "profiling_metadata": workload_metadata,
+        },
+        "planning_cache_request": {
+            "directory": (
+                None if planning_cachedir is None else str(planning_cachedir.resolve())
+            ),
+            "save_plan": save_plan,
+            "force_fresh": force_fresh,
+            "overwrite_plan": overwrite_plan,
+            "implementation_revision": implementation_revision,
         },
         "device_budget_bytes": device_budget,
         "tolerances": {
@@ -578,6 +660,11 @@ def _planned_worker(
         "metric_failures": {
             name: asdict(tensor_results[name]) for name in metric_failures
         },
+        "metric_failure_values": _failure_tensor_values(
+            metric_failures,
+            {"model": reference["model"], "optimizer": reference["optimizer"]},
+            {"model": final_state["model"], "optimizer": final_state["optimizer"]},
+        ),
         "exact_failures": exact_failures,
         "checkpoint_replay_bitwise": (
             uninterrupted_digest == replay_digest and expected_replay == replay_losses
@@ -656,7 +743,7 @@ def _planned_worker(
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "recomputation_cache_hits": report.recomputation_cache_hits,
         "recomputation_cache_misses": report.recomputation_cache_misses,
-        "cold_cache_requested": os.environ.get("SHADOWSPILL_QUALIFICATION_COLD") == "1",
+        "cold_cache_requested": force_fresh,
         "pressurefit_fixtures": pressurefit_fixtures,
         "plan_report_artifact": {
             "path": str(plan_report_path),
@@ -678,6 +765,8 @@ def _planned_worker(
         not qualification_result["cold_cache_requested"]
         or (
             qualification_result["profile_cache_hits"] == 0
+            and qualification_result["aot_graph_pair_cache_misses"]
+            == qualification_result["aot_unique_stage_abis"]
             and qualification_result["recomputation_cache_hits"] == 0
         )
     )
@@ -748,6 +837,13 @@ def _orchestrate(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
+    planning_cachedir: Path | None,
+    profiling_metadata_argument: str | None,
+    save_plan: bool,
+    force_fresh: bool,
+    overwrite_plan: bool,
+    implementation_revision: str | None,
+    reuse_reference: bool,
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
@@ -767,24 +863,38 @@ def _orchestrate(
         options.append("--allow-fully-resident")
     if data_geometry_argument is not None:
         options.extend(("--data-geometry", data_geometry_argument))
+    if profiling_metadata_argument is not None:
+        options.extend(("--profiling-metadata", profiling_metadata_argument))
     if case_factory is not None:
         options.extend(("--case-factory", case_factory))
     for value in case_option_arguments:
         options.extend(("--case-option", value))
     environment = dict(os.environ)
-    subprocess.run(
-        [
-            *base,
-            "_reference",
-            family,
-            str(reference),
-            "--model-implementation",
-            model_implementation,
-            *options,
-        ],
-        check=True,
-        env=environment,
-    )
+    if not reuse_reference or not reference.is_file():
+        subprocess.run(
+            [
+                *base,
+                "_reference",
+                family,
+                str(reference),
+                "--model-implementation",
+                model_implementation,
+                *options,
+            ],
+            check=True,
+            env=environment,
+        )
+    planned_options: list[str] = []
+    selected_cache = planning_cachedir or result_directory / "planning_cache"
+    planned_options.extend(("--planning-cachedir", str(selected_cache)))
+    if not save_plan:
+        planned_options.append("--no-save-plan")
+    if force_fresh:
+        planned_options.append("--force-fresh")
+    if overwrite_plan:
+        planned_options.append("--overwrite-plan")
+    if implementation_revision is not None:
+        planned_options.extend(("--implementation-revision", implementation_revision))
     subprocess.run(
         [
             *base,
@@ -796,6 +906,7 @@ def _orchestrate(
             "--model-implementation",
             model_implementation,
             *options,
+            *planned_options,
             "--checkpoint-step",
             str(checkpoint_step),
         ],
@@ -843,6 +954,43 @@ def main() -> int:
         help="microbatch geometry list; omitted uses the built-in two-shape gate",
     )
     parser.add_argument(
+        "--profiling-metadata",
+        metavar="JSON|@FILE",
+        help=(
+            "one JSON-compatible workload descriptor per microbatch; used only "
+            "for value-sensitive profile/cache identity"
+        ),
+    )
+    parser.add_argument(
+        "--planning-cachedir",
+        type=Path,
+        help="shared planning artifact root (run mode defaults below the result dir)",
+    )
+    parser.add_argument(
+        "--no-save-plan",
+        action="store_true",
+        help="do not write reusable planning artifacts",
+    )
+    parser.add_argument(
+        "--force-fresh",
+        action="store_true",
+        help="bypass every planning-cache read",
+    )
+    parser.add_argument(
+        "--overwrite-plan",
+        action="store_true",
+        help="replace matching artifacts; requires --force-fresh",
+    )
+    parser.add_argument(
+        "--implementation-revision",
+        help="explicit implementation identity for custom-kernel invalidation",
+    )
+    parser.add_argument(
+        "--reuse-reference",
+        action="store_true",
+        help="reuse an existing compiled-reference artifact in run mode",
+    )
+    parser.add_argument(
         "--case-factory",
         metavar="MODULE:FUNCTION",
         help="factory for a model not in the built-in verification registry",
@@ -878,6 +1026,21 @@ def main() -> int:
             ):
                 raise ValueError("data geometry must decode to a list of objects")
             data_geometry_value = decoded_geometry
+        profiling_metadata_value = None
+        if arguments.profiling_metadata is not None:
+            decoded_metadata = _json_argument(
+                arguments.profiling_metadata,
+                description="profiling metadata",
+            )
+            if not isinstance(decoded_metadata, list):
+                raise ValueError("profiling metadata must decode to a list")
+            profiling_metadata_value = decoded_metadata
+        if arguments.overwrite_plan and (
+            arguments.no_save_plan or not arguments.force_fresh
+        ):
+            raise ValueError(
+                "--overwrite-plan requires saved artifacts and --force-fresh"
+            )
         case_options_value = _case_options(arguments.case_option)
     except ValueError as exc:
         parser.error(str(exc))
@@ -902,6 +1065,13 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
+            planning_cachedir=arguments.planning_cachedir,
+            profiling_metadata_argument=arguments.profiling_metadata,
+            save_plan=not arguments.no_save_plan,
+            force_fresh=arguments.force_fresh,
+            overwrite_plan=arguments.overwrite_plan,
+            implementation_revision=arguments.implementation_revision,
+            reuse_reference=arguments.reuse_reference,
         )
     elif arguments.mode == "_reference":
         if len(arguments.paths) != 1:
@@ -936,6 +1106,12 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
+            planning_cachedir=arguments.planning_cachedir,
+            profiling_metadata=profiling_metadata_value,
+            save_plan=not arguments.no_save_plan,
+            force_fresh=arguments.force_fresh,
+            overwrite_plan=arguments.overwrite_plan,
+            implementation_revision=arguments.implementation_revision,
         )
     return 0
 

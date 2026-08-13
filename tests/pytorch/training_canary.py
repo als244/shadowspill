@@ -135,10 +135,19 @@ def main(arguments: Iterable[str] | None = None) -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata=(
+                {"batch_size": 3, "label": "short"},
+                {"batch_size": 5, "label": "long"},
+            ),
         )
         if len(constructed) != 1:
             raise AssertionError("optimizer factory was not invoked exactly once")
         plan_diagnostics = planned.plan_report.diagnostics
+        if not plan_diagnostics.cache_artifacts:
+            raise AssertionError("plan diagnostics omitted cache artifacts")
+        if len(plan_diagnostics.profiling_metadata) != 2:
+            raise AssertionError("plan diagnostics omitted profiling metadata")
         if (
             plan_diagnostics.measured_wall_time_ns
             + plan_diagnostics.unattributed_overhead_ns
@@ -386,6 +395,34 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training grew the CUDA slab")
         if statistics.cuda.pinned_host_allocations != 1:
             raise AssertionError("training grew the configured spill pool")
+
+        warm_model = _Model()
+        warm = plan_step(
+            warm_model,
+            objective=_objective,
+            opt=optimizer_factory,
+            example_inputs=example_inputs,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata=(
+                {"batch_size": 3, "label": "short"},
+                {"batch_size": 5, "label": "long"},
+            ),
+        )
+        warm_diagnostics = warm.plan_report.diagnostics
+        if (
+            warm_diagnostics.aot_graph_pair_cache_hits == 0
+            or warm_diagnostics.aot_graph_pair_cache_misses != 0
+            or warm_diagnostics.profile_cache_hits == 0
+            or warm_diagnostics.profile_cache_misses != 0
+        ):
+            raise AssertionError("second planning call did not reuse warm artifacts")
+        warm_result = warm(steps[0])
+        if not all(torch.isfinite(value).all() for value in warm_result.objectives):
+            raise AssertionError("warm-cache execution produced a non-finite loss")
+        warm.close()
         runtime.close()
     return 0
 

@@ -58,12 +58,37 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
         config=config(),
         options=SMALL_PORTFOLIO,
     )
-    path = next(cache.root.glob("*.json"))
+    path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
     value["diagnostics"]["selected_makespan_ns"] += 1
     path.write_text(json.dumps(value))
 
     with pytest.raises(ValueError, match="stale simulator evidence"):
+        cache.resolve(
+            exact_capacity_program(),
+            initial_residency=initial,
+            final_residency=final,
+            config=config(),
+            options=SMALL_PORTFOLIO,
+        )
+
+
+def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> None:
+    initial, final = exact_capacity_residency()
+    cache = PressureFitCache(tmp_path)
+    cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=SMALL_PORTFOLIO,
+    )
+    path = next(cache.root.rglob("*.json"))
+    value = json.loads(path.read_text())
+    value["initial_residency"] = []
+    path.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match="initial_residency"):
         cache.resolve(
             exact_capacity_program(),
             initial_residency=initial,

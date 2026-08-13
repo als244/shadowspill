@@ -178,3 +178,46 @@ def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:
     assert result.cache_hits == 0
     assert result.cache_misses == 1
     assert result.measurements[0].runtime_ns == 2
+
+
+def test_profiling_metadata_splits_measurements_without_recompiling_identity(
+    tmp_path: Path,
+) -> None:
+    artifact = _artifacts()[0]
+    calls = 0
+
+    def measure(_artifact: GraphArtifact) -> TaskMeasurement:
+        nonlocal calls
+        calls += 1
+        return TaskMeasurement(
+            calls,
+            0,
+            0,
+            (),
+            (calls,),
+            "metadata-test",
+            persistent_extent_bytes=(32,),
+        )
+
+    cache = ProfileCache(tmp_path)
+    cold = profile_unique_artifacts(
+        (artifact, artifact),
+        environment=_environment(),
+        measure=measure,
+        cache=cache,
+        profiling_metadata_digests=("a" * 64, "b" * 64),
+    )
+    assert calls == 2
+    assert cold.unique_keys == 2
+    assert len(set(cold.key_digests)) == 2
+    assert cold.fixed_slab_bytes == 32
+
+    warm = profile_unique_artifacts(
+        (artifact, artifact),
+        environment=_environment(),
+        measure=lambda item: (_ for _ in ()).throw(AssertionError(item)),
+        cache=cache,
+        profiling_metadata_digests=("a" * 64, "b" * 64),
+    )
+    assert warm.cache_hits == 2
+    assert warm.cache_misses == 0

@@ -41,6 +41,8 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         runtime=public_test_runtime(),
         execution="execution",
         spill="spill",
+        planning_cachedir=tmp_path,
+        profiling_metadata={"batch_size": 3, "width": 17},
     )
     assert planned.plan_report.mode == "forward"
     assert planned.plan_report.predicted_makespan_ns > 0
@@ -52,10 +54,11 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         + admission.slab_bytes
     )
     assert (
-        planned.plan_report.predicted_device_peak_bytes
-        == admission.device_budget_bytes
+        planned.plan_report.predicted_device_peak_bytes == admission.device_budget_bytes
     )
     assert planned.plan_report.capture_identity
+    assert planned.plan_report.diagnostics.cache_artifacts
+    assert len(planned.plan_report.diagnostics.profiling_metadata) == 1
     actual = planned([inputs, 17])[0]
     torch.testing.assert_close(
         actual.cpu(), reference(inputs, 17)[0], rtol=2e-5, atol=2e-6

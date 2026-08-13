@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import operator
+import os
+import pickle
+import tempfile
 from collections.abc import Collection
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 import torch
 import torch.nn as nn
 from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule, Interpreter, Node
+from torch.fx.passes.fake_tensor_prop import FakeTensorProp
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
 
@@ -18,10 +26,19 @@ from .aot import (
     ExportCapture,
     TrainingObjectiveCapture,
     capture_graph_pair,
+    rebind_backward_input_provenance,
 )
-from .capture import AotGraphPair, GraphArtifact
+from .capture import (
+    AotGraphPair,
+    GraphArtifact,
+    TaskInputProvenance,
+    TaskInputRole,
+    TensorGeometry,
+)
 from .contracts import CaptureError
-from .output_contract import ExplicitMutation
+from .fx_graph_cache import SerializedFxGraph
+from .output_contract import ExplicitMutation, TaskStorageContract
+from .profiling import PlanningArtifactRecorder
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +78,7 @@ class StageExample:
     graph_module: GraphModule
     inputs: tuple[object, ...]
     input_sources: tuple[StageValueSource | None, ...]
+    input_provenance: tuple[TaskInputProvenance, ...]
     mutations: tuple[ExplicitMutation, ...]
     user_output_indices: tuple[int, ...]
     output: object
@@ -100,6 +118,7 @@ class PartitionedExport:
 
     root: GraphModule
     root_inputs: tuple[object, ...]
+    root_input_provenance: tuple[TaskInputProvenance, ...]
     stages: tuple[StageExample, ...]
     repeated_groups: tuple[str, ...]
     user_output_indices: tuple[int, ...]
@@ -172,15 +191,129 @@ class _StageRecorder(Interpreter):
         return output
 
 
+_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v3"
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedGraphArtifact:
+    """A GraphArtifact without live values or GraphModule retracing semantics."""
+
+    kind: Literal["forward", "backward", "inference", "optimizer"]
+    graph: SerializedFxGraph
+    tensor_inputs: tuple[TensorGeometry, ...]
+    argument_count: int
+    output_count: int
+    operator_targets: tuple[str, ...]
+    tensor_argument_positions: tuple[int, ...]
+    tensor_argument_alias_groups: tuple[int, ...]
+    input_provenance: tuple[TaskInputProvenance, ...]
+    storage_contract: TaskStorageContract
+    storage_contract_capture_ns: int
+    compatibility_digest: str
+
+    @classmethod
+    def capture(cls, artifact: GraphArtifact) -> _CachedGraphArtifact:
+        provenance = tuple(
+            TaskInputProvenance(item.role, item.source, item.consumer_targets)
+            for item in artifact.input_provenance
+        )
+        return cls(
+            artifact.kind,
+            SerializedFxGraph.capture(artifact.graph_module),
+            artifact.tensor_inputs,
+            artifact.argument_count,
+            artifact.output_count,
+            artifact.operator_targets,
+            artifact.tensor_argument_positions,
+            artifact.tensor_argument_alias_groups,
+            provenance,
+            artifact.storage_contract,
+            artifact.storage_contract_capture_ns,
+            artifact.compatibility_digest,
+        )
+
+    def restore(self) -> GraphArtifact:
+        graph_module = self.graph.restore()
+        arguments = _synthetic_fake_arguments_from_geometry(
+            self.tensor_inputs,
+            self.tensor_argument_alias_groups,
+            self.argument_count,
+        )
+        FakeTensorProp(graph_module).propagate(*arguments)
+        return GraphArtifact(
+            kind=self.kind,
+            graph_module=graph_module,
+            tensor_inputs=self.tensor_inputs,
+            argument_count=self.argument_count,
+            output_count=self.output_count,
+            operator_targets=self.operator_targets,
+            tensor_argument_positions=self.tensor_argument_positions,
+            tensor_argument_alias_groups=self.tensor_argument_alias_groups,
+            input_provenance=self.input_provenance,
+            storage_contract=self.storage_contract,
+            storage_contract_capture_ns=self.storage_contract_capture_ns,
+            compatibility_digest=self.compatibility_digest,
+            example_arguments=arguments,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedAotGraphPair:
+    """Persistent, value-free form of one save or recomputation pair."""
+
+    forward: _CachedGraphArtifact
+    backward: _CachedGraphArtifact
+    recomputation: bool
+    saved_value_count: int
+    specialized_unit_tangent_count: int
+
+    @classmethod
+    def capture(cls, pair: AotGraphPair) -> _CachedAotGraphPair:
+        return cls(
+            _CachedGraphArtifact.capture(pair.forward),
+            _CachedGraphArtifact.capture(pair.backward),
+            pair.recomputation,
+            pair.saved_value_count,
+            pair.specialized_unit_tangent_count,
+        )
+
+    def restore(self) -> AotGraphPair:
+        return AotGraphPair(
+            forward=self.forward.restore(),
+            backward=self.backward.restore(),
+            recomputation=self.recomputation,
+            saved_value_count=self.saved_value_count,
+            specialized_unit_tangent_count=self.specialized_unit_tangent_count,
+        )
+
+
 class _TrainingGraphPairCache:
     """Reuse AOT graph code while preserving occurrence-specific storages."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        *,
+        read_enabled: bool = True,
+        write_enabled: bool = True,
+        overwrite: bool = False,
+        artifact_recorder: PlanningArtifactRecorder | None = None,
+    ) -> None:
         self._pairs: dict[
             tuple[str, tuple[int, ...], bool], tuple[AotGraphPair, AotGraphPair]
         ] = {}
+        self._root = None if root is None else Path(root).expanduser()
+        self._read_enabled = read_enabled
+        self._write_enabled = write_enabled
+        self._overwrite = overwrite
+        self._artifact_recorder = artifact_recorder
+        self._keys_seen: set[tuple[str, tuple[int, ...], bool]] = set()
         self.hits = 0
         self.misses = 0
+
+    @property
+    def unique_keys(self) -> int:
+        return len(self._keys_seen)
 
     def resolve(
         self,
@@ -193,31 +326,23 @@ class _TrainingGraphPairCache:
             graph_module=example.graph_module,
             example_inputs=example.inputs,
             explicit_mutations=example.mutations,
+            input_provenance=example.input_provenance,
         )
         key = (stage_abi, roots, specialize_unit_tangents)
+        self._keys_seen.add(key)
         existing = self._pairs.get(key)
         if existing is None:
-            existing = (
-                capture_graph_pair(
-                    example.graph_module,
-                    example.inputs,
-                    original_output=example.output,
-                    recomputation=False,
-                    root_output_positions=roots,
-                    specialize_unit_tangents=specialize_unit_tangents,
-                    explicit_mutations=example.mutations,
-                ),
-                capture_graph_pair(
-                    example.graph_module,
-                    example.inputs,
-                    original_output=example.output,
-                    recomputation=True,
-                    root_output_positions=roots,
-                    specialize_unit_tangents=specialize_unit_tangents,
-                    explicit_mutations=example.mutations,
-                ),
-            )
+            existing = self._read(key)
+            if existing is not None:
+                self._pairs[key] = existing
+                self.hits += 1
+                return (
+                    _rebind_graph_pair(existing[0], example, roots),
+                    _rebind_graph_pair(existing[1], example, roots),
+                )
+            existing = self._capture(example, roots, specialize_unit_tangents)
             self._pairs[key] = existing
+            self._write(key, existing)
             self.misses += 1
             return existing
         self.hits += 1
@@ -227,15 +352,272 @@ class _TrainingGraphPairCache:
             _rebind_graph_pair(recompute_pair, example, roots),
         )
 
+    @staticmethod
+    def _capture(
+        example: StageExample,
+        roots: tuple[int, ...],
+        specialize_unit_tangents: bool,
+    ) -> tuple[AotGraphPair, AotGraphPair]:
+        return (
+            capture_graph_pair(
+                example.graph_module,
+                example.inputs,
+                recomputation=False,
+                original_output=example.output,
+                root_output_positions=roots,
+                specialize_unit_tangents=specialize_unit_tangents,
+                explicit_mutations=example.mutations,
+                input_provenance=example.input_provenance,
+            ),
+            capture_graph_pair(
+                example.graph_module,
+                example.inputs,
+                recomputation=True,
+                original_output=example.output,
+                root_output_positions=roots,
+                specialize_unit_tangents=specialize_unit_tangents,
+                explicit_mutations=example.mutations,
+                input_provenance=example.input_provenance,
+            ),
+        )
+
+    def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
+        if self._root is None:
+            return None
+        payload = {
+            "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+            "stage_abi": key[0],
+            "roots": key[1],
+            "specialize_unit_tangents": key[2],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        selection = hashlib.sha256(encoded.encode()).hexdigest()
+        return self._root / "v3" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
+
+    def _manifest_path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
+        path = self._path(key)
+        return None if path is None else path.with_name("manifest.json")
+
+    def _read(
+        self, key: tuple[str, tuple[int, ...], bool]
+    ) -> tuple[AotGraphPair, AotGraphPair] | None:
+        path = self._path(key)
+        if path is None or not self._read_enabled:
+            return None
+        try:
+            payload = torch.load(path, map_location="cpu", weights_only=False)
+        except FileNotFoundError:
+            return None
+        except (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            pickle.UnpicklingError,
+        ) as exc:
+            raise CaptureError(f"AOT graph-pair cache entry {path} is invalid") from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema") != _GRAPH_PAIR_CACHE_SCHEMA
+            or payload.get("key") != key
+        ):
+            raise CaptureError(f"AOT graph-pair cache entry {path} has the wrong key")
+        pairs = payload.get("pairs")
+        if (
+            not isinstance(pairs, tuple)
+            or len(pairs) != 2
+            or any(not isinstance(pair, _CachedAotGraphPair) for pair in pairs)
+        ):
+            raise CaptureError(f"AOT graph-pair cache entry {path} has invalid data")
+        hydrated = tuple(pair.restore() for pair in pairs)
+        result = (hydrated[0], hydrated[1])
+        self._record(key, path, "read", result)
+        manifest_path = self._manifest_path(key)
+        if manifest_path is not None and manifest_path.exists():
+            self._record(key, manifest_path, "read", result, kind="graph_pair_manifest")
+        return result
+
+    def _write(
+        self,
+        key: tuple[str, tuple[int, ...], bool],
+        pairs: tuple[AotGraphPair, AotGraphPair],
+    ) -> None:
+        path = self._path(key)
+        if path is None or not self._write_enabled:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cached = tuple(_CachedAotGraphPair.capture(pair) for pair in pairs)
+        if path.exists() and not self._overwrite:
+            self._record(key, path, "matched", pairs)
+            return
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                torch.save(
+                    {
+                        "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+                        "key": key,
+                        "pairs": cached,
+                    },
+                    output,
+                )
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary)
+        manifest_path = self._manifest_path(key)
+        assert manifest_path is not None
+        manifest = {
+            "schema": _GRAPH_PAIR_CACHE_SCHEMA,
+            "stage_aot_input_abi": key[0],
+            "differentiable_root_positions": list(key[1]),
+            "specialize_unit_tangents": key[2],
+            "save": {
+                "forward": pairs[0].forward.compatibility_digest,
+                "backward": pairs[0].backward.compatibility_digest,
+            },
+            "recompute": {
+                "forward": pairs[1].forward.compatibility_digest,
+                "backward": pairs[1].backward.compatibility_digest,
+            },
+        }
+        _atomic_json(manifest_path, manifest)
+        self._record(key, path, "write", pairs)
+        self._record(
+            key,
+            manifest_path,
+            "write",
+            pairs,
+            kind="graph_pair_manifest",
+        )
+
+    def _record(
+        self,
+        key: tuple[str, tuple[int, ...], bool],
+        path: Path,
+        access: str,
+        pairs: tuple[AotGraphPair, AotGraphPair],
+        *,
+        kind: str = "aot_graph_pairs",
+    ) -> None:
+        if self._artifact_recorder is None:
+            return
+        digest = path.parent.name
+        dependencies = (
+            key[0],
+            pairs[0].forward.compatibility_digest,
+            pairs[0].backward.compatibility_digest,
+            pairs[1].forward.compatibility_digest,
+            pairs[1].backward.compatibility_digest,
+        )
+        self._artifact_recorder(
+            category="graphpairs",
+            kind=kind,
+            digest=digest,
+            path=path,
+            access=access,
+            schema=_GRAPH_PAIR_CACHE_SCHEMA,
+            dependencies=dependencies,
+        )
+
+
+def _synthetic_fake_arguments_from_geometry(
+    tensor_inputs: tuple[TensorGeometry, ...],
+    alias_groups: tuple[int, ...],
+    argument_count: int,
+) -> tuple[torch.Tensor, ...]:
+    if argument_count != len(tensor_inputs):
+        raise CaptureError("cached AOT graph contains an unexpected static argument")
+    members: dict[int, list[TensorGeometry]] = {}
+    for group, geometry in zip(
+        alias_groups,
+        tensor_inputs,
+        strict=True,
+    ):
+        members.setdefault(group, []).append(geometry)
+    owners: dict[int, torch.Tensor] = {}
+    for group, geometries in members.items():
+        devices = {item.device_type for item in geometries}
+        if len(devices) != 1:
+            raise CaptureError("cached AOT alias group spans multiple devices")
+        storage_bytes = max(_geometry_storage_bytes(item) for item in geometries)
+        owners[group] = torch.empty(
+            storage_bytes,
+            dtype=torch.uint8,
+            device=next(iter(devices)),
+        )
+    arguments: list[torch.Tensor] = []
+    for group, geometry in zip(
+        alias_groups,
+        tensor_inputs,
+        strict=True,
+    ):
+        value = torch.empty(0, dtype=geometry.dtype, device=geometry.device_type).set_(
+            owners[group].untyped_storage(),
+            geometry.storage_offset,
+            geometry.shape,
+            geometry.stride,
+        )
+        value.requires_grad_(geometry.requires_grad)
+        arguments.append(value)
+    return tuple(arguments)
+
+
+def _geometry_storage_bytes(geometry: TensorGeometry) -> int:
+    if any(size == 0 for size in geometry.shape):
+        elements = geometry.storage_offset
+    elif not geometry.shape:
+        elements = geometry.storage_offset + 1
+    else:
+        if any(stride < 0 for stride in geometry.stride):
+            raise CaptureError("cached AOT graph uses a negative-stride tensor")
+        elements = (
+            geometry.storage_offset
+            + 1
+            + sum(
+                (size - 1) * stride
+                for size, stride in zip(geometry.shape, geometry.stride, strict=True)
+            )
+        )
+    return max(0, elements * torch.empty((), dtype=geometry.dtype).element_size())
+
+
+def _atomic_json(path: Path, payload: dict[str, object]) -> None:
+    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
+
 
 def partition_export(
-    capture: ExportCapture, module: nn.Module, *, partition: str = "auto"
+    capture: ExportCapture,
+    module: nn.Module,
+    *,
+    partition: str = "auto",
+    representative_root_inputs: tuple[object, ...] | None = None,
 ) -> PartitionedExport:
     """Split at outer repeated-module boundaries or retain one whole graph."""
 
     if partition not in {"auto", "whole"}:
         raise CaptureError("partition must be 'auto' or 'whole'")
     repeated = _outer_repeated_groups(module) if partition == "auto" else ()
+    root_provenance = _root_input_provenance(
+        capture,
+        representative_root_inputs=representative_root_inputs,
+    )
     graph_module = capture.exported_program.graph_module
     assignments = _partition_assignments(graph_module, repeated)
     try:
@@ -302,6 +684,12 @@ def partition_export(
             graph_module=child,
             inputs=inputs,
             input_sources=sources,
+            input_provenance=tuple(
+                _stage_input_provenance(source, root_provenance)
+                if source is not None
+                else TaskInputProvenance(TaskInputRole.USER_INPUT)
+                for source in sources
+            ),
             mutations=mutations_by_stage.get(index, ()),
             user_output_indices=user_outputs_by_stage.get(index, ()),
             output=output,
@@ -311,6 +699,7 @@ def partition_export(
     return PartitionedExport(
         root=root,
         root_inputs=capture.flat_inputs,
+        root_input_provenance=root_provenance,
         stages=stages,
         repeated_groups=repeated,
         user_output_indices=capture.user_output_indices,
@@ -480,11 +869,15 @@ def partition_training_capture(
     *,
     partition: str = "auto",
     graph_pair_cache: _TrainingGraphPairCache | None = None,
+    representative_root_inputs: tuple[object, ...] | None = None,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template."""
 
     partitioned = partition_export(
-        capture.exported, capture.capture_module, partition=partition
+        capture.exported,
+        capture.capture_module,
+        partition=partition,
+        representative_root_inputs=representative_root_inputs,
     )
     return PartitionedTrainingCapture(
         training=capture,
@@ -520,12 +913,23 @@ def _rebind_graph_pair(
         forward_arguments.append(value.detach())
     if len(forward_arguments) != pair.forward.argument_count:
         raise CaptureError("reused stage forward tensor argument count changed")
-    forward = pair.forward.rebind_examples(tuple(forward_arguments))
+    forward_provenance = tuple(
+        example.input_provenance[position]
+        for position in pair.forward.tensor_argument_positions
+    )
+    forward = pair.forward.rebind_examples(
+        tuple(forward_arguments),
+        input_provenance=forward_provenance,
+    )
+    backward = pair.backward.rebind_examples(
+        pair.backward.example_arguments,
+        input_provenance=rebind_backward_input_provenance(pair, forward),
+    )
     if len(roots) < pair.specialized_unit_tangent_count:
         raise CaptureError("specialized tangent count exceeds stage roots")
     return AotGraphPair(
         forward=forward,
-        backward=pair.backward,
+        backward=backward,
         recomputation=pair.recomputation,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
@@ -543,8 +947,85 @@ def capture_forward_stages(
             graph_module=stage.graph_module,
             example_inputs=stage.inputs,
             explicit_mutations=stage.mutations,
+            input_provenance=stage.input_provenance,
         )
         for stage in partitioned.stages
+    )
+
+
+def _root_input_provenance(
+    capture: ExportCapture,
+    *,
+    representative_root_inputs: tuple[object, ...] | None,
+) -> tuple[TaskInputProvenance, ...]:
+    """Translate Export input kinds into task-local value policy roles."""
+
+    inputs = capture.flat_inputs
+    if representative_root_inputs is not None and len(
+        representative_root_inputs
+    ) != len(inputs):
+        raise CaptureError("representative root inputs differ from the Export ABI")
+    specs = tuple(capture.exported_program.graph_signature.input_specs)
+    if len(specs) != len(inputs):
+        raise CaptureError("Export input signature differs from flattened inputs")
+    role_by_kind = {
+        InputKind.PARAMETER: TaskInputRole.PARAMETER,
+        InputKind.BUFFER: TaskInputRole.BUFFER,
+        InputKind.CONSTANT_TENSOR: TaskInputRole.CONSTANT,
+        InputKind.USER_INPUT: TaskInputRole.USER_INPUT,
+    }
+    result: list[TaskInputProvenance] = []
+    for index, (spec, value) in enumerate(zip(specs, inputs, strict=True)):
+        role = role_by_kind.get(spec.kind, TaskInputRole.USER_INPUT)
+        source = spec.target if isinstance(spec.target, str) else f"input_{index}"
+        reference: torch.Tensor | None = None
+        if representative_root_inputs is not None:
+            supplied = representative_root_inputs[index]
+            if isinstance(value, torch.Tensor):
+                if not isinstance(supplied, torch.Tensor):
+                    raise CaptureError(
+                        "representative root tensor became a static value"
+                    )
+                expected = TensorGeometry.from_tensor(value)
+                actual = TensorGeometry.from_tensor(supplied)
+                if (
+                    expected.shape,
+                    expected.stride,
+                    expected.storage_offset,
+                    expected.dtype,
+                ) != (
+                    actual.shape,
+                    actual.stride,
+                    actual.storage_offset,
+                    actual.dtype,
+                ):
+                    raise CaptureError(
+                        "representative root tensor geometry differs from Export"
+                    )
+                reference = supplied
+        result.append(TaskInputProvenance(role, source, representative_value=reference))
+    return tuple(result)
+
+
+def _stage_input_provenance(
+    source: StageValueSource,
+    roots: tuple[TaskInputProvenance, ...],
+) -> TaskInputProvenance:
+    if source.root_input_index is not None:
+        try:
+            return roots[source.root_input_index]
+        except IndexError as exc:
+            raise CaptureError(
+                "stage input provenance is outside the root ABI"
+            ) from exc
+    assert source.producer_stage_index is not None
+    assert source.producer_output_index is not None
+    return TaskInputProvenance(
+        TaskInputRole.ACTIVATION,
+        (
+            f"stage_{source.producer_stage_index:04d}."
+            f"output_{source.producer_output_index:04d}"
+        ),
     )
 
 

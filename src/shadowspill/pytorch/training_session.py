@@ -18,6 +18,8 @@ from shadowspill.runtime import AdmissionError
 from shadowspill.simulator import SimulationConfig
 
 from ._plan_diagnostics import training_stage_inventory
+from ._planning_cache import PlanningCache
+from ._profiling_metadata import training_profiling_metadata
 from .aot import capture_training_objective
 from .capture import GraphArtifact
 from .compiler import (
@@ -36,7 +38,7 @@ from .partition import (
     partition_training_capture,
     training_parameter_stage_owners,
 )
-from .profiling import ProfileCache, profile_unique_artifacts
+from .profiling import ProfileCache, TaskMeasurement, profile_unique_artifacts
 from .public import (
     PlanDiagnostics,
     PlannedTrainStep,
@@ -47,8 +49,11 @@ from .public import (
 from .runtime import PlanMemory
 from .runtime_bridge import RuntimeBridge
 from .session import (
+    _archive_export_capture,
+    _finalize_plan_report,
     _forward_report,
     _PhaseTimer,
+    _public_cache_artifacts,
     _reconcile_spill_pool,
     _seal_physical_budget,
     _simulation_capacity,
@@ -61,11 +66,15 @@ from .spatial_admission import (
 )
 from .training_executor import TrainingExecutor
 from .training_lowering import (
+    ProfileMeasurementKey,
     TrainingLoweringCache,
     lower_partitioned_training_program,
     lower_training_storage_layout,
 )
-from .training_materialization import TrainingMaterializedState
+from .training_materialization import (
+    TrainingMaterializedState,
+    representative_training_arguments,
+)
 
 
 def build_training(
@@ -78,11 +87,17 @@ def build_training(
     partition: str,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
+    planning_cache: PlanningCache,
+    profiling_metadata: Sequence[object] | None,
 ) -> PlannedTrainStep:
     """Construct one fixed accumulated training program."""
 
     started = time.perf_counter_ns()
     timer = _PhaseTimer(verbose=verbose)
+    workloads = training_profiling_metadata(
+        profiling_metadata,
+        microbatch_count=len(example_inputs),
+    )
     with timer.measure("validation"):
         _validate_training_request(
             model,
@@ -105,28 +120,58 @@ def build_training(
     with timer.measure("capture_lowering"):
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
-        with fake_mode:
-            with timer.measure("objective_export"):
-                captures = tuple(
-                    capture_training_objective(
-                        fake_model,
-                        objective,
-                        fake_cuda_inputs(
-                            microbatch, fake_mode, device_index=device_ordinal
-                        ),
-                    )
-                    for microbatch in cpu_inputs
+        with fake_mode, timer.measure("objective_export"):
+            captures = tuple(
+                capture_training_objective(
+                    fake_model,
+                    objective,
+                    fake_cuda_inputs(
+                        microbatch, fake_mode, device_index=device_ordinal
+                    ),
                 )
-            with timer.measure("stage_partition_aot"):
-                graph_pair_cache = _TrainingGraphPairCache()
-                partitioned_captures = tuple(
-                    partition_training_capture(
-                        capture,
-                        partition=partition,
-                        graph_pair_cache=graph_pair_cache,
-                    )
-                    for capture in captures
+                for microbatch in cpu_inputs
+            )
+        with timer.measure("export_archival"):
+            for position, objective_capture in enumerate(captures):
+                _archive_export_capture(
+                    planning_cache,
+                    objective_capture.exported,
+                    mode="training_objective",
+                    position=position,
                 )
+        representative_roots = tuple(
+            representative_training_arguments(
+                objective_capture,
+                model,
+                microbatch,
+            )
+            for objective_capture, microbatch in zip(
+                captures,
+                cpu_inputs,
+                strict=True,
+            )
+        )
+        with fake_mode, timer.measure("stage_partition_aot"):
+            graph_pair_cache = _TrainingGraphPairCache(
+                planning_cache.graphpairs,
+                read_enabled=planning_cache.read_enabled,
+                write_enabled=planning_cache.write_enabled,
+                overwrite=planning_cache.overwrite_plan,
+                artifact_recorder=planning_cache.record,
+            )
+            partitioned_captures = tuple(
+                partition_training_capture(
+                    capture,
+                    partition=partition,
+                    graph_pair_cache=graph_pair_cache,
+                    representative_root_inputs=root_inputs,
+                )
+                for capture, root_inputs in zip(
+                    captures,
+                    representative_roots,
+                    strict=True,
+                )
+            )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(fake_model, captures)
 
@@ -170,22 +215,45 @@ def build_training(
                     f"{optimizer_capture.opaque_reason}"
                 )
 
-        artifact_by_digest: dict[str, OptimizerTaskArtifact] = {
-            artifact.compatibility_digest: artifact
-            for capture in partitioned_captures
-            for stage in capture.stages
-            for pair in (stage.save_pair, stage.recompute_pair)
-            for artifact in (pair.forward, pair.backward)
-        }
+        artifact_by_digest: dict[str, OptimizerTaskArtifact] = {}
+        profile_artifact_by_key: dict[
+            tuple[str, str | None], OptimizerTaskArtifact
+        ] = {}
+        for position, partitioned_capture in enumerate(partitioned_captures):
+            metadata_digest = workloads[position].digest
+            for stage in partitioned_capture.stages:
+                for pair in (stage.save_pair, stage.recompute_pair):
+                    for artifact in (pair.forward, pair.backward):
+                        artifact_by_digest.setdefault(
+                            artifact.compatibility_digest,
+                            artifact,
+                        )
+                        profile_artifact_by_key.setdefault(
+                            (artifact.compatibility_digest, metadata_digest),
+                            artifact,
+                        )
         for optimizer_task in optimizer_capture.recurrent_tasks:
-            artifact_by_digest[optimizer_task.artifact.compatibility_digest] = (
-                optimizer_task.artifact
+            artifact_by_digest.setdefault(
+                optimizer_task.artifact.compatibility_digest,
+                optimizer_task.artifact,
+            )
+            profile_artifact_by_key.setdefault(
+                (optimizer_task.artifact.compatibility_digest, None),
+                optimizer_task.artifact,
             )
         if optimizer_capture.initialized_state_dict is None:
-            artifact_by_digest[optimizer_capture.recurrent.compatibility_digest] = (
-                optimizer_capture.recurrent
+            artifact_by_digest.setdefault(
+                optimizer_capture.recurrent.compatibility_digest,
+                optimizer_capture.recurrent,
+            )
+            profile_artifact_by_key.setdefault(
+                (optimizer_capture.recurrent.compatibility_digest, None),
+                optimizer_capture.recurrent,
             )
         artifacts = tuple(artifact_by_digest.values())
+        profile_keys = tuple(profile_artifact_by_key)
+        profile_artifacts = tuple(profile_artifact_by_key.values())
+        profile_metadata_digests = tuple(item[1] for item in profile_keys)
         optimizer_artifact_count = sum(
             not isinstance(item, GraphArtifact) or item.kind == "optimizer"
             for item in artifacts
@@ -195,14 +263,23 @@ def build_training(
             f"graph={len(artifacts) - optimizer_artifact_count}, "
             f"optimizer={optimizer_artifact_count}, "
             f"unique={len(artifacts)}, "
+            f"profile_variants={len(profile_artifacts)}, "
             f"optimizer_tasks={len(optimizer_capture.recurrent_tasks)}"
         )
         profiler = CudaTaskProfiler(installed.library, device_ordinal=device_ordinal)
         environment = profile_environment(
             device_ordinal=device_ordinal,
             provider_id="shadowspill.device_pool",
+            implementation_revision=planning_cache.implementation_revision,
         )
-        profile_cache = ProfileCache()
+        profile_cache = ProfileCache(
+            planning_cache.profile_measurements,
+            compiled_manifest_root=planning_cache.compiled_manifests,
+            read_enabled=planning_cache.read_enabled,
+            write_enabled=planning_cache.write_enabled,
+            overwrite=planning_cache.overwrite_plan,
+            artifact_recorder=planning_cache.record,
+        )
         with timer.measure("compiler_manifest"):
             resolved_manifests = resolve_task_manifests(
                 artifacts,
@@ -220,7 +297,7 @@ def build_training(
             )
         with timer.measure("structural_profiling"):
             profiles = profile_unique_artifacts(
-                artifacts,
+                profile_artifacts,
                 environment=environment,
                 measure=profiler.measure,
                 cache=profile_cache,
@@ -232,14 +309,22 @@ def build_training(
                 progress=lambda index, total, state, digest: timer.progress(
                     f"structural profile {index}/{total} {state}: {digest[:12]}"
                 ),
+                profiling_metadata_digests=profile_metadata_digests,
             )
 
         with timer.measure("program_lowering"):
-            measurements = {
-                artifact.compatibility_digest: measurement
-                for artifact, measurement in zip(
-                    artifacts, profiles.measurements, strict=True
+            measurements: dict[ProfileMeasurementKey, TaskMeasurement] = {
+                key: measurement
+                for key, measurement in zip(
+                    profile_keys, profiles.measurements, strict=True
                 )
+            }
+            measurements_by_profile = dict(
+                zip(profiles.key_digests, profiles.measurements, strict=True)
+            )
+            profile_compatibility_digests = {
+                key: digest
+                for key, digest in zip(profile_keys, profiles.key_digests, strict=True)
             }
             lowering_cache = TrainingLoweringCache()
             initial_lowered = lower_partitioned_training_program(
@@ -258,6 +343,8 @@ def build_training(
                 optimizer_phase="initial",
                 optimizer_ordering=optimizer_ordering,
                 lowering_cache=lowering_cache,
+                profiling_metadata_digests=tuple(item.digest for item in workloads),
+                profile_compatibility_digests=profile_compatibility_digests,
             )
             recurrent_lowered = lower_partitioned_training_program(
                 fake_model,
@@ -275,6 +362,8 @@ def build_training(
                 optimizer_phase="recurrent",
                 optimizer_ordering=optimizer_ordering,
                 lowering_cache=lowering_cache,
+                profiling_metadata_digests=tuple(item.digest for item in workloads),
+                profile_compatibility_digests=profile_compatibility_digests,
             )
             _verify_provisional_layout(layout, recurrent_lowered)
             _verify_optimizer_phase_identity(initial_lowered, recurrent_lowered)
@@ -316,7 +405,16 @@ def build_training(
                 ).latency_nanoseconds,
             )
         with timer.measure("pressurefit_simulation"):
-            selection_cache = PressureFitCache()
+            planning_cache.archive_program(recurrent_lowered.program)
+            if initial_lowered.program.digest != recurrent_lowered.program.digest:
+                planning_cache.archive_program(initial_lowered.program)
+            selection_cache = PressureFitCache(
+                planning_cache.pressurefit_selections,
+                read_enabled=planning_cache.read_enabled,
+                write_enabled=planning_cache.write_enabled,
+                overwrite=planning_cache.overwrite_plan,
+                artifact_recorder=planning_cache.record,
+            )
             recurrent_cached = selection_cache.resolve(
                 recurrent_lowered.program,
                 initial_residency=recurrent_lowered.initial_residency,
@@ -383,7 +481,7 @@ def build_training(
                 replays = [
                     replay_selected_schedule(
                         recurrent_selected,
-                        measurements,
+                        measurements_by_profile,
                         execution_pool_bytes=(
                             memory.execution_budget - profiles.fixed_slab_bytes
                         ),
@@ -403,7 +501,7 @@ def build_training(
                     replays.append(
                         replay_selected_schedule(
                             initial_selected,
-                            measurements,
+                            measurements_by_profile,
                             execution_pool_bytes=(
                                 memory.execution_budget - profiles.fixed_slab_bytes
                             ),
@@ -468,6 +566,7 @@ def build_training(
                 recurrent_plan,
                 measurements,
                 resolved_manifests.manifests,
+                profiling_metadata_digests=tuple(item.digest for item in workloads),
             )
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
@@ -500,6 +599,7 @@ def build_training(
             captured_stage_count=sum(
                 len(capture.stages) for capture in partitioned_captures
             ),
+            aot_unique_stage_abis=graph_pair_cache.unique_keys,
             aot_graph_pair_cache_hits=graph_pair_cache.hits,
             aot_graph_pair_cache_misses=graph_pair_cache.misses,
             pressurefit_results=tuple(
@@ -509,8 +609,19 @@ def build_training(
             ),
             task_stage_map=task_stage_map,
             unique_stages=unique_stages,
+            compiler_phase_timings_ns=profiler.compilation_phase_timings_ns,
+            compiler_phase_timings_by_abi=(profiler.compilation_phase_timings_by_abi),
+            cache_directories=planning_cache.diagnostics(),
+            cache_artifacts=_public_cache_artifacts(planning_cache),
+            profiling_metadata=workloads,
             optimizer_ordering=optimizer_ordering,
             memory=memory,
+        )
+        report = _finalize_plan_report(
+            model,
+            report,
+            planning_cache,
+            started=started,
         )
         return PlannedTrainStep(
             model,
@@ -640,11 +751,19 @@ def _training_report(
     recomputation_cache_hits: int = 0,
     recomputation_cache_misses: int = 0,
     captured_stage_count: int = 0,
+    aot_unique_stage_abis: int = 0,
     aot_graph_pair_cache_hits: int = 0,
     aot_graph_pair_cache_misses: int = 0,
     pressurefit_results: tuple[Any, ...] = (),
     task_stage_map: tuple[PlanTaskStage, ...] = (),
     unique_stages: tuple[PlanUniqueStage, ...] = (),
+    compiler_phase_timings_ns: tuple[tuple[str, int], ...] = (),
+    compiler_phase_timings_by_abi: tuple[
+        tuple[str, tuple[tuple[str, int], ...]], ...
+    ] = (),
+    cache_directories: tuple[tuple[str, str], ...] = (),
+    cache_artifacts: tuple[Any, ...] = (),
+    profiling_metadata: tuple[Any, ...] = (),
     optimizer_ordering: str,
     memory: PlanMemory,
 ) -> PlanReport:
@@ -665,9 +784,14 @@ def _training_report(
         timings,
         started,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_unique_stage_abis=aot_unique_stage_abis,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
+        compiler_phase_timings_ns=compiler_phase_timings_ns,
+        compiler_phase_timings_by_abi=compiler_phase_timings_by_abi,
+        cache_directories=cache_directories,
+        cache_artifacts=cache_artifacts,
+        profiling_metadata=profiling_metadata,
         memory=memory,
     )
     base_diagnostics = report.diagnostics
@@ -679,13 +803,18 @@ def _training_report(
         profile_cache_hits=base_diagnostics.profile_cache_hits,
         profile_cache_misses=base_diagnostics.profile_cache_misses,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_unique_stage_abis=aot_unique_stage_abis,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         recomputation_cache_hits=recomputation_cache_hits,
         recomputation_cache_misses=recomputation_cache_misses,
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
+        compiler_phase_timings_ns=compiler_phase_timings_ns,
+        compiler_profiles=base_diagnostics.compiler_profiles,
+        cache_directories=cache_directories,
+        cache_artifacts=base_diagnostics.cache_artifacts,
+        profiling_metadata=base_diagnostics.profiling_metadata,
     )
     return PlanReport(
         mode="training",
@@ -705,7 +834,7 @@ def _training_report(
         recomputation_cache_misses=recomputation_cache_misses,
         fixed_slab_bytes=report.fixed_slab_bytes,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_graph_pair_cache_misses,
+        aot_unique_stage_abis=aot_unique_stage_abis,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         pressurefit_results=pressurefit_results,

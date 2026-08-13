@@ -15,7 +15,11 @@ from typing import Any
 import torch
 from torch.fx import GraphModule
 
-from .capture import GraphArtifact
+from .capture import (
+    GraphArtifact,
+    TaskInputProvenance,
+    TaskInputRole,
+)
 from .contracts import CaptureError
 
 
@@ -167,6 +171,7 @@ def capture_optimizer(
         )
     optimizer_type = f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
     initialized_state_dict: dict[str, Any] | None
+    representative_values: dict[str, torch.Tensor] = {}
     try:
         sandbox = _copy_optimizer(optimizer)
     except BaseException as exc:
@@ -239,6 +244,10 @@ def capture_optimizer(
                 before_parameters,
             )
             initialized_state_dict = sandbox.state_dict()
+            representative_values = _representative_optimizer_values(
+                sandbox,
+                name_by_sandbox_id,
+            )
             sandbox, name_by_sandbox_id = _fake_cuda_optimizer(
                 sandbox, name_by_sandbox_id
             )
@@ -333,6 +342,10 @@ def capture_optimizer(
         finally:
             torch.set_grad_enabled(probe_grad_enabled)
         _restore_binding_values(probe_bindings, probe_snapshots)
+        representative_values = _representative_optimizer_values(
+            sandbox,
+            name_by_sandbox_id,
+        )
         sandbox, name_by_sandbox_id = _fake_cuda_optimizer(sandbox, name_by_sandbox_id)
 
     bindings = _tensor_bindings(sandbox, name_by_sandbox_id)
@@ -348,6 +361,10 @@ def capture_optimizer(
             kind="optimizer",
             graph_module=graph_module,
             example_inputs=tuple(binding.tensor for binding in bindings),
+            input_provenance=_optimizer_input_provenance(
+                bindings,
+                representative_values,
+            ),
         )
     except BaseException as exc:
         _restore_binding_values(bindings, snapshots)
@@ -1038,6 +1055,9 @@ def _partition_optimizer_graph(
             example_inputs=tuple(
                 artifact.example_arguments[position] for position in positions
             ),
+            input_provenance=tuple(
+                artifact.input_provenance[position] for position in positions
+            ),
         )
         tasks.append(
             OptimizerTask(
@@ -1048,6 +1068,39 @@ def _partition_optimizer_graph(
             )
         )
     return tuple(tasks)
+
+
+def _representative_optimizer_values(
+    optimizer: torch.optim.Optimizer,
+    name_by_id: Mapping[int, str],
+) -> dict[str, torch.Tensor]:
+    """Retain occurrence-local initialized values before FakeTensor conversion."""
+
+    return {
+        binding.name: binding.tensor.detach()
+        for binding in _tensor_bindings(optimizer, name_by_id)
+        if binding.role is not OptimizerTensorRole.GRADIENT
+    }
+
+
+def _optimizer_input_provenance(
+    bindings: tuple[OptimizerTensorBinding, ...],
+    representative_values: Mapping[str, torch.Tensor],
+) -> tuple[TaskInputProvenance, ...]:
+    role_map = {
+        OptimizerTensorRole.PARAMETER: TaskInputRole.PARAMETER,
+        OptimizerTensorRole.GRADIENT: TaskInputRole.GRADIENT,
+        OptimizerTensorRole.STATE: TaskInputRole.OPTIMIZER_STATE,
+        OptimizerTensorRole.HYPERPARAMETER: (TaskInputRole.OPTIMIZER_HYPERPARAMETER),
+    }
+    return tuple(
+        TaskInputProvenance(
+            role_map[binding.role],
+            binding.name,
+            representative_value=representative_values.get(binding.name),
+        )
+        for binding in bindings
+    )
 
 
 def _completion_stage(

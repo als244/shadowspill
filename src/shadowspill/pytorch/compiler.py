@@ -8,9 +8,10 @@ import statistics
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils._pytree import tree_flatten
 
 from ._abi import AdapterStatistics, Allocation
@@ -28,7 +29,7 @@ from .contracts import CaptureError
 from .inductor_adapter import (
     ExecutableRootAllocation,
     ExecutableTaskManifest,
-    compile_inductor_task,
+    compile_explicit_inductor_task,
 )
 from .optimizer import OpaqueOptimizerArtifact, materialize_opaque_optimizer
 from .output_contract import TaskStorageContract
@@ -40,6 +41,27 @@ from .profiling import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from .representative import (
+    RepresentativeInputSummary,
+    materialize_representative_inputs,
+)
+
+
+def _timing_stability(samples: Sequence[int]) -> tuple[float, float]:
+    """Return relative MAD and first/second-half median drift."""
+
+    if not samples:
+        raise ValueError("timing stability requires at least one sample")
+    median = float(statistics.median(samples))
+    if median <= 0:
+        return (0.0, 0.0) if not any(samples) else (float("inf"), float("inf"))
+    mad = float(statistics.median(abs(value - median) for value in samples)) / median
+    midpoint = len(samples) // 2
+    if midpoint == 0:
+        return mad, 0.0
+    first = float(statistics.median(samples[:midpoint]))
+    second = float(statistics.median(samples[-midpoint:]))
+    return mad, abs(first - second) / median
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +74,8 @@ class CompiledTask:
     manifest: ExecutableTaskManifest
     execution_provider: str = "torch-inductor"
     graph_node_count: int = 0
+    representative_inputs: tuple[RepresentativeInputSummary, ...] = ()
+    compilation_phase_timings_ns: tuple[tuple[str, int], ...] = ()
 
     def __call__(self) -> object:
         # GraphArtifact training derivatives are explicit AOT forward/backward
@@ -96,6 +120,14 @@ class ResolvedTaskManifests:
     cache_misses: int
 
 
+@dataclass(frozen=True, slots=True)
+class _WorkspaceObservation:
+    profile: Any
+    execution_wall_time_ns: int
+    telemetry_copy_decode_ns: int
+    replay_wall_time_ns: int
+
+
 def validate_compiled_profile(
     artifact: ProfilableArtifact,
     measurement: TaskMeasurement,
@@ -118,7 +150,12 @@ def validate_compiled_profile(
     )
 
 
-def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvironment:
+def profile_environment(
+    *,
+    device_ordinal: int,
+    provider_id: str,
+    implementation_revision: str | None = None,
+) -> ProfileEnvironment:
     """Describe every implementation attribute that can change task cost."""
 
     properties = torch.cuda.get_device_properties(device_ordinal)
@@ -127,8 +164,9 @@ def profile_environment(*, device_ordinal: int, provider_id: str) -> ProfileEnvi
         cuda_version=torch.version.cuda,
         device_name=properties.name,
         compute_capability=(properties.major, properties.minor),
-        compiler_id="shadowspill-structural-compiler/v2:torch-inductor",
+        compiler_id="shadowspill-explicit-task-compiler/v3:torch-inductor",
         provider_id=provider_id,
+        implementation_revision=implementation_revision,
     )
 
 
@@ -147,7 +185,13 @@ def resolve_task_manifests(
         for artifact in artifacts
         if isinstance(artifact, GraphArtifact)
     }
-    sidecars = CompiledManifestCache(profile_cache.root)
+    sidecars = CompiledManifestCache(
+        profile_cache.compiled_manifest_root,
+        read_enabled=profile_cache.read_enabled,
+        write_enabled=profile_cache.write_enabled,
+        overwrite=profile_cache.overwrite,
+        artifact_recorder=profile_cache.artifact_recorder,
+    )
     manifests: dict[str, ExecutableTaskManifest] = {}
     missing: list[GraphArtifact] = []
     for index, digest in enumerate(sorted(unique), start=1):
@@ -226,13 +270,20 @@ def compile_artifact(
     device_ordinal: int,
     representative_arguments: Sequence[object] | None = None,
 ) -> CompiledTask:
-    """Compile one explicit FX task against real allocator-owned CUDA values."""
+    """Compile one explicit FX task from geometry-only arguments.
 
-    examples = materialize_example_arguments(
+    Export/AOT artifacts already carry FakeTensor geometry on their intended
+    execution device.  Inductor consumes that geometry directly; allocating a
+    second real, zero-filled copy here only adds device work before the real
+    representative inputs are materialized for profiling.  Concrete unit-test
+    artifacts remain concrete and are fakeified inside the compiler adapter.
+    """
+
+    del device_ordinal
+    examples = tuple(
         artifact.example_arguments
         if representative_arguments is None
-        else representative_arguments,
-        device_ordinal=device_ordinal,
+        else representative_arguments
     )
     # Every GraphArtifact is already an explicit inference, AOT forward, AOT
     # backward, or optimizer program and CompiledTask always runs under
@@ -243,20 +294,24 @@ def compile_artifact(
         value.detach() if isinstance(value, torch.Tensor) else value
         for value in examples
     )
-    graph_module = copy.deepcopy(artifact.graph_module)
-    node_count = len(tuple(graph_module.graph.nodes))
-    compilation = compile_inductor_task(
-        graph_module,
+    node_count = len(tuple(artifact.graph_module.graph.nodes))
+    compilation = compile_explicit_inductor_task(
+        artifact.graph_module,
         examples,
         semantic_contract=artifact.storage_contract,
+    )
+    callable_arguments = (
+        () if any(isinstance(value, FakeTensor) for value in examples) else examples
     )
     return CompiledTask(
         artifact,
         compilation.function,
-        examples,
+        callable_arguments,
         compilation.manifest,
         "torch-inductor",
         node_count,
+        (),
+        compilation.phase_timings_ns,
     )
 
 
@@ -287,14 +342,36 @@ class CudaTaskProfiler:
         self._executables: dict[str, CompiledTask] = {}
         self._warmed_digests: set[str] = set()
         self._compilation_wall_time_ns = 0
+        self._compilation_phase_timings_ns: dict[str, int] = {}
+        self._compilation_phase_timings_by_abi: dict[
+            str, tuple[tuple[str, int], ...]
+        ] = {}
         self._profiling_wall_time_ns = 0
         self._entrypoint_warmup_wall_time_ns = 0
+        self._timing_events: tuple[Any, Any] | None = None
+        self._device_conditioned = False
+        self._last_workspace_observation: _WorkspaceObservation | None = None
+        self._last_audit_timings: tuple[tuple[str, int], ...] = ()
 
     @property
     def compilation_wall_time_ns(self) -> int:
         """Wall time spent constructing unique compiled entrypoints."""
 
         return self._compilation_wall_time_ns
+
+    @property
+    def compilation_phase_timings_ns(self) -> tuple[tuple[str, int], ...]:
+        """Non-overlapping compiler subphases aggregated across unique ABIs."""
+
+        return tuple(self._compilation_phase_timings_ns.items())
+
+    @property
+    def compilation_phase_timings_by_abi(
+        self,
+    ) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
+        """Compiler subphases for every independently compiled structural ABI."""
+
+        return tuple(sorted(self._compilation_phase_timings_by_abi.items()))
 
     @property
     def profiling_wall_time_ns(self) -> int:
@@ -322,6 +399,11 @@ class CudaTaskProfiler:
 
         digest = artifact.compatibility_digest
         executable = self._compiled(artifact)
+        if executable.artifact is not artifact:
+            # Manifest preparation and structural profiling deliberately have
+            # different lifetimes.  Reattach the first profiling occurrence
+            # so repeated ABIs receive that occurrence's registered values.
+            executable = replace(executable, artifact=artifact)
         if not executable.example_arguments and artifact.example_arguments:
             executable = self._restore_example_arguments(executable)
             self._executables[digest] = executable
@@ -364,6 +446,8 @@ class CudaTaskProfiler:
                 executable.manifest,
                 executable.execution_provider,
                 executable.graph_node_count,
+                (),
+                executable.compilation_phase_timings_ns,
             )
             return measurement
         finally:
@@ -377,11 +461,10 @@ class CudaTaskProfiler:
     ) -> dict[str, ExecutableTaskManifest]:
         """Compile only missing storage manifests without retaining examples."""
 
-        graph_artifacts = {
-            artifact.compatibility_digest: artifact
-            for artifact in artifacts
-            if isinstance(artifact, GraphArtifact)
-        }
+        graph_artifacts: dict[str, GraphArtifact] = {}
+        for artifact in artifacts:
+            if isinstance(artifact, GraphArtifact):
+                graph_artifacts.setdefault(artifact.compatibility_digest, artifact)
         manifests: dict[str, ExecutableTaskManifest] = {}
         total = len(graph_artifacts)
         for index, digest in enumerate(sorted(graph_artifacts), start=1):
@@ -411,48 +494,83 @@ class CudaTaskProfiler:
 
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
+        phase_timings: list[tuple[str, int]] = []
+        if not self._device_conditioned:
+            conditioning_started = time.perf_counter_ns()
+            self._condition_device(stream)
+            phase_timings.append(
+                (
+                    "device_conditioning",
+                    time.perf_counter_ns() - conditioning_started,
+                )
+            )
         persistent_baseline = self._requested_allocated_bytes()
         persistent_high_water = persistent_baseline
+        warmup_started = time.perf_counter_ns()
         for _ in range(self._warmups):
-            task_id = self._open_profile_task(stream)
-            try:
-                output = executable()
-                del output
-                self._close_profile_task(task_id, stream)
-            except BaseException:
-                self._library.shadowspill_pytorch_abort_task_range()
-                raise
+            self._invoke_profile_task(executable, stream)
         stream.synchronize()
         self._library.shadowspill_pytorch_allocator_wait_idle()
         persistent_high_water = max(
             persistent_high_water, self._requested_allocated_bytes()
         )
-        samples: list[int] = []
-        event_factory: Any = torch.cuda.Event
-        for _ in range(self._samples):
-            start = event_factory(enable_timing=True)
-            finish = event_factory(enable_timing=True)
-            task_id = self._open_profile_task(stream)
-            try:
-                start.record(stream)
-                output = executable()
-                del output
-                finish.record(stream)
-                self._close_profile_task(task_id, stream)
-            except BaseException:
-                self._library.shadowspill_pytorch_abort_task_range()
-                raise
-            finish.synchronize()
+        # One independent observation after the mandatory warmups proves that
+        # first-use provider allocation has reached a stable baseline. If it
+        # grows, require two consecutive stable observations before timing.
+        previous = self._requested_allocated_bytes()
+        stable = 0
+        for _ in range(16):
+            self._invoke_profile_task(executable, stream)
+            stream.synchronize()
             self._library.shadowspill_pytorch_allocator_wait_idle()
-            samples.append(max(0, round(start.elapsed_time(finish) * 1_000_000)))
+            current = self._requested_allocated_bytes()
+            persistent_high_water = max(persistent_high_water, current)
+            if current == previous:
+                stable += 1
+            else:
+                stable = 0
+            if stable >= 1:
+                break
+            previous = current
+        else:
+            raise AllocationTelemetryError(
+                "provider allocations did not stabilize during task warmup"
+            )
+        phase_timings.append(
+            ("provider_warmup", time.perf_counter_ns() - warmup_started)
+        )
+        samples: list[int] = []
+        timing_started = time.perf_counter_ns()
+        while True:
+            target = self._samples if not samples else min(15, len(samples) + 2)
+            while len(samples) < target:
+                samples.append(self._measure_task_once(executable, stream))
+            relative_mad, half_drift = _timing_stability(samples)
+            if (
+                self._samples < 5
+                or max(relative_mad, half_drift) <= 0.03
+                or len(samples) >= 15
+            ):
+                break
+        phase_timings.append(
+            ("timing_samples", time.perf_counter_ns() - timing_started)
+        )
         self._library.shadowspill_pytorch_allocator_wait_idle()
         persistent_high_water = max(
             persistent_high_water, self._requested_allocated_bytes()
         )
+        audit_started = time.perf_counter_ns()
         workspace, persistent_high_water = self._audit_workspace_retention(
             executable,
             stream,
             persistent_high_water=persistent_high_water,
+        )
+        workspace_timings = self._last_audit_timings
+        audit_wall = time.perf_counter_ns() - audit_started
+        phase_timings.extend(workspace_timings)
+        accounted_workspace = sum(duration for _name, duration in workspace_timings)
+        phase_timings.append(
+            ("retention_audit", max(0, audit_wall - accounted_workspace))
         )
         fixed_bytes = max(0, persistent_high_water - persistent_baseline)
         # A shared provider cache may already be populated by another ABI.
@@ -473,7 +591,90 @@ class CudaTaskProfiler:
             allocation_trace=workspace.allocation_trace,
             output_input_bindings=workspace.output_input_bindings,
             persistent_extent_bytes=fixed_extents,
+            representative_inputs=(
+                executable.representative_inputs
+                if isinstance(executable, CompiledTask)
+                else ()
+            ),
+            phase_timings_ns=tuple(phase_timings),
+            timing_relative_mad=relative_mad,
+            timing_half_drift=half_drift,
+            timing_unstable=max(relative_mad, half_drift) > 0.03,
         )
+
+    def _invoke_profile_task(
+        self,
+        executable: Callable[[], object],
+        stream: torch.cuda.Stream,
+    ) -> None:
+        task_id = self._open_profile_task(stream)
+        try:
+            output = executable()
+            del output
+            self._close_profile_task(task_id, stream)
+        except BaseException:
+            self._library.shadowspill_pytorch_abort_task_range()
+            raise
+
+    def _measure_task_once(
+        self,
+        executable: Callable[[], object],
+        stream: torch.cuda.Stream,
+    ) -> int:
+        start, finish = self._timing_event_pair()
+        task_id = self._open_profile_task(stream)
+        try:
+            start.record(stream)
+            output = executable()
+            del output
+            finish.record(stream)
+            self._close_profile_task(task_id, stream)
+        except BaseException:
+            self._library.shadowspill_pytorch_abort_task_range()
+            raise
+        finish.synchronize()
+        self._library.shadowspill_pytorch_allocator_wait_idle()
+        elapsed_ms = cast(float, start.elapsed_time(finish))
+        return max(0, round(elapsed_ms * 1_000_000))
+
+    def _timing_event_pair(self) -> tuple[Any, Any]:
+        if self._timing_events is None:
+            event_factory: Any = torch.cuda.Event
+            self._timing_events = (
+                event_factory(enable_timing=True),
+                event_factory(enable_timing=True),
+            )
+        return self._timing_events
+
+    def _condition_device(self, stream: torch.cuda.Stream) -> None:
+        """Warm clocks/provider state once using bounded preallocated GEMM."""
+
+        if self._device_conditioned:
+            return
+        shape = (2048, 2048)
+        device = torch.device("cuda", self._device_ordinal)
+        left = torch.randn(shape, dtype=torch.bfloat16, device=device)
+        right = torch.randn(shape, dtype=torch.bfloat16, device=device)
+        output = torch.empty(shape, dtype=torch.bfloat16, device=device)
+        samples: list[int] = []
+        start, finish = self._timing_event_pair()
+        for _ in range(64):
+            start.record(stream)
+            torch.mm(left, right, out=output)
+            finish.record(stream)
+            finish.synchronize()
+            samples.append(max(1, round(start.elapsed_time(finish) * 1_000_000)))
+            if len(samples) >= 3:
+                recent = samples[-3:]
+                median = float(statistics.median(recent))
+                if median > 0 and (max(recent) - min(recent)) / median <= 0.02:
+                    break
+        del output
+        del right
+        del left
+        stream.synchronize()
+        self._library.shadowspill_pytorch_allocator_wait_idle()
+        self._device_conditioned = True
 
     def _open_profile_task(self, stream: torch.cuda.Stream) -> int:
         task_id = self._next_task_id
@@ -509,17 +710,37 @@ class CudaTaskProfiler:
         previous = self._requested_allocated_bytes()
         stable_observations = 0
         workspace: Any | None = None
+        execution_ns = 0
+        copy_decode_ns = 0
+        replay_ns = 0
+        self._last_audit_timings = ()
         for _ in range(maximum_iterations):
+            self._last_workspace_observation = None
             workspace = self._measure_workspace(executable, stream)
+            observation = self._last_workspace_observation
+            if observation is not None:
+                execution_ns += observation.execution_wall_time_ns
+                copy_decode_ns += observation.telemetry_copy_decode_ns
+                replay_ns += observation.replay_wall_time_ns
             current = self._requested_allocated_bytes()
             persistent_high_water = max(persistent_high_water, current)
             if not workspace.persistent_extent_bytes:
+                self._last_audit_timings = (
+                    ("workspace_execution", execution_ns),
+                    ("telemetry_copy_decode", copy_decode_ns),
+                    ("workspace_replay", replay_ns),
+                )
                 return workspace, persistent_high_water
             if current == previous:
                 stable_observations += 1
             else:
                 stable_observations = 0
-            if stable_observations >= 2:
+            if stable_observations >= 1:
+                self._last_audit_timings = (
+                    ("workspace_execution", execution_ns),
+                    ("telemetry_copy_decode", copy_decode_ns),
+                    ("workspace_replay", replay_ns),
+                )
                 return workspace, persistent_high_water
             previous = current
         if workspace is None:
@@ -631,6 +852,8 @@ class CudaTaskProfiler:
                 )
             if executable is None:
                 executable = self._compile_artifact(artifact)
+            elif executable.artifact is not artifact:
+                executable = replace(executable, artifact=artifact)
             needs_warmup = digest not in self._warmed_digests
             if needs_warmup:
                 if not executable.example_arguments:
@@ -676,26 +899,39 @@ class CudaTaskProfiler:
     def _compile_artifact(self, artifact: GraphArtifact) -> CompiledTask:
         started = time.perf_counter_ns()
         try:
-            return compile_artifact(artifact, device_ordinal=self._device_ordinal)
+            executable = compile_artifact(artifact, device_ordinal=self._device_ordinal)
+            for name, duration in executable.compilation_phase_timings_ns:
+                self._compilation_phase_timings_ns[name] = (
+                    self._compilation_phase_timings_ns.get(name, 0) + duration
+                )
+            self._compilation_phase_timings_by_abi[artifact.compatibility_digest] = (
+                executable.compilation_phase_timings_ns
+            )
+            return executable
         finally:
             self._compilation_wall_time_ns += time.perf_counter_ns() - started
 
     def _restore_example_arguments(self, executable: CompiledTask) -> CompiledTask:
-        examples = materialize_example_arguments(
-            executable.artifact.example_arguments,
+        representatives = materialize_representative_inputs(
+            executable.artifact,
             device_ordinal=self._device_ordinal,
         )
         detached = tuple(
             value.detach() if isinstance(value, torch.Tensor) else value
-            for value in examples
+            for value in representatives.arguments
         )
-        return replace(executable, example_arguments=detached)
+        return replace(
+            executable,
+            example_arguments=detached,
+            representative_inputs=representatives.summaries,
+        )
 
     def _measure_workspace(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
     ) -> Any:
         task_id = self._next_task_id
         self._next_task_id += 1
+        execution_started = time.perf_counter_ns()
         start_allocation_telemetry(self._library, capacity=self._telemetry_capacity)
         task_open = False
         output: object | None = None
@@ -738,13 +974,25 @@ class CudaTaskProfiler:
             raise
         finally:
             stop_allocation_telemetry(self._library)
+        execution_wall = time.perf_counter_ns() - execution_started
+        copy_started = time.perf_counter_ns()
         events = read_allocation_telemetry(self._library)
-        return summarize_task_workspace(
+        copy_wall = time.perf_counter_ns() - copy_started
+        replay_started = time.perf_counter_ns()
+        profile = summarize_task_workspace(
             events,
             task_id=task_id,
             output_allocation_views=output_allocations,
             output_input_bindings=output_input_bindings,
         )
+        replay_wall = time.perf_counter_ns() - replay_started
+        self._last_workspace_observation = _WorkspaceObservation(
+            profile,
+            execution_wall,
+            copy_wall,
+            replay_wall,
+        )
+        return profile
 
     def _output_allocation_views(
         self,

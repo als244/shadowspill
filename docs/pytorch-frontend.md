@@ -32,6 +32,20 @@ capacities and may only reduce them. `execution_device=None` uses PyTorch's
 current accelerator device; an explicit ordinal or `torch.device` selects it.
 The resolved device must equal the execution pool's device.
 
+`planning_cachedir` selects one shared, inspectable artifact store. Export is
+rerun on every planning call, while graph pairs, compiler artifacts, task
+profiles, PressureFit selections, and resolved plans are content-addressed
+within that store. See [Planning Cache](planning-cache.md) for its layout,
+precise identities, freshness controls, and custom-kernel invalidation rules.
+
+`profiling_metadata` is an optional JSON-compatible description of
+value-dependent performance characteristics not represented by tensor
+geometry. Training accepts one entry per example microbatch; forward planning
+accepts one entry. It only enters profiling/cache identity and PlanReport
+diagnostics. It is never passed to the model or runtime. For example, it keeps
+packed `[4096, D]` workloads representing one 4,096-token sequence distinct
+from eight 512-token sequences while still reusing their common compiled ABI.
+
 Every invocation validates the complete tensor geometry, storage alias
 relationships, and static metadata before writing persistent input slots.
 PressureFit's initial placement and exact ordered actions are submitted to the
@@ -67,7 +81,7 @@ does not require a later synchronization:
 train_step = plan_step(model, ..., runtime=runtime, execution="device", spill="spill")
 
 planning = train_step.plan_report.diagnostics
-selected = planning.task("task_000123")
+selected = planning.task("execution_000123")
 print(selected.chosen_graph_pair_variant)
 
 for stage in planning.unique_stages:
@@ -79,7 +93,9 @@ The planning diagnostic reports mutually exclusive phase intervals and an
 explicit unattributed remainder; their sum equals its recorded total wall
 time. It also reports structural profile and graph-pair cache work, a direct
 task-to-unique-stage map, the candidate and chosen graph-pair variant for every
-task, and every legal graph-pair alternative for each deduplicated stage.
+task, the task's profile and `profiling_metadata` identities, and every legal
+graph-pair alternative for each deduplicated stage. It also lists every cache
+artifact read, written, matched, or managed by the planning call.
 
 `PlanReport` also records the selected pool names, effective capacities,
 execution-device ordinal, and the complete immutable transfer-capability

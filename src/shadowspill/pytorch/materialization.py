@@ -24,14 +24,15 @@ from .runtime_bridge import RuntimeBridge
 def representative_cpu_inputs(values: Any) -> Any:
     """Materialize TensorSpec/meta leaves without changing authentic CPU values."""
 
+    synthetic_ordinal = 0
+
     def convert(value: object) -> object:
+        nonlocal synthetic_ordinal
         if isinstance(value, TensorSpec):
             result = torch.empty_strided(
                 value.shape, value.resolved_stride, dtype=value.dtype, device="cpu"
             )
-            result.zero_()
             result.requires_grad_(value.requires_grad)
-            return result
         if isinstance(value, torch.Tensor) and value.device.type == "meta":
             result = torch.empty_strided(
                 tuple(value.shape),
@@ -39,10 +40,34 @@ def representative_cpu_inputs(values: Any) -> Any:
                 dtype=value.dtype,
                 device="cpu",
             )
-            result.zero_()
             result.requires_grad_(value.requires_grad)
-            return result
-        return value
+        elif not isinstance(value, TensorSpec):
+            return value
+        generator = torch.Generator(device="cpu").manual_seed(
+            0x5A17_0000 + synthetic_ordinal
+        )
+        synthetic_ordinal += 1
+        with torch.no_grad():
+            if result.is_floating_point():
+                result.copy_(
+                    torch.randn(
+                        tuple(result.shape),
+                        dtype=torch.float32,
+                        generator=generator,
+                    ).to(dtype=result.dtype)
+                )
+            elif result.is_complex():
+                real = torch.randn(
+                    tuple(result.shape), dtype=torch.float32, generator=generator
+                )
+                imaginary = torch.randn(
+                    tuple(result.shape), dtype=torch.float32, generator=generator
+                )
+                result.copy_(torch.complex(real, imaginary).to(dtype=result.dtype))
+            else:
+                pattern = torch.arange(result.numel(), dtype=torch.int64).remainder_(2)
+                result.copy_(pattern.reshape(tuple(result.shape)).to(result.dtype))
+        return result
 
     return tree_map(convert, values)
 

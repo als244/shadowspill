@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -103,7 +105,10 @@ def test_repeated_stage_aot_code_reuses_one_structural_capture() -> None:
     second_interior = stages[2].save_pair
     assert first_interior.forward.graph_module is second_interior.forward.graph_module
     assert first_interior.backward.graph_module is second_interior.backward.graph_module
-    assert first_interior.backward is second_interior.backward
+    # The executable graphs are structurally shared, while the artifact wrappers
+    # remain occurrence-local so their provenance can carry the initialized state
+    # for the corresponding repeated module.
+    assert first_interior.backward is not second_interior.backward
     assert (
         first_interior.forward.compatibility_digest
         == second_interior.forward.compatibility_digest
@@ -119,6 +124,62 @@ def test_repeated_stage_aot_code_reuses_one_structural_capture() -> None:
         if isinstance(value, torch.Tensor)
     )
     assert first_storages != second_storages
+
+
+def test_graph_pair_cache_persists_structural_artifacts(tmp_path: Path) -> None:
+    model = _NestedRepeatedNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
+
+    def objective(
+        current: nn.Module, value: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.nn.functional.mse_loss(current(value), target)
+
+    with mode:
+        capture = capture_training(replica, objective, inputs)
+        partitioned = partition_export(capture.exported, capture.capture_module)
+        first = _TrainingGraphPairCache(tmp_path)
+        expected = capture_training_stages(partitioned, graph_pair_cache=first)
+        second = _TrainingGraphPairCache(tmp_path)
+        actual = capture_training_stages(partitioned, graph_pair_cache=second)
+
+    assert first.unique_keys == 3
+    assert first.misses == 3
+    assert second.unique_keys == 3
+    assert second.misses == 0
+    assert second.hits == 4
+    assert tuple(tmp_path.rglob("graph_pairs.pt"))
+    assert tuple(
+        (
+            stage.save_pair.forward.compatibility_digest,
+            stage.save_pair.backward.compatibility_digest,
+            stage.recompute_pair.forward.compatibility_digest,
+            stage.recompute_pair.backward.compatibility_digest,
+        )
+        for stage in actual
+    ) == tuple(
+        (
+            stage.save_pair.forward.compatibility_digest,
+            stage.save_pair.backward.compatibility_digest,
+            stage.recompute_pair.forward.compatibility_digest,
+            stage.recompute_pair.backward.compatibility_digest,
+        )
+        for stage in expected
+    )
+    for expected_stage, actual_stage in zip(expected, actual, strict=True):
+        for expected_pair, actual_pair in (
+            (expected_stage.save_pair, actual_stage.save_pair),
+            (expected_stage.recompute_pair, actual_stage.recompute_pair),
+        ):
+            for expected_artifact, actual_artifact in (
+                (expected_pair.forward, actual_pair.forward),
+                (expected_pair.backward, actual_pair.backward),
+            ):
+                assert str(actual_artifact.graph_module.graph) == str(
+                    expected_artifact.graph_module.graph
+                )
 
 
 def test_whole_partition_is_one_stage() -> None:

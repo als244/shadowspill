@@ -69,10 +69,16 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata={"batch_size": 4, "width": 16},
         )
         if len(planned.plan_report.execution_plan.program.tasks) != 3:
             raise AssertionError("automatic partition did not retain three stages")
         plan_diagnostics = planned.plan_report.diagnostics
+        if not plan_diagnostics.cache_artifacts:
+            raise AssertionError("plan diagnostics omitted cache artifacts")
+        if len(plan_diagnostics.profiling_metadata) != 1:
+            raise AssertionError("plan diagnostics omitted profiling metadata")
         if (
             plan_diagnostics.measured_wall_time_ns
             + plan_diagnostics.unattributed_overhead_ns

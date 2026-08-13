@@ -838,12 +838,20 @@ def lower_forward_program(
     compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
     | None = None,
     device_ordinal: int = 0,
+    profile_compatibility_digests: tuple[str, ...] | None = None,
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
 
     stage_count = len(partitioned.stages)
     if len(artifacts) != stage_count or len(measurements) != stage_count:
         raise CaptureError("stage, artifact, and measurement counts must match")
+    profile_digests = (
+        tuple(item.compatibility_digest for item in artifacts)
+        if profile_compatibility_digests is None
+        else profile_compatibility_digests
+    )
+    if len(profile_digests) != stage_count:
+        raise CaptureError("profile identities must align with forward stages")
     device_id = f"cuda_{device_ordinal}"
     inventory = ObjectCatalog(device_id=device_id)
     registrations: list[RegistrationBinding] = []
@@ -910,12 +918,17 @@ def lower_forward_program(
             artifacts, contracts, measurements, strict=True
         )
     )
-    for artifact, contract, measurement, layout in zip(
-        artifacts, contracts, measurements, compiled_layouts, strict=True
+    for _artifact, contract, measurement, layout, profile_digest in zip(
+        artifacts,
+        contracts,
+        measurements,
+        compiled_layouts,
+        profile_digests,
+        strict=True,
     ):
         transition_bytes = replacement_transition_bytes(contract, layout)
         key = (
-            artifact.compatibility_digest,
+            profile_digest,
             measurement.runtime_ns,
             measurement.workspace_charged_bytes,
             transition_bytes,
@@ -929,7 +942,7 @@ def lower_forward_program(
                     profile_id,
                     measurement.runtime_ns,
                     measurement.workspace_charged_bytes + transition_bytes,
-                    artifact.compatibility_digest,
+                    profile_digest,
                 )
             )
         profile_ids.append(profile_id)

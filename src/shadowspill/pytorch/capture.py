@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from typing import Any, Literal
 
 import torch
@@ -54,6 +55,57 @@ class TensorGeometry:
         }
 
 
+class TaskInputRole(StrEnum):
+    """Semantic source of one explicit compiled-task tensor argument."""
+
+    PARAMETER = "parameter"
+    BUFFER = "buffer"
+    CONSTANT = "constant"
+    USER_INPUT = "user_input"
+    ACTIVATION = "activation"
+    RESIDUAL = "residual"
+    TANGENT = "tangent"
+    GRADIENT = "gradient"
+    OPTIMIZER_STATE = "optimizer_state"
+    OPTIMIZER_HYPERPARAMETER = "optimizer_hyperparameter"
+    ANONYMOUS = "anonymous"
+
+
+@dataclass(frozen=True, slots=True)
+class TaskInputProvenance:
+    """Offline provenance and optional authentic value for one task input.
+
+    ``representative_value`` is deliberately excluded from equality and ABI
+    identity. It is an occurrence-local view of initialized/user-owned CPU
+    storage and never becomes semantic identity evidence.
+    """
+
+    role: TaskInputRole
+    source: str | None = None
+    consumer_targets: tuple[str, ...] = ()
+    representative_value: torch.Tensor | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.role, TaskInputRole):
+            raise TypeError("task input role has an invalid type")
+        if self.source is not None and not self.source:
+            raise ValueError("task input provenance source must be non-empty")
+        if any(not item for item in self.consumer_targets):
+            raise ValueError("task input consumer targets must be non-empty")
+        value = self.representative_value
+        if value is not None and not isinstance(value, torch.Tensor):
+            raise TypeError("representative task input must be a Tensor")
+
+    def structural_identity(self) -> dict[str, object]:
+        """Return only fields that can change representative-value policy."""
+
+        return {"role": self.role.value}
+
+
 @dataclass(frozen=True, slots=True)
 class GraphArtifact:
     """One explicit tensor graph and its structural ABI identity."""
@@ -66,6 +118,7 @@ class GraphArtifact:
     operator_targets: tuple[str, ...]
     tensor_argument_positions: tuple[int, ...]
     tensor_argument_alias_groups: tuple[int, ...]
+    input_provenance: tuple[TaskInputProvenance, ...]
     storage_contract: TaskStorageContract
     storage_contract_capture_ns: int = field(compare=False)
     compatibility_digest: str
@@ -78,11 +131,19 @@ class GraphArtifact:
         graph_module: GraphModule,
         example_inputs: tuple[object, ...],
         explicit_mutations: tuple[ExplicitMutation, ...] = (),
+        input_provenance: tuple[TaskInputProvenance, ...] | None = None,
     ) -> str:
         """Identify a graph/input ABI without evaluating the graph outputs."""
 
+        original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
+        )
+        _normalize_input_provenance(
+            graph_module,
+            original_inputs,
+            tensor_positions,
+            input_provenance,
         )
         tensor_arguments = tuple(
             value for value in example_inputs if isinstance(value, torch.Tensor)
@@ -123,9 +184,17 @@ class GraphArtifact:
         graph_module: GraphModule,
         example_inputs: tuple[object, ...],
         explicit_mutations: tuple[ExplicitMutation, ...] = (),
+        input_provenance: tuple[TaskInputProvenance, ...] | None = None,
     ) -> GraphArtifact:
+        original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
+        )
+        provenance = _normalize_input_provenance(
+            graph_module,
+            original_inputs,
+            tensor_positions,
+            input_provenance,
         )
         tensor_arguments = tuple(
             value for value in example_inputs if isinstance(value, torch.Tensor)
@@ -202,13 +271,19 @@ class GraphArtifact:
             operator_targets=operators,
             tensor_argument_positions=tensor_positions,
             tensor_argument_alias_groups=tensor_alias_groups,
+            input_provenance=provenance,
             storage_contract=storage_contract,
             storage_contract_capture_ns=contract_capture_ns,
             compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
             example_arguments=example_inputs,
         )
 
-    def rebind_examples(self, example_arguments: tuple[object, ...]) -> GraphArtifact:
+    def rebind_examples(
+        self,
+        example_arguments: tuple[object, ...],
+        *,
+        input_provenance: tuple[TaskInputProvenance, ...] | None = None,
+    ) -> GraphArtifact:
         """Bind equivalent live tensors without re-extracting graph semantics.
 
         Structural AOT cache hits reuse the exact same FX graph and storage
@@ -237,7 +312,57 @@ class GraphArtifact:
         )
         if alias_groups != self.tensor_argument_alias_groups:
             raise CaptureError("rebound graph input aliases differ from its ABI")
-        return replace(self, example_arguments=example_arguments)
+        provenance = self.input_provenance
+        if input_provenance is not None:
+            if len(input_provenance) != len(provenance):
+                raise CaptureError("rebound graph input provenance arity changed")
+            if tuple(item.role for item in input_provenance) != tuple(
+                item.role for item in provenance
+            ):
+                raise CaptureError("rebound graph input provenance roles changed")
+            provenance = input_provenance
+        return replace(
+            self,
+            example_arguments=example_arguments,
+            input_provenance=provenance,
+        )
+
+
+def _normalize_input_provenance(
+    graph_module: GraphModule,
+    original_inputs: tuple[object, ...],
+    tensor_positions: tuple[int, ...],
+    supplied: tuple[TaskInputProvenance, ...] | None,
+) -> tuple[TaskInputProvenance, ...]:
+    """Attach compact tensor roles and static FX consumer descriptions."""
+
+    if supplied is None:
+        original = tuple(
+            TaskInputProvenance(TaskInputRole.ANONYMOUS) for _value in original_inputs
+        )
+    else:
+        if len(supplied) != len(original_inputs):
+            raise ValueError("task input provenance must match argument arity")
+        original = supplied
+    compact = tuple(original[position] for position in tensor_positions)
+    placeholders = tuple(
+        node for node in graph_module.graph.nodes if node.op == "placeholder"
+    )
+    if len(placeholders) != len(compact):
+        raise ValueError("specialized task placeholders differ from tensor inputs")
+    result: list[TaskInputProvenance] = []
+    for item, placeholder in zip(compact, placeholders, strict=True):
+        consumers = tuple(
+            sorted(
+                {
+                    str(user.target)
+                    for user in placeholder.users
+                    if user.op in {"call_function", "call_method", "call_module"}
+                }
+            )
+        )
+        result.append(replace(item, consumer_targets=consumers))
+    return tuple(result)
 
 
 def _specialize_static_inputs(

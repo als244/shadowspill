@@ -32,24 +32,53 @@ from .public import (
     PlanMutationBinding,
     PlanObjectFootprint,
     PlanOutputView,
+    PlanRepresentativeInput,
     PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
 )
-from .training_lowering import LoweredTrainingProgram, TrainingTaskEntrypoint
+from .training_lowering import (
+    LoweredTrainingProgram,
+    ProfileMeasurementKey,
+    TrainingTaskEntrypoint,
+)
 
 
 def training_stage_inventory(
     captures: tuple[PartitionedTrainingCapture, ...],
     lowered: LoweredTrainingProgram,
     execution_plan: ExecutionPlan,
-    measurements: Mapping[str, TaskMeasurement],
+    measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
+    profiling_metadata_digests: tuple[str, ...] | None = None,
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe task occurrences and all legal structural graph pairs."""
 
     program = lowered.program
     task_by_id = {item.task_id: item for item in program.tasks}
+    profile_by_id = {item.profile_id: item for item in program.profiles}
+
+    def metadata_for(entrypoint: TrainingTaskEntrypoint) -> str | None:
+        if entrypoint.microbatch is None or profiling_metadata_digests is None:
+            return None
+        return profiling_metadata_digests[entrypoint.microbatch]
+
+    def measurement_for(
+        artifact: GraphArtifact,
+        entrypoint: TrainingTaskEntrypoint,
+    ) -> TaskMeasurement:
+        metadata_digest = metadata_for(entrypoint)
+        measurement = measurements.get((artifact.compatibility_digest, metadata_digest))
+        if measurement is None and profiling_metadata_digests is None:
+            measurement = measurements.get(artifact.compatibility_digest)
+        if measurement is None:
+            raise ValueError(
+                "diagnostic profile is missing "
+                f"artifact={artifact.compatibility_digest}, "
+                f"profiling_metadata={metadata_digest}"
+            )
+        return measurement
+
     entrypoint_by_key = {
         _entrypoint_key(item): item
         for item in lowered.entrypoints
@@ -116,15 +145,13 @@ def training_stage_inventory(
         if isinstance(artifact, GraphArtifact):
             executable_manifest = manifests[artifact.compatibility_digest]
             executable_contract = executable_manifest.storage_contract
-            contract_digest: str | None = (
-                artifact.storage_contract.compatibility_digest
-            )
+            contract_digest: str | None = artifact.storage_contract.compatibility_digest
             executable_contract_digest: str | None = (
                 executable_contract.compatibility_digest
             )
             compiled_layout_digest: str | None = reconcile_compiled_task_layout(
                 executable_contract,
-                measurements[artifact.compatibility_digest],
+                measurement_for(artifact, entrypoint),
                 root_allocations=executable_manifest.root_allocations,
             ).compatibility_digest
         else:
@@ -132,6 +159,7 @@ def training_stage_inventory(
             executable_contract_digest = None
             compiled_layout_digest = None
         ordinal = execution_ordinal.get(entrypoint.task_id)
+        task_profile = profile_by_id[task_by_id[entrypoint.task_id].profile_id]
         task_map.append(
             PlanTaskStage(
                 task_id=entrypoint.task_id,
@@ -151,6 +179,8 @@ def training_stage_inventory(
                 graph_pair_variant=entrypoint.variant,
                 chosen_graph_pair_variant=chosen,
                 selected=entrypoint.task_id in selected_ids,
+                profile_compatibility_digest=task_profile.compatibility_digest,
+                profiling_metadata_digest=metadata_for(entrypoint),
             )
         )
 
@@ -182,7 +212,7 @@ def training_stage_inventory(
                         "forward",
                         task_by_id[forward_entrypoint.task_id],
                         program,
-                        measurements[pair.forward.compatibility_digest],
+                        measurement_for(pair.forward, forward_entrypoint),
                         manifests[pair.forward.compatibility_digest],
                     ),
                     backward=_graph_profile(
@@ -190,7 +220,7 @@ def training_stage_inventory(
                         "backward",
                         task_by_id[backward_entrypoint.task_id],
                         program,
-                        measurements[pair.backward.compatibility_digest],
+                        measurement_for(pair.backward, backward_entrypoint),
                         manifests[pair.backward.compatibility_digest],
                     ),
                 )
@@ -216,6 +246,8 @@ def forward_stage_inventory(
     execution_plan: ExecutionPlan,
     measurements: Mapping[str, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
+    *,
+    profiling_metadata_digest: str | None = None,
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe deduplicated inference stages and task occurrences."""
 
@@ -225,6 +257,7 @@ def forward_stage_inventory(
     execution_ordinal = {
         item.task_id: index for index, item in enumerate(selected_tasks)
     }
+    profile_by_id = {item.profile_id: item for item in lowered.program.profiles}
     keys = sorted({item.artifact.compatibility_digest for item in lowered.entrypoints})
     unique_id_by_key = {
         key: f"unique_stage_{index:04d}" for index, key in enumerate(keys)
@@ -251,9 +284,7 @@ def forward_stage_inventory(
                 entrypoint.artifact.compatibility_digest
             ].storage_contract.compatibility_digest,
             compiled_layout_digest=reconcile_compiled_task_layout(
-                manifests[
-                    entrypoint.artifact.compatibility_digest
-                ].storage_contract,
+                manifests[entrypoint.artifact.compatibility_digest].storage_contract,
                 measurements[entrypoint.artifact.compatibility_digest],
                 root_allocations=manifests[
                     entrypoint.artifact.compatibility_digest
@@ -262,6 +293,10 @@ def forward_stage_inventory(
             graph_pair_variant="inference",
             chosen_graph_pair_variant="inference",
             selected=entrypoint.task_id in selected_ids,
+            profile_compatibility_digest=profile_by_id[
+                task_by_id[entrypoint.task_id].profile_id
+            ].compatibility_digest,
+            profiling_metadata_digest=profiling_metadata_digest,
         )
         for index, entrypoint in enumerate(lowered.entrypoints)
     )
@@ -372,9 +407,7 @@ def _graph_profile(
     return PlanGraphProfile(
         direction=direction,
         structural_abi_key=artifact.compatibility_digest,
-        semantic_contract_digest=(
-            artifact.storage_contract.compatibility_digest
-        ),
+        semantic_contract_digest=(artifact.storage_contract.compatibility_digest),
         semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
         semantic_roots=tuple(
             PlanStorageRoot(
@@ -472,6 +505,25 @@ def _graph_profile(
         runtime_ns=measurement.runtime_ns,
         samples_ns=measurement.samples_ns,
         provenance=measurement.provenance,
+        representative_inputs=tuple(
+            PlanRepresentativeInput(
+                position=item.position,
+                role=item.role.value,
+                source=item.source,
+                value_policy=item.value_policy,
+                dtype=item.dtype,
+                shape=item.shape,
+                stride=item.stride,
+                storage_offset=item.storage_offset,
+                alias_group=item.alias_group,
+                consumer_targets=item.consumer_targets,
+            )
+            for item in measurement.representative_inputs
+        ),
+        profile_phase_timings_ns=measurement.phase_timings_ns,
+        timing_relative_mad=measurement.timing_relative_mad,
+        timing_half_drift=measurement.timing_half_drift,
+        timing_unstable=measurement.timing_unstable,
         inputs=inputs,
         mutations=mutations,
         outputs=outputs,

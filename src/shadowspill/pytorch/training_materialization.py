@@ -513,4 +513,17 @@ def _flat_training_arguments(
     return tuple(flat)
 
 
-__all__ = ["TrainingMaterializedState"]
+def representative_training_arguments(
+    capture: TrainingObjectiveCapture,
+    model: nn.Module,
+    microbatch: Sequence[Any],
+) -> tuple[object, ...]:
+    """Expose authentic root values for isolated task profiling."""
+
+    return tuple(
+        value.detach() if isinstance(value, torch.Tensor) else value
+        for value in _flat_training_arguments(capture, model, microbatch)
+    )
+
+
+__all__ = ["TrainingMaterializedState", "representative_training_arguments"]

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
@@ -14,11 +15,15 @@ from pathlib import Path
 from typing import Protocol
 
 from .contracts import CaptureError
+from .representative import (
+    REPRESENTATIVE_VALUE_POLICY,
+    RepresentativeInputSummary,
+)
 
 # v10 records when a compiled output is physically served by a task input.
 # The optimized Inductor storage contract must already describe that alias;
 # profiling validates the contract and measures layout, workspace, and timing.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v10"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v12"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -149,6 +154,22 @@ class ProfilableArtifact(Protocol):
     def compatibility_digest(self) -> str: ...
 
 
+class PlanningArtifactRecorder(Protocol):
+    """Minimal callback used to publish persistent-cache evidence."""
+
+    def __call__(
+        self,
+        *,
+        category: str,
+        kind: str,
+        digest: str | None,
+        path: str | Path,
+        access: str,
+        schema: str | None,
+        dependencies: tuple[str, ...] = (),
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileEnvironment:
     """Implementation identity that can change executable task cost."""
@@ -159,6 +180,7 @@ class ProfileEnvironment:
     compute_capability: tuple[int, int]
     compiler_id: str
     provider_id: str
+    implementation_revision: str | None = None
 
     def identity(self) -> dict[str, object]:
         return {
@@ -168,6 +190,7 @@ class ProfileEnvironment:
             "compute_capability": self.compute_capability,
             "compiler_id": self.compiler_id,
             "provider_id": self.provider_id,
+            "implementation_revision": self.implementation_revision,
         }
 
 
@@ -190,6 +213,11 @@ class TaskMeasurement:
     output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
     profiling_wall_time_ns: int = 0
+    representative_inputs: tuple[RepresentativeInputSummary, ...] = ()
+    phase_timings_ns: tuple[tuple[str, int], ...] = ()
+    timing_relative_mad: float = 0.0
+    timing_half_drift: float = 0.0
+    timing_unstable: bool = False
 
     def __post_init__(self) -> None:
         values = (
@@ -200,6 +228,7 @@ class TaskMeasurement:
             *self.samples_ns,
             *self.persistent_extent_bytes,
             self.profiling_wall_time_ns,
+            *(duration for _name, duration in self.phase_timings_ns),
         )
         if any(value < 0 for value in values):
             raise ValueError("profile measurements must be non-negative")
@@ -207,6 +236,12 @@ class TaskMeasurement:
             raise ValueError("profile measurement requires at least one sample")
         if not self.provenance:
             raise ValueError("profile provenance must be non-empty")
+        if any(not name for name, _duration in self.phase_timings_ns):
+            raise ValueError("profile phase names must be non-empty")
+        if not math.isfinite(self.timing_relative_mad) or self.timing_relative_mad < 0:
+            raise ValueError("profile relative MAD must be finite and non-negative")
+        if not math.isfinite(self.timing_half_drift) or self.timing_half_drift < 0:
+            raise ValueError("profile half drift must be finite and non-negative")
         self._validate_allocation_trace()
 
     def _validate_allocation_trace(self) -> None:
@@ -267,6 +302,13 @@ class TaskMeasurement:
             ],
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
             "profiling_wall_time_ns": self.profiling_wall_time_ns,
+            "representative_inputs": [
+                item.to_dict() for item in self.representative_inputs
+            ],
+            "phase_timings_ns": [list(item) for item in self.phase_timings_ns],
+            "timing_relative_mad": self.timing_relative_mad,
+            "timing_half_drift": self.timing_half_drift,
+            "timing_unstable": self.timing_unstable,
         }
 
     @classmethod
@@ -295,6 +337,16 @@ class TaskMeasurement:
                     int(item) for item in value["persistent_extent_bytes"]
                 ),
                 profiling_wall_time_ns=int(value["profiling_wall_time_ns"]),
+                representative_inputs=tuple(
+                    RepresentativeInputSummary.from_dict(item)
+                    for item in value["representative_inputs"]
+                ),
+                phase_timings_ns=tuple(
+                    (str(item[0]), int(item[1])) for item in value["phase_timings_ns"]
+                ),
+                timing_relative_mad=float(value["timing_relative_mad"]),
+                timing_half_drift=float(value["timing_half_drift"]),
+                timing_unstable=bool(value["timing_unstable"]),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task measurement has an invalid schema") from exc
@@ -304,13 +356,16 @@ class TaskMeasurement:
 class ProfileKey:
     graph_digest: str
     environment: ProfileEnvironment
+    profiling_metadata_digest: str | None = None
 
     @property
     def digest(self) -> str:
         payload = {
             "schema": PROFILE_SCHEMA,
+            "representative_value_policy": REPRESENTATIVE_VALUE_POLICY,
             "graph_digest": self.graph_digest,
             "environment": self.environment.identity(),
+            "profiling_metadata_digest": self.profiling_metadata_digest,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
@@ -325,12 +380,23 @@ class ProfilingResult:
     cache_hits: int
     cache_misses: int
     fixed_slab_bytes: int
+    key_digests: tuple[str, ...] = ()
+    profiling_metadata_digests: tuple[str | None, ...] = ()
 
 
 class ProfileCache:
     """Atomic per-key JSON cache with no dependency on planning task identity."""
 
-    def __init__(self, root: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        *,
+        compiled_manifest_root: str | Path | None = None,
+        read_enabled: bool = True,
+        write_enabled: bool = True,
+        overwrite: bool = False,
+        artifact_recorder: PlanningArtifactRecorder | None = None,
+    ) -> None:
         configured = os.environ.get("SHADOWSPILL_PROFILE_CACHE")
         selected = root if root is not None else configured
         self.root = (
@@ -338,9 +404,23 @@ class ProfileCache:
             if selected is not None
             else Path.home() / ".cache" / "shadowspill" / "profiles"
         )
+        self.compiled_manifest_root = (
+            Path(compiled_manifest_root).expanduser()
+            if compiled_manifest_root is not None
+            else self.root / "compiled_manifests" / "v2"
+        )
+        self.read_enabled = read_enabled
+        self.write_enabled = write_enabled
+        self.overwrite = overwrite
+        self.artifact_recorder = artifact_recorder
+
+    def path(self, key: ProfileKey) -> Path:
+        return self.root / key.digest[:2] / f"{key.digest}.json"
 
     def read(self, key: ProfileKey) -> TaskMeasurement | None:
-        path = self.root / f"{key.digest}.json"
+        if not self.read_enabled:
+            return None
+        path = self.path(key)
         try:
             value = json.loads(path.read_text())
         except FileNotFoundError:
@@ -351,28 +431,66 @@ class ProfileCache:
             raise ValueError(f"profile cache entry {path} has an invalid schema")
         if value.get("key_digest") != key.digest:
             raise ValueError(f"profile cache entry {path} has the wrong identity")
-        return TaskMeasurement.from_dict(value.get("measurement"))
+        measurement = TaskMeasurement.from_dict(value.get("measurement"))
+        self._record(key, path, "read")
+        return measurement
 
-    def write(self, key: ProfileKey, measurement: TaskMeasurement) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
+    def write(
+        self,
+        key: ProfileKey,
+        measurement: TaskMeasurement,
+        *,
+        replace_invalid: bool = False,
+    ) -> None:
+        if not self.write_enabled:
+            return
+        path = self.path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema": PROFILE_SCHEMA,
             "key_digest": key.digest,
             "measurement": measurement.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        if path.exists() and not self.overwrite and not replace_invalid:
+            try:
+                existing = path.read_text()
+            except OSError as exc:
+                raise ValueError(f"profile cache entry {path} cannot be read") from exc
+            if existing != encoded:
+                raise ValueError(
+                    "fresh profiling differs from an existing cache entry; "
+                    "use overwrite_plan=True or a new implementation_revision: "
+                    f"{path}"
+                )
+            self._record(key, path, "matched")
+            return
         descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{key.digest}.", suffix=".tmp", dir=self.root
+            prefix=f".{key.digest}.", suffix=".tmp", dir=path.parent
         )
         try:
             with os.fdopen(descriptor, "w") as output:
                 output.write(encoded)
                 output.flush()
                 os.fsync(output.fileno())
-            os.replace(temporary, self.root / f"{key.digest}.json")
+            os.replace(temporary, path)
         finally:
             with suppress(FileNotFoundError):
                 os.unlink(temporary)
+        self._record(key, path, "write")
+
+    def _record(self, key: ProfileKey, path: Path, access: str) -> None:
+        if self.artifact_recorder is None:
+            return
+        self.artifact_recorder(
+            category="profiling",
+            kind="task_measurement",
+            digest=key.digest,
+            path=path,
+            access=access,
+            schema=PROFILE_SCHEMA,
+            dependencies=(key.graph_digest,),
+        )
 
 
 def profile_unique_artifacts(
@@ -383,26 +501,43 @@ def profile_unique_artifacts(
     cache: ProfileCache,
     validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None = None,
     progress: Callable[[int, int, str, str], None] | None = None,
+    profiling_metadata_digests: Sequence[str | None] | None = None,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
 
     sequence = tuple(artifacts)
+    metadata = (
+        (None,) * len(sequence)
+        if profiling_metadata_digests is None
+        else tuple(profiling_metadata_digests)
+    )
+    if len(metadata) != len(sequence):
+        raise ValueError("profiling metadata must align with task artifacts")
     by_key: dict[str, list[int]] = {}
     key_objects: dict[str, ProfileKey] = {}
     representatives: dict[str, ProfilableArtifact] = {}
-    for position, artifact in enumerate(sequence):
-        key = ProfileKey(artifact.compatibility_digest, environment)
+    position_key_digests: list[str] = []
+    for position, (artifact, metadata_digest) in enumerate(
+        zip(sequence, metadata, strict=True)
+    ):
+        key = ProfileKey(
+            artifact.compatibility_digest,
+            environment,
+            metadata_digest,
+        )
+        position_key_digests.append(key.digest)
         by_key.setdefault(key.digest, []).append(position)
         key_objects[key.digest] = key
         representatives.setdefault(key.digest, artifact)
     results: list[TaskMeasurement | None] = [None] * len(sequence)
     hits = 0
     misses = 0
-    fixed_slab_bytes = 0
+    persistent_bytes_by_graph: dict[str, int] = {}
     ordered_digests = sorted(by_key)
     for index, digest in enumerate(ordered_digests, start=1):
         key = key_objects[digest]
         measurement = cache.read(key)
+        replace_invalid = False
         if measurement is not None and validate is not None:
             try:
                 validate(representatives[digest], measurement)
@@ -410,19 +545,24 @@ def profile_unique_artifacts(
                 if progress is not None:
                     progress(index, len(ordered_digests), "cache-invalid", digest)
                 measurement = None
+                replace_invalid = True
         if measurement is None:
             if progress is not None:
                 progress(index, len(ordered_digests), "measuring", digest)
             measurement = measure(representatives[digest])
             if validate is not None:
                 validate(representatives[digest], measurement)
-            cache.write(key, measurement)
+            cache.write(key, measurement, replace_invalid=replace_invalid)
             misses += 1
         else:
             if progress is not None:
                 progress(index, len(ordered_digests), "cache-hit", digest)
             hits += 1
-        fixed_slab_bytes += sum(measurement.persistent_extent_bytes)
+        persistent_bytes = sum(measurement.persistent_extent_bytes)
+        persistent_bytes_by_graph[key.graph_digest] = max(
+            persistent_bytes_by_graph.get(key.graph_digest, 0),
+            persistent_bytes,
+        )
         for position in by_key[digest]:
             results[position] = measurement
     if any(measurement is None for measurement in results):
@@ -434,5 +574,7 @@ def profile_unique_artifacts(
         unique_keys=len(by_key),
         cache_hits=hits,
         cache_misses=misses,
-        fixed_slab_bytes=fixed_slab_bytes,
+        fixed_slab_bytes=sum(persistent_bytes_by_graph.values()),
+        key_digests=tuple(position_key_digests),
+        profiling_metadata_digests=metadata,
     )
