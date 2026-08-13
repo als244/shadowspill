@@ -20,7 +20,12 @@ from .compiled_layout import (
     replacement_transition_bytes,
 )
 from .inductor_adapter import ExecutableTaskManifest
-from .lowering import LoweredForwardProgram
+from .lowering.forward import LoweredForwardProgram
+from .lowering.profiles import ProfileMeasurementKey
+from .lowering.training import (
+    LoweredTrainingProgram,
+    TrainingTaskEntrypoint,
+)
 from .partition import PartitionedTrainingCapture, TrainingStage
 from .profiling import TaskMeasurement
 from .public import (
@@ -36,11 +41,6 @@ from .public import (
     PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
-)
-from .training_lowering import (
-    LoweredTrainingProgram,
-    ProfileMeasurementKey,
-    TrainingTaskEntrypoint,
 )
 
 

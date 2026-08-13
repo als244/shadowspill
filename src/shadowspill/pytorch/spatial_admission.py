@@ -16,9 +16,9 @@ from shadowspill.runtime import (
 )
 from shadowspill.simulator import TransferDirection
 
-from .lowering import TaskEntrypoint
+from .lowering.forward import TaskEntrypoint
+from .lowering.training import TrainingTaskEntrypoint
 from .profiling import TaskAllocationOperation, TaskMeasurement
-from .training_lowering import TrainingTaskEntrypoint
 
 
 class _SpatialEventKind(IntEnum):
@@ -80,9 +80,7 @@ def replay_selected_schedule(
     """
 
     program = selected.program
-    alias_size = {
-        item.alias_group_id: item.size_bytes for item in program.alias_groups
-    }
+    alias_size = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
     zero_aliases = {
         alias_id for alias_id, size_bytes in alias_size.items() if size_bytes == 0
     }

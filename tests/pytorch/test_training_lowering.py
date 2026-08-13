@@ -13,6 +13,11 @@ from shadowspill.pytorch.aot import capture_training
 from shadowspill.pytorch.capture import GraphArtifact
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.lowering.training import (
+    LoweredTrainingProgram,
+    lower_partitioned_training_program,
+    lower_training_storage_layout,
+)
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.partition import partition_training_capture
 from shadowspill.pytorch.profiling import (
@@ -20,12 +25,6 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
     TaskOutputInputBinding,
-)
-from shadowspill.pytorch.training_lowering import (
-    LoweredTrainingProgram,
-    lower_partitioned_training_program,
-    lower_training_program,
-    lower_training_storage_layout,
 )
 from shadowspill.simulator import SimulationConfig
 
@@ -182,14 +181,17 @@ def _lowered() -> LoweredTrainingProgram:
     )
     with mode:
         captures = tuple(
-            capture_training(model, _objective, fake_cuda_inputs(values, mode))
+            partition_training_capture(
+                capture_training(model, _objective, fake_cuda_inputs(values, mode))
+            )
             for values in examples
         )
     artifacts = (
         *(
             artifact
             for capture in captures
-            for pair in (capture.save_pair, capture.recompute_pair)
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -198,7 +200,12 @@ def _lowered() -> LoweredTrainingProgram:
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
-    return lower_training_program(model, captures, measurements, optimizer_capture)
+    return lower_partitioned_training_program(
+        model,
+        captures,
+        measurements,
+        optimizer_capture,
+    )
 
 
 def test_training_lowering_composes_accumulation_and_recomputation() -> None:
@@ -262,10 +269,14 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     model = fake_cuda_model(real_model, mode)
     with mode:
         captures = tuple(
-            capture_training(
-                model,
-                _objective,
-                fake_cuda_inputs([torch.randn(rows, 3), torch.randn(rows, 2)], mode),
+            partition_training_capture(
+                capture_training(
+                    model,
+                    _objective,
+                    fake_cuda_inputs(
+                        [torch.randn(rows, 3), torch.randn(rows, 2)], mode
+                    ),
+                )
             )
             for rows in (4, 5)
         )
@@ -273,7 +284,8 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
         *(
             artifact
             for capture in captures
-            for pair in (capture.save_pair, capture.recompute_pair)
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -282,7 +294,12 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
-    lowered = lower_training_program(model, captures, measurements, optimizer_capture)
+    lowered = lower_partitioned_training_program(
+        model,
+        captures,
+        measurements,
+        optimizer_capture,
+    )
     parameter_aliases = {
         next(
             item.alias_group_id
@@ -318,17 +335,20 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     model = fake_cuda_model(real_model, mode)
     with mode:
         captures = (
-            capture_training(
-                model,
-                _objective,
-                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+            partition_training_capture(
+                capture_training(
+                    model,
+                    _objective,
+                    fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+                )
             ),
         )
     artifacts = (
         *(
             artifact
             for capture in captures
-            for pair in (capture.save_pair, capture.recompute_pair)
+            for stage in capture.stages
+            for pair in (stage.save_pair, stage.recompute_pair)
             for artifact in (pair.forward, pair.backward)
         ),
         optimizer_capture.recurrent,
@@ -337,14 +357,14 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
-    initial = lower_training_program(
+    initial = lower_partitioned_training_program(
         model,
         captures,
         measurements,
         optimizer_capture,
         optimizer_phase="initial",
     )
-    recurrent = lower_training_program(
+    recurrent = lower_partitioned_training_program(
         model,
         captures,
         measurements,

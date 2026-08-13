@@ -10,19 +10,20 @@ import torch.nn as nn
 
 from shadowspill.pytorch import PlanningError, TensorSpec
 from shadowspill.pytorch.materialization import representative_cpu_inputs
+from shadowspill.pytorch.planning.common import (
+    PlanningTimer,
+    estimate_spill_reservation,
+    simulation_capacity,
+    validate_budgets,
+    validate_cpu_model,
+    workspace_reserve,
+)
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.runtime import _adapter_path
-from shadowspill.pytorch.session import (
-    _PhaseTimer,
-    _simulation_capacity,
-    _spill_pool_estimate,
-    _validate_forward_request,
-    _workspace_reserve,
-)
 
 
 def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> None:
-    timer = _PhaseTimer(verbose=False)
+    timer = PlanningTimer(verbose=False)
     timer.values = [
         ("capture_lowering", 11),
         ("compiler_manifest", 30),
@@ -48,34 +49,32 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
     ]
 
 
-def test_forward_request_and_admission_helpers_reject_invalid_values() -> None:
+def test_planning_admission_helpers_reject_invalid_values() -> None:
     model = nn.Linear(2, 2)
     with pytest.raises(TypeError, match="model"):
-        _validate_forward_request(object(), [], 1 << 30, 1 << 30)  # type: ignore[arg-type]
-    with pytest.raises(PlanningError, match="example_inputs"):
-        _validate_forward_request(model, object(), 1 << 30, 1 << 30)  # type: ignore[arg-type]
+        validate_cpu_model(object())  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="execution_budget"):
-        _validate_forward_request(model, [], True, 1 << 30)
+        validate_budgets(True, 1 << 30)
     with pytest.raises(TypeError, match="spill_budget"):
-        _validate_forward_request(model, [], 1 << 30, True)
+        validate_budgets(1 << 30, True)
     with pytest.raises(PlanningError, match="positive"):
-        _validate_forward_request(model, [], 0, 1 << 30)
+        validate_budgets(0, 1 << 30)
     with pytest.raises(PlanningError, match="spill_budget"):
-        _validate_forward_request(model, [], 1 << 30, 0)
+        validate_budgets(1 << 30, 0)
     with pytest.raises(PlanningError, match="CPU resident"):
-        _validate_forward_request(nn.Linear(2, 2, device="meta"), [], 1 << 30, 1 << 30)
+        validate_cpu_model(nn.Linear(2, 2, device="meta"))
     with pytest.raises(PlanningError, match="spill-pool budget"):
-        _spill_pool_estimate(model, [torch.ones(2)], 1)
+        estimate_spill_reservation(model, [torch.ones(2)], 1)
 
 
 def test_workspace_and_capacity_helpers_are_explicit() -> None:
     measurement = TaskMeasurement(1, 3, 100, (100,), (1,), "test")
-    assert _workspace_reserve((measurement,)) == 512 << 20
-    assert _simulation_capacity(1 << 30, 512 << 20, (measurement,)) == (
+    assert workspace_reserve((measurement,)) == 512 << 20
+    assert simulation_capacity(1 << 30, 512 << 20, (measurement,)) == (
         (512 << 20) + 100
     )
     assert (
-        _simulation_capacity(
+        simulation_capacity(
             1 << 30,
             512 << 20,
             (measurement,),
@@ -84,7 +83,7 @@ def test_workspace_and_capacity_helpers_are_explicit() -> None:
         == (512 << 20) + 68
     )
     with pytest.raises(PlanningError, match="smaller"):
-        _simulation_capacity(1, 2, ())
+        simulation_capacity(1, 2, ())
 
 
 def test_representatives_and_adapter_path_contract(

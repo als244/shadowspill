@@ -2319,3 +2319,18 @@ the ignored internal progress log before this tracked summary is updated.
 - Validation: all 19 compiled native/CUDA/PyTorch canaries pass; Ruff and
   strict mypy pass; and the complete Python suite passes. The runtime ABI is
   16 and the private PyTorch adapter ABI is 26.
+
+## 2026-08-13 — Composable PyTorch planning and lowering
+
+- Replaced stateful planning coordinators with explicit capture, profile,
+  Program, PressureFit, admission, reporting, and cache artifact boundaries.
+  `PlanReport` exposes the canonical Program and PressureFit result for
+  direct budget sweeps.
+- Reorganized PyTorch lowering around shared object-catalog, task-binding,
+  physical-profile, compiled-layout, and Program-publication modules. Forward
+  and training have symmetric partitioned-lowering packages whose
+  `program.py` functions read as phase orchestrators and retain only their
+  real mode-specific behavior.
+- Removed obsolete whole-graph and mixed-authority lowering paths. Ruff
+  complexity checks, strict mypy, the complete Python suite, and fresh-process
+  CUDA forward/training canaries pass after the structural change.

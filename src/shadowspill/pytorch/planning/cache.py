@@ -1,8 +1,7 @@
-"""Cache-backed artifacts used by the PyTorch planning pipeline.
+"""Artifact lookup and persistence for PyTorch planning.
 
-Planning sessions consume this facade instead of constructing individual
-cache implementations or interpreting cache policy flags.  Semantic planning
-code therefore sees one store with explicit operations at artifact boundaries.
+This module is intentionally policy-only.  It does not capture graphs, profile
+tasks, construct Programs, or admit runtime memory.
 """
 
 from __future__ import annotations
@@ -15,17 +14,17 @@ from shadowspill.planner import PressureFitOptions
 from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
 from shadowspill.simulator import SimulationConfig
 
-from ._planning_cache import PlanningCache
-from .aot import ExportCapture, export_capture_digest
-from .partition import _TrainingGraphPairCache
-from .profiling import ProfileCache
+from .._planning_cache import PlanningCache
+from ..aot import ExportCapture, export_capture_digest
+from ..partition import _TrainingGraphPairCache
+from ..profiling import ProfileCache
 
 
 @dataclass(frozen=True, slots=True)
-class PlanningArtifacts:
-    """All persistent artifact services for one planning call."""
+class PlanningArtifactCache:
+    """Typed lookup/write boundary for one planning call's artifacts."""
 
-    cache: PlanningCache
+    store: PlanningCache
     profiles: ProfileCache
     pressurefit: PressureFitCache
     graph_pairs: _TrainingGraphPairCache
@@ -41,7 +40,7 @@ class PlanningArtifacts:
 
         digest = export_capture_digest(capture)
         signature = capture.exported_program.graph_signature
-        self.cache.archive_export(
+        self.store.archive_export(
             capture.exported_program,
             digest=digest,
             metadata={
@@ -67,7 +66,7 @@ class PlanningArtifacts:
         )
         return digest
 
-    def select(
+    def resolve_pressurefit(
         self,
         program: Program,
         *,
@@ -77,9 +76,9 @@ class PlanningArtifacts:
         options: PressureFitOptions | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
-        """Archive ``program`` and resolve its exact PressureFit selection."""
+        """Return a validated selection, running PressureFit only on a miss."""
 
-        self.cache.archive_program(program)
+        self.store.archive_program(program)
         return self.pressurefit.resolve(
             program,
             initial_residency=initial_residency,
@@ -90,38 +89,34 @@ class PlanningArtifacts:
         )
 
 
-def planning_artifacts(cache: PlanningCache) -> PlanningArtifacts:
-    """Create one policy-complete artifact facade for a planning call.
+def open_artifact_cache(store: PlanningCache) -> PlanningArtifactCache:
+    """Translate one public cache policy into typed artifact lookups."""
 
-    This is the only place that translates :class:`PlanningCache` policy into
-    graph-pair, profiling, and PressureFit cache implementations.
-    """
-
-    return PlanningArtifacts(
-        cache=cache,
+    return PlanningArtifactCache(
+        store=store,
         profiles=ProfileCache(
-            cache.profile_measurements,
-            compiled_manifest_root=cache.compiled_manifests,
-            read_enabled=cache.read_enabled,
-            write_enabled=cache.write_enabled,
-            overwrite=cache.overwrite_plan,
-            artifact_recorder=cache.record,
+            store.profile_measurements,
+            compiled_manifest_root=store.compiled_manifests,
+            read_enabled=store.read_enabled,
+            write_enabled=store.write_enabled,
+            overwrite=store.overwrite_plan,
+            artifact_recorder=store.record,
         ),
         pressurefit=PressureFitCache(
-            cache.pressurefit_selections,
-            read_enabled=cache.read_enabled,
-            write_enabled=cache.write_enabled,
-            overwrite=cache.overwrite_plan,
-            artifact_recorder=cache.record,
+            store.pressurefit_selections,
+            read_enabled=store.read_enabled,
+            write_enabled=store.write_enabled,
+            overwrite=store.overwrite_plan,
+            artifact_recorder=store.record,
         ),
         graph_pairs=_TrainingGraphPairCache(
-            cache.graphpairs,
-            read_enabled=cache.read_enabled,
-            write_enabled=cache.write_enabled,
-            overwrite=cache.overwrite_plan,
-            artifact_recorder=cache.record,
+            store.graphpairs,
+            read_enabled=store.read_enabled,
+            write_enabled=store.write_enabled,
+            overwrite=store.overwrite_plan,
+            artifact_recorder=store.record,
         ),
     )
 
 
-__all__ = ["PlanningArtifacts", "planning_artifacts"]
+__all__ = ["PlanningArtifactCache", "open_artifact_cache"]

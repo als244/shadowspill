@@ -10,8 +10,8 @@ from shadowspill.planner import pressurefit
 from shadowspill.pytorch.aot import capture_forward
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.lowering import (
-    lower_forward_program,
+from shadowspill.pytorch.lowering.forward import (
+    lower_partitioned_forward_program,
 )
 from shadowspill.pytorch.partition import capture_forward_stages, partition_export
 from shadowspill.pytorch.profiling import (
@@ -42,7 +42,9 @@ def _lowered() -> object:
         partitioned = partition_export(capture_forward(model, inputs), model)
         artifacts = capture_forward_stages(partitioned)
     measurements = tuple(_measurement(artifact) for artifact in artifacts)
-    return lower_forward_program(model, partitioned, artifacts, measurements)
+    return lower_partitioned_forward_program(
+        model, partitioned, artifacts, measurements
+    )
 
 
 def _measurement(artifact: object) -> TaskMeasurement:
@@ -120,7 +122,7 @@ def test_forward_lowering_rejects_incomplete_profile_scatter() -> None:
         partitioned = partition_export(capture_forward(model, inputs), model)
         artifacts = capture_forward_stages(partitioned)
     with pytest.raises(CaptureError, match="counts"):
-        lower_forward_program(model, partitioned, artifacts, ())
+        lower_partitioned_forward_program(model, partitioned, artifacts, ())
 
 
 def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> None:
@@ -141,7 +143,7 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
             capture_forward(model, inputs), model, partition="whole"
         )
         artifacts = capture_forward_stages(partitioned)
-    lowered = lower_forward_program(
+    lowered = lower_partitioned_forward_program(
         model,
         partitioned,
         artifacts,
@@ -160,8 +162,11 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
         for item in lowered.program.objects
         if item.object_id == buffer_object
     )
-    assert next(
-        item.location
-        for item in lowered.final_residency
-        if item.alias_group_id == buffer_alias
-    ) is MemoryLocation.HOST
+    assert (
+        next(
+            item.location
+            for item in lowered.final_residency
+            if item.alias_group_id == buffer_alias
+        )
+        is MemoryLocation.HOST
+    )

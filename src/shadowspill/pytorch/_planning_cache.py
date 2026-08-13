@@ -27,7 +27,7 @@ _ACCESS_KINDS = {"managed", "matched", "read", "write"}
 
 @dataclass(frozen=True, slots=True)
 class PlanningArtifact:
-    """One file or managed directory touched by a planning session."""
+    """One file or managed directory touched by a planning call."""
 
     category: str
     kind: str
@@ -68,7 +68,7 @@ class _ArtifactLedger:
 
 @dataclass(frozen=True, slots=True)
 class PlanningCache:
-    """Resolved directories and artifact ledger for one planning session.
+    """Resolved directories and artifact ledger for one planning call.
 
     The four public phase directories remain stable.  Content-addressed leaf
     paths provide identity; the ``plans`` tree is a readable index linking one

@@ -13,7 +13,7 @@ from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSp
 
 from ._abi import ObjectBinding
 from ._transfer_labels import TransferLabelIndex
-from .lowering import LoweredForwardProgram, TaskEntrypoint
+from .lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from .materialization import MaterializedForwardState
 from .partition import PartitionedExport
 from .runtime_bridge import RuntimeBridge, actions_by_task

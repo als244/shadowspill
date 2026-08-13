@@ -17,7 +17,8 @@ from shadowspill.ir import MemoryAction, MemoryActionKind
 from ._live_storage import unique_live_tensors
 from .aot import ExportCapture
 from .contracts import PlanningError, TensorSpec
-from .lowering import LoweredForwardProgram, RegistrationBinding
+from .lowering.catalog import RegistrationBinding
+from .lowering.forward import LoweredForwardProgram
 from .runtime_bridge import RuntimeBridge
 
 

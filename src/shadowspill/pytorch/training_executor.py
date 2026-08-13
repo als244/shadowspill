@@ -20,9 +20,9 @@ from ._runtime_trace import RuntimeTraceEvent, RuntimeTraceEventKind
 from ._telemetry import CapturedAllocationEvent
 from ._transfer_labels import TransferLabelIndex
 from .capture import GraphArtifact
+from .lowering.training import LoweredTrainingProgram, TrainingTaskEntrypoint
 from .optimizer import OpaqueOptimizerArtifact, current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge, actions_by_task
-from .training_lowering import LoweredTrainingProgram, TrainingTaskEntrypoint
 from .training_materialization import TrainingMaterializedState
 
 
@@ -2126,9 +2126,7 @@ class TrainingExecutor:
     def _configure_task_trace_labels(self, run: _PlanRun) -> dict[str, str]:
         """Register labels for the one execution program selected next."""
 
-        result = {
-            record.task.task_id: record.trace_label for record in run.execution
-        }
+        result = {record.task.task_id: record.trace_label for record in run.execution}
         self._bridge.configure_task_labels(result)
         self._trace_label_run = run
         return result

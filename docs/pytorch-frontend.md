@@ -228,14 +228,75 @@ different ABI.
 
 PyTorch 2.13 AOTAutograd may initialize CUDA provider state even when its model
 and examples are FakeTensors. Public planning therefore installs ShadowSpill's
-allocator before entering Export/AOT capture. Calling the private capture
-helpers directly is unsupported; the public planning session enforces this
-ordering.
+allocator before entering Export/AOT capture. The composable planning API
+therefore requires resolved runtime memory before capture and enforces this
+ordering without a hidden stateful coordinator.
 
 Registered custom operators are accepted when their normal PyTorch contracts
 are complete: schema, fake/meta implementation, alias and mutation declaration,
 and—when differentiated—an autograd implementation. ShadowSpill does not
 special-case operation libraries.
+
+## Composable planning boundaries
+
+`plan_forward()` and `plan_step()` are convenience compositions. Advanced
+tools can call the same typed boundaries from `shadowspill.pytorch.planning`
+when they already own the corresponding resolved `PlanMemory` and artifact
+cache:
+
+```python
+from shadowspill.pytorch.planning import (
+    PlanningCache,
+    PlanningTimer,
+    build_forward_program,
+    capture_forward_graph,
+    open_artifact_cache,
+    pressurefit_forward_program,
+    profile_forward_tasks,
+)
+
+timer = PlanningTimer(verbose=True)
+artifacts = open_artifact_cache(PlanningCache.resolve(cache_directory))
+
+captured = capture_forward_graph(
+    model,
+    example_inputs=example_inputs,
+    memory=memory,
+    partition="auto",
+    profiling_metadata=profiling_metadata,
+    artifact_cache=artifacts,
+    timer=timer,
+)
+profiled = profile_forward_tasks(
+    captured,
+    artifact_cache=artifacts,
+    timer=timer,
+)
+program = build_forward_program(
+    captured,
+    profiled,
+    memory=memory,
+    timer=timer,
+)
+selection = pressurefit_forward_program(
+    program,
+    artifact_cache=artifacts,
+    timer=timer,
+)
+```
+
+Training exposes the corresponding `capture_training_graphs()`,
+`materialize_training_state()`, `profile_training_tasks()`,
+`build_training_programs()`, `pressurefit_training_programs()`,
+`compile_selected_training_tasks()`, and `admit_training_plan()` functions.
+Every boundary returns an immutable artifact sufficient for the next one.
+`rollback_training_materialization()` explicitly restores CPU ownership if an
+advanced caller stops after optimizer materialization.
+
+PressureFit itself remains framework neutral. A caller that only wants to
+sweep planner capacity starts from `planned.plan_report.program` and
+`planned.plan_report.pressurefit_result`; it does not need a runtime allocation,
+PyTorch capture, compilation, or profiling call.
 
 Compiled task entrypoints execute with dispatcher autograd disabled. Training
 already contains the explicit AOTAutograd forward/backward programs, and
@@ -335,3 +396,19 @@ entrypoint binding retains only the stage module target, compiled artifact, and
 tensor leaf positions needed by the PyTorch executor. The resulting `Program`
 is accepted directly by the standalone simulator and PressureFit; neither sees
 PyTorch tensors, graph modules, pointers, or operation names.
+
+The implementation mirrors those contracts directly.
+`lowering/catalog.py`, `task_binding.py`, `profiles.py`, and `program.py`
+are shared by both modes. The `lowering/forward/` package owns only forward
+output ownership and stage emission. The `lowering/training/` package owns
+only stage boundaries, graph-pair variants, gradients, accumulation, and
+optimizer task composition. Each package exposes one short
+partitioned-lowering orchestrator whose calls correspond directly to those
+phases. The former unpartitioned training lowerer has been removed; production
+and tests use the same partitioned contract.
+
+Planning is likewise split by artifact boundary under `pytorch/planning`.
+Cache resolution, capture, profiling, Program construction, PressureFit,
+physical admission, and reporting are separate modules and functions. The
+public convenience call is a short composition of those functions rather than
+a monolithic builder with hidden mutable state.

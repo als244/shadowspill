@@ -16,10 +16,10 @@ from shadowspill.ir import MemoryAction, MemoryActionKind
 from ._live_storage import unique_live_tensors
 from .aot import TrainingObjectiveCapture
 from .contracts import PlanningError
-from .lowering import RegistrationBinding
+from .lowering.catalog import RegistrationBinding
+from .lowering.training import LoweredTrainingProgram, TrainingStorageLayout
 from .optimizer import current_optimizer_bindings
 from .runtime_bridge import RuntimeBridge
-from .training_lowering import LoweredTrainingProgram, TrainingStorageLayout
 
 
 @dataclass(frozen=True, slots=True)

@@ -484,7 +484,7 @@ class PlanTaskStage:
 
 @dataclass(frozen=True, slots=True)
 class PlanDiagnostics:
-    """Structured evidence describing one frontend planning session.
+    """Structured evidence describing one frontend planning call.
 
     Phase intervals are mutually exclusive. ``unattributed_overhead_ns`` is
     the small remainder spent between measured intervals and constructing the
@@ -1002,7 +1002,7 @@ def plan_forward(
     exported graph.
     """
 
-    from .session import build_forward
+    from .planning.forward import build_forward
 
     memory = runtime._resolve_plan(
         execution=execution,
@@ -1071,7 +1071,7 @@ def plan_step(
     Cache policy arguments have the same meaning as :func:`plan_forward`.
     """
 
-    from .training_session import build_training
+    from .planning.training import build_training
 
     memory = runtime._resolve_plan(
         execution=execution,

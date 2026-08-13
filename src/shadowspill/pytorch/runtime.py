@@ -110,7 +110,7 @@ class TransferCapabilities:
 
 @dataclass(frozen=True, slots=True)
 class PlanMemory:
-    """Resolved pool roles and capacities consumed by one planning session."""
+    """Resolved pool roles and capacities consumed by one planning call."""
 
     runtime: Runtime
     installed: InstalledAllocator
@@ -254,8 +254,7 @@ class Runtime:
                 return
             if self._active_plans != 0 or self._planning:
                 raise RuntimeConfigurationError(
-                    "cannot close Runtime while a planned callable or planning "
-                    "session owns it"
+                    "cannot close Runtime while a callable or in-progress plan owns it"
                 )
             status = int(
                 self._installed.library.shadowspill_pytorch_allocator_wait_idle()
@@ -287,8 +286,8 @@ class Runtime:
             self._require_open()
             if self._active_plans != 0 or self._planning:
                 raise RuntimeConfigurationError(
-                    "this Runtime already has an active callable or planning "
-                    "session; close it before creating another plan"
+                    "this Runtime already has an active callable or in-progress "
+                    "plan; close it before creating another plan"
                 )
             if execution == spill:
                 raise RuntimeConfigurationError(
@@ -342,7 +341,7 @@ class Runtime:
             self._require_open()
             if not self._planning or self._active_plans != 0:
                 raise RuntimeConfigurationError(
-                    "Runtime has no exclusive planning session to adopt"
+                    "Runtime has no exclusive in-progress plan to adopt"
                 )
             self._planning = False
             self._active_plans = 1
@@ -355,7 +354,7 @@ class Runtime:
             self._active_plans = 0
 
     def _abort_plan(self) -> None:
-        """Release cold-path execution records after a failed planning session."""
+        """Release cold-path execution records after a failed planning call."""
 
         with self._lock:
             if not self._planning or self._active_plans != 0:
@@ -364,9 +363,7 @@ class Runtime:
             self._planning = False
 
     def _clear_execution_plan(self) -> None:
-        status = int(
-            self._installed.library.shadowspill_pytorch_clear_execution_plan()
-        )
+        status = int(self._installed.library.shadowspill_pytorch_clear_execution_plan())
         if status != 0:
             raise RuntimeConfigurationError(
                 f"execution-plan teardown failed with status {status}"
@@ -386,8 +383,7 @@ class Runtime:
             self._require_open()
             if self._active_plans != 0 or self._planning:
                 raise RuntimeConfigurationError(
-                    "transfer calibration requires no active callable or "
-                    "planning session"
+                    "transfer calibration requires no callable or in-progress plan"
                 )
             keys: Any = None
             count = 0

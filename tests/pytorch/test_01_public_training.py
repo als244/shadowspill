@@ -108,6 +108,10 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert training.plan_report.aot_unique_stage_abis == 4
     assert training.plan_report.aot_graph_pair_cache_hits == 0
     assert training.plan_report.aot_graph_pair_cache_misses == 4
+    assert training.plan_report.program is training.plan_report.execution_plan.program
+    assert (
+        training.plan_report.pressurefit_result.program == training.plan_report.program
+    )
     assert training.plan_report.diagnostics.cache_artifacts
     assert len(training.plan_report.diagnostics.profiling_metadata) == 2
     assert all(parameter.device.type == "cuda" for parameter in model.parameters())
