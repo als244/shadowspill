@@ -19,7 +19,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import TaskAllocationPlacementHint
+from shadowspill.pytorch.runtime_adapter.bridge import TaskMemoryEnvelope
 from shadowspill.runtime import (
     AllocationEvent,
     AllocationOperation,
@@ -131,48 +131,18 @@ class TaskOutputBinding:
 
 
 @dataclass(frozen=True, slots=True)
-class PrefetchPlacement:
-    """Exact execution-pool destination for one planned prefetch action."""
-
-    alias_group_id: str
-    offset: int
-    trigger_task_id: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class SelectedSpatialLayout:
-    """Runtime guidance derived from one complete selected allocation timeline."""
+    """Dynamic-runtime admission evidence for one selected schedule."""
 
     slab: SlabLayout
-    task_allocations: tuple[tuple[str, TaskAllocationPlacementHint], ...]
-    prefetches: tuple[PrefetchPlacement, ...]
+    task_envelopes: tuple[tuple[str, TaskMemoryEnvelope], ...]
 
     @property
     def replay(self) -> SlabReplay:
         return self.slab.replay
 
-    def task_hints(self) -> dict[str, tuple[TaskAllocationPlacementHint, ...]]:
-        result: dict[str, list[TaskAllocationPlacementHint]] = {}
-        for task_id, placement in self.task_allocations:
-            result.setdefault(task_id, []).append(placement)
-        return {
-            task_id: tuple(sorted(items, key=lambda item: item.allocation_ordinal))
-            for task_id, items in result.items()
-        }
-
-    def initial_prefetch_offsets(self) -> dict[str, int]:
-        return {
-            item.alias_group_id: item.offset
-            for item in self.prefetches
-            if item.trigger_task_id is None
-        }
-
-    def action_prefetch_offsets(self) -> dict[tuple[str, str], int]:
-        return {
-            (item.trigger_task_id, item.alias_group_id): item.offset
-            for item in self.prefetches
-            if item.trigger_task_id is not None
-        }
+    def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
+        return dict(self.task_envelopes)
 
 
 def replay_selected_schedule(
@@ -205,14 +175,73 @@ def build_selected_spatial_layout(
 ) -> SelectedSpatialLayout:
     """Assign immutable offsets to every selected execution-pool lifetime."""
 
-    slab, sources = _selected_slab_layout(
+    slab, _sources = _selected_slab_layout(
         selected,
         measurements,
         execution_pool_bytes=execution_pool_bytes,
         alignment=alignment,
         output_bindings=output_bindings,
     )
-    return _runtime_spatial_layout(slab, sources)
+    return SelectedSpatialLayout(
+        slab=slab,
+        task_envelopes=_selected_task_envelopes(selected, measurements),
+    )
+
+
+def _selected_task_envelopes(
+    selected: PressureFitResult,
+    measurements: Mapping[str, TaskMeasurement],
+) -> tuple[tuple[str, TaskMemoryEnvelope], ...]:
+    profiles = {item.profile_id: item for item in selected.program.profiles}
+    return tuple(
+        (
+            task.task_id,
+            _task_memory_envelope(
+                _measurement_for_profile(measurements, profiles[task.profile_id])
+            ),
+        )
+        for task in selected.program.selected_tasks(selected.selections)
+    )
+
+
+def _task_memory_envelope(
+    measurement: TaskMeasurement,
+) -> TaskMemoryEnvelope:
+    live: dict[int, tuple[int, int]] = {}
+    live_requested = 0
+    live_charged = 0
+    peak_requested = 0
+    peak_charged = 0
+    maximum_requested = 0
+    maximum_charged = 0
+    for event in measurement.allocation_trace:
+        sizes = (event.requested_bytes, event.charged_bytes)
+        if event.operation is TaskAllocationOperation.ALLOCATE:
+            live[event.allocation_ordinal] = sizes
+            live_requested += sizes[0]
+            live_charged += sizes[1]
+            peak_requested = max(peak_requested, live_requested)
+            peak_charged = max(peak_charged, live_charged)
+            maximum_requested = max(maximum_requested, sizes[0])
+            maximum_charged = max(maximum_charged, sizes[1])
+        else:
+            prior = live.pop(event.allocation_ordinal)
+            live_requested -= prior[0]
+            live_charged -= prior[1]
+    return TaskMemoryEnvelope(
+        maximum_requested_allocation_bytes=maximum_requested,
+        maximum_charged_allocation_bytes=maximum_charged,
+        live_requested_allocation_limit_bytes=_envelope_limit(peak_requested),
+        live_charged_allocation_limit_bytes=_envelope_limit(peak_charged),
+    )
+
+
+def _envelope_limit(profiled_bytes: int) -> int:
+    if profiled_bytes == 0:
+        return 0
+    two_mib = 2 << 20
+    with_headroom = (profiled_bytes * 5 + 3) // 4
+    return ((with_headroom + two_mib - 1) // two_mib) * two_mib
 
 
 def _selected_slab_layout(
@@ -539,71 +568,6 @@ def _translate_spatial_timeline(
         tuple(state.events),
         state.sources,
         frozenset(state.caller_owned_allocation_ids),
-    )
-
-
-def _runtime_spatial_layout(
-    slab: SlabLayout,
-    sources: Mapping[str, _AllocationSource],
-) -> SelectedSpatialLayout:
-    offsets = slab.offset_by_allocation()
-    dynamic_ids = frozenset(slab.dynamic_allocation_ids)
-    task_allocations: list[tuple[str, TaskAllocationPlacementHint]] = []
-    prefetches: list[PrefetchPlacement] = []
-    for allocation_id, source in sources.items():
-        offset = offsets[allocation_id]
-        if source.alias_group_id is not None:
-            prefetches.append(
-                PrefetchPlacement(
-                    source.alias_group_id,
-                    offset,
-                    source.task_id,
-                )
-            )
-            continue
-        if (
-            source.task_id is None
-            or source.allocation_ordinal is None
-            or source.requested_bytes is None
-        ):
-            raise ValueError(
-                f"allocation {allocation_id!r} lacks runtime placement identity: "
-                f"producer_task={source.task_id!r}"
-            )
-        task_allocations.append(
-            (
-                source.task_id,
-                TaskAllocationPlacementHint(
-                    source.allocation_ordinal,
-                    source.requested_bytes,
-                    (
-                        slab.static_layout_bytes
-                        if allocation_id in dynamic_ids
-                        else offset
-                    ),
-                    source.reuse,
-                    allocation_id in dynamic_ids,
-                ),
-            )
-        )
-    return SelectedSpatialLayout(
-        slab,
-        tuple(
-            sorted(
-                task_allocations,
-                key=lambda item: (item[0], item[1].allocation_ordinal),
-            )
-        ),
-        tuple(
-            sorted(
-                prefetches,
-                key=lambda item: (
-                    item.trigger_task_id is not None,
-                    item.trigger_task_id or "",
-                    item.alias_group_id,
-                ),
-            )
-        ),
     )
 
 
@@ -1219,7 +1183,6 @@ def output_bindings_for_entrypoints(
 
 
 __all__ = [
-    "PrefetchPlacement",
     "SelectedSpatialLayout",
     "TaskOutputBinding",
     "build_selected_spatial_layout",

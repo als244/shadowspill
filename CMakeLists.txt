@@ -333,6 +333,25 @@ if(BUILD_TESTING)
   )
   add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
 
+  add_executable(
+    shadowspill_memory_pool_canary
+    tests/runtime/memory_pool_canary.c
+    runtime/src/memory_pool.c
+    runtime/src/ranges.c
+  )
+  target_include_directories(
+    shadowspill_memory_pool_canary
+    PRIVATE runtime/src runtime/include
+  )
+  target_link_libraries(
+    shadowspill_memory_pool_canary
+    PRIVATE shadowspill_build_options Threads::Threads
+  )
+  add_test(
+    NAME shadowspill_memory_pool_canary
+    COMMAND shadowspill_memory_pool_canary
+  )
+
   foreach(runtime_test IN ITEMS blocking calibration completion failure telemetry transitions)
     add_executable(
       shadowspill_runtime_${runtime_test}_canary

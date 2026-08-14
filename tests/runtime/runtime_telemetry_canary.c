@@ -122,8 +122,8 @@ static int ordered_task_capture(void) {
     }
     if (!failed &&
         (logical_count != 4U ||
-         logical_events[0].slab_offset + logical_events[0].charged_bytes != 256U ||
-         logical_events[2].slab_offset + logical_events[2].charged_bytes != 192U ||
+         logical_events[0].slab_offset != 0U ||
+         logical_events[2].slab_offset != 64U ||
          logical_events[0].category != SHADOWSPILL_ALLOCATION_ANONYMOUS ||
          logical_events[3].category != SHADOWSPILL_ALLOCATION_PLANNED_OBJECT)) {
             failed = 1;
@@ -163,20 +163,14 @@ static int same_stream_retirement_is_task_batched(void) {
     int failed = shadowspill_before_task(
             runtime, 77U, compute, NULL, 0U, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
-    void *first_pointer = NULL;
     for (uint32_t index = 0U; !failed && index < 2500U; ++index) {
         ShadowSpillAllocation allocation = {0};
         failed = shadowspill_allocate(
                 runtime, 64U, 1U, compute, &allocation
             ) != SHADOWSPILL_RUNTIME_OK;
-        if (index == 0U) {
-            first_pointer = allocation.pointer;
-        } else if (allocation.pointer != first_pointer) {
-            failed = 1;
-        }
         failed = failed || shadowspill_free(
-                runtime, allocation.allocation_id, compute
-            ) != SHADOWSPILL_RUNTIME_OK;
+            runtime, allocation.allocation_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK;
     }
     shadowspill_mock_backend_statistics(mock, &during);
     failed = failed || during.operation_count != before.operation_count ||
@@ -196,11 +190,12 @@ static int same_stream_retirement_is_task_batched(void) {
         fprintf(
             stderr,
             "task retirement batching before=%llu during=%llu after=%llu "
-            "pending=%llu allocated=%llu\n",
+            "pending=%llu actions=%llu allocated=%llu\n",
             (unsigned long long)before.operation_count,
             (unsigned long long)during.operation_count,
             (unsigned long long)after.operation_count,
             (unsigned long long)runtime_statistics.pending_retirements,
+            (unsigned long long)runtime_statistics.queued_actions,
             (unsigned long long)runtime_statistics.allocated_bytes
         );
     }
@@ -501,12 +496,19 @@ static int bounded_runtime_trace_is_opt_in(void) {
 }
 
 int main(void) {
-    return ordered_task_capture() == 0 &&
-        same_stream_retirement_is_task_batched() == 0 &&
-        queued_transfers_survive_retirement_only_task() == 0 &&
-        all_completed_retirements_precede_action_admission() == 0 &&
-        bounded_runtime_trace_is_opt_in() == 0 &&
-        overflow_is_failure() == 0
-        ? EXIT_SUCCESS
-        : EXIT_FAILURE;
+#define REQUIRE_TELEMETRY_CANARY(call)                                      \
+    do {                                                                    \
+        fprintf(stderr, "runtime telemetry canary starting: %s\n", #call);  \
+        if ((call) != 0) {                                                  \
+            fprintf(stderr, "runtime telemetry canary failed: %s\n", #call); \
+            return EXIT_FAILURE;                                            \
+        }                                                                   \
+    } while (0)
+    REQUIRE_TELEMETRY_CANARY(ordered_task_capture());
+    REQUIRE_TELEMETRY_CANARY(same_stream_retirement_is_task_batched());
+    REQUIRE_TELEMETRY_CANARY(queued_transfers_survive_retirement_only_task());
+    REQUIRE_TELEMETRY_CANARY(all_completed_retirements_precede_action_admission());
+    REQUIRE_TELEMETRY_CANARY(bounded_runtime_trace_is_opt_in());
+    REQUIRE_TELEMETRY_CANARY(overflow_is_failure());
+    return EXIT_SUCCESS;
 }

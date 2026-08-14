@@ -11,7 +11,7 @@ from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 _NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = 3
 _NO_PROGRESS = 4
-_PLAN_VIOLATION = 6
+_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10
 _STATUS_NAMES = {
     0: "ok",
     1: "invalid_argument",
@@ -23,6 +23,7 @@ _STATUS_NAMES = {
     7: "backend_failure",
     8: "worker_failure",
     9: "closed",
+    _TASK_ALLOCATION_ENVELOPE_EXCEEDED: "task_allocation_envelope_exceeded",
 }
 
 
@@ -49,9 +50,12 @@ class RuntimeFailureDiagnostics:
     object_id: int | None
     allocation_id: int | None
     task_id: int | None = None
-    allocation_ordinal: int | None = None
-    expected_allocation_ordinal: int | None = None
-    expected_requested_bytes: int = 0
+    task_live_requested_bytes: int = 0
+    task_live_charged_bytes: int = 0
+    task_live_requested_limit_bytes: int = 0
+    task_live_charged_limit_bytes: int = 0
+    task_maximum_requested_allocation_bytes: int = 0
+    task_maximum_charged_allocation_bytes: int = 0
     task: ExecutionTaskIdentity | None = None
 
     @property
@@ -68,6 +72,15 @@ class RuntimeFailureDiagnostics:
 
         return self.status == _NO_PROGRESS and self.requested_bytes > 0
 
+    @property
+    def is_shadowspill_contract_failure(self) -> bool:
+        """Whether ShadowSpill should replace a secondary provider exception."""
+
+        return self.status in {
+            6,  # plan_violation
+            _TASK_ALLOCATION_ENVELOPE_EXCEEDED,
+        }
+
     def as_dict(self) -> dict[str, object]:
         task = self.task
         return {
@@ -81,9 +94,18 @@ class RuntimeFailureDiagnostics:
             "object_id": self.object_id,
             "allocation_id": self.allocation_id,
             "task_id": self.task_id,
-            "allocation_ordinal": self.allocation_ordinal,
-            "expected_allocation_ordinal": self.expected_allocation_ordinal,
-            "expected_requested_bytes": self.expected_requested_bytes,
+            "task_live_requested_bytes": self.task_live_requested_bytes,
+            "task_live_charged_bytes": self.task_live_charged_bytes,
+            "task_live_requested_limit_bytes": (
+                self.task_live_requested_limit_bytes
+            ),
+            "task_live_charged_limit_bytes": self.task_live_charged_limit_bytes,
+            "task_maximum_requested_allocation_bytes": (
+                self.task_maximum_requested_allocation_bytes
+            ),
+            "task_maximum_charged_allocation_bytes": (
+                self.task_maximum_charged_allocation_bytes
+            ),
             "execution_task_id": None if task is None else task.execution_task_id,
             "semantic_name": None if task is None else task.semantic_name,
             "canonical_task_id": None if task is None else task.canonical_task_id,
@@ -136,13 +158,20 @@ def read_allocator_failure(
         object_id=_optional_id(int(failure.runtime.object_id)),
         allocation_id=_optional_id(int(failure.runtime.allocation_id)),
         task_id=_optional_id(int(failure.runtime.task_id)),
-        allocation_ordinal=_optional_id(
-            int(failure.runtime.allocation_ordinal)
+        task_live_requested_bytes=int(failure.runtime.task_live_requested_bytes),
+        task_live_charged_bytes=int(failure.runtime.task_live_charged_bytes),
+        task_live_requested_limit_bytes=int(
+            failure.runtime.task_live_requested_limit_bytes
         ),
-        expected_allocation_ordinal=_optional_id(
-            int(failure.runtime.expected_allocation_ordinal)
+        task_live_charged_limit_bytes=int(
+            failure.runtime.task_live_charged_limit_bytes
         ),
-        expected_requested_bytes=int(failure.runtime.expected_requested_bytes),
+        task_maximum_requested_allocation_bytes=int(
+            failure.runtime.task_maximum_requested_allocation_bytes
+        ),
+        task_maximum_charged_allocation_bytes=int(
+            failure.runtime.task_maximum_charged_allocation_bytes
+        ),
         task=task,
     )
 
@@ -215,13 +244,20 @@ def generic_runtime_error(
             f"largest_free_range: {diagnostics.largest_free_range_bytes}",
         )
     )
-    if diagnostics.status == _PLAN_VIOLATION:
+    if diagnostics.status == _TASK_ALLOCATION_ENVELOPE_EXCEEDED:
         lines.extend(
             (
-                f"allocation_ordinal: {diagnostics.allocation_ordinal}",
-                "expected_allocation_ordinal: "
-                f"{diagnostics.expected_allocation_ordinal}",
-                f"expected_requested: {diagnostics.expected_requested_bytes}",
+                "reason: TASK_ALLOCATION_ENVELOPE_EXCEEDED",
+                f"task_live_requested: {diagnostics.task_live_requested_bytes}",
+                f"task_live_charged: {diagnostics.task_live_charged_bytes}",
+                "task_live_requested_limit: "
+                f"{diagnostics.task_live_requested_limit_bytes}",
+                "task_live_charged_limit: "
+                f"{diagnostics.task_live_charged_limit_bytes}",
+                "task_maximum_requested_allocation: "
+                f"{diagnostics.task_maximum_requested_allocation_bytes}",
+                "task_maximum_charged_allocation: "
+                f"{diagnostics.task_maximum_charged_allocation_bytes}",
             )
         )
     return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)

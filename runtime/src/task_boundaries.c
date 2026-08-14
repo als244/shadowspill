@@ -8,6 +8,192 @@ typedef struct ShadowSpillActionBatch {
     ShadowSpillQueuedAction *tail;
 } ShadowSpillActionBatch;
 
+static void release_reserved_destination(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillQueuedAction *action
+) {
+    ShadowSpillMemoryLease *lease = action->destination_lease;
+    if (lease == NULL) {
+        return;
+    }
+    action->destination_lease = NULL;
+    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        shadowspill_memory_pool_lock_reservation(
+            shadowspill_execution_pool(runtime)
+        );
+        shadowspill_cancel_execution_reservation_locked(runtime, lease);
+        shadowspill_memory_pool_unlock_reservation(
+            shadowspill_execution_pool(runtime)
+        );
+        shadowspill_memory_pool_relinquish_reservation(
+            shadowspill_execution_pool(runtime)
+        );
+        return;
+    }
+    shadowspill_memory_pool_lock_reservation(shadowspill_spill_pool(runtime));
+    (void)shadowspill_memory_pool_cancel_reservation_locked(lease);
+    shadowspill_memory_pool_unlock_reservation(shadowspill_spill_pool(runtime));
+    shadowspill_memory_pool_relinquish_reservation(
+        shadowspill_spill_pool(runtime)
+    );
+    free(lease);
+}
+
+static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillQueuedAction *action,
+    ShadowSpillMemoryPool *pool
+) {
+    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
+    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        status = shadowspill_create_execution_lease_locked(
+            runtime,
+            action->object->size_bytes,
+            pool->minimum_alignment,
+            1,
+            SHADOWSPILL_MEMORY_BEST_FIT_LOW,
+            action->task_id,
+            &action->destination_lease
+        );
+        if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
+            status = shadowspill_create_execution_successor_locked(
+                runtime,
+                action->object->size_bytes,
+                pool->minimum_alignment,
+                action->task_id,
+                &action->destination_lease
+            );
+        }
+    } else {
+        action->destination_lease = calloc(
+            1U, sizeof(*action->destination_lease)
+        );
+        const int reserve_status = action->destination_lease == NULL
+            ? -1
+            : shadowspill_memory_pool_reserve_lease_locked(
+                pool,
+                action->destination_lease,
+                action->object->size_bytes,
+                pool->minimum_alignment,
+                SHADOWSPILL_MEMORY_BEST_FIT_LOW
+            );
+        if (reserve_status != 0) {
+            const int successor_status = action->destination_lease == NULL
+                ? -1
+                : shadowspill_memory_pool_reserve_causal_successor_locked(
+                    pool,
+                    action->destination_lease,
+                    action->object->size_bytes,
+                    pool->minimum_alignment
+                );
+            if (successor_status != 0) {
+                free(action->destination_lease);
+                action->destination_lease = NULL;
+                status = successor_status > 0
+                    ? SHADOWSPILL_RUNTIME_OUT_OF_MEMORY
+                    : SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            }
+        }
+    }
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    if (action->destination_lease->state !=
+            SHADOWSPILL_LEASE_SUCCESSOR_RESERVED &&
+        shadowspill_memory_pool_mark_reserved_locked(
+            action->destination_lease
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    if (status == SHADOWSPILL_RUNTIME_OK &&
+        action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        action->destination_lease->bound_object_id =
+            action->object->object_id;
+    }
+    return status;
+}
+
+static ShadowSpillRuntimeStatus reserve_action_destination(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillQueuedAction *action,
+    int destination_required
+) {
+    if (!destination_required) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+        ? shadowspill_execution_pool(runtime)
+        : shadowspill_spill_pool(runtime);
+    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
+    shadowspill_memory_pool_lock_reservation(pool);
+    for (;;) {
+        status = try_reserve_action_destination_locked(runtime, action, pool);
+        if (status != SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
+            break;
+        }
+        const int eventually_fits =
+            shadowspill_memory_pool_can_reserve_after_releases_locked(
+                pool,
+                action->object->size_bytes,
+                pool->minimum_alignment
+            );
+        if (eventually_fits <= 0) {
+            status = eventually_fits == 0
+                ? SHADOWSPILL_RUNTIME_OUT_OF_MEMORY
+                : SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            break;
+        }
+        /*
+         * Several completed predecessors may need to coalesce before this
+         * destination has one compatible range. Their events are already
+         * published, so waiting here has a concrete progress source.
+         */
+        shadowspill_notify_worker(runtime);
+        pthread_cond_wait(&pool->capacity_changed, &pool->lock);
+        status = shadowspill_failure_status(runtime);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            break;
+        }
+    }
+    shadowspill_memory_pool_unlock_reservation(pool);
+    shadowspill_memory_pool_relinquish_reservation(pool);
+
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        release_reserved_destination(runtime, action);
+        if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
+            shadowspill_latch_task_failure(
+                runtime,
+                SHADOWSPILL_RUNTIME_NO_PROGRESS,
+                action->task_id,
+                action->object->object_id,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                action->object->size_bytes
+            );
+            return SHADOWSPILL_RUNTIME_NO_PROGRESS;
+        }
+        shadowspill_latch_task_failure(
+            runtime,
+            status,
+            action->task_id,
+            action->object->object_id,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            action->object->size_bytes
+        );
+        return status;
+    }
+    shadowspill_append_trace_event_locked(
+        runtime,
+        SHADOWSPILL_TRACE_DESTINATION_RESERVED,
+        action->task_id,
+        action->object->object_id,
+        action->object->allocation_id,
+        action->object->size_bytes,
+        action->kind,
+        action->destination_lease->offset
+    );
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 static ShadowSpillRuntimeStatus publish_mutations_locked(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
@@ -164,33 +350,30 @@ static void discard_action_batch_locked(
     ShadowSpillQueuedAction *action = batch->head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
-        if (action->destination_priority_declared) {
-            ShadowSpillMemoryPool *pool =
-                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-                ? shadowspill_execution_pool(runtime)
-                : shadowspill_spill_pool(runtime);
-            shadowspill_memory_pool_relinquish_transfer(pool);
-            action->destination_priority_declared = 0U;
-        }
+        release_reserved_destination(runtime, action);
+        pthread_mutex_lock(&action->object->lock);
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            pthread_mutex_lock(&action->object->lock);
             action->object->prefetch_pending = 0U;
-            pthread_cond_broadcast(&action->object->state_changed);
-            pthread_mutex_unlock(&action->object->lock);
+        } else {
+            ShadowSpillMemoryLease *source = shadowspill_execution_location(
+                runtime, action->object
+            )->lease;
+            if (source != NULL &&
+                source->state == SHADOWSPILL_LEASE_RETIRE_PENDING) {
+                (void)shadowspill_memory_pool_cancel_retirement_locked(source);
+            }
         }
+        pthread_cond_broadcast(&action->object->state_changed);
+        pthread_mutex_unlock(&action->object->lock);
         shadowspill_release_task_fence_locked(runtime, action->fence);
         if (action->admitted) {
             const uint8_t kind = action->kind;
-            const uint64_t execution_offset = action->execution_offset;
-            const uint8_t has_execution_offset = action->has_execution_offset;
             ShadowSpillObject *object = action->object;
             const uint64_t task_id = action->task_id;
             const char *trace_label = action->trace_label;
             *action = (ShadowSpillQueuedAction){
                 .task_id = task_id,
-                .execution_offset = execution_offset,
                 .kind = kind,
-                .has_execution_offset = has_execution_offset,
                 .object = object,
                 .trace_label = trace_label,
                 .admitted = 1U,
@@ -238,30 +421,46 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_INVALID_STATE;
         }
+        const uint64_t expected_generation = object->generation;
+        const uint64_t expected_version = object->authoritative_version;
+        const int destination_required =
+            action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
+            (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
+             shadowspill_spill_location(runtime, object)->lease == NULL);
         queued->active = 1U;
         queued->state = SHADOWSPILL_ACTION_QUEUED;
         queued->fence = fence;
         shadowspill_retain_task_fence(fence);
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             object->prefetch_pending = 1U;
-        }
-        ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-            runtime, object
-        );
-        /*
-         * Publish destination priority at the host trigger boundary. The
-         * dispatcher may run ahead of the trigger's completion event, but its
-         * malloc callbacks must not overtake this causal capacity promise.
-         */
-        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
-            (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-             spill->lease == NULL)) {
-            ShadowSpillMemoryPool *pool =
-                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-                ? shadowspill_execution_pool(runtime)
-                : shadowspill_spill_pool(runtime);
-            shadowspill_memory_pool_declare_transfer(pool);
-            queued->destination_priority_declared = 1U;
+        } else {
+            ShadowSpillMemoryLease *source =
+                shadowspill_execution_location(runtime, object)->lease;
+            if (source == NULL) {
+                pthread_mutex_unlock(&object->lock);
+                return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            }
+            const int keeps_lease_for_handoff =
+                action->kind == SHADOWSPILL_RUNTIME_RELEASE &&
+                object->handoff_task_id == record->task_id;
+            if (!keeps_lease_for_handoff) {
+                pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+                const int retirement_status =
+                    shadowspill_memory_pool_begin_retirement_locked(
+                        source,
+                        action->kind == SHADOWSPILL_RUNTIME_RELEASE
+                            ? fence->event
+                            : NULL,
+                        action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
+                    );
+                pthread_mutex_unlock(
+                    &shadowspill_execution_pool(runtime)->lock
+                );
+                if (retirement_status != 0) {
+                    pthread_mutex_unlock(&object->lock);
+                    return SHADOWSPILL_RUNTIME_INVALID_STATE;
+                }
+            }
         }
         pthread_mutex_unlock(&object->lock);
         if (batch->tail == NULL) {
@@ -271,6 +470,19 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             batch->tail->next = queued;
         }
         batch->tail = queued;
+        ShadowSpillRuntimeStatus status = reserve_action_destination(
+            runtime, queued, destination_required
+        );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+        pthread_mutex_lock(&object->lock);
+        const int unchanged = object->generation == expected_generation &&
+            object->authoritative_version == expected_version;
+        pthread_mutex_unlock(&object->lock);
+        if (!unchanged) {
+            return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        }
     }
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -291,6 +503,12 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
             continue;
         }
         allocation->retirement_fence = fence;
+        if (shadowspill_memory_pool_publish_retirement_dependency_locked(
+                allocation, fence->event
+            ) != 0) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            break;
+        }
         shadowspill_retain_task_fence(fence);
         status = shadowspill_retirement_enqueue_locked(runtime, allocation);
         if (status != SHADOWSPILL_RUNTIME_OK) {
@@ -376,9 +594,6 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
 
     if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = shadowspill_validate_allocation_placements(runtime, record);
-    }
-    if (status == SHADOWSPILL_RUNTIME_OK) {
         status = publish_mutations_locked(
             runtime, record, &failure_object_id, &failure_allocation_id
         );
@@ -395,6 +610,11 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         (record->action_count != 0U || retirement_count != 0U)) {
         status = record_task_fence_locked(runtime, compute_stream, &fence);
         if (status == SHADOWSPILL_RUNTIME_OK) {
+            status = attach_task_retirements_locked(
+                runtime, record->task_id, fence
+            );
+        }
+        if (status == SHADOWSPILL_RUNTIME_OK) {
             status = instantiate_actions_locked(
                 runtime,
                 record,
@@ -402,11 +622,6 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
                 &batch,
                 &failure_object_id,
                 &failure_allocation_id
-            );
-        }
-        if (status == SHADOWSPILL_RUNTIME_OK) {
-            status = attach_task_retirements_locked(
-                runtime, record->task_id, fence
             );
         }
         if (status == SHADOWSPILL_RUNTIME_OK) {
@@ -496,13 +711,45 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
     const ShadowSpillRuntimeAction *actions,
     uint32_t action_count
 ) {
-    return shadowspill_after_task_legacy(
-        runtime,
-        task_id,
-        compute_stream,
-        updates,
-        update_count,
-        actions,
-        action_count
+    const ShadowSpillExecutionDescription description = {
+        .task_id = task_id,
+        .updates = updates,
+        .update_count = update_count,
+        .actions = actions,
+        .action_count = action_count,
+    };
+    ShadowSpillRuntimeStatus status = shadowspill_admit_execution(
+        runtime, &description
     );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        /*
+         * An allocator callback may have latched this failure inside the
+         * active task. Publish completion for its logical frees even though
+         * failure state prevents admitting a new execution record.
+         */
+        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+        const ShadowSpillRuntimeStatus retirement_status =
+            shadowspill_fence_task_retirements_locked(
+                runtime, task_id, compute_stream
+            );
+        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+        if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                retirement_status,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                0U
+            );
+        }
+        shadowspill_leave_task_scope(runtime);
+        return status;
+    }
+    const ShadowSpillExecutionRecord *record =
+        shadowspill_execution_table_acquire(&runtime->execution, task_id);
+    if (record == NULL) {
+        shadowspill_leave_task_scope(runtime);
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    return shadowspill_after_execution_record(runtime, record, compute_stream);
 }

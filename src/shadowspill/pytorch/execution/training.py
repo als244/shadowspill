@@ -40,7 +40,7 @@ from shadowspill.pytorch.optimizer import (
 )
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
-    TaskAllocationPlacementHint,
+    TaskMemoryEnvelope,
 )
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
@@ -108,17 +108,8 @@ class TrainingExecutor:
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
         *,
-        initial_allocation_placement_hints: Mapping[
-            str, tuple[TaskAllocationPlacementHint, ...]
-        ]
-        | None = None,
-        recurrent_allocation_placement_hints: Mapping[
-            str, tuple[TaskAllocationPlacementHint, ...]
-        ],
-        initial_prefetch_offsets: Mapping[str, int] | None = None,
-        initial_action_prefetch_offsets: Mapping[tuple[str, str], int] | None = None,
-        recurrent_prefetch_offsets: Mapping[str, int],
-        recurrent_action_prefetch_offsets: Mapping[tuple[str, str], int],
+        initial_memory_envelopes: Mapping[str, TaskMemoryEnvelope] | None = None,
+        recurrent_memory_envelopes: Mapping[str, TaskMemoryEnvelope],
         optimizer_state_preinitialized: bool = False,
         optimizer_state_was_lazy: bool = False,
     ) -> None:
@@ -133,18 +124,14 @@ class TrainingExecutor:
                 *initial,
                 bridge=bridge,
                 functions=functions,
-                allocation_placement_hints=(initial_allocation_placement_hints or {}),
-                initial_prefetch_offsets=initial_prefetch_offsets or {},
-                action_prefetch_offsets=initial_action_prefetch_offsets or {},
+                memory_envelopes=initial_memory_envelopes or {},
             )
         )
         self._recurrent = build_plan_run(
             *recurrent,
             bridge=bridge,
             functions=functions,
-            allocation_placement_hints=recurrent_allocation_placement_hints,
-            initial_prefetch_offsets=recurrent_prefetch_offsets,
-            action_prefetch_offsets=recurrent_action_prefetch_offsets,
+            memory_envelopes=recurrent_memory_envelopes,
         )
         if self._initial is None:
             self._recurrent = self._admit_run(self._recurrent)
@@ -202,8 +189,7 @@ class TrainingExecutor:
                         record.input_aliases,
                         record.actions,
                         labels.labels_for(record.actions),
-                        record.allocation_placement_hints,
-                        dict(record.prefetch_offsets),
+                        record.memory_envelope,
                     ),
                 )
             )
@@ -316,10 +302,9 @@ class TrainingExecutor:
             self._bridge.submit_initial_actions(
                 tuple(
                     MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-                    for alias_id, _offset in run.initial_prefetches
+                    for alias_id in run.initial_prefetches
                 ),
                 task_number=(1 << 60) + self._invocations,
-                prefetch_offsets=dict(run.initial_prefetches),
             )
         if timing is not None:
             timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
@@ -421,7 +406,7 @@ class TrainingExecutor:
             actions=(
                 tuple(
                     MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-                    for alias_id, _offset in run.initial_prefetches
+                    for alias_id in run.initial_prefetches
                 )
                 + run.plan.schedule.actions
             ),

@@ -153,13 +153,14 @@ def _initialize_provider_state(
     library: Any,
     admission: PhysicalAdmission,
 ) -> int:
-    """Create persistent PyTorch CUDA provider state in one slab tail.
+    """Create persistent PyTorch CUDA provider state before plan admission.
 
     PyTorch lazily obtains its cuBLAS handle on the first matrix operation.
     That handle's workspace is allocated through the selected allocator and
-    remains live. Creating it while the slab is otherwise empty lets the
-    high-address allocator place it in one tail reservation that planning can
-    exclude from every simulated and physical layout.
+    remains live. Creating it while the slab is otherwise empty makes its
+    physical cost explicit before planning. Dynamic allocation does not assign
+    a special address to this state; admission excludes its charged bytes and
+    verifies that the remaining capacity is physically usable.
     """
 
     # Tiny allocator/failure canaries and genuinely small non-BLAS workloads
@@ -192,9 +193,11 @@ def _initialize_provider_state(
     fixed = int(runtime.allocated_bytes)
     free = int(runtime.free_bytes)
     capacity = int(admission.execution_pool_bytes)
-    if fixed + free != capacity or int(runtime.free_prefix_bytes) != free:
+    largest = int(runtime.largest_free_range_bytes)
+    if fixed + free != capacity or largest != free:
         raise AllocatorInstallError(
-            "CUDA provider state did not occupy one contiguous slab tail"
+            "CUDA provider initialization fragmented the otherwise empty slab: "
+            f"fixed={fixed}, free={free}, largest={largest}, capacity={capacity}"
         )
     required = fixed + _PROVIDER_GROWTH_MARGIN
     return (
@@ -209,7 +212,7 @@ def validate_fixed_execution_reservation(
     *,
     reserved_bytes: int,
 ) -> int:
-    """Verify persistent planning allocations still form the excluded tail."""
+    """Verify the dynamic slab retains the capacity excluded by planning."""
 
     if reserved_bytes < installed.fixed_execution_bytes:
         raise ValueError("fixed execution reservation is smaller than bootstrap")
@@ -238,14 +241,13 @@ def validate_fixed_execution_reservation(
             f"observed={allocated}, reserved={reserved_bytes}"
         )
     usable_prefix = capacity - reserved_bytes
-    free_prefix = int(runtime.free_prefix_bytes)
-    if allocated + free != capacity or free_prefix < usable_prefix:
+    largest = int(runtime.largest_free_range_bytes)
+    if allocated + free != capacity or largest < usable_prefix:
         raise AllocatorInstallError(
-            "live execution allocations overlap the prefix reserved for the "
-            "admitted plan: "
+            "live execution allocations leave no compatible range for the "
+            "admitted dynamic plan: "
             f"observed={allocated}, reserved={reserved_bytes}, free={free}, "
-            f"free_prefix={free_prefix}, required_prefix={usable_prefix}, "
-            f"largest={int(runtime.largest_free_range_bytes)}, capacity={capacity}"
+            f"required_range={usable_prefix}, largest={largest}, capacity={capacity}"
         )
     return allocated
 

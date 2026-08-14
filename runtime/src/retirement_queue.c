@@ -136,13 +136,13 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
 
 static int retirement_complete(const ShadowSpillRetirementRecord *record) {
     if (record->fence != NULL && atomic_load_explicit(
-            &record->fence->event->completion_known, memory_order_acquire
+            &record->fence->event->backend_complete, memory_order_acquire
         ) == 0U) {
         return 0;
     }
     for (uint32_t index = 0U; index < record->event_count; ++index) {
         if (atomic_load_explicit(
-                &record->events[index]->completion_known,
+                &record->events[index]->backend_complete,
                 memory_order_acquire
             ) == 0U) {
             return 0;

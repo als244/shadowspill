@@ -38,7 +38,12 @@ struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
     uint64_t generation;
     _Atomic uint32_t references;
-    _Atomic uint8_t completion_known;
+    /*
+     * The backend has reported that the event completed. This is deliberately
+     * not a memory-availability flag: a range becomes reusable only when its
+     * owning MemoryPool commits the matching lease transition under pool.lock.
+     */
+    _Atomic uint8_t backend_complete;
 };
 
 typedef struct ShadowSpillEventRecord {
@@ -88,13 +93,16 @@ typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
     pthread_cond_t capacity_changed;
     _Atomic uint64_t foreground_waiters;
-    _Atomic uint64_t transfer_waiters;
+    _Atomic uint64_t reservation_waiters;
     ShadowSpillRangeAllocator ranges;
     struct ShadowSpillMemoryLease *leases;
     ShadowSpillMemoryPoolBackend backend;
     void *base;
     uint32_t pool_id;
     uint64_t minimum_alignment;
+    uint64_t next_request_sequence;
+    uint64_t next_release_sequence;
+    uint64_t reserved_bytes;
     uint8_t initialized;
 } ShadowSpillMemoryPool;
 
@@ -102,10 +110,11 @@ typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
 
 typedef enum ShadowSpillMemoryLeaseState {
     SHADOWSPILL_LEASE_FREE = 0,
-    SHADOWSPILL_LEASE_RESERVED = 1,
-    SHADOWSPILL_LEASE_TRANSFERRING = 2,
-    SHADOWSPILL_LEASE_ACTIVE = 3,
-    SHADOWSPILL_LEASE_RETIRING = 4,
+    SHADOWSPILL_LEASE_IN_USE = 1,
+    SHADOWSPILL_LEASE_RETIRE_PENDING = 2,
+    SHADOWSPILL_LEASE_RESERVED = 3,
+    SHADOWSPILL_LEASE_SUCCESSOR_RESERVED = 4,
+    SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED = 5,
 } ShadowSpillMemoryLeaseState;
 
 typedef struct ShadowSpillMemoryLease {
@@ -118,6 +127,8 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t offset;
     uint64_t origin_task_id;
     uint64_t release_task_id;
+    uint64_t request_sequence;
+    uint64_t release_sequence;
     void *pointer;
     void *retired_pointer;
     _Atomic uint32_t references;
@@ -138,6 +149,17 @@ typedef struct ShadowSpillMemoryLease {
     ShadowSpillEventRecord *retirement_events;
     ShadowSpillTaskFence *retirement_fence;
     uint64_t retirement_enqueued_generation;
+    /*
+     * A causal successor owns a future claim on this exact physical range.
+     * The predecessor remains the pool's range owner until either its
+     * completion is observed or the successor's stream has accepted the
+     * published dependency. Exactly one successor may exist.
+     */
+    struct ShadowSpillMemoryLease *causal_predecessor;
+    struct ShadowSpillMemoryLease *causal_successor;
+    uint64_t causal_predecessor_generation;
+    ShadowSpillEventLease *causal_event;
+    uint8_t causal_dependency_expected;
     struct ShadowSpillMemoryLease *next;
     struct ShadowSpillMemoryLease *id_index_next;
     struct ShadowSpillMemoryLease *pointer_index_next;
@@ -234,15 +256,13 @@ typedef enum ShadowSpillQueuedActionState {
 
 typedef struct ShadowSpillQueuedAction {
     uint64_t task_id;
-    uint64_t execution_offset;
     uint8_t kind;
-    uint8_t has_execution_offset;
     uint8_t state;
-    uint8_t destination_priority_declared;
     ShadowSpillMemoryLease *destination_lease;
     ShadowSpillObject *object;
     ShadowSpillTaskFence *fence;
     ShadowSpillEventLease *completion_event;
+    ShadowSpillEventLease *dependency_event;
     const char *trace_label;
     uint8_t owns_trace_label;
     uint8_t has_completion_event;
@@ -293,9 +313,7 @@ typedef struct ShadowSpillExecutionUpdate {
 
 typedef struct ShadowSpillExecutionAction {
     ShadowSpillObject *object;
-    uint64_t execution_offset;
     uint8_t kind;
-    uint8_t has_execution_offset;
     char *trace_label;
 } ShadowSpillExecutionAction;
 
@@ -313,8 +331,10 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillExecutionAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
-    ShadowSpillAllocationPlacementHint *allocation_placement_hints;
-    uint32_t allocation_placement_hint_count;
+    uint64_t maximum_requested_allocation_bytes;
+    uint64_t maximum_charged_allocation_bytes;
+    uint64_t live_requested_allocation_limit_bytes;
+    uint64_t live_charged_allocation_limit_bytes;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
 } ShadowSpillExecutionRecord;
@@ -485,10 +505,11 @@ int shadowspill_memory_pool_initialize(
 void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);
-void shadowspill_memory_pool_declare_transfer(ShadowSpillMemoryPool *pool);
-void shadowspill_memory_pool_relinquish_transfer(ShadowSpillMemoryPool *pool);
-int shadowspill_memory_pool_try_lock_transfer(ShadowSpillMemoryPool *pool);
-void shadowspill_memory_pool_unlock_transfer(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_declare_reservation(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_relinquish_reservation(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_lock_reservation(ShadowSpillMemoryPool *pool);
+int shadowspill_memory_pool_try_lock_reservation(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_unlock_reservation(ShadowSpillMemoryPool *pool);
 int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_reclamation(ShadowSpillMemoryPool *pool);
 int shadowspill_memory_pool_reserve_locked(
@@ -510,20 +531,40 @@ int shadowspill_memory_pool_reserve_lease_locked(
     uint64_t alignment,
     ShadowSpillMemoryPlacement placement
 );
-int shadowspill_memory_pool_reserve_lease_at_locked(
-    ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryLease *lease,
-    uint64_t bytes,
-    uint64_t offset
-);
-int shadowspill_memory_pool_reserve_lease_highest_locked(
-    ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryLease *lease,
-    uint64_t bytes,
-    uint64_t alignment,
-    uint64_t minimum_offset
-);
 int shadowspill_memory_pool_release_lease_locked(
+    ShadowSpillMemoryLease *lease
+);
+int shadowspill_memory_pool_mark_reserved_locked(
+    ShadowSpillMemoryLease *lease
+);
+int shadowspill_memory_pool_begin_retirement_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease *dependency_event,
+    int dependency_expected
+);
+int shadowspill_memory_pool_publish_retirement_dependency_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease *dependency_event
+);
+int shadowspill_memory_pool_cancel_retirement_locked(
+    ShadowSpillMemoryLease *lease
+);
+int shadowspill_memory_pool_reserve_causal_successor_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *successor,
+    uint64_t bytes,
+    uint64_t alignment
+);
+int shadowspill_memory_pool_can_reserve_after_releases_locked(
+    const ShadowSpillMemoryPool *pool,
+    uint64_t bytes,
+    uint64_t alignment
+);
+int shadowspill_memory_pool_acquire_reserved_lease_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease **dependency_event
+);
+int shadowspill_memory_pool_cancel_reservation_locked(
     ShadowSpillMemoryLease *lease
 );
 int shadowspill_memory_pool_adopt_lease_locked(
@@ -624,22 +665,21 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 );
-ShadowSpillRuntimeStatus shadowspill_create_execution_lease_at_locked(
-    ShadowSpillRuntime *runtime,
-    uint64_t bytes,
-    uint64_t offset,
-    int plan_owned,
-    uint64_t origin_task_id,
-    ShadowSpillMemoryLease **record
-);
-ShadowSpillRuntimeStatus shadowspill_create_execution_lease_highest_locked(
+ShadowSpillRuntimeStatus shadowspill_create_execution_successor_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,
     uint64_t alignment,
-    uint64_t minimum_offset,
-    int plan_owned,
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
+);
+int shadowspill_acquire_reserved_execution_lease_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease **dependency_event
+);
+void shadowspill_cancel_execution_reservation_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryLease *lease
 );
 void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
@@ -688,14 +728,21 @@ int shadowspill_enter_execution_scope(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record
 );
-ShadowSpillRuntimeStatus shadowspill_next_allocation_placement(
+ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
-    const ShadowSpillAllocationPlacementHint **placement
+    uint64_t charged_bytes
 );
-ShadowSpillRuntimeStatus shadowspill_validate_allocation_placements(
+void shadowspill_commit_task_allocation(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record
+    uint64_t requested_bytes,
+    uint64_t charged_bytes
+);
+void shadowspill_release_task_allocation(
+    ShadowSpillRuntime *runtime,
+    uint64_t origin_task_id,
+    uint64_t requested_bytes,
+    uint64_t charged_bytes
 );
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime);
 void shadowspill_append_allocation_event_locked(
@@ -704,7 +751,7 @@ void shadowspill_append_allocation_event_locked(
     ShadowSpillAllocationEventKind kind,
     ShadowSpillAllocationCategory category
 );
-void shadowspill_append_trace_event_locked(
+void shadowspill_trace_append_enabled(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceEventKind kind,
     uint64_t task_id,
@@ -714,6 +761,18 @@ void shadowspill_append_trace_event_locked(
     uint64_t detail_0,
     uint64_t detail_1
 );
+#define shadowspill_append_trace_event_locked(runtime_, ...)                  \
+    do {                                                                       \
+        ShadowSpillRuntime *const shadowspill_trace_runtime__ = (runtime_);    \
+        if (atomic_load_explicit(                                              \
+                &shadowspill_trace_runtime__->trace_active,                    \
+                memory_order_acquire                                           \
+            ) != 0U) {                                                         \
+            shadowspill_trace_append_enabled(                                 \
+                shadowspill_trace_runtime__, __VA_ARGS__                       \
+            );                                                                 \
+        }                                                                      \
+    } while (0)
 int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 int shadowspill_memory_pool_backend_is_valid(
     const ShadowSpillMemoryPoolBackend *backend

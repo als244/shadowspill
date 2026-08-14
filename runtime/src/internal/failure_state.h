@@ -22,12 +22,16 @@ void shadowspill_latch_task_failure(
     uint64_t requested_bytes
 );
 
-void shadowspill_latch_placement_failure(
+void shadowspill_latch_task_envelope_failure(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
-    uint64_t allocation_ordinal,
-    uint64_t expected_allocation_ordinal,
-    uint64_t expected_requested_bytes
+    uint64_t charged_bytes,
+    uint64_t live_requested_bytes,
+    uint64_t live_charged_bytes,
+    uint64_t live_requested_limit_bytes,
+    uint64_t live_charged_limit_bytes,
+    uint64_t maximum_requested_allocation_bytes,
+    uint64_t maximum_charged_allocation_bytes
 );
 
 ShadowSpillRuntimeStatus shadowspill_current_status_locked(

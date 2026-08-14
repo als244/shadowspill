@@ -15,7 +15,7 @@ static uint64_t monotonic_nanoseconds(void) {
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
 }
 
-void shadowspill_append_trace_event_locked(
+void shadowspill_trace_append_enabled(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceEventKind kind,
     uint64_t task_id,

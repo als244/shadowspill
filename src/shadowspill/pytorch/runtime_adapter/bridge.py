@@ -26,9 +26,6 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskHostTiming,
 )
-from shadowspill.pytorch.runtime_adapter.abi import (
-    AllocationPlacementHint as CAllocationPlacementHint,
-)
 from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     RuntimeExecutionError,
@@ -53,26 +50,35 @@ _ACTION_KIND = {
 
 
 @dataclass(frozen=True, slots=True)
-class TaskAllocationPlacementHint:
-    """Expected task-local allocator callback and exact slab address."""
+class TaskMemoryEnvelope:
+    """Conservative bounds on one task's anonymous allocator behavior."""
 
-    allocation_ordinal: int
-    requested_bytes: int
-    slab_offset: int
-    reuse: bool = False
-    dynamic: bool = False
+    maximum_requested_allocation_bytes: int = 0
+    maximum_charged_allocation_bytes: int = 0
+    live_requested_allocation_limit_bytes: int = 0
+    live_charged_allocation_limit_bytes: int = 0
 
     def __post_init__(self) -> None:
-        if self.allocation_ordinal < 0:
-            raise ValueError("allocation placement ordinal must be non-negative")
-        if self.requested_bytes <= 0:
-            raise ValueError("allocation placement size must be positive")
-        if self.slab_offset < 0:
-            raise ValueError("allocation placement offset must be non-negative")
-        if not isinstance(self.reuse, bool):
-            raise TypeError("allocation placement reuse flag must be boolean")
-        if not isinstance(self.dynamic, bool):
-            raise TypeError("allocation placement dynamic flag must be boolean")
+        values = (
+            self.maximum_requested_allocation_bytes,
+            self.maximum_charged_allocation_bytes,
+            self.live_requested_allocation_limit_bytes,
+            self.live_charged_allocation_limit_bytes,
+        )
+        if any(value < 0 for value in values):
+            raise ValueError("task memory envelope bounds must be non-negative")
+        if (
+            self.live_requested_allocation_limit_bytes
+            and self.maximum_requested_allocation_bytes
+            > self.live_requested_allocation_limit_bytes
+        ):
+            raise ValueError("requested allocation maximum exceeds live limit")
+        if (
+            self.live_charged_allocation_limit_bytes
+            and self.maximum_charged_allocation_bytes
+            > self.live_charged_allocation_limit_bytes
+        ):
+            raise ValueError("charged allocation maximum exceeds live limit")
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +95,6 @@ class _ExecutionBuffers:
     input_ids: Any
     updates: Any
     actions: Any
-    allocation_placement_hints: Any
     encoded_labels: tuple[bytes | None, ...]
 
 
@@ -116,16 +121,13 @@ def _runtime_action(
     object_id: int,
     kind: int,
     *,
-    execution_offset: int | None = None,
     trace_label: bytes | None = None,
 ) -> RuntimeAction:
     """Construct one ABI action without relying on ctypes field ordering."""
 
     return RuntimeAction(
         object_id=object_id,
-        execution_offset=0 if execution_offset is None else execution_offset,
         kind=kind,
-        has_execution_offset=int(execution_offset is not None),
         trace_label=trace_label,
     )
 
@@ -172,10 +174,7 @@ class RuntimeBridge:
         input_alias_ids: tuple[str, ...],
         actions: tuple[MemoryAction, ...],
         action_trace_labels: tuple[str, ...] | None = None,
-        allocation_placement_hints: tuple[
-            TaskAllocationPlacementHint, ...
-        ] = (),
-        prefetch_offsets: Mapping[str, int] | None = None,
+        memory_envelope: TaskMemoryEnvelope = TaskMemoryEnvelope(),
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
@@ -194,8 +193,7 @@ class RuntimeBridge:
             runtime_inputs,
             mutations,
             action_pairs,
-            allocation_placement_hints,
-            {} if prefetch_offsets is None else prefetch_offsets,
+            memory_envelope,
         )
         self._require(
             self.library.shadowspill_pytorch_admit_execution(
@@ -254,8 +252,7 @@ class RuntimeBridge:
         inputs: tuple[str, ...],
         mutations: tuple[MutationSpec, ...],
         actions: tuple[tuple[MemoryAction, str], ...],
-        allocation_placement_hints: tuple[TaskAllocationPlacementHint, ...],
-        prefetch_offsets: Mapping[str, int],
+        memory_envelope: TaskMemoryEnvelope,
     ) -> _ExecutionBuffers:
         input_ids = (ctypes.c_uint64 * len(inputs))(
             *(_dense_id(value, "alias_") for value in inputs)
@@ -275,28 +272,9 @@ class RuntimeBridge:
                 _runtime_action(
                     _dense_id(action.alias_group_id, "alias_"),
                     _ACTION_KIND[action.kind],
-                    execution_offset=(
-                        prefetch_offsets.get(action.alias_group_id)
-                        if action.kind is MemoryActionKind.PREFETCH
-                        else None
-                    ),
                     trace_label=label,
                 )
                 for (action, _text), label in zip(actions, labels, strict=True)
-            )
-        )
-        placement_values = (
-            CAllocationPlacementHint * len(allocation_placement_hints)
-        )(
-            *(
-                CAllocationPlacementHint(
-                    item.allocation_ordinal,
-                    item.requested_bytes,
-                    item.slab_offset,
-                    int(item.reuse),
-                    int(item.dynamic),
-                )
-                for item in allocation_placement_hints
             )
         )
         description = ExecutionDescription(
@@ -307,17 +285,24 @@ class RuntimeBridge:
             update_count=len(mutations),
             actions=action_values if actions else None,
             action_count=len(actions),
-            allocation_placement_hints=(
-                placement_values if allocation_placement_hints else None
+            maximum_requested_allocation_bytes=(
+                memory_envelope.maximum_requested_allocation_bytes
             ),
-            allocation_placement_hint_count=len(allocation_placement_hints),
+            maximum_charged_allocation_bytes=(
+                memory_envelope.maximum_charged_allocation_bytes
+            ),
+            live_requested_allocation_limit_bytes=(
+                memory_envelope.live_requested_allocation_limit_bytes
+            ),
+            live_charged_allocation_limit_bytes=(
+                memory_envelope.live_charged_allocation_limit_bytes
+            ),
         )
         return _ExecutionBuffers(
             description,
             input_ids,
             updates,
             action_values,
-            placement_values,
             labels,
         )
 
@@ -871,7 +856,6 @@ class RuntimeBridge:
         actions: tuple[MemoryAction, ...],
         *,
         task_number: int,
-        prefetch_offsets: Mapping[str, int] | None = None,
     ) -> None:
         runtime_actions_values = tuple(
             item for item in actions if self.requires_storage(item.alias_group_id)
@@ -884,12 +868,6 @@ class RuntimeBridge:
                 _runtime_action(
                     _dense_id(item.alias_group_id, "alias_"),
                     _ACTION_KIND[item.kind],
-                    execution_offset=(
-                        None
-                        if prefetch_offsets is None
-                        or item.kind is not MemoryActionKind.PREFETCH
-                        else prefetch_offsets.get(item.alias_group_id)
-                    ),
                 )
                 for item in runtime_actions_values
             )
@@ -1150,7 +1128,7 @@ class RuntimeBridge:
         if diagnostics is not None:
             if diagnostics.is_allocator_oom:
                 raise allocator_oom_error(diagnostics) from cause
-            if diagnostics.status_name == "plan_violation":
+            if diagnostics.is_shadowspill_contract_failure:
                 raise generic_runtime_error(diagnostics) from cause
 
     def raise_if_allocator_failed(self, operation: str) -> None:

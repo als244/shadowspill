@@ -174,32 +174,37 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
     ShadowSpillQueuedAction *action = runtime->actions.head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
-        if (action->destination_priority_declared) {
-            ShadowSpillMemoryPool *pool =
-                action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-                ? shadowspill_execution_pool(runtime)
-                : shadowspill_spill_pool(runtime);
-            shadowspill_memory_pool_relinquish_transfer(pool);
-            action->destination_priority_declared = 0U;
-        }
         if (action->has_completion_event) {
             (void)shadowspill_event_lease_release(
                 runtime, action->completion_event
             );
         }
+        if (action->dependency_event != NULL) {
+            (void)shadowspill_event_lease_release(
+                runtime, action->dependency_event
+            );
+            action->dependency_event = NULL;
+        }
         if (action->destination_lease != NULL) {
             ShadowSpillMemoryLease *lease = action->destination_lease;
             ShadowSpillMemoryPool *pool = lease->pool;
-            pthread_mutex_lock(&pool->lock);
-            if (pool->pool_id == runtime->execution_pool_id) {
-                lease->release_task_id = action->task_id;
-                shadowspill_release_execution_lease_locked(runtime, lease);
+            if (pool == NULL) {
+                action->destination_lease = NULL;
             } else {
-                (void)shadowspill_memory_pool_release_lease_locked(lease);
-                free(lease);
+                pthread_mutex_lock(&pool->lock);
+                if (pool->pool_id == runtime->execution_pool_id) {
+                    shadowspill_cancel_execution_reservation_locked(
+                        runtime, lease
+                    );
+                } else {
+                    (void)shadowspill_memory_pool_cancel_reservation_locked(
+                        lease
+                    );
+                    free(lease);
+                }
+                pthread_mutex_unlock(&pool->lock);
+                action->destination_lease = NULL;
             }
-            pthread_mutex_unlock(&pool->lock);
-            action->destination_lease = NULL;
         }
         shadowspill_release_task_fence_locked(runtime, action->fence);
         if (!action->admitted) {

@@ -30,14 +30,107 @@ delay physical reuse until completion. Allocation waits only when a known
 retirement or memory action can produce a sufficiently large range. Otherwise
 it returns a diagnostic no-progress OOM.
 
-One stable `MemoryLease` moves through reserved, transferring, active,
-retiring, and released states. Reservation and transfer do not create separate
-allocation identities. A generation prevents stale transfer or retirement
-completion from publishing state for a recycled range.
+One stable `MemoryLease` describes pool ownership only. Transfer actions and
+object residency have separate state machines; the pool never records
+`FETCHING`, `EVICTING`, source/destination, or route state.
+
+| Lease state | Pool meaning |
+|---|---|
+| `FREE` | The record owns no range. |
+| `IN_USE` | A consumer owns the range and may use its pointer subject to dependencies it already accepted. |
+| `RETIRE_PENDING` | The current consumer still owns the range until its completion dependency is committed. |
+| `RESERVED` | The range is exclusively held for a future consumer but has not been handed to it. |
+| `SUCCESSOR_RESERVED` | A future consumer has claimed a `RETIRE_PENDING` predecessor's range; the predecessor still owns the bytes. |
+| `PREDECESSOR_TRANSFERRED` | Range ownership has moved to the successor; this record retains only historical metadata until predecessor completion is processed. |
+
+The private pool transition surface is intentionally small:
+
+```text
+reserve lease
+mark lease reserved
+begin / cancel retirement
+publish retirement dependency
+reserve causal successor
+acquire reserved lease
+cancel reservation
+release lease
+snapshot geometry
+```
+
+`acquire_reserved_lease()` changes `RESERVED` to `IN_USE`. For a
+`SUCCESSOR_RESERVED` lease it also returns the predecessor dependency that the
+consumer must honor before touching the address. A generation prevents stale
+completion, release, or acquisition from publishing state for a recycled
+range.
 
 Object locations are an indexed array over runtime pools. Each entry stores its
 lease and version state. The current frontend selects execution and spill roles
 but the object representation does not contain fixed host/device fields.
+
+### Causal reuse rules
+
+Backend event completion and pool availability are deliberately different
+facts. An event's `backend_complete` bit means only that its stream reached the
+event. A range is allocatable only after its `MemoryPool` has committed the
+owning lease transition under that pool's lock.
+
+There are two nonblocking reuse paths:
+
+1. An ordinary framework allocation may recycle an anonymous logically freed
+   lease immediately only when every prior use and the new consumer use the
+   same execution stream. Stream order itself prevents the new work from
+   overtaking the old work. A cross-stream ordinary allocation does not receive
+   a pending address: it waits for a committed free range or fails with a
+   no-progress OOM.
+2. A memory action may reserve a pending predecessor range at its directive
+   trigger. The resulting lease is action-owned and is not exposed to an
+   arbitrary framework allocation. When a transfer action reaches its lane
+   head, that separate component acquires the reserved lease and makes its
+   stream wait on the dependency returned by the pool. For a fetch, the
+   consuming compute stream subsequently waits on the fetch-completion event
+   before the frontend binds and launches work using that generation.
+
+The planned fetch dependency chain is therefore:
+
+```text
+predecessor stream reaches completion event
+    -> fetch lane may write the reserved range
+    -> fetch completion event
+    -> consuming compute may read the object generation
+```
+
+Completion commits exactly one pool transition:
+
+```text
+no successor:
+    pending predecessor -> FREE
+
+reserved successor:
+    pending predecessor + SUCCESSOR_RESERVED
+        -> predecessor metadata retired + successor RESERVED
+```
+
+The second transition hands ownership off directly. The bytes never enter the
+free-range tree, so an unrelated allocation cannot take them between
+predecessor completion and consumer acquisition. If the consumer acquires
+first, ownership moves directly to `IN_USE` and the pool returns the retained
+predecessor dependency. The later predecessor completion then retires only its
+metadata. Generation checks reject every stale completion in either order.
+
+Transfer terminology belongs above this API. For example, an object may be
+`OFFLOADING` while its source lease is generically `RETIRE_PENDING`; completing
+the transfer changes object residency, while completing the dependency commits
+the pool handoff or free. A zero-copy object handoff changes logical object
+ownership without retiring the shared physical lease at all.
+
+Immediately free compatible ranges are always preferred over causal
+predecessors. Among pending candidates, ShadowSpill prefers a published
+dependency, then least charged-range waste, oldest logical release, and lowest
+address. It never interprets an observed-but-uncommitted event as free memory.
+
+Free ranges are coalesced with adjacent free neighbors. ShadowSpill does not
+move live leases to compact the arena; planning-time allocator replay validates
+the expected fragmentation and derives any required reserve.
 
 ## Task protocol
 

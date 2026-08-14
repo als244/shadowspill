@@ -304,7 +304,7 @@ done:
     return result;
 }
 
-static int failed_prefetch_releases_transfer_priority(void) {
+static int failed_prefetch_reports_trigger_reservation_oom(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
@@ -330,21 +330,16 @@ static int failed_prefetch_releases_transfer_priority(void) {
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = object.object_id,
-        .execution_offset = 0U,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
-        .has_execution_offset = 1U,
-    };
-    const ShadowSpillAllocationPlacementHint placement = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 32U,
-        .slab_offset = 0U,
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 81U,
         .actions = &prefetch,
         .action_count = 1U,
-        .allocation_placement_hints = &placement,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 128U,
+        .maximum_charged_allocation_bytes = 128U,
+        .live_requested_allocation_limit_bytes = 128U,
+        .live_charged_allocation_limit_bytes = 128U,
     };
     int result = 0;
     if (shadowspill_runtime_create(&config, &runtime) !=
@@ -357,35 +352,28 @@ static int failed_prefetch_releases_transfer_priority(void) {
         shadowspill_before_execution(
             runtime, execution.task_id, stream, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 32U, 1U, stream, &temporary) !=
+        shadowspill_allocate(runtime, 128U, 1U, stream, &temporary) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_after_execution(runtime, execution.task_id, stream) !=
-            SHADOWSPILL_RUNTIME_OK) {
+            SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         result = -1;
         goto done;
     }
 
     ShadowSpillRuntimeFailure failure = {0};
-    for (uint32_t attempt = 0U; attempt < 1000U; ++attempt) {
-        if (shadowspill_runtime_failure(runtime, &failure) !=
-            SHADOWSPILL_RUNTIME_OK) {
-            result = -1;
-            goto done;
-        }
-        if (failure.status != SHADOWSPILL_RUNTIME_OK) {
-            break;
-        }
-        const struct timespec delay = {.tv_nsec = 1000000L};
-        (void)nanosleep(&delay, NULL);
+    if (shadowspill_runtime_failure(runtime, &failure) !=
+        SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+        goto done;
     }
     const ShadowSpillRuntimeStatus free_status = shadowspill_free(
         runtime, temporary.allocation_id, stream
     );
-    if (failure.status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+    if (failure.status != SHADOWSPILL_RUNTIME_NO_PROGRESS ||
         failure.task_id != execution.task_id ||
         failure.object_id != object.object_id ||
         failure.requested_bytes != object.size_bytes ||
-        free_status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
+        free_status != SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         fprintf(
             stderr,
             "failed prefetch recovery: status=%u task=%llu object=%llu bytes=%llu free_status=%u\n",
@@ -408,9 +396,17 @@ done:
 }
 
 int main(void) {
-    return impossible_oom() == 0 && fragmented_oom() == 0 &&
-            worker_failure() == 0 && failed_task_retirement_recovery() == 0 &&
-            failed_prefetch_releases_transfer_priority() == 0
-        ? EXIT_SUCCESS
-        : EXIT_FAILURE;
+#define REQUIRE_FAILURE_CANARY(call)                                        \
+    do {                                                                    \
+        if ((call) != 0) {                                                  \
+            fprintf(stderr, "runtime failure canary failed: %s\n", #call); \
+            return EXIT_FAILURE;                                            \
+        }                                                                   \
+    } while (0)
+    REQUIRE_FAILURE_CANARY(impossible_oom());
+    REQUIRE_FAILURE_CANARY(fragmented_oom());
+    REQUIRE_FAILURE_CANARY(worker_failure());
+    REQUIRE_FAILURE_CANARY(failed_task_retirement_recovery());
+    REQUIRE_FAILURE_CANARY(failed_prefetch_reports_trigger_reservation_oom());
+    return EXIT_SUCCESS;
 }

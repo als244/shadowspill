@@ -7,7 +7,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The runtime ABI is version 19. Public functions return
+The runtime ABI is version 23. Public functions return
 `ShadowSpillRuntimeStatus` except documented idempotent destroy/read-only
 operations. Call `shadowspill_runtime_abi_version()` before constructing a
 runtime and validate every supplied vtable ABI.
@@ -63,6 +63,37 @@ into an unbounded block.
 - Returned allocation/binding values remain valid only for their generation.
 - Input description arrays are borrowed only for the call.
 - Diagnostics/statistics are caller-owned snapshots with no internal pointer.
+
+An event becoming complete does not make an associated range allocatable.
+Completion observation is backend state; `MemoryPool` ownership is the memory
+authority. Under the pool lock, completion either coalesces an unclaimed range
+into the free tree or hands it directly to its already-reserved causal
+successor. A successor handoff never exposes an intermediate free range.
+
+Ordinary allocator callbacks can return pending storage without blocking only
+for verified same-stream anonymous reuse. Planned transfer reservations are
+not returned to arbitrary callers: the transfer lane waits on the predecessor,
+and consuming compute waits on fetch completion. Cross-stream ordinary reuse
+waits for a committed pool transition.
+
+## Internal MemoryPool boundary
+
+`MemoryPool` is a framework-, backend-, and transfer-agnostic C component. Its
+private API operates on ranges, `MemoryLease` records, generations, and opaque
+completion dependencies. It does not accept action kinds, routes, streams,
+objects, or fetch/evict terminology.
+
+The action layer may ask the pool to reserve a lease at a trigger, reserve a
+causal successor, or acquire an existing reservation. Acquisition returns an
+opaque predecessor event when one must be honored. The action/route layer—not
+the pool—decides which stream waits on that event and what copy is submitted.
+Likewise, object readiness and `PREFETCHING`/`OFFLOADING` transitions are never
+written by pool code.
+
+All `_locked` pool functions require ownership of that pool's mutex. Backend
+operations and route submission are forbidden under it. Pool state changes are
+constant-time except range-tree allocation/free and deterministic scans for a
+compatible causal predecessor; completion polling occurs outside the pool.
 
 ## Route calibration
 

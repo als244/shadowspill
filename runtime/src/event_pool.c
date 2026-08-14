@@ -29,7 +29,7 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
         );
     }
     atomic_init(&lease->references, 1U);
-    atomic_init(&lease->completion_known, 0U);
+    atomic_init(&lease->backend_complete, 0U);
     *output = lease;
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -67,7 +67,7 @@ int shadowspill_event_lease_query(
         return -1;
     }
     if (atomic_load_explicit(
-            &lease->completion_known, memory_order_acquire
+            &lease->backend_complete, memory_order_acquire
         ) != 0U) {
         *complete = 1;
         return 0;
@@ -79,7 +79,7 @@ int shadowspill_event_lease_query(
     }
     if (*complete) {
         atomic_store_explicit(
-            &lease->completion_known, 1U, memory_order_release
+            &lease->backend_complete, 1U, memory_order_release
         );
     }
     return 0;

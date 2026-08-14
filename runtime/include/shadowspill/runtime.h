@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 22U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 23U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -41,6 +41,7 @@ typedef enum ShadowSpillRuntimeStatus {
     SHADOWSPILL_RUNTIME_BACKEND_FAILURE = 7,
     SHADOWSPILL_RUNTIME_WORKER_FAILURE = 8,
     SHADOWSPILL_RUNTIME_CLOSED = 9,
+    SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10,
 } ShadowSpillRuntimeStatus;
 
 typedef enum ShadowSpillObjectResidency {
@@ -127,9 +128,7 @@ typedef struct ShadowSpillObjectUpdate {
 
 typedef struct ShadowSpillRuntimeAction {
     uint64_t object_id;
-    uint64_t execution_offset;
     uint8_t kind;
-    uint8_t has_execution_offset;
     /*
      * Optional, borrowed semantic profiler label. Admission copies the string,
      * so the caller only needs to keep it alive for the duration of the call.
@@ -137,21 +136,6 @@ typedef struct ShadowSpillRuntimeAction {
      */
     const char *trace_label;
 } ShadowSpillRuntimeAction;
-
-/*
- * Immutable exact placement for one allocator callback made while an admitted
- * execution task is active. Allocation ordinals are zero-based and count
- * nonzero callbacks in dispatch order. Runtime validates ordinal, byte count,
- * offset, and whether profiling observed same-stream lease reuse. The lease
- * remains anonymous until the frontend binds it to an object.
- */
-typedef struct ShadowSpillAllocationPlacementHint {
-    uint64_t allocation_ordinal;
-    uint64_t requested_bytes;
-    uint64_t slab_offset;
-    uint8_t reuse;
-    uint8_t dynamic;
-} ShadowSpillAllocationPlacementHint;
 
 typedef struct ShadowSpillExecutionDescription {
     uint64_t task_id;
@@ -161,8 +145,15 @@ typedef struct ShadowSpillExecutionDescription {
     uint32_t update_count;
     const ShadowSpillRuntimeAction *actions;
     uint32_t action_count;
-    const ShadowSpillAllocationPlacementHint *allocation_placement_hints;
-    uint32_t allocation_placement_hint_count;
+    /*
+     * Conservative task-local allocator envelope. Zero selects an unbounded
+     * field for legacy/non-profiled callers. These bounds constrain behavior,
+     * never addresses or allocation order.
+     */
+    uint64_t maximum_requested_allocation_bytes;
+    uint64_t maximum_charged_allocation_bytes;
+    uint64_t live_requested_allocation_limit_bytes;
+    uint64_t live_charged_allocation_limit_bytes;
 } ShadowSpillExecutionDescription;
 
 typedef struct ShadowSpillAllocationEvent {
@@ -296,9 +287,12 @@ typedef struct ShadowSpillRuntimeFailure {
     uint64_t requested_bytes;
     uint64_t free_bytes;
     uint64_t largest_free_range_bytes;
-    uint64_t allocation_ordinal;
-    uint64_t expected_allocation_ordinal;
-    uint64_t expected_requested_bytes;
+    uint64_t task_live_requested_bytes;
+    uint64_t task_live_charged_bytes;
+    uint64_t task_live_requested_limit_bytes;
+    uint64_t task_live_charged_limit_bytes;
+    uint64_t task_maximum_requested_allocation_bytes;
+    uint64_t task_maximum_charged_allocation_bytes;
 } ShadowSpillRuntimeFailure;
 
 typedef struct ShadowSpillObjectSnapshot {

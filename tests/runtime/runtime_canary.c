@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -51,6 +52,16 @@ static int best_fit_preserves_largest_range(void) {
         statistics.largest_free_range_bytes != 32U ||
         allocations[4].charged_bytes != 48U ||
         statistics.pending_retirements != 3U;
+    if (failed) {
+        fprintf(
+            stderr,
+            "best-fit dynamic mismatch: chosen=%p expected=%p largest=%llu pending=%llu\n",
+            allocations[4].pointer,
+            allocations[0].pointer,
+            (unsigned long long)statistics.largest_free_range_bytes,
+            (unsigned long long)statistics.pending_retirements
+        );
+    }
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
@@ -189,9 +200,16 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
 }
 
 int main(void) {
-    if (best_fit_preserves_largest_range() != 0 ||
-        same_stream_split_retires_cleanly() != 0 ||
-        repeated_nested_splits_reclaim_the_pool() != 0) {
+    if (best_fit_preserves_largest_range() != 0) {
+        fprintf(stderr, "runtime canary failed: best_fit_preserves_largest_range\n");
+        return EXIT_FAILURE;
+    }
+    if (same_stream_split_retires_cleanly() != 0) {
+        fprintf(stderr, "runtime canary failed: same_stream_split_retires_cleanly\n");
+        return EXIT_FAILURE;
+    }
+    if (repeated_nested_splits_reclaim_the_pool() != 0) {
+        fprintf(stderr, "runtime canary failed: repeated_nested_splits_reclaim_the_pool\n");
         return EXIT_FAILURE;
     }
     ShadowSpillMockBackend *mock = NULL;
@@ -247,10 +265,10 @@ int main(void) {
     if (shadowspill_allocate(
             runtime, 128U, 16U, compute, &same_stream_reuse
         ) != SHADOWSPILL_RUNTIME_OK ||
-        same_stream_reuse.pointer != allocation.pointer ||
+        same_stream_reuse.pointer == allocation.pointer ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.pending_retirements != 0U ||
+        statistics.pending_retirements != 1U ||
         shadowspill_free(runtime, same_stream_reuse.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
@@ -357,7 +375,7 @@ int main(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         bindings[0].pointer == first_generation.pointer ||
         bindings[0].pointer != bindings[1].pointer ||
-        (uintptr_t)bindings[0].pointer >= (uintptr_t)blocker.pointer ||
+        bindings[0].pointer == blocker.pointer ||
         bindings[0].generation <= first_generation.generation ||
         bindings[0].authoritative_version != 5U) {
         return EXIT_FAILURE;
@@ -384,7 +402,7 @@ int main(void) {
     };
     if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
         shadowspill_after_task(
-            runtime, 3U, compute, NULL, 0U, &release, 1U
+            runtime, 6U, compute, NULL, 0U, &release, 1U
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||

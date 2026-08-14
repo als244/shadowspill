@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 31
-RUNTIME_ABI_VERSION: Final = 22
+ADAPTER_ABI_VERSION: Final = 32
+RUNTIME_ABI_VERSION: Final = 23
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -244,9 +244,12 @@ class RuntimeFailure(ctypes.Structure):
         ("requested_bytes", ctypes.c_uint64),
         ("free_bytes", ctypes.c_uint64),
         ("largest_free_range_bytes", ctypes.c_uint64),
-        ("allocation_ordinal", ctypes.c_uint64),
-        ("expected_allocation_ordinal", ctypes.c_uint64),
-        ("expected_requested_bytes", ctypes.c_uint64),
+        ("task_live_requested_bytes", ctypes.c_uint64),
+        ("task_live_charged_bytes", ctypes.c_uint64),
+        ("task_live_requested_limit_bytes", ctypes.c_uint64),
+        ("task_live_charged_limit_bytes", ctypes.c_uint64),
+        ("task_maximum_requested_allocation_bytes", ctypes.c_uint64),
+        ("task_maximum_charged_allocation_bytes", ctypes.c_uint64),
     ]
 
 
@@ -297,20 +300,8 @@ class ObjectUpdate(ctypes.Structure):
 class RuntimeAction(ctypes.Structure):
     _fields_ = [
         ("object_id", ctypes.c_uint64),
-        ("execution_offset", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
-        ("has_execution_offset", ctypes.c_uint8),
         ("trace_label", ctypes.c_char_p),
-    ]
-
-
-class AllocationPlacementHint(ctypes.Structure):
-    _fields_ = [
-        ("allocation_ordinal", ctypes.c_uint64),
-        ("requested_bytes", ctypes.c_uint64),
-        ("slab_offset", ctypes.c_uint64),
-        ("reuse", ctypes.c_uint8),
-        ("dynamic", ctypes.c_uint8),
     ]
 
 
@@ -323,11 +314,10 @@ class ExecutionDescription(ctypes.Structure):
         ("update_count", ctypes.c_uint32),
         ("actions", ctypes.POINTER(RuntimeAction)),
         ("action_count", ctypes.c_uint32),
-        (
-            "allocation_placement_hints",
-            ctypes.POINTER(AllocationPlacementHint),
-        ),
-        ("allocation_placement_hint_count", ctypes.c_uint32),
+        ("maximum_requested_allocation_bytes", ctypes.c_uint64),
+        ("maximum_charged_allocation_bytes", ctypes.c_uint64),
+        ("live_requested_allocation_limit_bytes", ctypes.c_uint64),
+        ("live_charged_allocation_limit_bytes", ctypes.c_uint64),
     ]
 
 

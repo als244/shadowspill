@@ -126,8 +126,10 @@ int shadowspill_memory_pool_initialize(
     pool->base = base;
     pool->pool_id = pool_id;
     pool->minimum_alignment = minimum_alignment;
+    pool->next_request_sequence = 1U;
+    pool->next_release_sequence = 1U;
     atomic_init(&pool->foreground_waiters, 0U);
-    atomic_init(&pool->transfer_waiters, 0U);
+    atomic_init(&pool->reservation_waiters, 0U);
     pool->initialized = 1U;
     return 0;
 }
@@ -150,7 +152,7 @@ void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool) {
         &pool->foreground_waiters, 1U, memory_order_relaxed
     );
     while (atomic_load_explicit(
-               &pool->transfer_waiters, memory_order_acquire
+               &pool->reservation_waiters, memory_order_acquire
            ) != 0U || pthread_mutex_trylock(&pool->lock) != 0) {
         cpu_relax();
     }
@@ -163,29 +165,38 @@ void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool) {
     pthread_mutex_unlock(&pool->lock);
 }
 
-void shadowspill_memory_pool_declare_transfer(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_declare_reservation(ShadowSpillMemoryPool *pool) {
     (void)atomic_fetch_add_explicit(
-        &pool->transfer_waiters, 1U, memory_order_release
+        &pool->reservation_waiters, 1U, memory_order_release
     );
 }
 
-void shadowspill_memory_pool_relinquish_transfer(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_relinquish_reservation(
+    ShadowSpillMemoryPool *pool
+) {
     (void)atomic_fetch_sub_explicit(
-        &pool->transfer_waiters, 1U, memory_order_release
+        &pool->reservation_waiters, 1U, memory_order_release
     );
 }
 
-int shadowspill_memory_pool_try_lock_transfer(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_lock_reservation(ShadowSpillMemoryPool *pool) {
+    shadowspill_memory_pool_declare_reservation(pool);
+    while (pthread_mutex_trylock(&pool->lock) != 0) {
+        cpu_relax();
+    }
+}
+
+int shadowspill_memory_pool_try_lock_reservation(ShadowSpillMemoryPool *pool) {
     return pthread_mutex_trylock(&pool->lock) == 0;
 }
 
-void shadowspill_memory_pool_unlock_transfer(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_unlock_reservation(ShadowSpillMemoryPool *pool) {
     pthread_mutex_unlock(&pool->lock);
 }
 
 int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool) {
-    const int transfer_waiting = atomic_load_explicit(
-        &pool->transfer_waiters, memory_order_acquire
+    const int reservation_waiting = atomic_load_explicit(
+        &pool->reservation_waiters, memory_order_acquire
     ) != 0U;
     /*
      * A destination reservation may depend on a completed retirement from
@@ -193,12 +204,12 @@ int shadowspill_memory_pool_try_lock_reclamation(ShadowSpillMemoryPool *pool) {
      * before either yields to foreground allocation. Without this ordering,
      * each worker operation can wait for the other indefinitely.
      */
-    if ((!transfer_waiting && atomic_load_explicit(
+    if ((!reservation_waiting && atomic_load_explicit(
              &pool->foreground_waiters, memory_order_relaxed
          ) != 0U) || pthread_mutex_trylock(&pool->lock) != 0) {
         return 0;
     }
-    if (!transfer_waiting && atomic_load_explicit(
+    if (!reservation_waiting && atomic_load_explicit(
             &pool->foreground_waiters, memory_order_relaxed
         ) != 0U) {
         pthread_mutex_unlock(&pool->lock);
@@ -283,66 +294,6 @@ int shadowspill_memory_pool_reserve_lease_locked(
     return adopt_status;
 }
 
-int shadowspill_memory_pool_reserve_lease_at_locked(
-    ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryLease *lease,
-    uint64_t bytes,
-    uint64_t offset
-) {
-    if (pool == NULL || lease == NULL || lease->state != SHADOWSPILL_LEASE_FREE ||
-        offset % pool->minimum_alignment != 0U) {
-        return -1;
-    }
-    const uint64_t charged = bytes == 0U ? 1U : bytes;
-    const int status = shadowspill_range_allocate_at(
-        &pool->ranges, offset, charged
-    );
-    if (status != 0) {
-        return status;
-    }
-    const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
-        pool, lease, bytes, offset
-    );
-    if (adopt_status != 0) {
-        (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
-    }
-    return adopt_status;
-}
-
-int shadowspill_memory_pool_reserve_lease_highest_locked(
-    ShadowSpillMemoryPool *pool,
-    ShadowSpillMemoryLease *lease,
-    uint64_t bytes,
-    uint64_t alignment,
-    uint64_t minimum_offset
-) {
-    if (pool == NULL || lease == NULL || lease->state != SHADOWSPILL_LEASE_FREE) {
-        return -1;
-    }
-    if (alignment < pool->minimum_alignment) {
-        alignment = pool->minimum_alignment;
-    }
-    const uint64_t charged = bytes == 0U ? 1U : bytes;
-    uint64_t offset = 0U;
-    const int status = shadowspill_range_allocate_highest(
-        &pool->ranges,
-        charged,
-        alignment,
-        minimum_offset,
-        &offset
-    );
-    if (status != 0) {
-        return status;
-    }
-    const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
-        pool, lease, bytes, offset
-    );
-    if (adopt_status != 0) {
-        (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
-    }
-    return adopt_status;
-}
-
 int shadowspill_memory_pool_adopt_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,
@@ -357,12 +308,18 @@ int shadowspill_memory_pool_adopt_lease_locked(
         return -1;
     }
     lease->pool = pool;
-    lease->state = SHADOWSPILL_LEASE_RESERVED;
+    lease->state = SHADOWSPILL_LEASE_IN_USE;
     lease->requested_bytes = bytes;
     lease->charged_bytes = charged;
     lease->offset = offset;
+    lease->request_sequence = pool->next_request_sequence++;
     lease->pointer = shadowspill_memory_pool_pointer(pool, offset);
     lease->retired_pointer = NULL;
+    lease->causal_predecessor = NULL;
+    lease->causal_successor = NULL;
+    lease->causal_predecessor_generation = 0U;
+    lease->causal_event = NULL;
+    lease->causal_dependency_expected = 0U;
     lease->pool_next = pool->leases;
     lease->pool_previous_link = &pool->leases;
     if (lease->pool_next != NULL) {
@@ -372,9 +329,326 @@ int shadowspill_memory_pool_adopt_lease_locked(
     return 0;
 }
 
+int shadowspill_memory_pool_mark_reserved_locked(
+    ShadowSpillMemoryLease *lease
+) {
+    if (lease == NULL || lease->pool == NULL ||
+        lease->state != SHADOWSPILL_LEASE_IN_USE) {
+        return -1;
+    }
+    lease->state = SHADOWSPILL_LEASE_RESERVED;
+    lease->pool->reserved_bytes += lease->charged_bytes;
+    return 0;
+}
+
+int shadowspill_memory_pool_begin_retirement_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease *dependency_event,
+    int dependency_expected
+) {
+    if (lease == NULL || lease->pool == NULL ||
+        lease->state != SHADOWSPILL_LEASE_IN_USE ||
+        lease->causal_successor != NULL ||
+        (dependency_event != NULL && dependency_expected != 0)) {
+        return -1;
+    }
+    lease->state = SHADOWSPILL_LEASE_RETIRE_PENDING;
+    lease->release_sequence = lease->pool->next_release_sequence++;
+    lease->causal_event = dependency_event;
+    lease->causal_dependency_expected = dependency_expected != 0 ? 1U : 0U;
+    return 0;
+}
+
+int shadowspill_memory_pool_publish_retirement_dependency_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease *dependency_event
+) {
+    if (lease == NULL || dependency_event == NULL || lease->pool == NULL ||
+        lease->state != SHADOWSPILL_LEASE_RETIRE_PENDING ||
+        lease->causal_event != NULL ||
+        lease->causal_dependency_expected == 0U) {
+        return -1;
+    }
+    lease->causal_event = dependency_event;
+    lease->causal_dependency_expected = 0U;
+    return 0;
+}
+
+int shadowspill_memory_pool_cancel_retirement_locked(
+    ShadowSpillMemoryLease *lease
+) {
+    if (lease == NULL || lease->pool == NULL ||
+        lease->state != SHADOWSPILL_LEASE_RETIRE_PENDING ||
+        lease->causal_successor != NULL) {
+        return -1;
+    }
+    lease->state = SHADOWSPILL_LEASE_IN_USE;
+    lease->causal_event = NULL;
+    lease->causal_dependency_expected = 0U;
+    return 0;
+}
+
+static int lease_is_causally_releasable(
+    const ShadowSpillMemoryLease *lease
+) {
+    return lease->state == SHADOWSPILL_LEASE_RETIRE_PENDING;
+}
+
+static int lease_can_publish_causal_dependency(
+    const ShadowSpillMemoryLease *lease
+) {
+    if (!lease_is_causally_releasable(lease)) {
+        return 0;
+    }
+    /*
+     * MemoryPool does not know why the owner is releasing this range.  It
+     * only needs proof that one dependency either exists now or is guaranteed
+     * to be published by the owner.  Multi-event ordinary retirements leave
+     * both fields clear and therefore cannot be represented by one causal
+     * successor.
+     */
+    return lease->causal_event != NULL ||
+        lease->causal_dependency_expected != 0U;
+}
+
+static int causal_candidate_precedes(
+    const ShadowSpillMemoryLease *candidate,
+    const ShadowSpillMemoryLease *selected
+) {
+    if (selected == NULL) {
+        return 1;
+    }
+    const int candidate_dependency_published =
+        candidate->causal_event != NULL;
+    const int selected_dependency_published = selected->causal_event != NULL;
+    if (candidate_dependency_published != selected_dependency_published) {
+        return candidate_dependency_published > selected_dependency_published;
+    }
+    if (candidate->charged_bytes != selected->charged_bytes) {
+        return candidate->charged_bytes < selected->charged_bytes;
+    }
+    if (candidate->release_sequence != selected->release_sequence) {
+        return candidate->release_sequence < selected->release_sequence;
+    }
+    return candidate->offset < selected->offset;
+}
+
+int shadowspill_memory_pool_reserve_causal_successor_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *successor,
+    uint64_t bytes,
+    uint64_t alignment
+) {
+    if (pool == NULL || successor == NULL || successor->pool != NULL ||
+        successor->state != SHADOWSPILL_LEASE_FREE || bytes == 0U) {
+        return -1;
+    }
+    if (alignment < pool->minimum_alignment) {
+        alignment = pool->minimum_alignment;
+    }
+    ShadowSpillMemoryLease *selected = NULL;
+    for (ShadowSpillMemoryLease *candidate = pool->leases;
+         candidate != NULL; candidate = candidate->pool_next) {
+        if (!lease_can_publish_causal_dependency(candidate) ||
+            candidate->causal_successor != NULL ||
+            candidate->charged_bytes < bytes ||
+            candidate->offset % alignment != 0U) {
+            continue;
+        }
+        if (causal_candidate_precedes(candidate, selected)) {
+            selected = candidate;
+        }
+    }
+    if (selected == NULL) {
+        return 1;
+    }
+
+    /*
+     * The successor claims the predecessor's complete charged extent. This
+     * keeps every byte unavailable until the predecessor dependency is
+     * satisfied; a smaller logical request merely carries internal slack.
+     * Splitting a still-live predecessor would make the unclaimed fragment
+     * reusable too early.
+     */
+    successor->pool = pool;
+    successor->state = SHADOWSPILL_LEASE_SUCCESSOR_RESERVED;
+    successor->requested_bytes = bytes;
+    successor->charged_bytes = selected->charged_bytes;
+    successor->offset = selected->offset;
+    successor->request_sequence = pool->next_request_sequence++;
+    successor->pointer = selected->pointer;
+    successor->retired_pointer = NULL;
+    successor->causal_predecessor = selected;
+    successor->causal_predecessor_generation = selected->generation;
+    selected->causal_successor = successor;
+    successor->causal_dependency_expected = 0U;
+    pool->reserved_bytes += successor->charged_bytes;
+    return 0;
+}
+
+int shadowspill_memory_pool_can_reserve_after_releases_locked(
+    const ShadowSpillMemoryPool *pool,
+    uint64_t bytes,
+    uint64_t alignment
+) {
+    if (pool == NULL || !pool->initialized || bytes == 0U) {
+        return -1;
+    }
+    if (alignment < pool->minimum_alignment) {
+        alignment = pool->minimum_alignment;
+    }
+    ShadowSpillRangeAllocator future = {0};
+    if (shadowspill_range_clone_extended(
+            &pool->ranges, pool->ranges.capacity, &future
+        ) != 0) {
+        return -1;
+    }
+    for (const ShadowSpillMemoryLease *lease = pool->leases;
+         lease != NULL; lease = lease->pool_next) {
+        if (!lease_can_publish_causal_dependency(lease) ||
+            lease->causal_successor != NULL) {
+            continue;
+        }
+        if (shadowspill_range_free(
+                &future, lease->offset, lease->charged_bytes
+            ) != 0) {
+            shadowspill_range_destroy(&future);
+            return -1;
+        }
+    }
+    uint64_t ignored_offset = 0U;
+    const int reserve_status = shadowspill_range_allocate_best_fit_low(
+        &future, bytes, alignment, &ignored_offset
+    );
+    shadowspill_range_destroy(&future);
+    return reserve_status == 0 ? 1 : reserve_status > 0 ? 0 : -1;
+}
+
+static int handoff_causal_range_locked(
+    ShadowSpillMemoryLease *successor,
+    ShadowSpillMemoryLeaseState successor_state,
+    ShadowSpillEventLease **dependency_event
+) {
+    ShadowSpillMemoryLease *predecessor = successor == NULL
+        ? NULL
+        : successor->causal_predecessor;
+    ShadowSpillMemoryPool *pool = successor == NULL ? NULL : successor->pool;
+    if (predecessor == NULL || pool == NULL ||
+        successor->state != SHADOWSPILL_LEASE_SUCCESSOR_RESERVED ||
+        predecessor->pool != pool ||
+        predecessor->generation != successor->causal_predecessor_generation ||
+        predecessor->causal_successor != successor ||
+        predecessor->pool_previous_link == NULL ||
+        *predecessor->pool_previous_link != predecessor ||
+        successor->pool_previous_link != NULL || successor->pool_next != NULL) {
+        return -1;
+    }
+    if (successor_state == SHADOWSPILL_LEASE_IN_USE) {
+        if (predecessor->causal_event == NULL || dependency_event == NULL) {
+            return 1;
+        }
+        if (pool->reserved_bytes < successor->charged_bytes) {
+            return -1;
+        }
+        shadowspill_event_lease_retain(predecessor->causal_event);
+        *dependency_event = predecessor->causal_event;
+    }
+
+    successor->pool_previous_link = predecessor->pool_previous_link;
+    successor->pool_next = predecessor->pool_next;
+    *successor->pool_previous_link = successor;
+    if (successor->pool_next != NULL) {
+        successor->pool_next->pool_previous_link = &successor->pool_next;
+    }
+    predecessor->pool_previous_link = NULL;
+    predecessor->pool_next = NULL;
+    predecessor->pool = NULL;
+    predecessor->state = SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED;
+    predecessor->retired_pointer = predecessor->pointer;
+    predecessor->causal_successor = NULL;
+    predecessor->causal_event = NULL;
+    predecessor->causal_dependency_expected = 0U;
+    successor->causal_predecessor = NULL;
+    successor->causal_predecessor_generation = 0U;
+    successor->state = successor_state;
+    if (successor_state == SHADOWSPILL_LEASE_IN_USE) {
+        pool->reserved_bytes -= successor->charged_bytes;
+    }
+    pthread_cond_broadcast(&pool->capacity_changed);
+    return 0;
+}
+
+int shadowspill_memory_pool_acquire_reserved_lease_locked(
+    ShadowSpillMemoryLease *lease,
+    ShadowSpillEventLease **dependency_event
+) {
+    if (dependency_event == NULL) {
+        return -1;
+    }
+    *dependency_event = NULL;
+    if (lease == NULL || lease->pool == NULL) {
+        return -1;
+    }
+    if (lease->state == SHADOWSPILL_LEASE_SUCCESSOR_RESERVED) {
+        return handoff_causal_range_locked(
+            lease, SHADOWSPILL_LEASE_IN_USE, dependency_event
+        );
+    }
+    if (lease->state != SHADOWSPILL_LEASE_RESERVED ||
+        lease->pool->reserved_bytes < lease->charged_bytes) {
+        return -1;
+    }
+    lease->pool->reserved_bytes -= lease->charged_bytes;
+    lease->state = SHADOWSPILL_LEASE_IN_USE;
+    return 0;
+}
+
+int shadowspill_memory_pool_cancel_reservation_locked(
+    ShadowSpillMemoryLease *lease
+) {
+    if (lease == NULL || lease->pool == NULL) {
+        return -1;
+    }
+    if (lease->state != SHADOWSPILL_LEASE_SUCCESSOR_RESERVED) {
+        return shadowspill_memory_pool_release_lease_locked(lease);
+    }
+    ShadowSpillMemoryPool *pool = lease->pool;
+    ShadowSpillMemoryLease *predecessor = lease->causal_predecessor;
+    if (predecessor == NULL || predecessor->causal_successor != lease ||
+        predecessor->generation != lease->causal_predecessor_generation ||
+        pool->reserved_bytes < lease->charged_bytes) {
+        return -1;
+    }
+    predecessor->causal_successor = NULL;
+    lease->causal_predecessor = NULL;
+    lease->causal_predecessor_generation = 0U;
+    pool->reserved_bytes -= lease->charged_bytes;
+    lease->pool = NULL;
+    lease->state = SHADOWSPILL_LEASE_FREE;
+    lease->requested_bytes = 0U;
+    lease->charged_bytes = 0U;
+    lease->offset = 0U;
+    lease->pointer = NULL;
+    lease->causal_event = NULL;
+    lease->causal_dependency_expected = 0U;
+    return 0;
+}
+
 int shadowspill_memory_pool_release_lease_locked(
     ShadowSpillMemoryLease *lease
 ) {
+    if (lease != NULL &&
+        lease->state == SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED &&
+        lease->pool == NULL) {
+        lease->state = SHADOWSPILL_LEASE_FREE;
+        lease->pointer = NULL;
+        lease->requested_bytes = 0U;
+        lease->charged_bytes = 0U;
+        lease->offset = 0U;
+        lease->causal_event = NULL;
+        lease->causal_dependency_expected = 0U;
+        return 0;
+    }
     if (lease == NULL || lease->pool == NULL ||
         lease->state == SHADOWSPILL_LEASE_FREE ||
         lease->pool_previous_link == NULL ||
@@ -382,6 +656,36 @@ int shadowspill_memory_pool_release_lease_locked(
         return -1;
     }
     ShadowSpillMemoryPool *pool = lease->pool;
+    if (lease->causal_successor != NULL) {
+        ShadowSpillMemoryLease *successor = lease->causal_successor;
+        const int handoff_status = handoff_causal_range_locked(
+            successor,
+            SHADOWSPILL_LEASE_RESERVED,
+            NULL
+        );
+        if (handoff_status != 0) {
+            return handoff_status;
+        }
+        lease->state = SHADOWSPILL_LEASE_FREE;
+        lease->pointer = NULL;
+        lease->requested_bytes = 0U;
+        lease->charged_bytes = 0U;
+        lease->offset = 0U;
+        lease->causal_event = NULL;
+        lease->causal_dependency_expected = 0U;
+        return 0;
+    }
+    if (lease->state == SHADOWSPILL_LEASE_SUCCESSOR_RESERVED ||
+        lease->state == SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED) {
+        return -1;
+    }
+    if (lease->state == SHADOWSPILL_LEASE_RESERVED) {
+        if (pool->reserved_bytes < lease->charged_bytes) {
+            return -1;
+        }
+        pool->reserved_bytes -= lease->charged_bytes;
+    }
+    lease->release_sequence = pool->next_release_sequence++;
     const int status = shadowspill_memory_pool_release_locked(
         pool, lease->offset, lease->charged_bytes
     );
@@ -399,6 +703,8 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->charged_bytes = 0U;
         lease->offset = 0U;
         lease->pointer = NULL;
+        lease->causal_event = NULL;
+        lease->causal_dependency_expected = 0U;
     }
     return status;
 }

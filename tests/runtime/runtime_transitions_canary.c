@@ -304,7 +304,7 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
     return failed ? -1 : 0;
 }
 
-static int trigger_reservation_failure_is_a_plan_violation(void) {
+static int trigger_reservation_failure_reports_no_progress(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
@@ -323,14 +323,12 @@ static int trigger_reservation_failure_is_a_plan_violation(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_after_task(
             fixture.runtime, 1U, fixture.compute, NULL, 0U, actions, 2U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(fixture.runtime) !=
-            SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        ) != SHADOWSPILL_RUNTIME_NO_PROGRESS;
     ShadowSpillRuntimeFailure failure = {0};
     failed = failed || shadowspill_runtime_failure(
             fixture.runtime, &failure
         ) != SHADOWSPILL_RUNTIME_OK ||
-        failure.status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+        failure.status != SHADOWSPILL_RUNTIME_NO_PROGRESS ||
         failure.object_id != 2U || failure.requested_bytes != 80U ||
         failure.free_bytes != 48U ||
         failure.largest_free_range_bytes != 48U;
@@ -818,32 +816,17 @@ static int immutable_execution_admission(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_output_uses_exact_spatial_offset(void) {
+static int admitted_task_allocates_dynamic_ranges(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillAllocationPlacementHint hints[] = {
-        {
-            .allocation_ordinal = 0U,
-            .requested_bytes = 40U,
-            .slab_offset = 88U,
-        },
-        {
-            .allocation_ordinal = 1U,
-            .requested_bytes = 32U,
-            .slab_offset = 0U,
-        },
-        {
-            .allocation_ordinal = 2U,
-            .requested_bytes = 40U,
-            .slab_offset = 48U,
-        },
-    };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 51U,
-        .allocation_placement_hints = hints,
-        .allocation_placement_hint_count = 3U,
+        .maximum_requested_allocation_bytes = 40U,
+        .maximum_charged_allocation_bytes = 40U,
+        .live_requested_allocation_limit_bytes = 112U,
+        .live_charged_allocation_limit_bytes = 112U,
     };
     ShadowSpillAllocation first_workspace = {0};
     ShadowSpillAllocation output = {0};
@@ -859,40 +842,33 @@ static int admitted_output_uses_exact_spatial_offset(void) {
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 40U, 1U, fixture.compute, &second_workspace
         ) != SHADOWSPILL_RUNTIME_OK ||
+        (uintptr_t)first_workspace.pointer >= (uintptr_t)output.pointer ||
         (uintptr_t)output.pointer >= (uintptr_t)second_workspace.pointer ||
-        (uintptr_t)second_workspace.pointer >=
-            (uintptr_t)first_workspace.pointer || shadowspill_after_execution(
+        shadowspill_after_execution(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
 
-static int admitted_reuse_reacquires_retired_exact_range(void) {
+static int admitted_reuse_reacquires_retired_dynamic_range(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillAllocationPlacementHint first_hint = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 64U,
-        .slab_offset = 32U,
-    };
-    const ShadowSpillAllocationPlacementHint reuse_hint = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 64U,
-        .slab_offset = 32U,
-        .reuse = 1U,
-    };
     const ShadowSpillExecutionDescription first_execution = {
         .task_id = 61U,
-        .allocation_placement_hints = &first_hint,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 64U,
+        .maximum_charged_allocation_bytes = 64U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
     };
     const ShadowSpillExecutionDescription reuse_execution = {
         .task_id = 62U,
-        .allocation_placement_hints = &reuse_hint,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 64U,
+        .maximum_charged_allocation_bytes = 64U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
     };
     ShadowSpillAllocation first = {0};
     ShadowSpillAllocation reacquired = {0};
@@ -930,31 +906,24 @@ static int admitted_reuse_reacquires_retired_exact_range(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_reuse_without_progress_reports_no_progress(void) {
+static int admitted_allocation_without_progress_reports_no_progress(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillAllocationPlacementHint first_hint = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 64U,
-        .slab_offset = 32U,
-    };
-    const ShadowSpillAllocationPlacementHint reuse_hint = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 64U,
-        .slab_offset = 32U,
-        .reuse = 1U,
-    };
     const ShadowSpillExecutionDescription first_execution = {
         .task_id = 63U,
-        .allocation_placement_hints = &first_hint,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 128U,
+        .maximum_charged_allocation_bytes = 128U,
+        .live_requested_allocation_limit_bytes = 128U,
+        .live_charged_allocation_limit_bytes = 128U,
     };
     const ShadowSpillExecutionDescription reuse_execution = {
         .task_id = 64U,
-        .allocation_placement_hints = &reuse_hint,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 64U,
+        .maximum_charged_allocation_bytes = 64U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
     };
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation blocked = {0};
@@ -966,7 +935,7 @@ static int admitted_reuse_without_progress_reports_no_progress(void) {
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
             fixture.runtime, first_execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
-            fixture.runtime, 64U, 1U, fixture.compute, &live
+            fixture.runtime, 128U, 1U, fixture.compute, &live
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
             fixture.runtime, first_execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
@@ -984,28 +953,17 @@ static int admitted_reuse_without_progress_reports_no_progress(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_dynamic_output_uses_high_suffix(void) {
+static int admitted_dynamic_allocations_use_deterministic_low_ranges(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillAllocationPlacementHint hints[] = {
-        {
-            .allocation_ordinal = 0U,
-            .requested_bytes = 32U,
-            .slab_offset = 64U,
-            .dynamic = 1U,
-        },
-        {
-            .allocation_ordinal = 1U,
-            .requested_bytes = 32U,
-            .slab_offset = 0U,
-        },
-    };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 53U,
-        .allocation_placement_hints = hints,
-        .allocation_placement_hint_count = 2U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
     };
     ShadowSpillAllocation dynamic = {0};
     ShadowSpillAllocation exact = {0};
@@ -1018,7 +976,7 @@ static int admitted_dynamic_output_uses_high_suffix(void) {
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 32U, 1U, fixture.compute, &exact
         ) != SHADOWSPILL_RUNTIME_OK ||
-        (uintptr_t)dynamic.pointer != (uintptr_t)exact.pointer + 96U ||
+        (uintptr_t)exact.pointer != (uintptr_t)dynamic.pointer + 32U ||
         shadowspill_after_execution(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
@@ -1026,20 +984,17 @@ static int admitted_dynamic_output_uses_high_suffix(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_task_rejects_unprofiled_allocation(void) {
+static int admitted_task_rejects_envelope_excess(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillAllocationPlacementHint hint = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 32U,
-        .slab_offset = 0U,
-    };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 54U,
-        .allocation_placement_hints = &hint,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 32U,
+        .live_charged_allocation_limit_bytes = 32U,
     };
     ShadowSpillAllocation expected = {0};
     ShadowSpillAllocation unexpected = {0};
@@ -1052,19 +1007,23 @@ static int admitted_task_rejects_unprofiled_allocation(void) {
             fixture.runtime, 32U, 1U, fixture.compute, &expected
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 16U, 1U, fixture.compute, &unexpected
-        ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION || shadowspill_runtime_failure(
+        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED ||
+        shadowspill_runtime_failure(
             fixture.runtime, &failure
         ) != SHADOWSPILL_RUNTIME_OK ||
-        failure.status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+        failure.status !=
+            SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED ||
         failure.task_id != execution.task_id ||
-        failure.requested_bytes != 16U || failure.allocation_ordinal != 1U ||
-        failure.expected_allocation_ordinal != SHADOWSPILL_RUNTIME_NO_ID ||
-        failure.expected_requested_bytes != 0U;
+        failure.requested_bytes != 16U ||
+        failure.task_live_requested_bytes != 48U ||
+        failure.task_live_charged_bytes != 48U ||
+        failure.task_live_requested_limit_bytes != 32U ||
+        failure.task_live_charged_limit_bytes != 32U;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
 
-static int admitted_prefetch_uses_exact_spatial_offset(void) {
+static int admitted_prefetch_reserves_dynamic_capacity(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
@@ -1076,9 +1035,7 @@ static int admitted_prefetch_uses_exact_spatial_offset(void) {
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = description.object_id,
-        .execution_offset = 64U,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
-        .has_execution_offset = 1U,
     };
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillAllocation following = {0};
@@ -1154,26 +1111,16 @@ static int functional_mutation_replaces_lease_without_copy(void) {
         .object_id = description.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillAllocationPlacementHint placements[] = {
-        {
-            .allocation_ordinal = 0U,
-            .requested_bytes = 32U,
-            .slab_offset = 0U,
-        },
-        {
-            .allocation_ordinal = 1U,
-            .requested_bytes = 32U,
-            .slab_offset = 32U,
-        },
-    };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 41U,
         .input_object_ids = &input,
         .input_count = 1U,
         .updates = &update,
         .update_count = 1U,
-        .allocation_placement_hints = placements,
-        .allocation_placement_hint_count = 2U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
     };
     ShadowSpillObjectBinding acquired = {0};
     ShadowSpillObjectBinding replaced = {0};
@@ -1274,19 +1221,16 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
         .object_id = description.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillAllocationPlacementHint placement = {
-        .allocation_ordinal = 0U,
-        .requested_bytes = 32U,
-        .slab_offset = 32U,
-    };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 42U,
         .input_object_ids = &input,
         .input_count = 1U,
         .updates = &update,
         .update_count = 1U,
-        .allocation_placement_hints = &placement,
-        .allocation_placement_hint_count = 1U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 32U,
+        .live_charged_allocation_limit_bytes = 32U,
     };
     ShadowSpillObjectSnapshot during_fetch = {0};
     ShadowSpillObjectSnapshot completed = {0};
@@ -1359,14 +1303,14 @@ int main(void) {
     REQUIRE_CANARY(valid_transition_paths());
     REQUIRE_CANARY(prefetch_window_is_enqueued_without_host_blocking());
     REQUIRE_CANARY(offload_window_is_enqueued_without_host_serialization());
-    REQUIRE_CANARY(trigger_reservation_failure_is_a_plan_violation());
+    REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());
-    REQUIRE_CANARY(admitted_output_uses_exact_spatial_offset());
-    REQUIRE_CANARY(admitted_reuse_reacquires_retired_exact_range());
-    REQUIRE_CANARY(admitted_reuse_without_progress_reports_no_progress());
-    REQUIRE_CANARY(admitted_dynamic_output_uses_high_suffix());
-    REQUIRE_CANARY(admitted_task_rejects_unprofiled_allocation());
-    REQUIRE_CANARY(admitted_prefetch_uses_exact_spatial_offset());
+    REQUIRE_CANARY(admitted_task_allocates_dynamic_ranges());
+    REQUIRE_CANARY(admitted_reuse_reacquires_retired_dynamic_range());
+    REQUIRE_CANARY(admitted_allocation_without_progress_reports_no_progress());
+    REQUIRE_CANARY(admitted_dynamic_allocations_use_deterministic_low_ranges());
+    REQUIRE_CANARY(admitted_task_rejects_envelope_excess());
+    REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());

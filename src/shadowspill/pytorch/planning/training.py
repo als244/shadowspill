@@ -742,29 +742,13 @@ def admit_training_plan(
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
-                initial_allocation_placement_hints=(
+                initial_memory_envelopes=(
                     None
                     if admitted.initial_layout is None
-                    else admitted.initial_layout.task_hints()
+                    else admitted.initial_layout.envelopes_by_task()
                 ),
-                recurrent_allocation_placement_hints=(
-                    admitted.recurrent_layout.task_hints()
-                ),
-                initial_prefetch_offsets=(
-                    None
-                    if admitted.initial_layout is None
-                    else admitted.initial_layout.initial_prefetch_offsets()
-                ),
-                initial_action_prefetch_offsets=(
-                    None
-                    if admitted.initial_layout is None
-                    else admitted.initial_layout.action_prefetch_offsets()
-                ),
-                recurrent_prefetch_offsets=(
-                    admitted.recurrent_layout.initial_prefetch_offsets()
-                ),
-                recurrent_action_prefetch_offsets=(
-                    admitted.recurrent_layout.action_prefetch_offsets()
+                recurrent_memory_envelopes=(
+                    admitted.recurrent_layout.envelopes_by_task()
                 ),
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None

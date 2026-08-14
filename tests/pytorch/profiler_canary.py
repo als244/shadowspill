@@ -118,8 +118,12 @@ def main() -> int:
     runtime = statistics.runtime
     if int(runtime.allocated_bytes) > installed.fixed_execution_bytes:
         raise AssertionError("isolated profiling exceeded the fixed provider reserve")
-    if int(runtime.free_bytes) != int(runtime.free_prefix_bytes):
-        raise AssertionError("fixed provider state no longer forms one slab tail")
+    if int(runtime.allocated_bytes) + int(runtime.free_bytes) != int(
+        runtime.execution_pool_bytes
+    ):
+        raise AssertionError("dynamic slab accounting does not reconcile")
+    if int(runtime.largest_free_range_bytes) > int(runtime.free_bytes):
+        raise AssertionError("largest free range exceeds total free capacity")
     return 0
 
 

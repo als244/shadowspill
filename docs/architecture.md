@@ -29,6 +29,9 @@ PyTorch caller ──► task boundaries ──► neutral C runtime
   storage at task boundaries.
 - Pool storage, route copies, events, and profiler integration come from
   backend vtables. Neutral targets build and test without an accelerator SDK.
+- `MemoryPool` owns only range geometry and causal lease ownership. Transfer
+  actions own queueing, routes, copy submission, and object readiness; neither
+  component writes the other's state machine.
 - Models and operation libraries are clients and cannot become core
   dependencies.
 

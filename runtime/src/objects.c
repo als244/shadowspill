@@ -101,7 +101,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         }
         shadowspill_spill_location(runtime, created)->lease = spill_lease;
         shadowspill_spill_location(runtime, created)->owns_lease = 1U;
-        shadowspill_spill_location(runtime, created)->lease->state = SHADOWSPILL_LEASE_ACTIVE;
+        shadowspill_spill_location(runtime, created)->lease->state = SHADOWSPILL_LEASE_IN_USE;
         shadowspill_spill_location(runtime, created)->current = 1U;
         shadowspill_spill_location(runtime, created)->version = description->initial_version;
     }
@@ -447,7 +447,7 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     replacement->plan_owned = 1;
     replacement->ever_plan_owned = 1;
     replacement->bound_object_id = object->object_id;
-    replacement->state = SHADOWSPILL_LEASE_ACTIVE;
+    replacement->state = SHADOWSPILL_LEASE_IN_USE;
     shadowspill_append_allocation_event_locked(
         runtime,
         replacement,
@@ -467,7 +467,12 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     prior->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     prior->release_task_id = task_id;
     prior->logical_freed = 1;
-    prior->state = SHADOWSPILL_LEASE_RETIRING;
+    if (shadowspill_memory_pool_begin_retirement_locked(
+            prior, NULL, 1
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
     shadowspill_append_allocation_event_locked(
         runtime,
         prior,
@@ -946,12 +951,8 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         failure_allocation_id = object == NULL
             ? SHADOWSPILL_RUNTIME_NO_ID
             : object->allocation_id;
-        if (object == NULL || actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH ||
-            actions[index].has_execution_offset > 1U ||
-            (actions[index].has_execution_offset &&
-             (actions[index].kind != SHADOWSPILL_RUNTIME_PREFETCH ||
-              actions[index].execution_offset %
-                  shadowspill_execution_pool(runtime)->minimum_alignment != 0U))) {
+        if (object == NULL ||
+            actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH) {
             status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
             break;
         }
@@ -982,9 +983,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
             break;
         }
         created->task_id = task_id;
-        created->execution_offset = actions[index].execution_offset;
         created->kind = actions[index].kind;
-        created->has_execution_offset = actions[index].has_execution_offset;
         created->object = object;
         created->trace_label = shadowspill_copy_action_trace_label(
             &actions[index], task_id, object->size_bytes

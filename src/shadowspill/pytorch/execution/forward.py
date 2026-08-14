@@ -16,7 +16,7 @@ from shadowspill.pytorch.partition import PartitionedExport
 from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
-    TaskAllocationPlacementHint,
+    TaskMemoryEnvelope,
     actions_by_task,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
@@ -199,11 +199,7 @@ class ForwardExecutor:
         user_output_indices: tuple[int, ...],
         output_tree_spec: TreeSpec,
         *,
-        allocation_placement_hints: dict[
-            str, tuple[TaskAllocationPlacementHint, ...]
-        ],
-        initial_prefetch_offsets: Mapping[str, int],
-        action_prefetch_offsets: Mapping[tuple[str, str], int],
+        memory_envelopes: Mapping[str, TaskMemoryEnvelope],
     ) -> None:
         self._root = partitioned.root
         self._lowered = lowered
@@ -234,14 +230,7 @@ class ForwardExecutor:
                 ),
                 task_actions,
                 transfer_labels.labels_for(task_actions),
-                allocation_placement_hints.get(task.task_id, ()),
-                {
-                    action.alias_group_id: action_prefetch_offsets[
-                        (task.task_id, action.alias_group_id)
-                    ]
-                    for action in task_actions
-                    if action.kind is MemoryActionKind.PREFETCH
-                },
+                memory_envelopes.get(task.task_id, TaskMemoryEnvelope()),
             )
             function = functions[entrypoint.artifact.compatibility_digest]
             wrapper = _ExecutingStage(
@@ -275,7 +264,7 @@ class ForwardExecutor:
             )
         )
         self._initial_prefetches = tuple(
-            (item.alias_group_id, initial_prefetch_offsets[item.alias_group_id])
+            item.alias_group_id
             for item in plan.schedule.initial_residency
             if item.location.value == "device"
             and bridge.requires_storage(item.alias_group_id)
@@ -305,12 +294,11 @@ class ForwardExecutor:
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
             self._initial_prefetch_action(alias_id)
-            for alias_id, _offset in self._initial_prefetches
+            for alias_id in self._initial_prefetches
         )
         self._bridge.submit_initial_actions(
             initial_actions,
             task_number=(1 << 60) + self._invocations,
-            prefetch_offsets=dict(self._initial_prefetches),
         )
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)

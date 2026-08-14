@@ -105,28 +105,31 @@ def test_failed_task_preserves_original_error_for_non_oom_runtime_failure() -> N
     assert library.aborted
 
 
-class _PlacementFailureLibrary(_FailureLibrary):
+class _EnvelopeFailureLibrary(_FailureLibrary):
     def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
         from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 
         result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
-        result.status = 6
+        result.status = 10
         result.device_ordinal = 0
-        result.runtime.status = 6
+        result.runtime.status = 10
         result.runtime.task_id = 28
         result.runtime.object_id = (1 << 64) - 1
         result.runtime.allocation_id = (1 << 64) - 1
         result.runtime.requested_bytes = 2_097_152
         result.runtime.free_bytes = 3_603_365_636
         result.runtime.largest_free_range_bytes = 2_553_282_560
-        result.runtime.allocation_ordinal = 9
-        result.runtime.expected_allocation_ordinal = 9
-        result.runtime.expected_requested_bytes = 16_384
-        return 6
+        result.runtime.task_live_requested_bytes = 18_874_368
+        result.runtime.task_live_charged_bytes = 18_874_368
+        result.runtime.task_live_requested_limit_bytes = 16_777_216
+        result.runtime.task_live_charged_limit_bytes = 16_777_216
+        result.runtime.task_maximum_requested_allocation_bytes = 2_097_152
+        result.runtime.task_maximum_charged_allocation_bytes = 2_097_152
+        return 10
 
 
-def test_failed_task_surfaces_allocation_placement_contract() -> None:
-    library = _PlacementFailureLibrary()
+def test_failed_task_surfaces_allocation_envelope_contract() -> None:
+    library = _EnvelopeFailureLibrary()
     bridge = RuntimeBridge(library, representative_program())
     original = RuntimeError("tensor data is not allocated")
     task = ExecutionTaskIdentity(
@@ -141,11 +144,12 @@ def test_failed_task_surfaces_allocation_placement_contract() -> None:
     assert library.aborted
     assert caught.value.__cause__ is original
     message = str(caught.value)
-    assert "status 6 (plan_violation)" in message
+    assert "status 10 (task_allocation_envelope_exceeded)" in message
     assert "execution_task: execution_000028" in message
-    assert "allocation_ordinal: 9" in message
-    assert "expected_allocation_ordinal: 9" in message
-    assert "expected_requested: 16384" in message
+    assert "task_live_requested: 18874368" in message
+    assert "task_live_requested_limit: 16777216" in message
+    assert "task_live_charged: 18874368" in message
+    assert "task_live_charged_limit: 16777216" in message
 
 
 class _LabelLibrary:

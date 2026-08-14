@@ -411,13 +411,7 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
-                allocation_placement_hints=spatial_layout.task_hints(),
-                initial_prefetch_offsets=(
-                    spatial_layout.initial_prefetch_offsets()
-                ),
-                action_prefetch_offsets=(
-                    spatial_layout.action_prefetch_offsets()
-                ),
+                memory_envelopes=spatial_layout.envelopes_by_task(),
             )
         report = _forward_plan_report(
             model,

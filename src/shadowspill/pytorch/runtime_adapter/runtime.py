@@ -465,24 +465,27 @@ class Runtime:
         operation: str,
         task: ExecutionTaskIdentity | None = None,
     ) -> RuntimeExecutionError | None:
-        """Translate only the allocator OOM/null-pointer failure mode."""
+        """Translate allocator and admitted-runtime contract failures."""
 
         if isinstance(cause, RuntimeExecutionError):
             diagnostics = cause.diagnostics
             if diagnostics is not None:
                 self._record_failure(diagnostics)
-            return (
-                cause
-                if diagnostics is not None and diagnostics.is_allocator_oom
-                else None
-            )
+            return cause if diagnostics is not None and (
+                diagnostics.is_allocator_oom
+                or diagnostics.is_shadowspill_contract_failure
+            ) else None
         diagnostics = read_allocator_failure(
             self._installed.library, operation, task=task
         )
-        if diagnostics is None or not diagnostics.is_allocator_oom:
+        if diagnostics is None:
             return None
         self._record_failure(diagnostics)
-        return allocator_oom_error(diagnostics)
+        if diagnostics.is_allocator_oom:
+            return allocator_oom_error(diagnostics)
+        if diagnostics.is_shadowspill_contract_failure:
+            return generic_runtime_error(diagnostics)
+        return None
 
     def _prepare_failure_cleanup(self, error: BaseException) -> None:
         """Quiesce compute and recover a no-progress latch before teardown."""
