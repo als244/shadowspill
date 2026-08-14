@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import replace
+
+import pytest
 
 from shadowspill.ir import (
     EntrypointSpec,
@@ -8,7 +11,13 @@ from shadowspill.ir import (
     MemoryLocation,
     ResidencySpec,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import (
+    AdmissionTopology,
+    PressureFitInfeasibleError,
+    PressureFitOptions,
+    TaskAdmissionSpec,
+    pressurefit,
+)
 
 from ._examples import (
     config,
@@ -54,15 +63,11 @@ def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:
     program = replace(
         program,
         alias_groups=tuple(
-            replace(item, size_bytes=0)
-            if item.alias_group_id == "retained"
-            else item
+            replace(item, size_bytes=0) if item.alias_group_id == "retained" else item
             for item in program.alias_groups
         ),
         objects=tuple(
-            replace(item, size_bytes=0)
-            if item.object_id == "retained_object"
-            else item
+            replace(item, size_bytes=0) if item.object_id == "retained_object" else item
             for item in program.objects
         ),
     )
@@ -149,3 +154,56 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.selections == result.selections
     assert plan.prediction.makespan_ns == result.simulation.makespan_ns
     assert plan.prediction.device_peak_bytes == 122
+
+
+def test_physical_admission_refinement_starts_at_128_mib_and_doubles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    program = exact_capacity_program()
+    initial, final = exact_capacity_residency()
+    baseline = pressurefit(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=SMALL_PORTFOLIO,
+    )
+    one_gib = 1 << 30
+    topology = AdmissionTopology(
+        "cuda_0",
+        2 * one_gib,
+        one_gib,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id, 0) for task in program.tasks),
+    )
+    capacities: list[int] = []
+
+    def fake_once(*args: object, **kwargs: object):
+        admission = kwargs["admission"]
+        assert isinstance(admission, AdmissionTopology)
+        capacities.append(admission.object_capacity_bytes)
+        if len(capacities) <= 2:
+            raise PressureFitInfeasibleError(
+                "synthetic physical admission failure",
+                kind="physical_admission",
+                required_bytes=1,
+            )
+        return baseline
+
+    module = importlib.import_module("shadowspill.planner.pressurefit")
+    monkeypatch.setattr(module, "_pressurefit_once", fake_once)
+    result = pressurefit(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(one_gib),
+        options=SMALL_PORTFOLIO,
+        admission=topology,
+    )
+
+    assert capacities == [one_gib, one_gib - (128 << 20), one_gib - (384 << 20)]
+    assert tuple(
+        item.reserve_increment_bytes
+        for item in result.diagnostics.admission_refinements
+    ) == (128 << 20, 256 << 20)
+    assert result.diagnostics.effective_object_capacity_bytes == one_gib - (384 << 20)

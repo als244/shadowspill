@@ -31,6 +31,7 @@ from ._admission import (
 )
 from .admission import AdmissionTopology
 from .model import (
+    AdmissionRefinement,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
@@ -351,6 +352,15 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
             valid_candidate_count=int(value["valid_candidate_count"]),
             selected_makespan_ns=int(value["selected_makespan_ns"]),
             candidates=candidates,
+            admission_refinements=tuple(
+                AdmissionRefinement(**item)
+                for item in value.get("admission_refinements", ())
+            ),
+            effective_object_capacity_bytes=(
+                None
+                if value.get("effective_object_capacity_bytes") is None
+                else int(value["effective_object_capacity_bytes"])
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(

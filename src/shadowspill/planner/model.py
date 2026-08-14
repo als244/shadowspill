@@ -113,6 +113,17 @@ class CandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class AdmissionRefinement:
+    """One monotonic reduction of logical object capacity after slab replay."""
+
+    attempt: int
+    previous_object_capacity_bytes: int
+    required_additional_slack_bytes: int
+    reserve_increment_bytes: int
+    object_capacity_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class PressureFitDiagnostics:
     """Candidate evidence that is observational and never affects selection."""
 
@@ -122,6 +133,8 @@ class PressureFitDiagnostics:
     valid_candidate_count: int
     selected_makespan_ns: int
     candidates: tuple[CandidateDiagnostic, ...]
+    admission_refinements: tuple[AdmissionRefinement, ...] = ()
+    effective_object_capacity_bytes: int | None = None
 
 
 class PressureFitInfeasibleError(ValueError):
@@ -220,6 +233,7 @@ class PressureFitResult:
 
 
 __all__ = [
+    "AdmissionRefinement",
     "CandidateDiagnostic",
     "InitialPlacement",
     "PressureFitDiagnostics",

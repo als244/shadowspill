@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, Program, TaskProfile
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import PressureFitDiagnostics, PressureFitResult
 from shadowspill.pytorch.runtime_adapter import TransferCapabilities, TransferProfile
 
 
@@ -498,6 +498,7 @@ class PlanDiagnostics:
     cache_directories: tuple[tuple[str, str], ...] = ()
     cache_artifacts: tuple[PlanCacheArtifact, ...] = ()
     profiling_metadata: tuple[PlanProfilingMetadata, ...] = ()
+    pressurefit_runs: tuple[PressureFitDiagnostics, ...] = ()
 
     @property
     def measured_wall_time_ns(self) -> int:
@@ -542,6 +543,36 @@ class PlanDiagnostics:
                 "cache_hits": self.recomputation_cache_hits,
                 "cache_misses": self.recomputation_cache_misses,
             },
+            "pressurefit": [
+                {
+                    "run_index": index,
+                    "selected_candidate_id": item.selected_candidate_id,
+                    "selected_selection_id": item.selected_selection_id,
+                    "candidate_count": item.candidate_count,
+                    "valid_candidate_count": item.valid_candidate_count,
+                    "selected_makespan_ns": item.selected_makespan_ns,
+                    "effective_object_capacity_bytes": (
+                        item.effective_object_capacity_bytes
+                    ),
+                    "admission_refinements": [
+                        {
+                            "attempt": refinement.attempt,
+                            "previous_object_capacity_bytes": (
+                                refinement.previous_object_capacity_bytes
+                            ),
+                            "required_additional_slack_bytes": (
+                                refinement.required_additional_slack_bytes
+                            ),
+                            "reserve_increment_bytes": (
+                                refinement.reserve_increment_bytes
+                            ),
+                            "object_capacity_bytes": (refinement.object_capacity_bytes),
+                        }
+                        for refinement in item.admission_refinements
+                    ],
+                }
+                for index, item in enumerate(self.pressurefit_runs)
+            ],
             "tasks": {
                 execution_task_id: item.as_dict()
                 for execution_task_id, item in selected_tasks.items()

@@ -63,12 +63,16 @@ from ._residency import (
 )
 from .admission import AdmissionTopology
 from .model import (
+    AdmissionRefinement,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitResult,
 )
+
+_ADMISSION_RESERVE_GRANULARITY_BYTES = 2 << 20
+_ADMISSION_INITIAL_REFINEMENT_BYTES = 128 << 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -836,10 +840,22 @@ def _finish_native_pressurefit(
     if selected is None:
         frozen = tuple(diagnostics)
         first = frozen[0] if frozen else None
+        physical_slack = tuple(
+            candidate.error_required_bytes
+            for result in results
+            for candidate in result.candidates
+            if candidate.status == 3 and candidate.error_required_bytes > 0
+        )
         raise PressureFitInfeasibleError(
             "no simulator-valid PressureFit candidate satisfied the declared "
             "capacity and residency constraints",
             kind=first.failure_kind if first and first.failure_kind else "no_candidate",
+            required_bytes=min(physical_slack) if physical_slack else None,
+            capacity_bytes=(
+                config.devices[0].capacity_bytes
+                if len(config.devices) == 1
+                else None
+            ),
             diagnostics=frozen,
         )
 
@@ -888,7 +904,7 @@ def _finish_native_pressurefit(
     )
 
 
-def pressurefit(
+def _pressurefit_once(
     program: Program,
     *,
     initial_residency: tuple[ResidencySpec, ...],
@@ -1115,6 +1131,126 @@ def pressurefit(
         simulation=final_simulation,
         diagnostics=diagnostics,
     )
+
+
+def _round_up_admission_reserve(value: int) -> int:
+    granularity = _ADMISSION_RESERVE_GRANULARITY_BYTES
+    return ((value + granularity - 1) // granularity) * granularity
+
+
+def _with_object_capacity(
+    config: SimulationConfig,
+    admission: AdmissionTopology,
+    capacity_bytes: int,
+) -> tuple[SimulationConfig, AdmissionTopology]:
+    devices = tuple(
+        replace(device, capacity_bytes=capacity_bytes)
+        if device.device_id == admission.device_id
+        else device
+        for device in config.devices
+    )
+    if devices == config.devices:
+        raise ValueError(
+            f"admission device {admission.device_id!r} is absent from simulation"
+        )
+    return (
+        replace(config, devices=devices),
+        replace(admission, object_capacity_bytes=capacity_bytes),
+    )
+
+
+def pressurefit(
+    program: Program,
+    *,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...] = (),
+    config: SimulationConfig,
+    options: PressureFitOptions | None = None,
+    admission: AdmissionTopology | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> PressureFitResult:
+    """Select a schedule and monotonically refine dynamic-slab headroom.
+
+    PressureFit first uses the caller's conservative object capacity.  If all
+    logically valid schedules fail exact dynamic ``MemoryPool`` admission,
+    object capacity is reduced by at least 128 MiB.  The increment doubles on
+    every subsequent failure and is never smaller than the measured contiguous
+    deficit rounded to allocator granularity.  Selection then repeats without
+    changing physical pool capacity, task semantics, or action rules.
+    """
+
+    original_config = config
+    current_config = config
+    current_admission = admission
+    refinements: list[AdmissionRefinement] = []
+    while True:
+        try:
+            result = _pressurefit_once(
+                program,
+                initial_residency=initial_residency,
+                final_residency=final_residency,
+                config=current_config,
+                options=options,
+                admission=current_admission,
+                progress=progress,
+            )
+            effective_capacity = (
+                None
+                if current_admission is None
+                else current_admission.object_capacity_bytes
+            )
+            return replace(
+                result,
+                # Preserve the public call boundary for cache identity.  The
+                # exact effective capacity is recorded below, while physical
+                # simulation uses AdmissionTopology.pool_capacity_bytes.
+                simulation_config=original_config,
+                diagnostics=replace(
+                    result.diagnostics,
+                    admission_refinements=tuple(refinements),
+                    effective_object_capacity_bytes=effective_capacity,
+                ),
+            )
+        except PressureFitInfeasibleError as error:
+            if (
+                current_admission is None
+                or error.kind != "physical_admission"
+                or error.required_bytes is None
+                or error.required_bytes <= 0
+            ):
+                raise
+            previous = current_admission.object_capacity_bytes
+            geometric_increment = _ADMISSION_INITIAL_REFINEMENT_BYTES << len(
+                refinements
+            )
+            increment = max(
+                _round_up_admission_reserve(error.required_bytes),
+                geometric_increment,
+            )
+            capacity = previous - increment
+            if capacity <= 0:
+                raise
+            refinements.append(
+                AdmissionRefinement(
+                    attempt=len(refinements) + 1,
+                    previous_object_capacity_bytes=previous,
+                    required_additional_slack_bytes=error.required_bytes,
+                    reserve_increment_bytes=increment,
+                    object_capacity_bytes=capacity,
+                )
+            )
+            if progress is not None:
+                progress(
+                    "PressureFit physical admission refinement "
+                    f"{len(refinements)}: required_slack={error.required_bytes}, "
+                    f"reserve_increment={increment}, "
+                    f"object_capacity={capacity}"
+                )
+            current_config, current_admission = _with_object_capacity(
+                current_config,
+                current_admission,
+                capacity,
+            )
 
 
 __all__ = ["pressurefit", "validate_schedule_feasibility"]

@@ -89,6 +89,7 @@ def build_forward_report(
         cache_directories=cache_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
+        pressurefit_results=pressurefit_results,
     )
     return _forward_report(
         _forward_capture_identity(
@@ -128,6 +129,7 @@ def _forward_diagnostics(
     cache_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
+    pressurefit_results: tuple[PressureFitResult, ...],
 ) -> PlanDiagnostics:
     return PlanDiagnostics(
         phases=phases,
@@ -158,6 +160,7 @@ def _forward_diagnostics(
             PlanProfilingMetadata(index, item.digest, item.canonical_json)
             for index, item in enumerate(profiling_metadata)
         ),
+        pressurefit_runs=tuple(item.diagnostics for item in pressurefit_results),
     )
 
 
@@ -322,6 +325,7 @@ def build_training_report(
         cache_directories=cache_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
+        pressurefit_results=pressurefit_results,
         memory=memory,
     )
     base = report.diagnostics
