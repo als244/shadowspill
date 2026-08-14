@@ -117,6 +117,7 @@ class PlannedForward:
         operations.extend(
             (
                 ("restore model state", self._state.restore_cpu_and_unregister),
+                ("release compiled executor", self._release_executor),
                 ("release runtime plan", self._runtime._release_plan),
                 (
                     "restore persistent object identities",
@@ -133,6 +134,18 @@ class PlannedForward:
     def _finish_profiler_annotations(self) -> None:
         self._executor.finish_profiler_annotations()
         self._profiler_annotations_active = False
+
+    def _release_executor(self) -> None:
+        executor = self._executor
+        del self._executor
+        del executor
+        status = int(
+            self._runtime._installed.library.shadowspill_pytorch_allocator_wait_idle()
+        )
+        if status != 0:
+            raise RuntimeError(
+                f"compiled forward executor did not become idle (status {status})"
+            )
 
     def __enter__(self) -> PlannedForward:
         if self._closed:
@@ -318,6 +331,7 @@ class PlannedTrainStep:
                 ("clear parameter gradients", self._clear_parameter_gradients),
                 ("restore optimizer state", self._executor.restore_optimizer_cpu),
                 ("restore model state", self._state.restore_cpu_and_unregister),
+                ("release compiled executor", self._release_executor),
                 ("release runtime plan", self._runtime._release_plan),
                 (
                     "restore persistent object identities",
@@ -334,6 +348,18 @@ class PlannedTrainStep:
     def _finish_profiler_annotations(self) -> None:
         self._executor.finish_profiler_annotations()
         self._profiler_annotations_active = False
+
+    def _release_executor(self) -> None:
+        executor = self._executor
+        del self._executor
+        del executor
+        status = int(
+            self._runtime._installed.library.shadowspill_pytorch_allocator_wait_idle()
+        )
+        if status != 0:
+            raise RuntimeError(
+                f"compiled training executor did not become idle (status {status})"
+            )
 
     def _clear_parameter_gradients(self) -> None:
         for parameter in self._model.parameters():
