@@ -39,7 +39,7 @@ from shadowspill.pytorch.profiling.metadata import (
 )
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import (
-    validate_fixed_execution_reservation,
+    validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
@@ -262,7 +262,7 @@ def profile_forward_tasks(
         )
         _verify_manifest_identity(manifests, compiled_tasks)
         captured.installed.library.shadowspill_pytorch_allocator_wait_idle()
-        validate_fixed_execution_reservation(
+        validate_dynamic_execution_reservation(
             captured.installed,
             reserved_bytes=(
                 captured.installed.fixed_execution_bytes + profiles.fixed_slab_bytes

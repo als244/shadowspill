@@ -53,7 +53,7 @@ from shadowspill.pytorch.profiling.metadata import (
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
-    validate_fixed_execution_reservation,
+    validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.state.optimizer import (
@@ -715,7 +715,7 @@ def compile_selected_training_tasks(
         _verify_compiled_manifest_identity(profiled.manifests, compiled)
         profiled.profiler.discard_compiled_tasks()
         installed.library.shadowspill_pytorch_allocator_wait_idle()
-        validate_fixed_execution_reservation(
+        validate_dynamic_execution_reservation(
             installed,
             reserved_bytes=(
                 installed.fixed_execution_bytes + profiled.profiles.fixed_slab_bytes

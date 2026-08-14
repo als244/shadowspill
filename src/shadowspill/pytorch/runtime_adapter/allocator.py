@@ -207,12 +207,17 @@ def _initialize_provider_state(
     )
 
 
-def validate_fixed_execution_reservation(
+def validate_dynamic_execution_reservation(
     installed: InstalledAllocator,
     *,
     reserved_bytes: int,
 ) -> int:
-    """Verify the dynamic slab retains the capacity excluded by planning."""
+    """Verify persistent allocations fit inside the capacity excluded by planning.
+
+    Dynamic admission consumes every compatible free range in the execution
+    pool.  It therefore requires sufficient aggregate unreserved capacity, not
+    one contiguous range as large as the complete planning capacity.
+    """
 
     if reserved_bytes < installed.fixed_execution_bytes:
         raise ValueError("fixed execution reservation is smaller than bootstrap")
@@ -240,14 +245,14 @@ def validate_fixed_execution_reservation(
             "persistent provider allocations exceed the admitted slab reserve: "
             f"observed={allocated}, reserved={reserved_bytes}"
         )
-    usable_prefix = capacity - reserved_bytes
     largest = int(runtime.largest_free_range_bytes)
-    if allocated + free != capacity or largest < usable_prefix:
+    usable_capacity = capacity - reserved_bytes
+    if allocated + free != capacity or free < usable_capacity:
         raise AllocatorInstallError(
-            "live execution allocations leave no compatible range for the "
-            "admitted dynamic plan: "
+            "live execution allocation accounting is incompatible with the "
+            "admitted dynamic capacity: "
             f"observed={allocated}, reserved={reserved_bytes}, free={free}, "
-            f"required_range={usable_prefix}, largest={largest}, capacity={capacity}"
+            f"required_free={usable_capacity}, largest={largest}, capacity={capacity}"
         )
     return allocated
 

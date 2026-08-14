@@ -33,7 +33,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     _function_pointer,
     install_allocator,
     resize_spill_pool,
-    validate_fixed_execution_reservation,
+    validate_dynamic_execution_reservation,
 )
 
 
@@ -276,7 +276,7 @@ def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:
         resize_spill_pool(installed, spill_pool_bytes=40, spill_budget_bytes=64)
 
 
-def test_execution_reservation_requires_one_compatible_dynamic_range() -> None:
+def test_execution_reservation_accepts_fragmented_dynamic_capacity() -> None:
     class _StatisticsLibrary:
         allocated = 16
         free = 112
@@ -306,22 +306,24 @@ def test_execution_reservation_requires_one_compatible_dynamic_range() -> None:
         fixed_execution_bytes=16,
     )
 
-    assert validate_fixed_execution_reservation(installed, reserved_bytes=16) == 16
+    assert validate_dynamic_execution_reservation(installed, reserved_bytes=16) == 16
     with pytest.raises(ValueError, match="smaller"):
-        validate_fixed_execution_reservation(installed, reserved_bytes=15)
-    # The dynamic plan does not require a fixed prefix. Fragmentation is valid
-    # anywhere when one compatible range remains for admitted work, including
-    # retained caller-owned outputs from an earlier callable.
+        validate_dynamic_execution_reservation(installed, reserved_bytes=15)
+    # Dynamic admission may consume all compatible ranges.  Persistent state
+    # can split the free capacity without requiring one range as large as the
+    # complete planning capacity.
     library.allocated = 20
     library.free = 108
     library.free_prefix = 96
     library.largest = 96
-    assert validate_fixed_execution_reservation(installed, reserved_bytes=32) == 20
+    assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
     with pytest.raises(AllocatorInstallError, match="exceed"):
-        validate_fixed_execution_reservation(installed, reserved_bytes=16)
+        validate_dynamic_execution_reservation(installed, reserved_bytes=16)
     library.largest = 64
-    with pytest.raises(AllocatorInstallError, match="no compatible range"):
-        validate_fixed_execution_reservation(installed, reserved_bytes=32)
+    assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
+    library.free = 100
+    with pytest.raises(AllocatorInstallError, match="accounting"):
+        validate_dynamic_execution_reservation(installed, reserved_bytes=32)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:
