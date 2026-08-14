@@ -2486,3 +2486,7 @@ the ignored internal progress log before this tracked summary is updated.
   synchronizing ordinary CPU state and explain when direct model loading
   requires prior close/externalization. Application-owned RNG, scheduler,
   scaler, and data-loader state are explicitly outside the three-key schema.
+- The frontend guide now also demonstrates background filesystem serialization
+  while subsequent steps execute. It explicitly distinguishes the synchronous
+  snapshot copy from asynchronous I/O and records that snapshot tensors use
+  anonymous pageable CPU memory outside ShadowSpill pool budgets and telemetry.

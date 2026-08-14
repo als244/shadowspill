@@ -102,7 +102,9 @@ optimizer update per call. It does not divide accumulated gradients.
 member is directly compatible with
 `fresh_model.load_state_dict(checkpoint["model"])`; see
 [PyTorch Frontend](docs/pytorch-frontend.md#checkpoints-and-ordinary-pytorch-restoration)
-for active-runtime and ordinary-PyTorch restore examples.
+for active-runtime restore, ordinary-PyTorch restore, and asynchronous
+filesystem-save examples. The snapshot uses ordinary CPU memory outside
+ShadowSpill's pools and budgets.
 
 `profiling_metadata` is planning-only cache metadata for value-sensitive task
 costs. It is not passed into the model; the corresponding concrete

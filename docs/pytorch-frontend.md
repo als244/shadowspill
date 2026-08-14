@@ -109,7 +109,8 @@ schema and restores spill-backed CPU storage on deterministic close.
 
 Checkpoint methods belong to the planned callable. They are explicitly
 synchronizing and return ordinary CPU tensors that do not reference CUDA or
-runtime spill storage. A training checkpoint has exactly this structure:
+runtime spill storage. Snapshot construction and its memory copy finish before
+`state_dict()` returns. A training checkpoint has exactly this structure:
 
 ```python
 checkpoint = train_step.state_dict()
@@ -117,6 +118,43 @@ checkpoint = train_step.state_dict()
 assert set(checkpoint) == {"model", "optimizer", "step"}
 torch.save(checkpoint, checkpoint_path)
 ```
+
+### Saving asynchronously
+
+Because `state_dict()` returns an isolated copy, filesystem serialization may
+run in a background thread while later training steps use and mutate the
+runtime-owned state:
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+# This call synchronizes and finishes the state copy before returning.
+checkpoint = train_step.state_dict()
+
+with ThreadPoolExecutor(max_workers=1) as checkpoint_io:
+    save_future = checkpoint_io.submit(
+        torch.save,
+        checkpoint,
+        checkpoint_path,
+    )
+
+    # The future retains checkpoint while torch.save() reads it. These steps
+    # mutate the original runtime state, not the isolated checkpoint copy.
+    for microbatches in subsequent_steps:
+        train_step(microbatches)
+
+    save_future.result()  # Propagate any filesystem/serialization failure.
+
+del checkpoint  # Permit the ordinary CPU snapshot allocations to be reclaimed.
+```
+
+Only serialization is asynchronous in this example; `state_dict()` itself is
+synchronous. Its tensors occupy ordinary anonymous, pageable CPU memory. That
+memory is not allocated from a ShadowSpill pool, is not included in
+`spill_budget`, and is not reported by ShadowSpill memory telemetry. The
+process can therefore use approximately one additional checkpoint's worth of
+system RAM until serialization completes and all references to the checkpoint
+are released.
 
 Restore the complete state into an active ShadowSpill callable through the
 callable, not through its temporarily runtime-owned model:
