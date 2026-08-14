@@ -775,6 +775,14 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     while (status == SHADOWSPILL_RUNTIME_OK) {
         ShadowSpillMemoryLease *record = NULL;
         if (placement != NULL && placement->reuse) {
+            /*
+             * A reuse hint fixes the destination's spatial range; it does not
+             * require one C lease record to survive until this callback.  An
+             * intervening exact-placement wait may have fenced and completed
+             * the source retirement.  Prefer the pending lease when it still
+             * exists, then let the ordinary exact-range path below reacquire
+             * the range once the pool reports it free.
+             */
             status = reuse_pending_allocation_locked(
                 runtime,
                 bytes,
@@ -787,16 +795,6 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 placement->dynamic ? placement->slab_offset : 0U,
                 &record
             );
-            if (status == SHADOWSPILL_RUNTIME_OK && record == NULL) {
-                shadowspill_latch_failure_locked(
-                    runtime,
-                    SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
-                    SHADOWSPILL_RUNTIME_NO_ID,
-                    SHADOWSPILL_RUNTIME_NO_ID,
-                    bytes
-                );
-                status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-            }
         } else if (placement == NULL) {
             status = reuse_pending_allocation_locked(
                 runtime,

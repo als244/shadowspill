@@ -2865,3 +2865,39 @@ the ignored internal progress log before this tracked summary is updated.
   canary still raises the structured task-attributed `ShadowSpill no-progress
   OOM`. The historical pre-optimizer 8B fixture remains that expected negative
   case and is not reclassified as admission infeasibility.
+
+## 2026-08-14 — Exact reuse survives an intervening completed retirement
+
+- The optimizer-fixed mlops Llama 3 8B plan completed PressureFit and exact
+  admission, then failed its first real call in `execution_000032`
+  (`microbatch_0000.stage_0031.backward.recompute`). Allocator callback ordinal
+  13 requested a profiled 2 MiB reuse at its exact static offset while
+  3,603,365,636 bytes were free and the largest range was 2,553,282,560 bytes.
+  This was neither plan infeasibility nor the historical no-progress OOM.
+- A one-layer, full-width mlops Llama reproduction reduced planning to about
+  seven seconds and exposed the complete causal sequence. Task 6 logically
+  freed a 32 MiB temporary at offset 5,251,268,608. A later 4-byte exact
+  placement at offset 5,378,457,600 temporarily could not be acquired, so the
+  allocator correctly fenced the task's pending same-stream retirements. The
+  worker completed that fence and safely returned the 32 MiB range to the
+  execution pool. A later Inductor reuse callback requested the original 32
+  MiB offset, but the runtime rejected it solely because the prior C lease
+  record no longer existed.
+- The runtime had conflated two contracts. An offline `REUSE` operation fixes
+  the new allocation's spatial range; it does not require one lease record to
+  remain alive. The allocator now first adopts a compatible pending lease, as
+  before, and otherwise reacquires the exact range through `MemoryPool`. If its
+  retirement is incomplete, exact acquisition waits on the known progress
+  source; if it completed, the range is immediately available. Thus the pool,
+  not lease-record identity, remains the causal safety authority.
+- A native regression proves that a reuse hint reacquires the same pointer with
+  a new lease generation after complete retirement. Its paired negative case
+  keeps the range live with no progress source and verifies the result remains
+  `SHADOWSPILL_RUNTIME_NO_PROGRESS`. The real one-layer reproduction completes
+  two optimizer steps after the fix.
+- Runtime failure diagnostics now include the active execution task and exact
+  allocation ordinal/expected-byte contract. This surfaces a ShadowSpill
+  placement failure before PyTorch's secondary null-storage exception while
+  preserving ordinary CUDA/kernel errors. The original pre-optimizer 8B
+  fixture remains a distinct required `NoProgressOOM`: request 117,440,512,
+  free 39,845,512, largest range 39,744,768.
