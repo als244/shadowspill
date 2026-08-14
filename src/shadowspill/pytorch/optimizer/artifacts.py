@@ -59,6 +59,11 @@ class OpaqueOptimizerArtifact:
         )
         identity = {
             "kind": "opaque_optimizer",
+            # The profiling executable must restore captured gradients onto
+            # its copied Parameters.  Version that construction contract here
+            # so correcting it invalidates only opaque-optimizer profiles,
+            # rather than every compiled graph profile in the cache.
+            "profiling_contract": "representative_gradients/v1",
             "optimizer_type": optimizer_type,
             "step": code_identity,
             "bindings": [

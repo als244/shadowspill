@@ -107,7 +107,6 @@ def capture_optimizer(
     preinitialized_state_names: tuple[str, ...] = ()
     if (
         discovery.created_state_names
-        and not _has_optimizer_step_hooks(optimizer)
         and initialize_lazy_optimizer_state(
             inventory.canonical_parameters,
             optimizer,
@@ -290,8 +289,12 @@ def _run_discovery_step(
     | OptimizerCapture
 ):
     try:
+        # Discovery is not a semantic optimizer step.  Invoke the unwrapped
+        # implementation so user/global step hooks remain reserved for real
+        # callable invocations while the sandbox still exposes lazy state.
+        step = inspect.unwrap(type(sandbox).step).__get__(sandbox, type(sandbox))
         with torch.no_grad():
-            sandbox.step()
+            step()
     except BaseException as exc:
         return _recover_failed_discovery(
             optimizer_type,
@@ -907,8 +910,11 @@ def materialize_opaque_optimizer(
 ) -> torch.optim.Optimizer:
     """Build an isolated real-CUDA optimizer used only for task profiling."""
 
+    source_parameters = _optimizer_parameters(artifact.optimizer)
     optimizer = _copy_optimizer(artifact.optimizer)
     parameters = _optimizer_parameters(optimizer)
+    if len(parameters) != len(source_parameters):
+        raise CaptureError("copied opaque optimizer changed its parameter inventory")
     replacements: dict[int, torch.Tensor] = {}
     device = torch.device("cuda", device_ordinal)
 
@@ -953,7 +959,7 @@ def materialize_opaque_optimizer(
         return result
 
     real_parameters: dict[int, torch.nn.Parameter] = {}
-    for value in parameters:
+    for source_value, value in zip(source_parameters, parameters, strict=True):
         converted = real_tensor(
             value,
             parameter=True,
@@ -961,8 +967,15 @@ def materialize_opaque_optimizer(
         )
         if not isinstance(converted, torch.nn.Parameter):
             raise AssertionError("parameter conversion changed tensor type")
-        if value.grad is not None:
-            converted.grad = real_tensor(value.grad, synthetic_fill="normal")
+        # ``deepcopy(Parameter)`` intentionally drops ``.grad``.  The opaque
+        # optimizer would otherwise profile a no-op despite the captured task
+        # requiring gradients.  Recover the storage-free captured gradient
+        # from the source optimizer and materialize a representative value.
+        if source_value.grad is not None:
+            converted.grad = real_tensor(
+                source_value.grad,
+                synthetic_fill="normal",
+            )
         real_parameters[id(value)] = converted
     for group in optimizer.param_groups:
         group["params"] = [real_parameters[id(value)] for value in group["params"]]

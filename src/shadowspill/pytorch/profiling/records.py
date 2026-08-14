@@ -13,9 +13,9 @@ from shadowspill.pytorch.profiling.inputs import (
     RepresentativeInputSummary,
 )
 
-# v10 records when a compiled output is physically served by a task input.
-# The optimized Inductor storage contract must already describe that alias;
-# profiling validates the contract and measures layout, workspace, and timing.
+# The opaque-optimizer artifact versions its own representative-gradient
+# construction contract.  That targeted identity change avoids invalidating
+# unrelated compiled-graph measurements.
 PROFILE_SCHEMA = "shadowspill.pytorch.profile/v12"
 
 

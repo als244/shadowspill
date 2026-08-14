@@ -82,6 +82,29 @@ def test_lazy_state_is_initialized_at_step_zero_without_parameter_mutation() -> 
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
+def test_step_hooks_do_not_prevent_side_effect_free_state_initialization() -> None:
+    parameter = torch.nn.Parameter(torch.ones(8))
+    parameter.grad = torch.ones_like(parameter)
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3, foreach=False)
+    hook_calls: list[int] = []
+    optimizer.register_step_post_hook(
+        lambda _optimizer, _args, _kwargs: hook_calls.append(1)
+    )
+
+    captured = capture_optimizer({"weight": parameter}, optimizer)
+
+    assert hook_calls == []
+    assert captured.recurrent_is_opaque
+    assert captured.created_state_names == ()
+    assert captured.preinitialized_state_names == (
+        "optimizer.weight.exp_avg",
+        "optimizer.weight.exp_avg_sq",
+        "optimizer.weight.step",
+    )
+    assert optimizer.state[parameter]["step"].item() == 0
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
+
+
 def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
     mlops = pytest.importorskip("mlops")
     parameter = torch.nn.Parameter(torch.ones(8))
