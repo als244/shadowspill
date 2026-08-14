@@ -9,7 +9,7 @@ from pathlib import Path
 from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 5
+ABI_VERSION = 6
 NO_INDEX = (1 << 32) - 1
 
 
@@ -109,6 +109,25 @@ class CDenseSchedule(ctypes.Structure):
     ]
 
 
+class CAdmissionTopology(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("task_count", ctypes.c_uint32),
+        ("alias_count", ctypes.c_uint32),
+        ("pool_capacity_bytes", ctypes.c_uint64),
+        ("object_capacity_bytes", ctypes.c_uint64),
+        ("minimum_alignment", ctypes.c_uint64),
+        ("task_workspace_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("fresh_output_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("fresh_output_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("replacement_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("replacement_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("handoff_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("handoff_source_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("handoff_destination_aliases", ctypes.POINTER(ctypes.c_uint32)),
+    ]
+
+
 class CPressureFitContext(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -116,6 +135,7 @@ class CPressureFitContext(ctypes.Structure):
         ("simulation", ctypes.POINTER(CProgram)),
         ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
         ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
+        ("admission", ctypes.POINTER(CAdmissionTopology)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
@@ -138,6 +158,7 @@ class CPressureFitProgramContext(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("simulation", ctypes.POINTER(CProgram)),
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
+        ("admission", ctypes.POINTER(CAdmissionTopology)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
@@ -180,10 +201,40 @@ class CPressureFitContextResult(ctypes.Structure):
         ("schedule_cache_hits", ctypes.c_uint64),
         ("simulation_calls", ctypes.c_uint64),
         ("simulation_cache_hits", ctypes.c_uint64),
+        ("admission_calls", ctypes.c_uint64),
         ("residency_time_ns", ctypes.c_uint64),
         ("schedule_time_ns", ctypes.c_uint64),
         ("simulation_time_ns", ctypes.c_uint64),
+        ("admission_time_ns", ctypes.c_uint64),
         ("digest_time_ns", ctypes.c_uint64),
+    ]
+
+
+class CScheduleAdmissionResult(ctypes.Structure):
+    """Caller-owned buffers for one exact dense-schedule admission."""
+
+    _fields_ = [
+        ("status", ctypes.c_uint32),
+        ("decision_digest", ctypes.c_uint64),
+        ("peak_allocated_bytes", ctypes.c_uint64),
+        ("peak_reserved_bytes", ctypes.c_uint64),
+        ("peak_fragmentation_bytes", ctypes.c_uint64),
+        ("error_operation_index", ctypes.c_uint64),
+        ("error_requested_bytes", ctypes.c_uint64),
+        ("error_free_bytes", ctypes.c_uint64),
+        ("error_largest_free_range_bytes", ctypes.c_uint64),
+        ("initial_physical_bytes", ctypes.c_uint64),
+        ("task_start_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("task_completion_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("task_capacity", ctypes.c_uint32),
+        ("action_trigger_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("action_completion_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("action_capacity", ctypes.c_uint32),
+        ("reuse_predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_successor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_capacity", ctypes.c_uint32),
+        ("reuse_count", ctypes.c_uint32),
     ]
 
 
@@ -235,6 +286,13 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitContextResult),
     ]
     library.shadowspill_evaluate_pressurefit_program_context.restype = ctypes.c_uint32
+    library.shadowspill_evaluate_schedule_admission.argtypes = [
+        ctypes.POINTER(CProgram),
+        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CDenseSchedule),
+        ctypes.POINTER(CScheduleAdmissionResult),
+    ]
+    library.shadowspill_evaluate_schedule_admission.restype = ctypes.c_uint32
     library.shadowspill_pressurefit_context_result_destroy.argtypes = [
         ctypes.POINTER(CPressureFitContextResult),
     ]
@@ -247,6 +305,7 @@ def load_planner_library() -> ctypes.CDLL:
 __all__ = [
     "ABI_VERSION",
     "NO_INDEX",
+    "CAdmissionTopology",
     "CCandidateResult",
     "CDenseSchedule",
     "CPlanCandidate",
@@ -258,6 +317,7 @@ __all__ = [
     "CResidencyOptions",
     "CResidencyProblem",
     "CResidencyResult",
+    "CScheduleAdmissionResult",
     "CSelectionResult",
     "load_planner_library",
     "planner_library_path",

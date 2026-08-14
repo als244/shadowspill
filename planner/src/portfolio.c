@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "admission_internal.h"
 #include "portfolio_internal.h"
 #include "residency_internal.h"
 
@@ -73,6 +74,8 @@ typedef struct SimulationCacheEntry {
     uint64_t hash;
     ShadowSpillDenseSchedule schedule;
     ShadowSpillSimulationResult result;
+    ShadowSpillAdmissionReplayResult admission;
+    uint32_t admission_status;
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
     uint8_t digest_valid;
 } SimulationCacheEntry;
@@ -93,6 +96,7 @@ typedef struct CandidateWorkspace {
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
     SimulationWorkspace simulation;
+    ShadowSpillCandidateAdmissionWorkspace admission;
     ResidencyCache residency_cache;
     ScheduleCache schedule_cache;
     SimulationCache simulation_cache;
@@ -438,20 +442,42 @@ static void simulation_workspace_destroy(SimulationWorkspace *workspace) {
     memset(workspace, 0, sizeof(*workspace));
 }
 
-static ShadowSpillSimulationStatus simulate_schedule(
+static int simulate_schedule(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillDenseSchedule *schedule,
     SimulationWorkspace *workspace,
-    ShadowSpillSimulationResult *result
+    ShadowSpillCandidateAdmissionWorkspace *admission_workspace,
+    ShadowSpillSimulationResult *result,
+    ShadowSpillAdmissionReplayStatus *admission_status,
+    ShadowSpillAdmissionReplayResult *admission_result
 ) {
     if (simulation_workspace_reserve_transfers(
             workspace,
             schedule->action_count
         ) != 0) {
-        return SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE;
+        return -1;
     }
     ShadowSpillSimulationProgram program;
-    shadowspill_bind_dense_schedule(context->simulation, schedule, &program);
+    *admission_status = SHADOWSPILL_ADMISSION_REPLAY_OK;
+    memset(admission_result, 0, sizeof(*admission_result));
+    if (context->admission == NULL) {
+        shadowspill_bind_dense_schedule(context->simulation, schedule, &program);
+    } else {
+        *admission_status = shadowspill_admit_dense_schedule(
+            context,
+            schedule,
+            admission_workspace,
+            &program,
+            admission_result
+        );
+        if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+            memset(result, 0, sizeof(*result));
+            return 0;
+        }
+        if (*admission_status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+            return -1;
+        }
+    }
     *result = (ShadowSpillSimulationResult){
         .task_intervals = workspace->tasks,
         .task_interval_capacity = workspace->task_capacity,
@@ -460,7 +486,8 @@ static ShadowSpillSimulationStatus simulate_schedule(
         .device_peaks = workspace->peaks,
         .device_peak_capacity = workspace->device_capacity,
     };
-    return shadowspill_simulate(&program, result);
+    (void)shadowspill_simulate(&program, result);
+    return 0;
 }
 
 static int candidate_workspace_create(
@@ -503,6 +530,10 @@ static int candidate_workspace_create(
             context,
             &workspace->simulation
         ) != 0 ||
+        (context->admission != NULL &&
+         shadowspill_candidate_admission_workspace_create(
+             context, &workspace->admission
+         ) != 0) ||
         shadowspill_residency_workspace_create(
             context->residency,
             &workspace->residency_workspace
@@ -524,6 +555,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
     simulation_workspace_destroy(&workspace->simulation);
+    shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
     for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
         free(workspace->residency_cache.entries[index].extra_pressure);
@@ -942,6 +974,8 @@ static int dense_schedule_equal(
 static SimulationCacheEntry *append_simulation_cache(
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *result,
+    ShadowSpillAdmissionReplayStatus admission_status,
+    const ShadowSpillAdmissionReplayResult *admission,
     uint64_t hash
 ) {
     SimulationCache *cache = &workspace->simulation_cache;
@@ -970,6 +1004,12 @@ static SimulationCacheEntry *append_simulation_cache(
         return NULL;
     }
     entry->result = *result;
+    entry->admission_status = (uint32_t)admission_status;
+    entry->admission = *admission;
+    entry->admission.decisions = NULL;
+    entry->admission.dependencies = NULL;
+    entry->admission.decision_capacity = 0U;
+    entry->admission.dependency_capacity = 0U;
     entry->hash = hash;
     entry->result.task_intervals = NULL;
     entry->result.transfer_intervals = NULL;
@@ -996,6 +1036,8 @@ static int simulate_cached(
     const ShadowSpillPressureFitContext *context,
     CandidateWorkspace *workspace,
     ShadowSpillSimulationResult *result,
+    ShadowSpillAdmissionReplayStatus *admission_status,
+    ShadowSpillAdmissionReplayResult *admission_result,
     SimulationCacheEntry **selected_entry
 ) {
     SimulationCache *cache = &workspace->simulation_cache;
@@ -1011,6 +1053,9 @@ static int simulate_cached(
                 &workspace->schedule.value
             )) {
             *result = entry->result;
+            *admission_status =
+                (ShadowSpillAdmissionReplayStatus)entry->admission_status;
+            *admission_result = entry->admission;
             *selected_entry = entry;
             ++workspace->simulation_cache_hits;
             return 0;
@@ -1021,12 +1066,19 @@ static int simulate_cached(
             context,
             &workspace->schedule.value,
             &workspace->simulation,
-            result
-        ) == SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE) {
+            &workspace->admission,
+            result,
+            admission_status,
+            admission_result
+        ) != 0) {
         return -1;
     }
-    ++workspace->simulation_calls;
-    *selected_entry = append_simulation_cache(workspace, result, hash);
+    if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_OK) {
+        ++workspace->simulation_calls;
+    }
+    *selected_entry = append_simulation_cache(
+        workspace, result, *admission_status, admission_result, hash
+    );
     return *selected_entry == NULL ? -1 : 0;
 }
 
@@ -1292,12 +1344,17 @@ static int evaluate_candidate(
         }
 
         ShadowSpillSimulationResult simulation;
+        ShadowSpillAdmissionReplayStatus admission_status =
+            SHADOWSPILL_ADMISSION_REPLAY_OK;
+        ShadowSpillAdmissionReplayResult admission_result = {0};
         SimulationCacheEntry *simulation_entry = NULL;
         uint64_t simulation_started = monotonic_time_ns();
         if (simulate_cached(
                 context,
                 workspace,
                 &simulation,
+                &admission_status,
+                &admission_result,
                 &simulation_entry
             ) != 0) {
             return -1;
@@ -1306,6 +1363,24 @@ static int evaluate_candidate(
             monotonic_time_ns() - simulation_started;
         ShadowSpillSimulationStatus simulation_status =
             (ShadowSpillSimulationStatus)simulation.status;
+        if (admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+            diagnostic->status = SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+            diagnostic->error_device = 0U;
+            diagnostic->error_capacity_bytes =
+                context->admission->pool_capacity_bytes;
+            diagnostic->error_used_bytes =
+                context->admission->pool_capacity_bytes -
+                admission_result.error_free_bytes;
+            diagnostic->error_requested_bytes =
+                admission_result.error_requested_bytes;
+            diagnostic->error_required_bytes =
+                admission_result.error_requested_bytes >
+                    admission_result.error_largest_free_range_bytes
+                ? admission_result.error_requested_bytes -
+                    admission_result.error_largest_free_range_bytes
+                : 0U;
+            return 0;
+        }
         if (simulation_status == SHADOWSPILL_SIMULATION_OK) {
             diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
             diagnostic->makespan_ns = simulation.makespan_ns;
@@ -1547,9 +1622,11 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
     result->schedule_cache_hits = workspace.schedule_cache_hits;
     result->simulation_calls = workspace.simulation_calls;
     result->simulation_cache_hits = workspace.simulation_cache_hits;
+    result->admission_calls = workspace.admission.calls;
     result->residency_time_ns = workspace.residency_time_ns;
     result->schedule_time_ns = workspace.schedule_time_ns;
     result->simulation_time_ns = workspace.simulation_time_ns;
+    result->admission_time_ns = workspace.admission.time_ns;
     result->digest_time_ns = workspace.digest_time_ns;
     shadowspill_schedule_facts_destroy(&facts);
     candidate_workspace_destroy(&workspace);

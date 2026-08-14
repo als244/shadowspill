@@ -776,6 +776,16 @@ static ShadowSpillPlannerStatus prepare_context(
     if (status != SHADOWSPILL_PLANNER_OK) {
         return status;
     }
+    if (source->admission != NULL) {
+        if (program->device_count != 1U ||
+            source->admission->object_capacity_bytes == 0U ||
+            source->admission->object_capacity_bytes >
+                source->admission->pool_capacity_bytes) {
+            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        }
+        prepared->device_capacity_bytes[0] =
+            source->admission->object_capacity_bytes;
+    }
     status = finalize_alias_facts(program, prepared);
     if (status != SHADOWSPILL_PLANNER_OK) {
         return status;
@@ -820,6 +830,7 @@ static ShadowSpillPlannerStatus prepare_context(
         .simulation = program,
         .seed_resident = prepared->seed_resident,
         .seed_breaks = prepared->seed_breaks,
+        .admission = source->admission,
         .alias_json_names = source->alias_json_names,
         .task_json_names = source->task_json_names,
     };

@@ -20,6 +20,7 @@ from shadowspill.simulator._diagnostics import (
     simulation_status_kind,
 )
 
+from ._admission import CompiledAdmissionTopology
 from ._capi import (
     ABI_VERSION,
     NO_INDEX,
@@ -111,9 +112,11 @@ class NativeContextResult:
     schedule_cache_hits: int
     simulation_calls: int
     simulation_cache_hits: int
+    admission_calls: int
     residency_time_ns: int
     schedule_time_ns: int
     simulation_time_ns: int
+    admission_time_ns: int
     digest_time_ns: int
 
 
@@ -151,6 +154,23 @@ def decode_candidate_diagnostic(
             selection_id=selection_id,
             status="infeasible",
             failure_kind="analytic_capacity",
+            failure_detail=detail,
+            repair_attempts=value.repair_attempts,
+        )
+    if value.status == 3:
+        device_id = simulation.device_ids[value.error_device]
+        detail = (
+            "dynamic MemoryPool admission cannot place a compatible range: "
+            f"device={device_id!r}, capacity={value.error_capacity_bytes}, "
+            f"used={value.error_used_bytes}, "
+            f"request={value.error_requested_bytes}, "
+            f"additional_slack={value.error_required_bytes}"
+        )
+        return CandidateDiagnostic(
+            candidate_id=value.candidate_id,
+            selection_id=selection_id,
+            status="infeasible",
+            failure_kind="physical_admission",
             failure_detail=detail,
             repair_attempts=value.repair_attempts,
         )
@@ -268,6 +288,7 @@ def _evaluate_native_context(
     options: PressureFitOptions,
     *,
     residency: CompiledResidencyTemplate | None,
+    admission: CompiledAdmissionTopology | None,
 ) -> NativeContextResult | None:
     """Invoke and decode either compiled context-entry path."""
 
@@ -302,6 +323,11 @@ def _evaluate_native_context(
                 simulation=ctypes.pointer(simulation.program),
                 seed_resident=residency.seed_resident,
                 seed_breaks=residency.seed_breaks,
+                admission=(
+                    ctypes.pointer(admission.value)
+                    if admission is not None
+                    else None
+                ),
                 alias_json_names=alias_names,
                 task_json_names=task_names,
             )
@@ -325,6 +351,9 @@ def _evaluate_native_context(
             abi_version=ABI_VERSION,
             simulation=ctypes.pointer(simulation.program),
             device_priority=priorities,
+            admission=(
+                ctypes.pointer(admission.value) if admission is not None else None
+            ),
             alias_json_names=alias_names,
             task_json_names=task_names,
         )
@@ -405,9 +434,11 @@ def _evaluate_native_context(
             schedule_cache_hits=int(native_result.schedule_cache_hits),
             simulation_calls=int(native_result.simulation_calls),
             simulation_cache_hits=int(native_result.simulation_cache_hits),
+            admission_calls=int(native_result.admission_calls),
             residency_time_ns=int(native_result.residency_time_ns),
             schedule_time_ns=int(native_result.schedule_time_ns),
             simulation_time_ns=int(native_result.simulation_time_ns),
+            admission_time_ns=int(native_result.admission_time_ns),
             digest_time_ns=int(native_result.digest_time_ns),
         )
     finally:
@@ -423,7 +454,9 @@ def evaluate_context_compiled(
 ) -> NativeContextResult:
     """Evaluate a caller-prepared dense context in C."""
 
-    result = _evaluate_native_context(simulation, options, residency=residency)
+    result = _evaluate_native_context(
+        simulation, options, residency=residency, admission=None
+    )
     assert result is not None
     return result
 
@@ -431,10 +464,14 @@ def evaluate_context_compiled(
 def evaluate_program_context_compiled(
     simulation: CompiledSimulationTemplate,
     options: PressureFitOptions,
+    *,
+    admission: CompiledAdmissionTopology | None = None,
 ) -> NativeContextResult | None:
     """Derive dense planning facts and evaluate the portfolio entirely in C."""
 
-    return _evaluate_native_context(simulation, options, residency=None)
+    return _evaluate_native_context(
+        simulation, options, residency=None, admission=admission
+    )
 
 
 __all__ = [

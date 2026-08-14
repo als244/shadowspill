@@ -13,6 +13,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
+    AdmissionTopology,
     PressureFitInfeasibleError,
     PressureFitResult,
     validate_schedule_feasibility,
@@ -90,6 +91,7 @@ from ..partition import (
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
     SelectedAdmission,
+    build_admission_topology,
     build_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
@@ -503,13 +505,36 @@ def build_training_programs(
         _report_training_program_inventory(recurrent, timer)
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
+        execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
+            memory, profiled.profiles
+        )
+
+        def admission_for(lowered: LoweredTrainingProgram) -> AdmissionTopology:
+            return build_admission_topology(
+                lowered.program,
+                execution_pool_bytes=execution_pool_bytes,
+                object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
+                output_bindings=output_bindings_for_entrypoints(
+                    lowered.program.tasks,
+                    lowered.entrypoints,
+                    {
+                        item.object_id: item.alias_group_id
+                        for item in lowered.program.objects
+                    },
+                ),
+            )
+
+        initial_admission = admission_for(initial)
+        recurrent_admission = admission_for(recurrent)
     return TrainingProgramArtifacts(
-        initial,
-        recurrent,
-        measurements,
-        measurements_by_profile,
-        reserve,
-        simulation_config,
+        initial=initial,
+        recurrent=recurrent,
+        measurements=measurements,
+        measurements_by_profile=measurements_by_profile,
+        workspace_reserve=reserve,
+        simulation_config=simulation_config,
+        initial_admission=initial_admission,
+        recurrent_admission=recurrent_admission,
     )
 
 
@@ -618,6 +643,7 @@ def pressurefit_training_programs(
                 initial_residency=programs.recurrent.initial_residency,
                 final_residency=programs.recurrent.final_residency,
                 config=programs.simulation_config,
+                admission=programs.recurrent_admission,
             )
             if needs_initial:
                 validate_schedule_feasibility(
@@ -625,6 +651,7 @@ def pressurefit_training_programs(
                     initial_residency=programs.initial.initial_residency,
                     final_residency=programs.initial.final_residency,
                     config=programs.simulation_config,
+                    admission=programs.initial_admission,
                 )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
@@ -635,6 +662,7 @@ def pressurefit_training_programs(
                 initial_residency=programs.recurrent.initial_residency,
                 final_residency=programs.recurrent.final_residency,
                 config=programs.simulation_config,
+                admission=programs.recurrent_admission,
                 progress=timer.progress,
             )
             initial = (
@@ -643,6 +671,7 @@ def pressurefit_training_programs(
                     initial_residency=programs.initial.initial_residency,
                     final_residency=programs.initial.final_residency,
                     config=programs.simulation_config,
+                    admission=programs.initial_admission,
                     progress=timer.progress,
                 )
                 if needs_initial
@@ -1145,9 +1174,17 @@ def _build_training_admissions(
     memory: PlanMemory,
     timer: PlanningTimer,
 ) -> tuple[SelectedAdmission, ...]:
-    pairs = [(programs.recurrent, selections.recurrent.result)]
+    pairs = [
+        (
+            programs.recurrent,
+            selections.recurrent.result,
+            programs.recurrent_admission,
+        )
+    ]
     if selections.initial is not None:
-        pairs.append((programs.initial, selections.initial.result))
+        pairs.append(
+            (programs.initial, selections.initial.result, programs.initial_admission)
+        )
     with timer.measure("slab_admission"):
         try:
             return tuple(
@@ -1158,6 +1195,7 @@ def _build_training_admissions(
                         memory.execution_budget
                         - fixed_execution_bytes(memory, profiled.profiles)
                     ),
+                    topology=topology,
                     output_bindings=output_bindings_for_entrypoints(
                         selected.program.selected_tasks(selected.selections),
                         lowered.entrypoints,
@@ -1167,7 +1205,7 @@ def _build_training_admissions(
                         },
                     ),
                 )
-                for lowered, selected in pairs
+                for lowered, selected, topology in pairs
             )
         except RuntimeAdmissionError as exc:
             raise AdmissionError(f"dynamic slab admission failed: {exc}") from exc

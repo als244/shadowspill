@@ -22,6 +22,7 @@ from shadowspill.ir import (
     RecomputationSelection,
     TaskSpec,
 )
+from shadowspill.planner import AdmissionTopology, StorageHandoff
 from shadowspill.runtime import (
     AdmissionReplayOperation as PoolAdmissionOperation,
 )
@@ -32,7 +33,7 @@ from shadowspill.runtime import (
     run_admission_replay,
 )
 
-from .bindings import TaskOutputBinding
+from .bindings import TaskOutputBinding, build_admission_topology
 
 
 class AdmissionReplayPurpose(StrEnum):
@@ -132,22 +133,18 @@ class _AdmissionScriptBuilder:
         program: Program,
         schedule: MemorySchedule,
         selections: tuple[RecomputationSelection, ...],
-        bindings_by_task: Mapping[str, tuple[TaskOutputBinding, ...]],
-        alignment: int,
+        topology: AdmissionTopology,
     ) -> None:
         self.program = program
         self.schedule = schedule
         self.tasks = program.selected_tasks(selections)
-        self.bindings_by_task = bindings_by_task
-        self.alignment = alignment
+        self.admission_by_task = {item.task_id: item for item in topology.tasks}
+        self.alignment = topology.minimum_alignment
         self.alias_size = {
             alias.alias_group_id: alias.size_bytes for alias in program.alias_groups
         }
         self.alias_by_object = {
             item.object_id: item.alias_group_id for item in program.objects
-        }
-        self.profile_by_id = {
-            profile.profile_id: profile for profile in program.profiles
         }
         self.actions_by_task = self._index_actions()
         self.operations: list[AdmissionReplayStep] = []
@@ -210,15 +207,11 @@ class _AdmissionScriptBuilder:
 
     def _apply_task(self, task: TaskSpec) -> None:
         self._validate_task_inputs(task)
-        bindings = self.bindings_by_task.get(task.task_id, ())
-        handoffs = tuple(
-            binding for binding in bindings if binding.source_alias_group_id is not None
-        )
-        replacements = tuple(binding for binding in bindings if binding.replacement)
-        replacement_aliases = {binding.alias_group_id for binding in replacements}
-        handoff_aliases = {binding.alias_group_id for binding in handoffs}
-
-        workspace_bytes = self._workspace_bytes(task, replacements)
+        admission = self.admission_by_task[task.task_id]
+        handoffs = admission.storage_handoffs
+        replacements = admission.replacement_aliases
+        replacement_aliases = set(replacements)
+        workspace_bytes = admission.workspace_bytes
         self.workspace_bytes_by_task.append((task.task_id, workspace_bytes))
         workspace_lease = (
             None
@@ -233,14 +226,11 @@ class _AdmissionScriptBuilder:
         )
 
         new_alias_leases: dict[str, int] = {}
-        for alias_id in self._fresh_output_aliases(
-            task, bindings, replacement_aliases, handoff_aliases
-        ):
+        for alias_id in admission.fresh_output_aliases:
             new_alias_leases[alias_id] = self._acquire_alias(
                 task.task_id, alias_id, AdmissionReplayPurpose.TASK_OUTPUT
             )
-        for binding in replacements:
-            alias_id = binding.alias_group_id
+        for alias_id in replacements:
             if self.alias_size[alias_id] == 0:
                 continue
             if alias_id not in self.active_aliases:
@@ -293,47 +283,6 @@ class _AdmissionScriptBuilder:
                 f"task {task.task_id} starts without execution aliases {missing}"
             )
 
-    def _workspace_bytes(
-        self,
-        task: TaskSpec,
-        replacements: tuple[TaskOutputBinding, ...],
-    ) -> int:
-        profile_bytes = self.profile_by_id[task.profile_id].workspace_bytes
-        replacement_bytes = sum(
-            self.alias_size[alias_id]
-            for alias_id in dict.fromkeys(
-                binding.alias_group_id for binding in replacements
-            )
-        )
-        if replacement_bytes > profile_bytes:
-            raise ValueError(
-                f"task {task.task_id} replacement bytes exceed its workspace "
-                f"charge: replacements={replacement_bytes}, "
-                f"workspace={profile_bytes}"
-            )
-        return profile_bytes - replacement_bytes
-
-    def _fresh_output_aliases(
-        self,
-        task: TaskSpec,
-        bindings: tuple[TaskOutputBinding, ...],
-        replacement_aliases: set[str],
-        handoff_aliases: set[str],
-    ) -> tuple[str, ...]:
-        result = dict.fromkeys(
-            self.alias_by_object[object_id] for object_id in task.outputs
-        )
-        for binding in bindings:
-            if not binding.replacement and binding.source_alias_group_id is None:
-                result.setdefault(binding.alias_group_id, None)
-        return tuple(
-            alias_id
-            for alias_id in result
-            if alias_id not in replacement_aliases
-            and alias_id not in handoff_aliases
-            and self.alias_size[alias_id] != 0
-        )
-
     def _acquire_alias(
         self,
         task_id: str,
@@ -348,30 +297,30 @@ class _AdmissionScriptBuilder:
     def _publish_handoffs(
         self,
         task_id: str,
-        handoffs: tuple[TaskOutputBinding, ...],
+        handoffs: tuple[StorageHandoff, ...],
     ) -> None:
-        for binding in handoffs:
-            source = binding.source_alias_group_id
-            assert source is not None
-            if self.alias_size[binding.alias_group_id] == 0:
+        for handoff in handoffs:
+            source = handoff.source_alias_group_id
+            destination = handoff.destination_alias_group_id
+            if self.alias_size[destination] == 0:
                 continue
             if source not in self.active_aliases:
                 raise ValueError(
                     f"task {task_id} hands off nonresident alias {source!r}"
                 )
-            if binding.alias_group_id in self.active_aliases:
+            if destination in self.active_aliases:
                 raise ValueError(
                     f"task {task_id} handoff destination "
-                    f"{binding.alias_group_id!r} is already resident"
+                    f"{destination!r} is already resident"
                 )
             lease_id = self.active_aliases.pop(source)
-            self.active_aliases[binding.alias_group_id] = lease_id
+            self.active_aliases[destination] = lease_id
             self.handoff_releases.add((task_id, source))
             self.ownership_transitions.append(
                 OwnershipTransition(
                     task_id,
                     OwnershipTransitionKind.STORAGE_HANDOFF,
-                    binding.alias_group_id,
+                    destination,
                     lease_id,
                     source_alias_group_id=source,
                     source_lease_id=lease_id,
@@ -381,11 +330,10 @@ class _AdmissionScriptBuilder:
     def _publish_replacements(
         self,
         task_id: str,
-        replacements: tuple[TaskOutputBinding, ...],
+        replacements: tuple[str, ...],
         new_alias_leases: Mapping[str, int],
     ) -> None:
-        for binding in replacements:
-            alias_id = binding.alias_group_id
+        for alias_id in replacements:
             if self.alias_size[alias_id] == 0:
                 continue
             old_lease = self.active_aliases[alias_id]
@@ -575,6 +523,7 @@ def replay_admission(
     *,
     execution_pool_bytes: int,
     selections: tuple[RecomputationSelection, ...] = (),
+    topology: AdmissionTopology | None = None,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
     alignment: int = 256,
 ) -> AdmissionReplay:
@@ -585,12 +534,25 @@ def replay_admission(
     if alignment <= 0:
         raise ValueError("admission replay alignment must be positive")
     schedule.validate(program, selections)
+    selected_topology = topology or build_admission_topology(
+        program,
+        execution_pool_bytes=execution_pool_bytes,
+        object_capacity_bytes=execution_pool_bytes,
+        output_bindings=output_bindings,
+        alignment=alignment,
+    )
+    selected_topology.validate(program)
+    if selected_topology.pool_capacity_bytes != execution_pool_bytes:
+        raise ValueError(
+            "admission topology and replay capacities differ: "
+            f"topology={selected_topology.pool_capacity_bytes}, "
+            f"replay={execution_pool_bytes}"
+        )
     builder = _AdmissionScriptBuilder(
         program,
         schedule,
         selections,
-        dict(output_bindings or {}),
-        alignment,
+        selected_topology,
     )
     (
         annotated_operations,
@@ -603,11 +565,11 @@ def replay_admission(
     ) = builder.build()
     operations = tuple(item.operation for item in annotated_operations)
     pool = run_admission_replay(
-        execution_pool_bytes,
+        selected_topology.pool_capacity_bytes,
         operations,
         lease_count=lease_count,
         dependency_count=dependency_count,
-        minimum_alignment=alignment,
+        minimum_alignment=selected_topology.minimum_alignment,
     )
     pending_by_lease = {item.lease_id: item for item in pending_evictions}
     provenance_by_lease = builder.lease_provenance

@@ -167,6 +167,7 @@ class SimulationAdmission:
     """Timing-independent physical admission facts consumed by simulation."""
 
     initial_physical_bytes: tuple[tuple[str, int], ...]
+    device_capacity_bytes: tuple[tuple[str, int], ...] = ()
     task_deltas: tuple[TaskPhysicalDelta, ...] = ()
     action_deltas: tuple[ActionPhysicalDelta, ...] = ()
     reuse_dependencies: tuple[MemoryReuseDependency, ...] = ()
@@ -179,6 +180,20 @@ class SimulationAdmission:
                     "initial physical device IDs must be normalized strings"
                 )
             _require_non_negative(bytes_, "initial physical bytes")
+        _validate_unique_pairs(self.device_capacity_bytes, "device_capacity_bytes")
+        for device_id, bytes_ in self.device_capacity_bytes:
+            if not device_id or device_id.strip() != device_id:
+                raise ValueError(
+                    "admission capacity device IDs must be normalized strings"
+                )
+            _require_positive(bytes_, "admission device capacity bytes")
+        if self.device_capacity_bytes and {
+            item[0] for item in self.device_capacity_bytes
+        } != {item[0] for item in self.initial_physical_bytes}:
+            raise ValueError(
+                "admission device capacities and initial physical bytes must "
+                "name the same devices"
+            )
         _validate_unique_values(
             tuple(item.task_id for item in self.task_deltas), "task_deltas"
         )

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from shadowspill.ir import Program, ResidencySpec
-from shadowspill.planner import PressureFitOptions
+from shadowspill.planner import AdmissionTopology, PressureFitOptions
 from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileRepository
@@ -74,6 +74,7 @@ class PlanningArtifactRepositories:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
+        admission: AdmissionTopology | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated selection, running PressureFit only on a miss."""
@@ -85,6 +86,7 @@ class PlanningArtifactRepositories:
             final_residency=final_residency,
             config=config,
             options=options,
+            admission=admission,
             progress=progress,
         )
 

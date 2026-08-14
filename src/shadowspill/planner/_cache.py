@@ -19,7 +19,17 @@ from shadowspill.ir import (
     ResidencySpec,
 )
 from shadowspill.simulator import SimulationConfig, simulate
+from shadowspill.simulator._compiled import (
+    compile_simulation_template,
+    simulate_compiled_template,
+)
 
+from ._admission import (
+    compile_admission_topology,
+    encode_schedule,
+    evaluate_schedule_admission,
+)
+from .admission import AdmissionTopology
 from .model import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
@@ -28,7 +38,7 @@ from .model import (
 )
 from .pressurefit import pressurefit
 
-_SCHEMA = "shadowspill.pressurefit_selection/v3"
+_SCHEMA = "shadowspill.pressurefit_selection/v4"
 
 
 class _ArtifactRecorder(Protocol):
@@ -86,6 +96,7 @@ class PressureFitCache:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
+        admission: AdmissionTopology | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated cached selection or run unmodified PressureFit."""
@@ -97,6 +108,7 @@ class PressureFitCache:
             final_residency,
             config,
             selected_options,
+            admission,
         )
         cached = (
             self._read(
@@ -106,6 +118,7 @@ class PressureFitCache:
                 final_residency,
                 config,
                 selected_options,
+                admission,
             )
             if self.read_enabled
             else None
@@ -118,9 +131,10 @@ class PressureFitCache:
             final_residency=final_residency,
             config=config,
             options=selected_options,
+            admission=admission,
             progress=progress,
         )
-        self._write(key, result)
+        self._write(key, result, admission)
         return CachedPressureFitResult(result, False)
 
     def _read(
@@ -131,6 +145,7 @@ class PressureFitCache:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions,
+        admission: AdmissionTopology | None,
     ) -> PressureFitResult | None:
         path = self.path(key)
         try:
@@ -153,6 +168,7 @@ class PressureFitCache:
                 "host_capacity_bytes": config.host_capacity_bytes,
             },
             "options": _options_identity(options),
+            "admission_digest": admission.digest if admission is not None else None,
         }
         normalized_boundary = json.loads(
             json.dumps(expected_boundary, sort_keys=True, separators=(",", ":"))
@@ -171,12 +187,26 @@ class PressureFitCache:
             for index, item in enumerate(raw_selections)
         )
         schedule.validate(program, selections)
-        simulation = simulate(
-            program,
-            schedule,
-            selections=selections,
-            config=config,
-        )
+        if admission is None:
+            simulation = simulate(
+                program,
+                schedule,
+                selections=selections,
+                config=config,
+            )
+        else:
+            template = compile_simulation_template(program, selections, config)
+            compiled_admission = compile_admission_topology(admission, template)
+            physical = evaluate_schedule_admission(
+                template,
+                compiled_admission,
+                encode_schedule(schedule, template),
+            )
+            simulation = simulate_compiled_template(
+                template,
+                schedule,
+                admission=physical.simulation_admission,
+            )
         diagnostics = _diagnostics_from_value(value.get("diagnostics"), path)
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
             raise ValueError(
@@ -196,7 +226,12 @@ class PressureFitCache:
         self._record(key, program.digest, path, "read")
         return result
 
-    def _write(self, key: str, result: PressureFitResult) -> None:
+    def _write(
+        self,
+        key: str,
+        result: PressureFitResult,
+        admission: AdmissionTopology | None,
+    ) -> None:
         if not self.write_enabled:
             return
         path = self.path(key)
@@ -212,6 +247,7 @@ class PressureFitCache:
                 "host_capacity_bytes": result.simulation_config.host_capacity_bytes,
             },
             "options": _options_identity(result.options),
+            "admission_digest": admission.digest if admission is not None else None,
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
             "diagnostics": asdict(result.diagnostics),
@@ -272,6 +308,7 @@ def _key(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
+    admission: AdmissionTopology | None,
 ) -> str:
     payload = {
         "schema": _SCHEMA,
@@ -283,6 +320,7 @@ def _key(
             "host_capacity_bytes": config.host_capacity_bytes,
         },
         "options": _options_identity(options),
+        "admission_digest": admission.digest if admission is not None else None,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

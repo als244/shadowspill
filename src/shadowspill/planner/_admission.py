@@ -1,0 +1,362 @@
+"""Dense one-time projection of admission topology for the C planner."""
+
+from __future__ import annotations
+
+import ctypes
+from array import array
+from dataclasses import dataclass
+from typing import Protocol
+
+from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule
+from shadowspill.simulator import (
+    ActionPhysicalDelta,
+    MemoryReuseDependency,
+    SimulationAdmission,
+    TaskPhysicalDelta,
+)
+from shadowspill.simulator._capi import NO_INDEX
+from shadowspill.simulator._compiled import CompiledSimulationTemplate
+
+from ._capi import (
+    ABI_VERSION,
+    CAdmissionTopology,
+    CDenseSchedule,
+    CScheduleAdmissionResult,
+    load_planner_library,
+)
+from .admission import AdmissionTopology
+
+
+def _u32(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
+    result_type = ctypes.c_uint32 * max(1, len(values))
+    return result_type.from_buffer_copy(array("I", values)) if values else result_type()
+
+
+def _u64(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
+    result_type = ctypes.c_uint64 * max(1, len(values))
+    return result_type.from_buffer_copy(array("Q", values)) if values else result_type()
+
+
+def _u8(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
+    result_type = ctypes.c_uint8 * max(1, len(values))
+    return result_type.from_buffer_copy(bytes(values)) if values else result_type()
+
+
+def _flatten_rows(
+    rows: tuple[tuple[int, ...], ...],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    offsets = [0]
+    flattened: list[int] = []
+    for row in rows:
+        flattened.extend(row)
+        offsets.append(len(flattened))
+    return tuple(offsets), tuple(flattened)
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledAdmissionTopology:
+    """Borrowed C topology plus Python owners for all dense arrays."""
+
+    value: CAdmissionTopology
+    buffers: tuple[object, ...]
+    digest: str
+
+
+class DenseSchedule(Protocol):
+    """Structural interface shared with the native PressureFit winner."""
+
+    @property
+    def action_trigger_tasks(self) -> tuple[int, ...]: ...
+
+    @property
+    def action_aliases(self) -> tuple[int, ...]: ...
+
+    @property
+    def action_kinds(self) -> tuple[int, ...]: ...
+
+    @property
+    def initial_aliases(self) -> tuple[int, ...]: ...
+
+    @property
+    def initial_locations(self) -> tuple[int, ...]: ...
+
+    @property
+    def final_aliases(self) -> tuple[int, ...]: ...
+
+    @property
+    def final_locations(self) -> tuple[int, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledScheduleAdmission:
+    """Exact physical projection for one selected dense schedule."""
+
+    simulation_admission: SimulationAdmission
+    decision_digest: int
+    peak_allocated_bytes: int
+    peak_reserved_bytes: int
+    peak_fragmentation_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class EncodedDenseSchedule:
+    """Dense schedule projection accepted by compiled planner helpers."""
+
+    action_trigger_tasks: tuple[int, ...]
+    action_aliases: tuple[int, ...]
+    action_kinds: tuple[int, ...]
+    initial_aliases: tuple[int, ...]
+    initial_locations: tuple[int, ...]
+    final_aliases: tuple[int, ...]
+    final_locations: tuple[int, ...]
+
+
+_ACTION_KIND = {
+    MemoryActionKind.RELEASE: 0,
+    MemoryActionKind.OFFLOAD: 1,
+    MemoryActionKind.PREFETCH: 2,
+}
+_LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.HOST: 1}
+
+
+def encode_schedule(
+    schedule: MemorySchedule,
+    simulation: CompiledSimulationTemplate,
+) -> EncodedDenseSchedule:
+    """Encode one public schedule against an immutable compiled topology."""
+
+    return EncodedDenseSchedule(
+        action_trigger_tasks=tuple(
+            simulation.task_index[item.trigger_task_id]
+            for item in schedule.actions
+        ),
+        action_aliases=tuple(
+            simulation.alias_index[item.alias_group_id]
+            for item in schedule.actions
+        ),
+        action_kinds=tuple(_ACTION_KIND[item.kind] for item in schedule.actions),
+        initial_aliases=tuple(
+            simulation.alias_index[item.alias_group_id]
+            for item in schedule.initial_residency
+        ),
+        initial_locations=tuple(
+            _LOCATION[item.location] for item in schedule.initial_residency
+        ),
+        final_aliases=tuple(
+            simulation.alias_index[item.alias_group_id]
+            for item in schedule.final_residency
+        ),
+        final_locations=tuple(
+            _LOCATION[item.location] for item in schedule.final_residency
+        ),
+    )
+
+
+def compile_admission_topology(
+    topology: AdmissionTopology,
+    simulation: CompiledSimulationTemplate,
+) -> CompiledAdmissionTopology:
+    """Project only tasks selected by one recomputation context."""
+
+    if topology.device_id not in simulation.device_ids:
+        raise ValueError(
+            f"admission device {topology.device_id!r} is absent from simulation"
+        )
+    by_task = {item.task_id: item for item in topology.tasks}
+    try:
+        tasks = tuple(by_task[item] for item in simulation.task_ids)
+    except KeyError as exc:
+        raise ValueError(
+            f"admission topology lacks selected task {exc.args[0]!r}"
+        ) from exc
+    alias_index = simulation.alias_index
+    fresh_rows = tuple(
+        tuple(alias_index[item] for item in task.fresh_output_aliases)
+        for task in tasks
+    )
+    replacement_rows = tuple(
+        tuple(alias_index[item] for item in task.replacement_aliases)
+        for task in tasks
+    )
+    handoff_source_rows = tuple(
+        tuple(alias_index[item.source_alias_group_id] for item in task.storage_handoffs)
+        for task in tasks
+    )
+    handoff_destination_rows = tuple(
+        tuple(
+            alias_index[item.destination_alias_group_id]
+            for item in task.storage_handoffs
+        )
+        for task in tasks
+    )
+    fresh_offsets, fresh = _flatten_rows(fresh_rows)
+    replacement_offsets, replacements = _flatten_rows(replacement_rows)
+    handoff_offsets, handoff_sources = _flatten_rows(handoff_source_rows)
+    _, handoff_destinations = _flatten_rows(handoff_destination_rows)
+    buffers = (
+        _u64(tuple(item.workspace_bytes for item in tasks)),
+        _u32(fresh_offsets),
+        _u32(fresh),
+        _u32(replacement_offsets),
+        _u32(replacements),
+        _u32(handoff_offsets),
+        _u32(handoff_sources),
+        _u32(handoff_destinations),
+    )
+    value = CAdmissionTopology(
+        abi_version=ABI_VERSION,
+        task_count=len(tasks),
+        alias_count=len(simulation.alias_ids),
+        pool_capacity_bytes=topology.pool_capacity_bytes,
+        object_capacity_bytes=topology.object_capacity_bytes,
+        minimum_alignment=topology.minimum_alignment,
+        task_workspace_bytes=buffers[0],
+        fresh_output_offsets=buffers[1],
+        fresh_output_aliases=buffers[2],
+        replacement_offsets=buffers[3],
+        replacement_aliases=buffers[4],
+        handoff_offsets=buffers[5],
+        handoff_source_aliases=buffers[6],
+        handoff_destination_aliases=buffers[7],
+    )
+    return CompiledAdmissionTopology(value, buffers, topology.digest)
+
+
+def evaluate_schedule_admission(
+    simulation: CompiledSimulationTemplate,
+    admission: CompiledAdmissionTopology,
+    schedule: DenseSchedule,
+) -> CompiledScheduleAdmission:
+    """Evaluate one selected schedule through compiled production-pool policy."""
+
+    action_count = len(schedule.action_kinds)
+    if not (
+        len(schedule.action_trigger_tasks)
+        == len(schedule.action_aliases)
+        == action_count
+    ):
+        raise ValueError("dense admission schedule action arrays disagree")
+    action_tasks = _u32(schedule.action_trigger_tasks)
+    action_aliases = _u32(schedule.action_aliases)
+    action_kinds = _u8(schedule.action_kinds)
+    initial_aliases = _u32(schedule.initial_aliases)
+    initial_locations = _u8(schedule.initial_locations)
+    final_aliases = _u32(schedule.final_aliases)
+    final_locations = _u8(schedule.final_locations)
+    dense = CDenseSchedule(
+        action_count=action_count,
+        action_trigger_tasks=action_tasks,
+        action_aliases=action_aliases,
+        action_kinds=action_kinds,
+        initial_count=len(schedule.initial_aliases),
+        initial_aliases=initial_aliases,
+        initial_locations=initial_locations,
+        final_count=len(schedule.final_aliases),
+        final_aliases=final_aliases,
+        final_locations=final_locations,
+    )
+    task_count = len(simulation.task_ids)
+    task_start = (ctypes.c_int64 * max(1, task_count))()
+    task_completion = (ctypes.c_int64 * max(1, task_count))()
+    action_trigger = (ctypes.c_int64 * max(1, action_count))()
+    action_completion = (ctypes.c_int64 * max(1, action_count))()
+    reuse_capacity = action_count
+    reuse_predecessors = (ctypes.c_uint32 * max(1, reuse_capacity))()
+    reuse_tasks = (ctypes.c_uint32 * max(1, reuse_capacity))()
+    reuse_actions = (ctypes.c_uint32 * max(1, reuse_capacity))()
+    result = CScheduleAdmissionResult(
+        task_start_deltas=task_start,
+        task_completion_deltas=task_completion,
+        task_capacity=task_count,
+        action_trigger_deltas=action_trigger,
+        action_completion_deltas=action_completion,
+        action_capacity=action_count,
+        reuse_predecessor_actions=reuse_predecessors,
+        reuse_successor_tasks=reuse_tasks,
+        reuse_successor_actions=reuse_actions,
+        reuse_capacity=reuse_capacity,
+    )
+    library = load_planner_library()
+    status = int(
+        library.shadowspill_evaluate_schedule_admission(
+            ctypes.byref(simulation.program),
+            ctypes.byref(admission.value),
+            ctypes.byref(dense),
+            ctypes.byref(result),
+        )
+    )
+    if status != 0:
+        if status == 3:
+            raise ValueError(
+                "selected schedule failed dynamic MemoryPool admission: "
+                f"operation={int(result.error_operation_index)}, "
+                f"request={int(result.error_requested_bytes)}, "
+                f"free={int(result.error_free_bytes)}, "
+                "largest_free_range="
+                f"{int(result.error_largest_free_range_bytes)}"
+            )
+        encoded = library.shadowspill_planner_status_string(status)
+        detail = encoded.decode("utf-8") if encoded else f"planner status {status}"
+        raise RuntimeError(f"compiled schedule admission failed: {detail}")
+    dependencies: list[MemoryReuseDependency] = []
+    for index in range(int(result.reuse_count)):
+        predecessor = int(reuse_predecessors[index])
+        successor_task = int(reuse_tasks[index])
+        successor_action = int(reuse_actions[index])
+        if successor_task != NO_INDEX:
+            dependencies.append(
+                MemoryReuseDependency(
+                    predecessor,
+                    successor_task_id=simulation.task_ids[successor_task],
+                )
+            )
+        else:
+            dependencies.append(
+                MemoryReuseDependency(
+                    predecessor,
+                    successor_action_index=successor_action,
+                )
+            )
+    topology = admission.value
+    simulation_admission = SimulationAdmission(
+        initial_physical_bytes=(
+            (simulation.device_ids[0], int(result.initial_physical_bytes)),
+        ),
+        device_capacity_bytes=(
+            (simulation.device_ids[0], int(topology.pool_capacity_bytes)),
+        ),
+        task_deltas=tuple(
+            TaskPhysicalDelta(
+                task_id,
+                int(task_start[index]),
+                int(task_completion[index]),
+            )
+            for index, task_id in enumerate(simulation.task_ids)
+        ),
+        action_deltas=tuple(
+            ActionPhysicalDelta(
+                index,
+                int(action_trigger[index]),
+                int(action_completion[index]),
+            )
+            for index in range(action_count)
+        ),
+        reuse_dependencies=tuple(dependencies),
+    )
+    return CompiledScheduleAdmission(
+        simulation_admission=simulation_admission,
+        decision_digest=int(result.decision_digest),
+        peak_allocated_bytes=int(result.peak_allocated_bytes),
+        peak_reserved_bytes=int(result.peak_reserved_bytes),
+        peak_fragmentation_bytes=int(result.peak_fragmentation_bytes),
+    )
+
+
+__all__ = [
+    "CompiledAdmissionTopology",
+    "CompiledScheduleAdmission",
+    "EncodedDenseSchedule",
+    "compile_admission_topology",
+    "encode_schedule",
+    "evaluate_schedule_admission",
+]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import AdmissionTopology, PressureFitResult
 from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
@@ -64,6 +64,7 @@ def admit_selected_schedule(
     *,
     execution_pool_bytes: int,
     alignment: int = 256,
+    topology: AdmissionTopology | None = None,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
 ) -> AdmissionReplay:
     """Run timing-free cross-task admission for one selected schedule."""
@@ -73,6 +74,7 @@ def admit_selected_schedule(
         selected.schedule,
         execution_pool_bytes=execution_pool_bytes,
         selections=selected.selections,
+        topology=topology,
         output_bindings=output_bindings,
         alignment=alignment,
     )
@@ -84,6 +86,7 @@ def build_selected_admission(
     *,
     execution_pool_bytes: int,
     alignment: int = 256,
+    topology: AdmissionTopology | None = None,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
 ) -> SelectedAdmission:
     """Combine cross-task admission with fail-closed task envelopes."""
@@ -92,6 +95,7 @@ def build_selected_admission(
         selected,
         execution_pool_bytes=execution_pool_bytes,
         alignment=alignment,
+        topology=topology,
         output_bindings=output_bindings,
     )
     simulation_admission = simulation_admission_from_replay(
@@ -99,6 +103,7 @@ def build_selected_admission(
         selected.program,
         selected.schedule,
         selections=selected.selections,
+        device_capacity_bytes=execution_pool_bytes,
     )
     return SelectedAdmission(
         admission=admission,

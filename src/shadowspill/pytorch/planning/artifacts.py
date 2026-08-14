@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils._pytree import TreeSpec
 
 from shadowspill.ir import ExecutionPlan
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import AdmissionTopology, PressureFitResult
 from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
@@ -73,6 +73,7 @@ class ForwardProgramArtifacts:
     measurements_by_profile: dict[str, TaskMeasurement]
     workspace_reserve: int
     simulation_config: SimulationConfig
+    admission: AdmissionTopology
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,8 @@ class TrainingProgramArtifacts:
     measurements_by_profile: dict[str, TaskMeasurement]
     workspace_reserve: int
     simulation_config: SimulationConfig
+    initial_admission: AdmissionTopology
+    recurrent_admission: AdmissionTopology
 
 
 @dataclass(frozen=True, slots=True)

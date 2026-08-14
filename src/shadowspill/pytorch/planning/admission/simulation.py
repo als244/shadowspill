@@ -32,6 +32,7 @@ def simulation_admission_from_replay(
     schedule: MemorySchedule,
     *,
     selections: tuple[RecomputationSelection, ...] = (),
+    device_capacity_bytes: int | None = None,
 ) -> SimulationAdmission:
     """Project exact pool deltas onto task and action timing boundaries."""
 
@@ -92,6 +93,11 @@ def simulation_admission_from_replay(
     )
     result = SimulationAdmission(
         initial_physical_bytes=((device_id, initial_bytes),),
+        device_capacity_bytes=(
+            ()
+            if device_capacity_bytes is None
+            else ((device_id, device_capacity_bytes),)
+        ),
         task_deltas=tuple(
             TaskPhysicalDelta(task.task_id, *task_deltas[task.task_id])
             for task in tasks

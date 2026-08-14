@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Never
 
 from shadowspill.ir import (
@@ -111,6 +111,18 @@ class _Simulator:
             item.object_id: item.alias_group_id for item in program.objects
         }
         self.device_config = {item.device_id: item for item in config.devices}
+        if admission is not None and admission.device_capacity_bytes:
+            capacities = dict(admission.device_capacity_bytes)
+            if set(capacities) != set(self.device_config):
+                raise ValueError(
+                    "simulation admission capacities must exactly match Program "
+                    f"devices; expected {sorted(self.device_config)}, "
+                    f"got {sorted(capacities)}"
+                )
+            self.device_config = {
+                device_id: replace(item, capacity_bytes=capacities[device_id])
+                for device_id, item in self.device_config.items()
+            }
         self.task_physical_deltas = {
             item.task_id: item
             for item in (() if admission is None else admission.task_deltas)

@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from shadowspill.ir import TaskSpec
+from shadowspill.ir import Program, TaskSpec
+from shadowspill.planner import AdmissionTopology, StorageHandoff, TaskAdmissionSpec
 
 from ...lowering.forward import TaskEntrypoint
 from ...lowering.training import TrainingTaskEntrypoint
@@ -81,4 +82,86 @@ def output_bindings_for_entrypoints(
     return result
 
 
-__all__ = ["TaskOutputBinding", "output_bindings_for_entrypoints"]
+def build_admission_topology(
+    program: Program,
+    *,
+    execution_pool_bytes: int,
+    object_capacity_bytes: int,
+    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+    alignment: int = 256,
+) -> AdmissionTopology:
+    """Normalize executable output ownership into planner admission facts."""
+
+    if len(program.devices) != 1:
+        raise ValueError(
+            "one admission topology currently describes one execution pool; "
+            f"Program has {len(program.devices)} devices"
+        )
+    alias_by_object = {
+        item.object_id: item.alias_group_id for item in program.objects
+    }
+    alias_size = {
+        item.alias_group_id: item.size_bytes for item in program.alias_groups
+    }
+    profile_by_id = {item.profile_id: item for item in program.profiles}
+    bindings_by_task = dict(output_bindings or {})
+    task_specs: list[TaskAdmissionSpec] = []
+    for task in program.tasks:
+        bindings = bindings_by_task.get(task.task_id, ())
+        replacements = tuple(
+            dict.fromkeys(
+                item.alias_group_id for item in bindings if item.replacement
+            )
+        )
+        handoffs = tuple(
+            StorageHandoff(item.source_alias_group_id, item.alias_group_id)
+            for item in bindings
+            if item.source_alias_group_id is not None
+        )
+        handoff_destinations = {
+            item.destination_alias_group_id for item in handoffs
+        }
+        fresh = dict.fromkeys(alias_by_object[item] for item in task.outputs)
+        for binding in bindings:
+            if not binding.replacement and binding.source_alias_group_id is None:
+                fresh.setdefault(binding.alias_group_id, None)
+        fresh_aliases = tuple(
+            alias_id
+            for alias_id in fresh
+            if alias_id not in replacements
+            and alias_id not in handoff_destinations
+            and alias_size[alias_id] != 0
+        )
+        replacement_bytes = sum(alias_size[item] for item in replacements)
+        profiled_workspace = profile_by_id[task.profile_id].workspace_bytes
+        if replacement_bytes > profiled_workspace:
+            raise ValueError(
+                f"task {task.task_id} replacement bytes exceed its workspace "
+                f"charge: replacements={replacement_bytes}, "
+                f"workspace={profiled_workspace}"
+            )
+        task_specs.append(
+            TaskAdmissionSpec(
+                task_id=task.task_id,
+                workspace_bytes=profiled_workspace - replacement_bytes,
+                fresh_output_aliases=fresh_aliases,
+                replacement_aliases=replacements,
+                storage_handoffs=handoffs,
+            )
+        )
+    topology = AdmissionTopology(
+        device_id=program.devices[0].device_id,
+        pool_capacity_bytes=execution_pool_bytes,
+        object_capacity_bytes=object_capacity_bytes,
+        minimum_alignment=alignment,
+        tasks=tuple(task_specs),
+    )
+    topology.validate(program)
+    return topology
+
+
+__all__ = [
+    "TaskOutputBinding",
+    "build_admission_topology",
+    "output_bindings_for_entrypoints",
+]

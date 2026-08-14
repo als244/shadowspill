@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 5U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 6U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -111,12 +111,36 @@ typedef struct ShadowSpillDenseSchedule {
     uint8_t *final_locations;
 } ShadowSpillDenseSchedule;
 
+/*
+ * Schedule-invariant physical ownership facts for one execution pool.
+ * Offsets have task_count + 1 entries and index the corresponding flattened
+ * alias arrays. Storage handoffs transfer a live lease from source to
+ * destination without allocating. The arrays are borrowed for evaluation.
+ */
+typedef struct ShadowSpillAdmissionTopology {
+    uint32_t abi_version;
+    uint32_t task_count;
+    uint32_t alias_count;
+    uint64_t pool_capacity_bytes;
+    uint64_t object_capacity_bytes;
+    uint64_t minimum_alignment;
+    const uint64_t *task_workspace_bytes;
+    const uint32_t *fresh_output_offsets;
+    const uint32_t *fresh_output_aliases;
+    const uint32_t *replacement_offsets;
+    const uint32_t *replacement_aliases;
+    const uint32_t *handoff_offsets;
+    const uint32_t *handoff_source_aliases;
+    const uint32_t *handoff_destination_aliases;
+} ShadowSpillAdmissionTopology;
+
 typedef struct ShadowSpillPressureFitContext {
     uint32_t abi_version;
     const ShadowSpillResidencyProblem *residency;
     const ShadowSpillSimulationProgram *simulation;
     const uint8_t *seed_resident;
     const uint8_t *seed_breaks;
+    const ShadowSpillAdmissionTopology *admission;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -144,6 +168,7 @@ typedef struct ShadowSpillPressureFitProgramContext {
     uint32_t abi_version;
     const ShadowSpillSimulationProgram *simulation;
     const uint32_t *device_priority;
+    const ShadowSpillAdmissionTopology *admission;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -154,7 +179,8 @@ typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_VALID = 0,
     SHADOWSPILL_CANDIDATE_ANALYTIC_INFEASIBLE = 1,
     SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE = 2,
-    SHADOWSPILL_CANDIDATE_INTERNAL_ERROR = 3,
+    SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE = 3,
+    SHADOWSPILL_CANDIDATE_INTERNAL_ERROR = 4,
 } ShadowSpillCandidateStatus;
 
 typedef struct ShadowSpillPressureFitCandidateDiagnostic {
@@ -192,11 +218,39 @@ typedef struct ShadowSpillPressureFitContextResult {
     uint64_t schedule_cache_hits;
     uint64_t simulation_calls;
     uint64_t simulation_cache_hits;
+    uint64_t admission_calls;
     uint64_t residency_time_ns;
     uint64_t schedule_time_ns;
     uint64_t simulation_time_ns;
+    uint64_t admission_time_ns;
     uint64_t digest_time_ns;
 } ShadowSpillPressureFitContextResult;
+
+/* Caller-owned output buffers for one selected schedule's exact admission. */
+typedef struct ShadowSpillScheduleAdmissionResult {
+    uint32_t status;
+    uint64_t decision_digest;
+    uint64_t peak_allocated_bytes;
+    uint64_t peak_reserved_bytes;
+    uint64_t peak_fragmentation_bytes;
+    uint64_t error_operation_index;
+    uint64_t error_requested_bytes;
+    uint64_t error_free_bytes;
+    uint64_t error_largest_free_range_bytes;
+    uint64_t initial_physical_bytes;
+
+    int64_t *task_start_deltas;
+    int64_t *task_completion_deltas;
+    uint32_t task_capacity;
+    int64_t *action_trigger_deltas;
+    int64_t *action_completion_deltas;
+    uint32_t action_capacity;
+    uint32_t *reuse_predecessor_actions;
+    uint32_t *reuse_successor_tasks;
+    uint32_t *reuse_successor_actions;
+    uint32_t reuse_capacity;
+    uint32_t reuse_count;
+} ShadowSpillScheduleAdmissionResult;
 
 /*
  * One fully materialized PressureFit candidate. `program` includes the
@@ -285,6 +339,14 @@ shadowspill_evaluate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
+);
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_evaluate_schedule_admission(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillDenseSchedule *schedule,
+    ShadowSpillScheduleAdmissionResult *result
 );
 
 SHADOWSPILL_PLANNER_API void

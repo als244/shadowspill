@@ -64,6 +64,7 @@ from ..partition import (
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
     SelectedAdmission,
+    build_admission_topology,
     build_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
@@ -314,12 +315,30 @@ def build_forward_program(
         )
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
+        execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
+            memory, profiled.profiles
+        )
+        output_bindings = output_bindings_for_entrypoints(
+            lowered.program.tasks,
+            lowered.entrypoints,
+            {
+                item.object_id: item.alias_group_id
+                for item in lowered.program.objects
+            },
+        )
+        admission = build_admission_topology(
+            lowered.program,
+            execution_pool_bytes=execution_pool_bytes,
+            object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
+            output_bindings=output_bindings,
+        )
     return ForwardProgramArtifacts(
-        lowered,
-        measurements,
-        measurements_by_profile,
-        reserve,
-        simulation_config,
+        lowered=lowered,
+        measurements=measurements,
+        measurements_by_profile=measurements_by_profile,
+        workspace_reserve=reserve,
+        simulation_config=simulation_config,
+        admission=admission,
     )
 
 
@@ -338,6 +357,7 @@ def pressurefit_forward_program(
                 initial_residency=program.lowered.initial_residency,
                 final_residency=program.lowered.final_residency,
                 config=program.simulation_config,
+                admission=program.admission,
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
@@ -348,6 +368,7 @@ def pressurefit_forward_program(
                 initial_residency=program.lowered.initial_residency,
                 final_residency=program.lowered.final_residency,
                 config=program.simulation_config,
+                admission=program.admission,
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
@@ -603,6 +624,7 @@ def _build_forward_admission(
                     memory.execution_budget
                     - fixed_execution_bytes(memory, profiled.profiles)
                 ),
+                topology=program.admission,
                 output_bindings=output_bindings_for_entrypoints(
                     selection.result.program.selected_tasks(
                         selection.result.selections

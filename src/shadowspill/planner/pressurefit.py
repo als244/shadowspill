@@ -33,6 +33,11 @@ from shadowspill.simulator._compiled import (
 )
 
 from ._actions import emit_schedule
+from ._admission import (
+    CompiledAdmissionTopology,
+    compile_admission_topology,
+    evaluate_schedule_admission,
+)
 from ._capi import planner_library_path
 from ._dense_residency import (
     CompiledResidencyTemplate,
@@ -56,6 +61,7 @@ from ._residency import (
     reduce_pressure,
     seed_residency,
 )
+from .admission import AdmissionTopology
 from .model import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
@@ -108,6 +114,7 @@ class _NativeSelectionContext:
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
     compiled_template: CompiledSimulationTemplate
+    compiled_admission: CompiledAdmissionTopology | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +246,7 @@ def validate_schedule_feasibility(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
+    admission: AdmissionTopology | None = None,
 ) -> None:
     """Reject irreducible capacity failures before schedule search.
 
@@ -256,6 +264,20 @@ def validate_schedule_feasibility(
         raise TypeError("final_residency must be a tuple")
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
+    if admission is not None:
+        if not isinstance(admission, AdmissionTopology):
+            raise TypeError("admission must be an AdmissionTopology")
+        admission.validate(program)
+        configured = {item.device_id: item for item in config.devices}
+        if (
+            admission.device_id not in configured
+            or configured[admission.device_id].capacity_bytes
+            != admission.object_capacity_bytes
+        ):
+            raise ValueError(
+                "feasibility capacity must equal AdmissionTopology object "
+                "capacity"
+            )
 
     failures: list[PressureFitInfeasibleError] = []
     for selections in _selection_portfolio(program):
@@ -637,6 +659,7 @@ def _build_native_contexts(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
+    admission: AdmissionTopology | None,
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
@@ -647,17 +670,23 @@ def _build_native_contexts(
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         tasks = program.selected_tasks(selections)
+        compiled_template = compile_simulation_template(
+            program,
+            selections,
+            config,
+            selected_tasks=tasks,
+            initial_residency=initial_residency,
+            final_residency=final_residency,
+        )
         contexts.append(
             _NativeSelectionContext(
                 selections=selections,
                 selection_id=_selection_id(selections),
-                compiled_template=compile_simulation_template(
-                    program,
-                    selections,
-                    config,
-                    selected_tasks=tasks,
-                    initial_residency=initial_residency,
-                    final_residency=final_residency,
+                compiled_template=compiled_template,
+                compiled_admission=(
+                    compile_admission_topology(admission, compiled_template)
+                    if admission is not None
+                    else None
                 ),
             )
         )
@@ -756,7 +785,11 @@ def _run_native_program_contexts(
     """Prepare and evaluate each selection in the compiled planner."""
 
     def evaluate(context: _NativeSelectionContext) -> NativeContextResult | None:
-        return evaluate_program_context_compiled(context.compiled_template, options)
+        return evaluate_program_context_compiled(
+            context.compiled_template,
+            options,
+            admission=context.compiled_admission,
+        )
 
     workers = _native_worker_count(options, len(contexts))
     if workers == 1:
@@ -818,7 +851,21 @@ def _finish_native_pressurefit(
     assert dense_schedule is not None
     assert context.compiled_template is not None
     schedule = decode_schedule(dense_schedule, context.compiled_template)
-    simulation = simulate_compiled_template(context.compiled_template, schedule)
+    simulation_admission = (
+        evaluate_schedule_admission(
+            context.compiled_template,
+            context.compiled_admission,
+            dense_schedule,
+        ).simulation_admission
+        if isinstance(context, _NativeSelectionContext)
+        and context.compiled_admission is not None
+        else None
+    )
+    simulation = simulate_compiled_template(
+        context.compiled_template,
+        schedule,
+        admission=simulation_admission,
+    )
     selected_diagnostic = result.candidates[candidate_index]
     public_diagnostics = PressureFitDiagnostics(
         selected_candidate_id=selected_diagnostic.candidate_id,
@@ -848,6 +895,7 @@ def pressurefit(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
+    admission: AdmissionTopology | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Plan residency, movement, and recomputation for a validated program.
@@ -865,6 +913,10 @@ def pressurefit(
         raise TypeError("final_residency must be a tuple")
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
+    if admission is not None:
+        if not isinstance(admission, AdmissionTopology):
+            raise TypeError("admission must be an AdmissionTopology")
+        admission.validate(program)
     selected_options = options or PressureFitOptions()
     portfolio = _selection_portfolio(program)
     if progress is not None:
@@ -884,6 +936,7 @@ def pressurefit(
             initial_residency,
             final_residency,
             config,
+            admission,
             portfolio=portfolio,
             progress=progress,
         )
@@ -893,6 +946,8 @@ def pressurefit(
                 selected_options,
             )
         except NativeContextPreparationError:
+            if admission is not None:
+                raise
             native_results = ()
             if progress is not None:
                 progress(

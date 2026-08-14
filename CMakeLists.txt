@@ -64,6 +64,7 @@ install(
 add_library(
   shadowspill_planner
   SHARED
+  planner/src/admission.c
   planner/src/context.c
   planner/src/digest.c
   planner/src/portfolio.c
@@ -77,6 +78,7 @@ target_include_directories(
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/planner/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/simulator/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
     $<INSTALL_INTERFACE:shadowspill/include>
   PRIVATE planner/src
 )
@@ -142,6 +144,10 @@ target_link_libraries(
   shadowspill_runtime
   PRIVATE Threads::Threads shadowspill_build_options
 )
+
+# Candidate admission deliberately reuses the production MemoryPool policy.
+# Runtime does not depend on planner, so this preserves an acyclic layering.
+target_link_libraries(shadowspill_planner PRIVATE shadowspill_runtime)
 set_target_properties(
   shadowspill_runtime
   PROPERTIES

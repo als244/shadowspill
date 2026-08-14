@@ -356,6 +356,7 @@ def _bind_schedule(
 ) -> _Projection:
     """Bind candidate-only arrays to one immutable compiled topology."""
 
+    physical_devices: ctypes.Array[CDevice] | None = None
     action_tasks = _u32_array(
         tuple(template.task_index[item.trigger_task_id] for item in schedule.actions)
     )
@@ -418,6 +419,36 @@ def _bind_schedule(
             )
         initial_physical = _u64_array(
             tuple(initial_by_device[item] for item in template.device_ids)
+        )
+        physical_capacity = dict(admission.device_capacity_bytes)
+        if physical_capacity and set(physical_capacity) != set(template.device_ids):
+            raise ValueError(
+                "simulation admission capacities must exactly match Program "
+                f"devices; expected {sorted(template.device_ids)}, "
+                f"got {sorted(physical_capacity)}"
+            )
+        physical_devices = (CDevice * len(template.device_ids))(
+            *(
+                CDevice(
+                    physical_capacity.get(
+                        device_id,
+                        int(template.program.devices[index].capacity_bytes),
+                    ),
+                    int(
+                        template.program.devices[
+                            index
+                        ].fetch_bandwidth_bytes_per_second
+                    ),
+                    int(
+                        template.program.devices[
+                            index
+                        ].evict_bandwidth_bytes_per_second
+                    ),
+                    int(template.program.devices[index].fetch_latency_ns),
+                    int(template.program.devices[index].evict_latency_ns),
+                )
+                for index, device_id in enumerate(template.device_ids)
+            )
         )
         task_start_deltas = _i64_array(
             tuple(
@@ -491,6 +522,8 @@ def _bind_schedule(
         reuse_successor_tasks = _u32_array(tuple(successor_tasks))
         reuse_successor_actions = _u32_array(tuple(successor_actions))
     c_program = CProgram.from_buffer_copy(template.program)
+    if physical_devices is not None:
+        c_program.devices = physical_devices
     c_program.action_count = len(schedule.actions)
     c_program.initial_count = len(schedule.initial_residency)
     c_program.final_count = len(schedule.final_residency)
@@ -532,6 +565,7 @@ def _bind_schedule(
             reuse_predecessors,
             reuse_successor_tasks,
             reuse_successor_actions,
+            physical_devices,
         ),
         template.task_ids,
         template.alias_ids,
