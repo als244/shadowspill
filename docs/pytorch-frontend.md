@@ -35,11 +35,12 @@ environment variables and does not patch Python or PyTorch objects.
 distinct model hierarchy whose registered tensors point directly into the
 selected runtime pool. It preserves module topology, parameter ties, buffer
 views, values, layout, and model mode without copying the registered payload
-through a second anonymous model allocation. With `release_source=False`, the
-runtime state retains the input model as its source owner. With
-`release_source=True`, ShadowSpill retains no source reference; assigning the
-result back to `model` lets Python release the old model when no other caller
-reference exists.
+through a second anonymous model allocation. `release_source=True` is the
+default and canonical behavior: ShadowSpill retains no source reference, and
+assigning the result back to `model` lets Python release the old model when no
+other caller reference exists. Set `release_source=False` only when the caller
+intentionally needs the original model and its anonymous CPU storage to remain
+available independently.
 
 `plan_forward(model, example_inputs=..., runtime=runtime, execution="device",
 spill="spill", partition="auto")` constructs forward-only execution.

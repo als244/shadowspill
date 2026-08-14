@@ -24,7 +24,7 @@ def relocate_model_state[ModelT: nn.Module](
     *,
     runtime: Runtime,
     pool: str,
-    release_source: bool = False,
+    release_source: bool = True,
 ) -> ModelT:
     """Return a model copy whose registered state resides in ``pool``.
 
@@ -32,11 +32,11 @@ def relocate_model_state[ModelT: nn.Module](
     preserving topology, ties, views, values, and metadata. Its registered
     tensors point directly into runtime-owned spill leases.
 
-    ``release_source=False`` leaves ``model`` unchanged and retains it as the
-    source owner. With ``release_source=True``, neither the returned model nor
+    The default ``release_source=True`` means neither the returned model nor
     ShadowSpill retains the input model. Assign the return value back to the
     same variable to let Python release the source when no other references
-    exist::
+    exist. Set ``release_source=False`` only when the original model must
+    remain available independently::
 
         model = relocate_model_state(
             model, runtime=runtime, pool="spill", release_source=True

@@ -16,9 +16,9 @@ def relocate_optimizer_state(
     *,
     runtime: Runtime,
     pool: str,
-    release_source: bool = False,
+    release_source: bool = True,
 ) -> torch.optim.Optimizer:
-    """Copy all currently materialized optimizer tensors into runtime objects."""
+    """Copy optimizer tensors into runtime objects and release sources by default."""
 
     relocate_tensors(
         optimizer,

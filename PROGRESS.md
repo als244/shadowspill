@@ -2452,3 +2452,11 @@ the ignored internal progress log before this tracked summary is updated.
   transition, and relocation canaries confirm one spill object per unique
   storage, no duplicate spill bytes during planning, preserved ties/views and
   numerical values, source-lifetime semantics, and complete runtime release.
+
+## 2026-08-14 — Source-releasing relocation is the default
+
+- `relocate_model_state()` and `relocate_optimizer_state()` now default
+  `release_source=True`. The opt-out remains available for callers that
+  deliberately need to retain an independent anonymous source allocation.
+- Public examples continue to spell `release_source=True` explicitly so the
+  canonical ownership transfer remains visible at the call site.

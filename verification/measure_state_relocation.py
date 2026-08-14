@@ -34,7 +34,12 @@ class Payload(nn.Module):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-mib", type=int, default=64)
-    parser.add_argument("--release-source", action="store_true")
+    parser.add_argument(
+        "--release-source",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="release the source owner after relocation (default: true)",
+    )
     parser.add_argument("--library", type=Path)
     arguments = parser.parse_args()
     if arguments.state_mib <= 0:

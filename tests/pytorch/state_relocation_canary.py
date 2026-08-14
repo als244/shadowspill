@@ -133,7 +133,6 @@ def main() -> int:
         model,
         runtime=runtime,
         pool="spill",
-        release_source=True,
     )
     relocated = persistent_state(runtime, relocated_model)
     if relocated is None:
@@ -214,7 +213,6 @@ def main() -> int:
         optimizer,
         runtime=runtime,
         pool="spill",
-        release_source=True,
     )
     externalize_optimizer_state(
         optimizer,
