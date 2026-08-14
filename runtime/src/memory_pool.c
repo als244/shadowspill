@@ -313,7 +313,9 @@ int shadowspill_memory_pool_release_lease_locked(
     ShadowSpillMemoryLease *lease
 ) {
     if (lease == NULL || lease->pool == NULL ||
-        lease->state == SHADOWSPILL_LEASE_FREE) {
+        lease->state == SHADOWSPILL_LEASE_FREE ||
+        lease->pool_previous_link == NULL ||
+        *lease->pool_previous_link != lease) {
         return -1;
     }
     ShadowSpillMemoryPool *pool = lease->pool;

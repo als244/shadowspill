@@ -59,8 +59,57 @@ static int best_fit_preserves_largest_range(void) {
     return failed ? -1 : 0;
 }
 
+static int same_stream_split_retires_cleanly(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .event_delay_nanoseconds = 100000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillAllocation original = {0};
+    ShadowSpillAllocation split = {0};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        shadowspill_allocate(runtime, 128U, 1U, compute, &original) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, original.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 64U, 1U, compute, &split) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        split.pointer != original.pointer ||
+        shadowspill_free(runtime, split.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.live_allocations != 0U ||
+        statistics.allocated_bytes != 0U ||
+        statistics.free_bytes != 128U ||
+        statistics.largest_free_range_bytes != 128U;
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
-    if (best_fit_preserves_largest_range() != 0) {
+    if (best_fit_preserves_largest_range() != 0 ||
+        same_stream_split_retires_cleanly() != 0) {
         return EXIT_FAILURE;
     }
     ShadowSpillMockBackend *mock = NULL;

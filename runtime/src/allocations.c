@@ -505,6 +505,22 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         if (split == NULL) {
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
+        /*
+         * The split range is already charged to ``selected``.  Adopt it into
+         * the pool's lease registry before changing either range owner so the
+         * new lease receives the same intrusive-list ownership invariants as
+         * every ordinarily allocated lease.  Adoption does not reserve the
+         * range a second time.
+         */
+        if (shadowspill_memory_pool_adopt_lease_locked(
+                shadowspill_execution_pool(runtime),
+                split,
+                bytes,
+                selected->offset
+            ) != 0) {
+            free(split);
+            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        }
     }
     /*
      * Every recorded use was on ``stream`` (checked above). Execution-stream order
@@ -514,7 +530,6 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
      */
     unindex_reusable_locked(runtime, selected);
     if (split != NULL) {
-        const uint64_t allocation_offset = selected->offset;
         unindex_allocation_pointer_locked(runtime, selected);
         runtime->requested_allocated_bytes -= selected->requested_bytes;
         selected->requested_bytes = 0U;
@@ -528,22 +543,14 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         index_reusable_locked(runtime, selected);
 
         split->allocation_id = runtime->next_allocation_id++;
-        split->pool = shadowspill_execution_pool(runtime);
         split->state = SHADOWSPILL_LEASE_ACTIVE;
         atomic_init(&split->references, 1U);
         split->generation = runtime->next_generation++;
-        split->requested_bytes = bytes;
-        split->charged_bytes = required;
-        split->offset = allocation_offset;
         split->origin_task_id = origin_task_id;
         split->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         split->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->pointer =
-            shadowspill_memory_pool_pointer(
-                shadowspill_execution_pool(runtime), allocation_offset
-            );
         split->next = runtime->execution_leases;
         runtime->execution_leases = split;
         activate_allocation_locked(runtime, split);
