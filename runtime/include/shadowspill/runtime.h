@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 21U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 22U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -290,11 +290,15 @@ typedef struct ShadowSpillRuntimeStatistics {
 
 typedef struct ShadowSpillRuntimeFailure {
     uint32_t status;
+    uint64_t task_id;
     uint64_t object_id;
     uint64_t allocation_id;
     uint64_t requested_bytes;
     uint64_t free_bytes;
     uint64_t largest_free_range_bytes;
+    uint64_t allocation_ordinal;
+    uint64_t expected_allocation_ordinal;
+    uint64_t expected_requested_bytes;
 } ShadowSpillRuntimeFailure;
 
 typedef struct ShadowSpillObjectSnapshot {

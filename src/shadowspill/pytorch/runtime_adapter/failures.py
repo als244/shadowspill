@@ -11,6 +11,7 @@ from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 _NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = 3
 _NO_PROGRESS = 4
+_PLAN_VIOLATION = 6
 _STATUS_NAMES = {
     0: "ok",
     1: "invalid_argument",
@@ -47,6 +48,10 @@ class RuntimeFailureDiagnostics:
     largest_free_range_bytes: int
     object_id: int | None
     allocation_id: int | None
+    task_id: int | None = None
+    allocation_ordinal: int | None = None
+    expected_allocation_ordinal: int | None = None
+    expected_requested_bytes: int = 0
     task: ExecutionTaskIdentity | None = None
 
     @property
@@ -75,6 +80,10 @@ class RuntimeFailureDiagnostics:
             "largest_free_range_bytes": self.largest_free_range_bytes,
             "object_id": self.object_id,
             "allocation_id": self.allocation_id,
+            "task_id": self.task_id,
+            "allocation_ordinal": self.allocation_ordinal,
+            "expected_allocation_ordinal": self.expected_allocation_ordinal,
+            "expected_requested_bytes": self.expected_requested_bytes,
             "execution_task_id": None if task is None else task.execution_task_id,
             "semantic_name": None if task is None else task.semantic_name,
             "canonical_task_id": None if task is None else task.canonical_task_id,
@@ -126,6 +135,14 @@ def read_allocator_failure(
         largest_free_range_bytes=int(failure.runtime.largest_free_range_bytes),
         object_id=_optional_id(int(failure.runtime.object_id)),
         allocation_id=_optional_id(int(failure.runtime.allocation_id)),
+        task_id=_optional_id(int(failure.runtime.task_id)),
+        allocation_ordinal=_optional_id(
+            int(failure.runtime.allocation_ordinal)
+        ),
+        expected_allocation_ordinal=_optional_id(
+            int(failure.runtime.expected_allocation_ordinal)
+        ),
+        expected_requested_bytes=int(failure.runtime.expected_requested_bytes),
         task=task,
     )
 
@@ -174,20 +191,40 @@ def generic_runtime_error(
 ) -> RuntimeExecutionError:
     """Build an error for an explicit runtime API rejection."""
 
-    return RuntimeExecutionError(
+    lines = [
+        f"{diagnostics.operation} failed with status {diagnostics.status} "
+        f"({diagnostics.status_name})"
+    ]
+    if diagnostics.task is not None:
+        lines.extend(
+            (
+                f"execution_task: {diagnostics.task.execution_task_id}",
+                f"semantic_task: {diagnostics.task.semantic_name}",
+                f"canonical_task: {diagnostics.task.canonical_task_id}",
+            )
+        )
+    elif diagnostics.task_id is not None:
+        lines.append(f"runtime_task: {diagnostics.task_id}")
+    lines.extend(
         (
-            f"{diagnostics.operation} failed with status {diagnostics.status} "
-            f"({diagnostics.status_name}); "
-            f"device={diagnostics.device_ordinal}, "
-            f"object={diagnostics.object_id}, "
-            f"allocation={diagnostics.allocation_id}, "
-            f"requested={diagnostics.requested_bytes}, "
-            f"free={diagnostics.free_bytes}, "
-            "largest_free_range="
-            f"{diagnostics.largest_free_range_bytes}"
-        ),
-        diagnostics=diagnostics,
+            f"device: {diagnostics.device_ordinal}",
+            f"object: {diagnostics.object_id}",
+            f"allocation: {diagnostics.allocation_id}",
+            f"requested: {diagnostics.requested_bytes}",
+            f"free: {diagnostics.free_bytes}",
+            f"largest_free_range: {diagnostics.largest_free_range_bytes}",
+        )
     )
+    if diagnostics.status == _PLAN_VIOLATION:
+        lines.extend(
+            (
+                f"allocation_ordinal: {diagnostics.allocation_ordinal}",
+                "expected_allocation_ordinal: "
+                f"{diagnostics.expected_allocation_ordinal}",
+                f"expected_requested: {diagnostics.expected_requested_bytes}",
+            )
+        )
+    return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)
 
 
 def raise_if_allocator_failed(library: Any, operation: str) -> None:

@@ -53,14 +53,18 @@ int shadowspill_enter_execution_scope(
 
 static ShadowSpillRuntimeStatus placement_violation(
     ShadowSpillRuntime *runtime,
-    uint64_t requested_bytes
+    uint64_t requested_bytes,
+    uint64_t allocation_ordinal,
+    const ShadowSpillAllocationPlacementHint *expected
 ) {
-    shadowspill_latch_failure_locked(
+    shadowspill_latch_placement_failure(
         runtime,
-        SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
-        SHADOWSPILL_RUNTIME_NO_ID,
-        SHADOWSPILL_RUNTIME_NO_ID,
-        requested_bytes
+        requested_bytes,
+        allocation_ordinal,
+        expected == NULL
+            ? SHADOWSPILL_RUNTIME_NO_ID
+            : expected->allocation_ordinal,
+        expected == NULL ? 0U : expected->requested_bytes
     );
     return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
 }
@@ -82,13 +86,13 @@ ShadowSpillRuntimeStatus shadowspill_next_allocation_placement(
     const uint64_t ordinal = task_scope.allocation_ordinal++;
     if (task_scope.placement_hint_index >=
         record->allocation_placement_hint_count) {
-        return placement_violation(runtime, requested_bytes);
+        return placement_violation(runtime, requested_bytes, ordinal, NULL);
     }
     const ShadowSpillAllocationPlacementHint *hint =
         &record->allocation_placement_hints[task_scope.placement_hint_index];
     if (hint->allocation_ordinal != ordinal ||
         hint->requested_bytes != requested_bytes) {
-        return placement_violation(runtime, requested_bytes);
+        return placement_violation(runtime, requested_bytes, ordinal, hint);
     }
     *placement = hint;
     ++task_scope.placement_hint_index;
@@ -111,7 +115,12 @@ ShadowSpillRuntimeStatus shadowspill_validate_allocation_placements(
     }
     const ShadowSpillAllocationPlacementHint *missing =
         &record->allocation_placement_hints[task_scope.placement_hint_index];
-    return placement_violation(runtime, missing->requested_bytes);
+    return placement_violation(
+        runtime,
+        0U,
+        task_scope.allocation_ordinal,
+        missing
+    );
 }
 
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {

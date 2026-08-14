@@ -105,6 +105,49 @@ def test_failed_task_preserves_original_error_for_non_oom_runtime_failure() -> N
     assert library.aborted
 
 
+class _PlacementFailureLibrary(_FailureLibrary):
+    def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
+        from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+
+        result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
+        result.status = 6
+        result.device_ordinal = 0
+        result.runtime.status = 6
+        result.runtime.task_id = 28
+        result.runtime.object_id = (1 << 64) - 1
+        result.runtime.allocation_id = (1 << 64) - 1
+        result.runtime.requested_bytes = 2_097_152
+        result.runtime.free_bytes = 3_603_365_636
+        result.runtime.largest_free_range_bytes = 2_553_282_560
+        result.runtime.allocation_ordinal = 9
+        result.runtime.expected_allocation_ordinal = 9
+        result.runtime.expected_requested_bytes = 16_384
+        return 6
+
+
+def test_failed_task_surfaces_allocation_placement_contract() -> None:
+    library = _PlacementFailureLibrary()
+    bridge = RuntimeBridge(library, representative_program())
+    original = RuntimeError("tensor data is not allocated")
+    task = ExecutionTaskIdentity(
+        "execution_000028",
+        "microbatch_0000.stage_0028.forward.recompute",
+        "task_000028",
+    )
+
+    with pytest.raises(RuntimeExecutionError) as caught:
+        bridge.abort_task_after_failure("execute task task_000028", original, task=task)
+
+    assert library.aborted
+    assert caught.value.__cause__ is original
+    message = str(caught.value)
+    assert "status 6 (plan_violation)" in message
+    assert "execution_task: execution_000028" in message
+    assert "allocation_ordinal: 9" in message
+    assert "expected_allocation_ordinal: 9" in message
+    assert "expected_requested: 16384" in message
+
+
 class _LabelLibrary:
     def __init__(self) -> None:
         self.labels: tuple[str, ...] = ()

@@ -1136,17 +1136,22 @@ class RuntimeBridge:
         *,
         task: ExecutionTaskIdentity | None = None,
     ) -> None:
-        """Close a failed boundary and translate only allocator OOM failures.
+        """Close a failed boundary and surface allocator contract failures.
 
         Backend, worker, invalid-state, and ordinary CUDA failures deliberately
         remain the original exception raised by PyTorch.  This avoids masking
         illegal memory accesses or bad kernels with stale runtime diagnostics.
+        A placement violation is ShadowSpill's own exact-allocation contract,
+        so it is surfaced before PyTorch's secondary null-storage error.
         """
 
         self.abort_task()
         diagnostics = read_allocator_failure(self.library, operation, task=task)
-        if diagnostics is not None and diagnostics.is_allocator_oom:
-            raise allocator_oom_error(diagnostics) from cause
+        if diagnostics is not None:
+            if diagnostics.is_allocator_oom:
+                raise allocator_oom_error(diagnostics) from cause
+            if diagnostics.status_name == "plan_violation":
+                raise generic_runtime_error(diagnostics) from cause
 
     def raise_if_allocator_failed(self, operation: str) -> None:
         """Raise the first callback failure without touching the device timeline."""

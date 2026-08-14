@@ -2,12 +2,15 @@
 
 #include <stdint.h>
 
-void shadowspill_latch_failure_locked(
+static void latch_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatus status,
     uint64_t object_id,
     uint64_t allocation_id,
-    uint64_t requested_bytes
+    uint64_t requested_bytes,
+    uint64_t allocation_ordinal,
+    uint64_t expected_allocation_ordinal,
+    uint64_t expected_requested_bytes
 ) {
     pthread_mutex_lock(&runtime->failure_lock);
     if (atomic_load_explicit(
@@ -18,6 +21,7 @@ void shadowspill_latch_failure_locked(
     }
     runtime->failure = (ShadowSpillRuntimeFailure){
         .status = (uint32_t)status,
+        .task_id = shadowspill_current_task_id(runtime),
         .object_id = object_id,
         .allocation_id = allocation_id,
         .requested_bytes = requested_bytes,
@@ -27,6 +31,9 @@ void shadowspill_latch_failure_locked(
         .largest_free_range_bytes = atomic_load_explicit(
             &runtime->execution_largest_free_snapshot, memory_order_acquire
         ),
+        .allocation_ordinal = allocation_ordinal,
+        .expected_allocation_ordinal = expected_allocation_ordinal,
+        .expected_requested_bytes = expected_requested_bytes,
     };
     atomic_store_explicit(
         &runtime->failure_status, (uint32_t)status, memory_order_release
@@ -49,6 +56,44 @@ void shadowspill_latch_failure_locked(
             &shadowspill_execution_pool(runtime)->capacity_changed
         );
     }
+}
+
+void shadowspill_latch_failure_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatus status,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+) {
+    latch_failure(
+        runtime,
+        status,
+        object_id,
+        allocation_id,
+        requested_bytes,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        0U
+    );
+}
+
+void shadowspill_latch_placement_failure(
+    ShadowSpillRuntime *runtime,
+    uint64_t requested_bytes,
+    uint64_t allocation_ordinal,
+    uint64_t expected_allocation_ordinal,
+    uint64_t expected_requested_bytes
+) {
+    latch_failure(
+        runtime,
+        SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        requested_bytes,
+        allocation_ordinal,
+        expected_allocation_ordinal,
+        expected_requested_bytes
+    );
 }
 
 ShadowSpillRuntimeStatus shadowspill_failure_status(
@@ -126,8 +171,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
     if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         runtime->failure = (ShadowSpillRuntimeFailure){
             .status = SHADOWSPILL_RUNTIME_OK,
+            .task_id = SHADOWSPILL_RUNTIME_NO_ID,
             .object_id = SHADOWSPILL_RUNTIME_NO_ID,
             .allocation_id = SHADOWSPILL_RUNTIME_NO_ID,
+            .allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID,
+            .expected_allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID,
         };
         atomic_store_explicit(
             &runtime->failure_status,

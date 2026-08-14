@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 30
-RUNTIME_ABI_VERSION: Final = 21
+ADAPTER_ABI_VERSION: Final = 31
+RUNTIME_ABI_VERSION: Final = 22
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -238,11 +238,15 @@ class CudaStatistics(ctypes.Structure):
 class RuntimeFailure(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
+        ("task_id", ctypes.c_uint64),
         ("object_id", ctypes.c_uint64),
         ("allocation_id", ctypes.c_uint64),
         ("requested_bytes", ctypes.c_uint64),
         ("free_bytes", ctypes.c_uint64),
         ("largest_free_range_bytes", ctypes.c_uint64),
+        ("allocation_ordinal", ctypes.c_uint64),
+        ("expected_allocation_ordinal", ctypes.c_uint64),
+        ("expected_requested_bytes", ctypes.c_uint64),
     ]
 
 
