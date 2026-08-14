@@ -132,6 +132,60 @@ Free ranges are coalesced with adjacent free neighbors. ShadowSpill does not
 move live leases to compact the arena; planning-time allocator replay validates
 the expected fragmentation and derives any required reserve.
 
+## Planning-time memory replay
+
+Replay and simulation have deliberately different responsibilities.
+
+`memory_replay.c` is a timing-free interpreter over the production
+`MemoryPool` policy. It receives only causal ownership boundaries—lease,
+retirement, reservation, acquisition, completion, and release—and answers:
+
+- whether the slab geometry is feasible;
+- which range each lease decision selects;
+- how much physical capacity is live or reserved;
+- how much fragmentation occurs;
+- which pending predecessor a successor reuses; and
+- which completion dependency the successor must honor.
+
+The replay source, public C ABI, and Python wrapper are isolated in:
+
+```text
+runtime/src/memory_replay.c
+runtime/include/shadowspill/memory_replay.h
+src/shadowspill/runtime/memory_replay.py
+```
+
+`memory_pool.c` remains the small reusable allocator/state-machine component.
+It knows neither about replay scripts nor simulator time.
+
+The simulator takes the selected task and transfer schedule plus replay's
+dependency edges. It assigns nanosecond timestamps from compute profiles,
+route latency/bandwidth, resource lanes, and queue backlog. A slow eviction
+therefore delays a successor fetch; a fast eviction may make the dependency
+wait zero. Neither outcome changes replay safety or range ownership.
+
+Replay must not free a retirement merely because a predicted timestamp says it
+should have completed. If two events have no happens-before relationship, the
+retirement remains causally pending. A planned successor can reserve its range
+only with an explicit dependency edge; an unrelated allocation cannot consume
+it. This makes admission deterministic across timing noise and transfer
+recalibration.
+
+Planning composes the two components as follows:
+
+```text
+candidate memory schedule
+    -> causal MemoryPool replay
+    -> memory-reuse dependency edges
+    -> timed simulator
+    -> validated ExecutionPlan
+```
+
+If the added edges change scheduling boundaries that affect the ownership
+script, planning repeats until both the replay decision digest and dependency
+edge set are stable. Timing affects makespan and plan quality, never the proof
+that memory exists.
+
 ## Task protocol
 
 `shadowspill_before_task` resolves the immutable execution record, acquires

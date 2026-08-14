@@ -114,6 +114,7 @@ add_library(
   runtime/src/failure_state.c
   runtime/src/lifecycle.c
   runtime/src/memory_pool.c
+  runtime/src/memory_replay.c
   runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/profiler.c
@@ -180,6 +181,7 @@ install(
 install(
   FILES
     runtime/include/shadowspill/backend.h
+    runtime/include/shadowspill/memory_replay.h
     runtime/include/shadowspill/profiler.h
     runtime/include/shadowspill/runtime.h
     runtime/backends/mock/include/shadowspill/backend_mock.h
@@ -350,6 +352,23 @@ if(BUILD_TESTING)
   add_test(
     NAME shadowspill_memory_pool_canary
     COMMAND shadowspill_memory_pool_canary
+  )
+
+  add_executable(
+    shadowspill_memory_replay_canary
+    tests/runtime/memory_replay_canary.c
+  )
+  target_include_directories(
+    shadowspill_memory_replay_canary
+    PRIVATE runtime/include
+  )
+  target_link_libraries(
+    shadowspill_memory_replay_canary
+    PRIVATE shadowspill_runtime shadowspill_build_options
+  )
+  add_test(
+    NAME shadowspill_memory_replay_canary
+    COMMAND shadowspill_memory_replay_canary
   )
 
   foreach(runtime_test IN ITEMS blocking calibration completion failure telemetry transitions)
