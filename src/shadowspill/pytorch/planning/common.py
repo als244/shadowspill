@@ -99,6 +99,12 @@ class _MeasuredPhase:
         self._timer._depth = self._depth
         outcome = "failed" if exception[0] is not None else "finished"
         self._timer.progress(f"{self._name}: {outcome} in {duration / 1e9:.3f}s")
+        error = exception[1]
+        if isinstance(error, BaseException):
+            error.add_note(
+                "ShadowSpill planning phase "
+                f"{self._name!r} failed after {duration / 1e9:.3f} seconds"
+            )
 
 
 def validate_cpu_model(model: nn.Module) -> None:

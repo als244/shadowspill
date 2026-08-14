@@ -48,6 +48,21 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
     ]
 
 
+def test_phase_timer_annotates_nested_planning_failures() -> None:
+    timer = PlanningTimer(verbose=False)
+    with (
+        pytest.raises(RuntimeError) as captured,
+        timer.measure("outer"),
+        timer.measure("inner"),
+    ):
+        raise RuntimeError("broken")
+
+    assert captured.value.__notes__ == [
+        "ShadowSpill planning phase 'inner' failed after 0.000 seconds",
+        "ShadowSpill planning phase 'outer' failed after 0.000 seconds",
+    ]
+
+
 def test_planning_admission_helpers_reject_invalid_values() -> None:
     model = nn.Linear(2, 2)
     with pytest.raises(TypeError, match="model"):
