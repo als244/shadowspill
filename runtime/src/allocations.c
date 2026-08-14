@@ -337,50 +337,13 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 ) {
-    uint64_t charged = bytes == 0U ? 1U : bytes;
+    if (record == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *record = NULL;
     if (alignment < shadowspill_execution_pool(runtime)->minimum_alignment) {
         alignment = shadowspill_execution_pool(runtime)->minimum_alignment;
     }
-    uint64_t offset = 0U;
-    int range_status = shadowspill_memory_pool_reserve_locked(
-        shadowspill_execution_pool(runtime),
-        charged,
-        alignment,
-        plan_owned ? SHADOWSPILL_MEMORY_BEST_FIT_LOW
-                   : SHADOWSPILL_MEMORY_BEST_FIT_HIGH,
-        &offset
-    );
-    if (range_status > 0) {
-        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
-    }
-    if (range_status < 0) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
-    shadowspill_publish_execution_geometry_locked(runtime);
-    ShadowSpillRuntimeStatus status =
-        shadowspill_create_reserved_execution_lease_locked(
-            runtime, bytes, offset, plan_owned, origin_task_id, record
-        );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        (*record)->state = SHADOWSPILL_LEASE_ACTIVE;
-    }
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        (void)shadowspill_memory_pool_release_locked(
-            shadowspill_execution_pool(runtime), offset, charged
-        );
-        shadowspill_publish_execution_geometry_locked(runtime);
-    }
-    return status;
-}
-
-ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
-    uint64_t bytes,
-    uint64_t offset,
-    int plan_owned,
-    uint64_t origin_task_id,
-    ShadowSpillMemoryLease **record
-) {
     ShadowSpillMemoryLease *created = calloc(1U, sizeof(*created));
     if (created == NULL) {
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -393,12 +356,22 @@ ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
     created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    if (shadowspill_memory_pool_adopt_lease_locked(
-            shadowspill_execution_pool(runtime), created, bytes, offset
-        ) != 0) {
+    const int reserve_status = shadowspill_memory_pool_reserve_lease_locked(
+        shadowspill_execution_pool(runtime),
+        created,
+        bytes,
+        alignment,
+        plan_owned ? SHADOWSPILL_MEMORY_BEST_FIT_LOW
+                   : SHADOWSPILL_MEMORY_BEST_FIT_HIGH
+    );
+    if (reserve_status != 0) {
         free(created);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return reserve_status > 0
+            ? SHADOWSPILL_RUNTIME_OUT_OF_MEMORY
+            : SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
+    shadowspill_publish_execution_geometry_locked(runtime);
+    created->state = SHADOWSPILL_LEASE_ACTIVE;
     created->plan_owned = plan_owned;
     created->next = runtime->execution_leases;
     runtime->execution_leases = created;
@@ -426,11 +399,8 @@ ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
         deactivate_allocation_locked(created);
         runtime->requested_allocated_bytes -= bytes;
         --runtime->live_allocations;
-        *created->pool_previous_link = created->pool_next;
-        if (created->pool_next != NULL) {
-            created->pool_next->pool_previous_link =
-                created->pool_previous_link;
-        }
+        (void)shadowspill_memory_pool_release_lease_locked(created);
+        shadowspill_publish_execution_geometry_locked(runtime);
         free(created);
         return shadowspill_failure_status(runtime);
     }

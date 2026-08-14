@@ -107,9 +107,90 @@ static int same_stream_split_retires_cleanly(void) {
     return failed ? -1 : 0;
 }
 
+static int repeated_nested_splits_reclaim_the_pool(void) {
+    enum {
+        POOL_BYTES = 4096,
+        ITERATIONS = 128,
+        SPLITS_PER_ITERATION = 8,
+    };
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .event_delay_nanoseconds = 100000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = POOL_BYTES,
+        .minimum_alignment = 16U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    uint32_t pseudo_random = 0x6d2b79f5U;
+    for (uint32_t iteration = 0U;
+         !failed && iteration < ITERATIONS;
+         ++iteration) {
+        ShadowSpillAllocation whole = {0};
+        ShadowSpillAllocation splits[SPLITS_PER_ITERATION] = {{0}};
+        failed = shadowspill_allocate(
+                runtime, POOL_BYTES, 16U, compute, &whole
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_mock_enqueue_compute(mock, compute, 1000U) != 0 ||
+            shadowspill_free(runtime, whole.allocation_id, compute) !=
+                SHADOWSPILL_RUNTIME_OK;
+        uint64_t remaining = POOL_BYTES;
+        for (uint32_t index = 0U;
+             !failed && index < SPLITS_PER_ITERATION;
+             ++index) {
+            pseudo_random = pseudo_random * 1664525U + 1013904223U;
+            const uint64_t slots_left = SPLITS_PER_ITERATION - index;
+            const uint64_t maximum = remaining - 16U * (slots_left - 1U);
+            const uint64_t slot_count = maximum / 16U;
+            const uint64_t bytes = index + 1U == SPLITS_PER_ITERATION
+                ? remaining
+                : 16U * (1U + pseudo_random % slot_count);
+            failed = shadowspill_allocate(
+                    runtime, bytes, 16U, compute, &splits[index]
+                ) != SHADOWSPILL_RUNTIME_OK;
+            remaining -= bytes;
+        }
+        for (uint32_t index = 0U;
+             !failed && index < SPLITS_PER_ITERATION;
+             ++index) {
+            failed = shadowspill_free(
+                    runtime, splits[index].allocation_id, compute
+                ) != SHADOWSPILL_RUNTIME_OK;
+        }
+        failed = failed || shadowspill_runtime_wait_idle(runtime) !=
+                SHADOWSPILL_RUNTIME_OK;
+        ShadowSpillRuntimeStatistics statistics = {0};
+        failed = failed || shadowspill_runtime_statistics(
+                runtime, &statistics
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            statistics.live_allocations != 0U ||
+            statistics.allocated_bytes != 0U ||
+            statistics.free_bytes != POOL_BYTES ||
+            statistics.largest_free_range_bytes != POOL_BYTES;
+    }
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (best_fit_preserves_largest_range() != 0 ||
-        same_stream_split_retires_cleanly() != 0) {
+        same_stream_split_retires_cleanly() != 0 ||
+        repeated_nested_splits_reclaim_the_pool() != 0) {
         return EXIT_FAILURE;
     }
     ShadowSpillMockBackend *mock = NULL;

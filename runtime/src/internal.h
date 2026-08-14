@@ -581,14 +581,6 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 );
-ShadowSpillRuntimeStatus shadowspill_create_reserved_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
-    uint64_t bytes,
-    uint64_t offset,
-    int plan_owned,
-    uint64_t origin_task_id,
-    ShadowSpillMemoryLease **record
-);
 void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation

@@ -289,14 +289,17 @@ int shadowspill_memory_pool_adopt_lease_locked(
     uint64_t bytes,
     uint64_t offset
 ) {
+    const uint64_t charged = bytes == 0U ? 1U : bytes;
     if (pool == NULL || lease == NULL || lease->pool != NULL ||
-        lease->pool_previous_link != NULL) {
+        lease->pool_next != NULL || lease->pool_previous_link != NULL ||
+        offset > pool->ranges.capacity ||
+        charged > pool->ranges.capacity - offset) {
         return -1;
     }
     lease->pool = pool;
     lease->state = SHADOWSPILL_LEASE_RESERVED;
     lease->requested_bytes = bytes;
-    lease->charged_bytes = bytes == 0U ? 1U : bytes;
+    lease->charged_bytes = charged;
     lease->offset = offset;
     lease->pointer = shadowspill_memory_pool_pointer(pool, offset);
     lease->retired_pointer = NULL;
