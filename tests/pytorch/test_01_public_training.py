@@ -369,7 +369,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
         spill="spill",
         planning_cachedir=tmp_path,
     )
-    assert training.plan_report.initial_execution_plan is None
+    assert training.plan_report.initial_execution_plan is not None
     optimizer_tasks = tuple(
         task
         for task in training.plan_report.execution_plan.program.tasks

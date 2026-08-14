@@ -291,9 +291,6 @@ def materialize_training_state(
             if not isinstance(optimizer, torch.optim.Optimizer):
                 raise PlanningError("optimizer factory must return Optimizer")
             state.restore_model_cpu_for_optimizer_capture()
-            for parameter in model.parameters():
-                if parameter.requires_grad:
-                    parameter.grad = torch.zeros_like(parameter)
             optimizer_capture = capture_optimizer(
                 dict(model.named_parameters()),
                 optimizer,
@@ -304,8 +301,6 @@ def materialize_training_state(
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
-            for parameter in model.parameters():
-                parameter.grad = None
             state.restore_cuda_placeholders_after_optimizer_capture()
             if optimizer_capture.recurrent is None:
                 raise PlanningError(

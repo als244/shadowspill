@@ -17,7 +17,7 @@ from shadowspill.pytorch.contracts import CaptureError
 
 REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v3"
 
-_EXACT_ROLES = frozenset(
+_REFERENCE_ROLES = frozenset(
     {
         TaskInputRole.PARAMETER,
         TaskInputRole.BUFFER,
@@ -26,6 +26,9 @@ _EXACT_ROLES = frozenset(
         TaskInputRole.OPTIMIZER_HYPERPARAMETER,
     }
 )
+_REQUIRED_REFERENCE_ROLES = _REFERENCE_ROLES - {
+    TaskInputRole.OPTIMIZER_STATE,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,7 +236,8 @@ def _populate_value(
 ) -> str:
     reference = provenance.representative_value
     if reference is not None and (
-        provenance.role in _EXACT_ROLES or provenance.role is TaskInputRole.USER_INPUT
+        provenance.role in _REFERENCE_ROLES
+        or provenance.role is TaskInputRole.USER_INPUT
     ):
         _validate_reference(
             reference,
@@ -244,7 +248,7 @@ def _populate_value(
         )
         target.copy_(reference, non_blocking=False)
         return "authentic"
-    if provenance.role in _EXACT_ROLES:
+    if provenance.role in _REQUIRED_REFERENCE_ROLES:
         raise _value_error(
             structural_abi_key,
             position,
@@ -252,6 +256,9 @@ def _populate_value(
             target,
             "authentic initialized value is unavailable",
         )
+    if provenance.role is TaskInputRole.OPTIMIZER_STATE:
+        target.zero_()
+        return "lazy_optimizer_state_zero"
 
     seed = _seed(structural_abi_key, position)
     try:

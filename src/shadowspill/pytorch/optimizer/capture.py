@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule
 
 from shadowspill.pytorch.capture.artifacts import (
@@ -143,12 +144,20 @@ def _discover_optimizer_state(
     inventory: _OptimizerInventory,
     optimizer: torch.optim.Optimizer,
 ) -> _OptimizerDiscovery | OptimizerCapture:
-    """Discover lazy tensor state on an isolated optimizer copy."""
+    """Discover lazy tensor state on a storage-free optimizer copy."""
 
     copied = _copy_discovery_sandbox(inventory, optimizer)
     if isinstance(copied, OptimizerCapture):
         return copied
     sandbox, sandbox_parameters, names = copied
+    actual_names = {
+        id(parameter): name
+        for name, parameter in inventory.canonical_parameters.items()
+    }
+    representative_values = _representative_optimizer_values(
+        optimizer,
+        actual_names,
+    )
     _seed_discovery_gradients(
         inventory.actual_parameters,
         sandbox_parameters,
@@ -162,7 +171,8 @@ def _discover_optimizer_state(
     )
     if isinstance(step, OptimizerCapture):
         return step
-    sandbox, names, initialized_state, representative_values = step
+    sandbox, names, initialized_state, discovered_values = step
+    representative_values.update(discovered_values)
     return _finish_optimizer_discovery(
         inventory,
         optimizer,
@@ -186,7 +196,11 @@ def _copy_discovery_sandbox(
     | OptimizerCapture
 ):
     try:
-        sandbox = _copy_optimizer(optimizer)
+        actual_names = {
+            id(parameter): name
+            for name, parameter in inventory.canonical_parameters.items()
+        }
+        sandbox, names = _copy_optimizer_to_meta(optimizer, actual_names)
     except BaseException as exc:
         return _empty_opaque_capture(
             inventory.optimizer_type,
@@ -195,19 +209,6 @@ def _copy_discovery_sandbox(
     parameters = _optimizer_parameters(sandbox)
     if len(parameters) != len(inventory.actual_parameters):
         raise CaptureError("copied optimizer changed its parameter inventory")
-    actual_names = {
-        id(parameter): name
-        for name, parameter in inventory.canonical_parameters.items()
-    }
-    names = {
-        id(copied_parameter): actual_names[id(actual_parameter)]
-        for actual_parameter, copied_parameter in zip(
-            inventory.actual_parameters,
-            parameters,
-            strict=True,
-        )
-        if id(actual_parameter) in actual_names
-    }
     return sandbox, parameters, names
 
 
@@ -215,18 +216,19 @@ def _seed_discovery_gradients(
     actual_parameters: tuple[torch.nn.Parameter, ...],
     sandbox_parameters: tuple[torch.nn.Parameter, ...],
 ) -> None:
-    for actual, sandbox in zip(
+    for _actual, sandbox in zip(
         actual_parameters,
         sandbox_parameters,
         strict=True,
     ):
         if not sandbox.requires_grad or sandbox.grad is not None:
             continue
-        sandbox.grad = (
-            torch.ones_like(sandbox)
-            if actual.grad is None
-            else actual.grad.detach().clone()
-        )
+        # State discovery depends on gradient presence and geometry, not its
+        # numerical payload.  Cloning the caller's real gradient here would
+        # both allocate its bytes and cross from CPU to the fake CUDA device.
+        # Representative profiling values are collected independently from
+        # the caller before this storage-free sandbox is stepped.
+        sandbox.grad = torch.ones_like(sandbox)
 
 
 def _discovery_baseline(
@@ -287,17 +289,29 @@ def _recover_failed_discovery(
     tuple[
         torch.optim.Optimizer,
         dict[int, str],
-        dict[str, Any],
+        dict[str, Any] | None,
         dict[str, torch.Tensor],
     ]
     | OptimizerCapture
 ):
-    # CUDA-only registered operators may reject CPU execution after creating
-    # lazy state. The state inventory remains valid and can be fakeified.
     if _state_structure(sandbox, names) == baseline.state_structure:
+        # A data-dependent but stateless optimizer can fail symbolic execution
+        # without changing its tensor inventory.  Preserve the symbolic
+        # sandbox so graph export can classify it as a bounded opaque task.
+        if _is_data_dependent_failure(failure):
+            return sandbox, names, None, {}
         return _empty_opaque_capture(
             optimizer_type,
             f"optimizer discovery step failed: {failure}",
+        )
+    if any(
+        isinstance(parameter, FakeTensor)
+        for parameter in _optimizer_parameters(sandbox)
+    ):
+        return _empty_opaque_capture(
+            optimizer_type,
+            "storage-free optimizer discovery step failed after changing its "
+            f"tensor inventory: {failure}",
         )
     try:
         _complete_failed_state_discovery(sandbox, names, baseline.parameters)
@@ -310,7 +324,8 @@ def _recover_failed_discovery(
             optimizer_type,
             (
                 f"optimizer discovery step failed: {failure}; "
-                f"fake CUDA inventory failed: {fake_failure}"
+                "optimizer must provide valid fake/meta behavior for lazy "
+                f"state discovery: {fake_failure}"
             ),
         )
 
@@ -430,19 +445,30 @@ def _prepare_recurrent_sandbox(
                 discovery,
                 opaque_artifact,
                 probe_bindings,
-                reason=f"recurrent optimizer graph is opaque: {exc}",
+                reason=_opaque_optimizer_reason(exc),
             )
         finally:
             torch.set_grad_enabled(probe_grad_enabled)
         _restore_binding_values(probe_bindings, probe_snapshots)
-        discovery.representative_values = _representative_optimizer_values(
-            sandbox,
-            names,
+        discovery.representative_values.update(
+            _representative_optimizer_values(sandbox, names)
         )
         sandbox, names = _fake_cuda_optimizer(sandbox, names)
         discovery.sandbox = sandbox
         discovery.name_by_sandbox_id = names
     return None
+
+
+def _opaque_optimizer_reason(failure: BaseException) -> str:
+    description = str(failure)
+    if _is_data_dependent_failure(failure):
+        return f"recurrent optimizer graph is data-dependent: {description}"
+    return f"recurrent optimizer graph is opaque: {description}"
+
+
+def _is_data_dependent_failure(failure: BaseException) -> bool:
+    description = str(failure)
+    return "_local_scalar_dense" in description or "Tensor.item" in description
 
 
 def _capture_optimizer_artifact(
@@ -475,7 +501,7 @@ def _capture_optimizer_artifact(
             discovery,
             opaque_artifact,
             bindings,
-            reason=f"recurrent optimizer graph is opaque: {exc}",
+            reason=_opaque_optimizer_reason(exc),
         )
     finally:
         torch.set_grad_enabled(grad_enabled)
@@ -569,6 +595,116 @@ def _copy_optimizer(optimizer: torch.optim.Optimizer) -> torch.optim.Optimizer:
     return copied
 
 
+def _copy_optimizer_to_meta(
+    optimizer: torch.optim.Optimizer,
+    name_by_id: Mapping[int, str],
+) -> tuple[torch.optim.Optimizer, dict[int, str]]:
+    """Copy optimizer structure while replacing payload tensors by meta geometry.
+
+    Optimizer discovery needs Python control flow, state names, and tensor
+    geometry; it does not need parameter bytes.  A normal ``deepcopy`` scales
+    with the complete model and can transiently duplicate parameters,
+    gradients, snapshots, and lazy state.  Pre-populating ``deepcopy``'s memo
+    with meta views retains the subclass structure without allocating any of
+    those payloads.
+    """
+
+    parameters = _optimizer_parameters(optimizer)
+    parameter_ids = {id(parameter) for parameter in parameters}
+    tensors = _optimizer_protocol_tensors(optimizer)
+    owners: dict[tuple[str, int], torch.Tensor] = {}
+    replacements: dict[int, torch.Tensor] = {}
+    for tensor in tensors:
+        if tensor.layout is not torch.strided:
+            raise CaptureError("optimizer meta capture requires strided tensors")
+        if (
+            id(tensor) not in parameter_ids
+            and tensor.device.type == "cpu"
+            and tensor.ndim == 0
+        ):
+            # Non-capturable torch.optim implementations intentionally keep
+            # their scalar step counter on CPU and inspect its value in Python.
+            # Retaining those few bytes follows the same control flow without
+            # allocating parameter or optimizer-state payloads.
+            continue
+        storage = tensor.untyped_storage()
+        key = (tensor.device.type, int(storage._cdata))
+        owner = owners.get(key)
+        if owner is None:
+            owner = torch.empty(
+                int(storage.nbytes()),
+                dtype=torch.uint8,
+                device="meta",
+            )
+            owners[key] = owner
+        replacement = torch.empty(
+            0,
+            dtype=tensor.dtype,
+            device="meta",
+        ).set_(
+            owner.untyped_storage(),
+            int(tensor.storage_offset()),
+            tuple(tensor.shape),
+            tuple(tensor.stride()),
+        )
+        replacement.requires_grad_(bool(tensor.requires_grad))
+        if id(tensor) in parameter_ids:
+            replacement = torch.nn.Parameter(
+                replacement,
+                requires_grad=bool(tensor.requires_grad),
+            )
+        replacements[id(tensor)] = replacement
+
+    copied = copy.deepcopy(optimizer, dict(replacements))
+    if copied.__dict__.keys() != optimizer.__dict__.keys():
+        copied = object.__new__(type(optimizer))
+        copied.__dict__ = copy.deepcopy(optimizer.__dict__, dict(replacements))
+    if not isinstance(copied, torch.optim.Optimizer):
+        raise TypeError("copied optimizer changed its base type")
+    copied_parameters = _optimizer_parameters(copied)
+    fake_names = {
+        id(copied_parameter): name_by_id[id(actual_parameter)]
+        for actual_parameter, copied_parameter in zip(
+            parameters,
+            copied_parameters,
+            strict=True,
+        )
+        if id(actual_parameter) in name_by_id
+    }
+    return copied, fake_names
+
+
+def _optimizer_protocol_tensors(
+    optimizer: torch.optim.Optimizer,
+) -> tuple[torch.Tensor, ...]:
+    """Return tensor leaves reachable through the optimizer's public state."""
+
+    result: list[torch.Tensor] = []
+    seen_containers: set[int] = set()
+    seen_tensors: set[int] = set()
+
+    def visit(value: object) -> None:
+        if isinstance(value, torch.Tensor):
+            if id(value) not in seen_tensors:
+                seen_tensors.add(id(value))
+                result.append(value)
+            return
+        identity = id(value)
+        if identity in seen_containers:
+            return
+        seen_containers.add(identity)
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                visit(key)
+                visit(item)
+        elif isinstance(value, tuple | list | set | frozenset):
+            for item in value:
+                visit(item)
+
+    visit(optimizer.__dict__)
+    return tuple(result)
+
+
 def _optimizer_parameters(
     optimizer: torch.optim.Optimizer,
 ) -> tuple[torch.nn.Parameter, ...]:
@@ -600,6 +736,8 @@ def _fake_cuda_optimizer(
     """
 
     parameters = _optimizer_parameters(optimizer)
+    if all(isinstance(parameter, FakeTensor) for parameter in parameters):
+        return optimizer, dict(name_by_id)
     replacements: dict[int, torch.Tensor] = {}
     fake_names: dict[int, str] = {}
     mode = torch._subclasses.fake_tensor.FakeTensorMode(allow_non_fake_inputs=True)
@@ -750,14 +888,22 @@ def materialize_opaque_optimizer(
     replacements: dict[int, torch.Tensor] = {}
     device = torch.device("cuda", device_ordinal)
 
-    def real_tensor(value: torch.Tensor, *, parameter: bool = False) -> torch.Tensor:
+    def real_tensor(
+        value: torch.Tensor,
+        *,
+        parameter: bool = False,
+        synthetic_fill: str = "zero",
+    ) -> torch.Tensor:
         existing = replacements.get(id(value))
         if existing is not None:
             return existing
         if value.layout is not torch.strided:
             raise CaptureError("opaque optimizer profiling requires strided tensors")
-        if isinstance(value, torch._subclasses.fake_tensor.FakeTensor):
-            raise CaptureError("opaque optimizer profiling requires concrete state")
+        symbolic = isinstance(value, FakeTensor) or value.device.type == "meta"
+        if not symbolic and value.device.type == "cpu" and value.ndim == 0:
+            scalar_copy = value.detach().clone()
+            replacements[id(value)] = scalar_copy
+            return scalar_copy
         with torch.no_grad():
             raw = torch.empty_strided(
                 tuple(value.shape),
@@ -765,7 +911,15 @@ def materialize_opaque_optimizer(
                 dtype=value.dtype,
                 device=device,
             )
-            raw.copy_(value)
+            if symbolic:
+                if synthetic_fill == "normal" and (
+                    value.dtype.is_floating_point or value.dtype.is_complex
+                ):
+                    raw.normal_()
+                else:
+                    raw.zero_()
+            else:
+                raw.copy_(value)
             result: torch.Tensor
             if parameter:
                 result = torch.nn.Parameter(raw, requires_grad=value.requires_grad)
@@ -776,11 +930,15 @@ def materialize_opaque_optimizer(
 
     real_parameters: dict[int, torch.nn.Parameter] = {}
     for value in parameters:
-        converted = real_tensor(value, parameter=True)
+        converted = real_tensor(
+            value,
+            parameter=True,
+            synthetic_fill="normal",
+        )
         if not isinstance(converted, torch.nn.Parameter):
             raise AssertionError("parameter conversion changed tensor type")
         if value.grad is not None:
-            converted.grad = real_tensor(value.grad)
+            converted.grad = real_tensor(value.grad, synthetic_fill="normal")
         real_parameters[id(value)] = converted
     for group in optimizer.param_groups:
         group["params"] = [real_parameters[id(value)] for value in group["params"]]
@@ -790,7 +948,10 @@ def materialize_opaque_optimizer(
         real_parameter = real_parameters.get(id(parameter))
         if real_parameter is None:
             raise CaptureError("optimizer state is keyed by an unknown parameter")
-        converted = _map_optimizer_tensors(value, real_tensor)
+        converted = _map_optimizer_tensors(
+            value,
+            lambda tensor: real_tensor(tensor, synthetic_fill="zero"),
+        )
         if not isinstance(converted, dict):
             raise CaptureError("per-parameter optimizer state must be a mapping")
         converted_state[real_parameter] = converted
@@ -1212,12 +1373,18 @@ def _representative_optimizer_values(
     optimizer: torch.optim.Optimizer,
     name_by_id: Mapping[int, str],
 ) -> dict[str, torch.Tensor]:
-    """Retain occurrence-local initialized values before FakeTensor conversion."""
+    """Retain occurrence-local initialized values before symbolic conversion."""
 
     return {
         binding.name: binding.tensor.detach()
-        for binding in _tensor_bindings(optimizer, name_by_id)
+        for binding in _tensor_bindings(
+            optimizer,
+            name_by_id,
+            require_gradients=False,
+        )
         if binding.role is not OptimizerTensorRole.GRADIENT
+        and not isinstance(binding.tensor, FakeTensor)
+        and binding.tensor.device.type != "meta"
     }
 
 

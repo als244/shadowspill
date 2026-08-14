@@ -99,32 +99,13 @@ def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
     assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
 
 
-def test_cuda_only_discovery_inventories_every_parameter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cuda_only_discovery_inventories_every_parameter() -> None:
     mlops = pytest.importorskip("mlops")
     first = torch.nn.Parameter(torch.ones(8))
     second = torch.nn.Parameter(torch.full((4,), 2.0))
     first.grad = torch.ones_like(first)
     second.grad = torch.ones_like(second)
     optimizer = mlops.optim.AdamW([first, second], lr=1e-3)
-    audited_sizes: list[int] = []
-    require_unchanged = optimizer_module._require_unchanged_discovery_parameters
-
-    def track_audit(
-        snapshots: tuple[
-            tuple[torch.nn.Parameter, torch.Tensor, torch.Tensor | None], ...
-        ],
-    ) -> None:
-        audited_sizes.append(len(snapshots))
-        require_unchanged(snapshots)
-
-    monkeypatch.setattr(
-        optimizer_module,
-        "_require_unchanged_discovery_parameters",
-        track_audit,
-    )
-
     captured = capture_optimizer(
         {"first": first, "second": second},
         optimizer,
@@ -166,7 +147,10 @@ def test_cuda_only_discovery_inventories_every_parameter(
     assert optimizer.state == {}
     torch.testing.assert_close(first, torch.ones_like(first))
     torch.testing.assert_close(second, torch.full_like(second, 2.0))
-    assert audited_sizes == [1, 2]
+    assert all(
+        isinstance(binding.tensor, torch._subclasses.fake_tensor.FakeTensor)
+        for binding in captured.bindings
+    )
 
 
 def test_optimizer_state_container_conversion_preserves_structure() -> None:
@@ -337,7 +321,9 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     opaque_graph = capture_optimizer({"parameter": parameter}, optimizer)
     assert opaque_graph.recurrent_is_opaque
     assert opaque_graph.bindings[1].name == "gradient.parameter"
-    torch.testing.assert_close(opaque_graph.bindings[1].tensor, torch.ones(4))
+    assert opaque_graph.bindings[1].tensor.device.type == "meta"
+    assert tuple(opaque_graph.bindings[1].tensor.shape) == (4,)
+    assert parameter.grad is None
     assert "recurrent optimizer graph is opaque" in (opaque_graph.opaque_reason or "")
 
     def fail_fake(*arguments: object) -> object:
@@ -349,7 +335,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
         {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
     )
     assert failed_fake.recurrent is None
-    assert "fake CUDA inventory failed" in (failed_fake.opaque_reason or "")
+    assert "fake/meta behavior" in (failed_fake.opaque_reason or "")
 
 
 def test_optimizer_option_identity_covers_bounded_containers() -> None:
