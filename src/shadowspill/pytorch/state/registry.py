@@ -25,12 +25,19 @@ class PersistentStateRegistry:
                 raise RuntimeError("persistent state identity was unexpectedly reused")
             return state
 
-    def add(self, state: PersistentState) -> None:
+    def add(
+        self,
+        state: PersistentState,
+        *,
+        allow_in_progress_plan: bool = False,
+    ) -> None:
         with self._lock:
             key = id(state.target)
             if key in self._states:
                 raise RuntimeError("state is already persistent in this Runtime")
-            self.runtime._retain_persistent_state()
+            self.runtime._retain_persistent_state(
+                allow_in_progress_plan=allow_in_progress_plan
+            )
             self._states[key] = state
 
     def remove(self, target: object) -> PersistentState:

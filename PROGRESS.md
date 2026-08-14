@@ -2594,3 +2594,48 @@ the ignored internal progress log before this tracked summary is updated.
   projections, Linux killed the process at about 170.1 GiB RSS. This is not the
   optimizer fix and will be corrected separately with bounded context
   production/consumption while preserving portfolio order and tie-breaking.
+
+## 2026-08-14 — Correction: duplicate optimizer ownership caused the host OOM
+
+- The earlier attribution of the 170.1 GiB Linux OOM kill to retained
+  PressureFit contexts was disproved by direct measurement. Reconstructing all
+  1,020 compiled contexts from the saved 8B Program increased RSS by only
+  1,010.3 MiB (145.9 MiB at 100 contexts, 521.6 MiB at 500, and 991.3 MiB at
+  1,000). Context retention is not the dominant host-memory defect.
+- The canonical Program contains 14.958 GiB of parameter storage, 29.915 GiB
+  of optimizer state, and 30.458 GiB of gradients. The configured 112 GiB
+  registered pinned spill arena already owned the authoritative model bytes,
+  but freshly initialized optimizer state remained simultaneously resident in
+  ordinary anonymous CPU storage while its spill copy was materialized later.
+  That extra 29.915 GiB, together with the spill arena, compiler state, and the
+  roughly 1 GiB context portfolio, mechanically explains the prior host OOM.
+- The generic ownership fix relocates initialized optimizer storages directly
+  into persistent spill objects immediately after optimizer capture and
+  releases their anonymous CPU sources. Training materialization adopts those
+  exact leases into plan aliases instead of copying them again. Close first
+  exposes ordinary CPU optimizer state and then releases its persistent spill
+  ownership; rollback abandons both representations deterministically.
+- In the first unchanged 8B rerun, optimizer relocation took 2.012 seconds and
+  process RSS immediately afterward was about 115 GiB. The run completed all
+  15 profiles and all 1,020 context compilations while remaining near
+  128.5 GiB RSS, confirming that the duplicate optimizer payload—not the
+  expected pre-fix no-progress OOM and not a planner deadlock—was the dominant
+  host-memory failure.
+- The complete run finished rather than being killed. Native PressureFit
+  evaluated 40,800 candidates across 1,020 contexts in 1,768.061 seconds;
+  complete `pressurefit_simulation` took 1,770.407 seconds. Decoding and cache
+  publication raised peak RSS to 150,589,696 KiB, still below the machine
+  limit, and deterministic rollback released the registered arena and worker.
+- The selected byte-feasible schedule was then rejected by exact slab replay.
+  Forward/recompute `task_000191` first allocated a persistent
+  1,050,673,152-byte output through the ordinary high-address path, then held
+  two 525,336,576-byte anonymous extents before requesting a second
+  1,050,673,152-byte anonymous extent. The slab had 1,644,592,960 bytes free,
+  but its largest hole was 795,983,872 bytes. The compiled layout identifies
+  the persistent output as allocation ordinal 21, so the next isolated fix is
+  to admit immutable per-task output-placement hints and keep that output on
+  the planned low-address side. This requires no copy and changes no
+  PressureFit action or trigger.
+- The optimizer spill-ownership implementation passes Ruff, strict mypy, all
+  23 native/CUDA canaries, and the complete Python suite with five expected
+  skips. It is therefore ready to commit independently of the spatial fix.

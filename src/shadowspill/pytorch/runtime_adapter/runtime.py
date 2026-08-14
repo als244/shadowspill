@@ -294,13 +294,20 @@ class Runtime:
                 )
             self._closed = True
 
-    def _reserve_persistent_object_ids(self, count: int) -> tuple[int, ...]:
+    def _reserve_persistent_object_ids(
+        self,
+        count: int,
+        *,
+        allow_in_progress_plan: bool = False,
+    ) -> tuple[int, ...]:
         """Reserve frontend-owned runtime identities outside dense plan IDs."""
 
         if count < 0:
             raise ValueError("persistent object count must be non-negative")
         with self._lock:
-            self._require_state_operation_allowed()
+            self._require_state_operation_allowed(
+                allow_in_progress_plan=allow_in_progress_plan
+            )
             first = self._next_persistent_object_id
             limit = first + count
             if limit >= (1 << 63):
@@ -310,9 +317,13 @@ class Runtime:
             self._next_persistent_object_id = limit
             return tuple(range(first, limit))
 
-    def _retain_persistent_state(self) -> None:
+    def _retain_persistent_state(
+        self, *, allow_in_progress_plan: bool = False
+    ) -> None:
         with self._lock:
-            self._require_state_operation_allowed()
+            self._require_state_operation_allowed(
+                allow_in_progress_plan=allow_in_progress_plan
+            )
             self._persistent_state_count += 1
 
     def _release_persistent_state(self) -> None:
@@ -321,10 +332,14 @@ class Runtime:
                 raise RuntimeError("persistent state ownership underflow")
             self._persistent_state_count -= 1
 
-    def _require_state_operation_allowed(self) -> None:
+    def _require_state_operation_allowed(
+        self, *, allow_in_progress_plan: bool = False
+    ) -> None:
         with self._lock:
             self._require_open()
-            if self._active_plans != 0 or self._planning:
+            if self._active_plans != 0 or (
+                self._planning and not allow_in_progress_plan
+            ):
                 raise RuntimeConfigurationError(
                     "persistent state relocation requires an idle Runtime"
                 )

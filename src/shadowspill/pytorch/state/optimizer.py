@@ -8,7 +8,12 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
-from .storage import NamedTensor, externalize_tensors, relocate_tensors
+from .storage import (
+    NamedTensor,
+    externalize_tensors,
+    release_persistent_tensors,
+    relocate_tensors,
+)
 
 
 def relocate_optimizer_state(
@@ -44,6 +49,34 @@ def externalize_optimizer_state(
         release_runtime=release_runtime,
     )
     return optimizer
+
+
+def relocate_optimizer_state_for_plan(
+    optimizer: torch.optim.Optimizer,
+    *,
+    runtime: Runtime,
+    pool: str,
+) -> None:
+    """Move initialized state into spill storage owned by an active plan build."""
+
+    relocate_tensors(
+        optimizer,
+        _optimizer_tensors(optimizer),
+        runtime=runtime,
+        pool=pool,
+        release_source=True,
+        _allow_in_progress_plan=True,
+    )
+
+
+def release_optimizer_state_from_plan(
+    optimizer: torch.optim.Optimizer,
+    *,
+    runtime: Runtime,
+) -> None:
+    """Drop internal spill ownership after views are external or abandoned."""
+
+    release_persistent_tensors(optimizer, runtime=runtime)
 
 
 def _optimizer_tensors(

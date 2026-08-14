@@ -52,6 +52,10 @@ from shadowspill.pytorch.profiling.metadata import (
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.state.optimizer import (
+    release_optimizer_state_from_plan,
+    relocate_optimizer_state_for_plan,
+)
 from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
 from shadowspill.runtime import SlabReplay
 
@@ -280,12 +284,14 @@ def materialize_training_state(
     *,
     opt: Callable[[Any], torch.optim.Optimizer],
     runtime: Runtime,
+    spill_pool: str,
     timer: PlanningTimer,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once."""
 
     bridge = RuntimeBridge(captured.installed.library, captured.layout.program)
     state: TrainingMaterializedState | None = None
+    optimizer: torch.optim.Optimizer | None = None
     try:
         with timer.measure("model_materialization"):
             state = TrainingMaterializedState(
@@ -312,21 +318,34 @@ def materialize_training_state(
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
+        with timer.measure("optimizer_state_relocation"):
+            relocate_optimizer_state_for_plan(
+                optimizer,
+                runtime=runtime,
+                pool=spill_pool,
+            )
+        with timer.measure("model_placeholder_restoration"):
             state.restore_cuda_placeholders_after_optimizer_capture()
-            if optimizer_capture.recurrent is None:
-                raise PlanningError(
-                    "the optimizer state/update cannot be bounded: "
-                    f"{optimizer_capture.opaque_reason}"
-                )
+        if optimizer_capture.recurrent is None:
+            raise PlanningError(
+                "the optimizer state/update cannot be bounded: "
+                f"{optimizer_capture.opaque_reason}"
+            )
         return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
     except BaseException as error:
-        for parameter in model.parameters():
-            parameter.grad = None
         if state is not None:
+            def rollback_partial_materialization() -> None:
+                _restore_training_ownership(
+                    model,
+                    state,
+                    optimizer,
+                    runtime=runtime,
+                )
+
             _rollback_training_failure(
                 runtime,
                 error,
-                lambda: state.restore_cpu_and_unregister(),
+                rollback_partial_materialization,
                 operation="materialize training state",
             )
         raise
@@ -881,9 +900,41 @@ def rollback_training_materialization(
 ) -> None:
     """Restore CPU ownership when a caller abandons an intermediate plan."""
 
+    _restore_training_ownership(
+        model,
+        materialized.state,
+        materialized.optimizer,
+        runtime=materialized.state.runtime,
+    )
+
+
+def _restore_training_ownership(
+    model: nn.Module,
+    state: TrainingMaterializedState,
+    optimizer: torch.optim.Optimizer | None,
+    *,
+    runtime: Runtime,
+) -> None:
+    """Attempt optimizer and model restoration even if either cleanup fails."""
+
     for parameter in model.parameters():
         parameter.grad = None
-    materialized.state.restore_cpu_and_unregister()
+    release_error: BaseException | None = None
+    if optimizer is not None:
+        try:
+            release_optimizer_state_from_plan(optimizer, runtime=runtime)
+        except BaseException as error:
+            release_error = error
+        optimizer.state.clear()
+    try:
+        state.restore_cpu_and_unregister()
+    except BaseException as error:
+        if release_error is not None:
+            release_error.add_note(f"Model-state rollback also failed: {error}")
+        else:
+            raise
+    if release_error is not None:
+        raise release_error
 
 
 def _rollback_training_failure(
@@ -944,6 +995,7 @@ def build_training(
         captured,
         opt=opt,
         runtime=memory.runtime,
+        spill_pool=memory.spill.name,
         timer=timer,
     )
     try:

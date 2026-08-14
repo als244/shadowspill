@@ -40,6 +40,7 @@ from shadowspill.pytorch.optimizer import (
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
+from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
 
 from .records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,
@@ -661,6 +662,10 @@ class TrainingExecutor:
         """Leave live optimizer state backed by ordinary CPU storage."""
 
         self._expose_optimizer_state_cpu()
+        release_optimizer_state_from_plan(
+            self.optimizer,
+            runtime=self._state.runtime,
+        )
 
     def _execute_task(
         self,

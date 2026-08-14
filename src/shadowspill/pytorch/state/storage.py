@@ -35,16 +35,28 @@ def relocate_tensors(
     runtime: Runtime,
     pool: str,
     release_source: bool,
+    _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative spill-pool objects."""
 
-    _validate_pool(runtime, pool)
+    _validate_pool(
+        runtime,
+        pool,
+        allow_in_progress_plan=_allow_in_progress_plan,
+    )
     registry = registry_for(runtime)
     if registry.get(target) is not None:
         raise RuntimeConfigurationError(
             "state is already relocated; externalize it before relocating again"
         )
-    created = list(register_tensor_storages(tensors, runtime=runtime, pool=pool))
+    created = list(
+        register_tensor_storages(
+            tensors,
+            runtime=runtime,
+            pool=pool,
+            _allow_in_progress_plan=_allow_in_progress_plan,
+        )
+    )
     try:
         if release_source and created:
             torch.ops.shadowspill._relocate_cpu_storages(
@@ -61,7 +73,10 @@ def relocate_tensors(
             storages=tuple(created),
             source_owner=None,
         )
-        registry.add(state)
+        registry.add(
+            state,
+            allow_in_progress_plan=_allow_in_progress_plan,
+        )
         return state
     except BaseException:
         unregister_tensor_storages(created, runtime=runtime)
@@ -73,12 +88,20 @@ def register_tensor_storages(
     *,
     runtime: Runtime,
     pool: str,
+    _allow_in_progress_plan: bool = False,
 ) -> tuple[PersistentStorage, ...]:
     """Copy unique source storages into newly registered runtime objects."""
 
-    _validate_pool(runtime, pool)
+    _validate_pool(
+        runtime,
+        pool,
+        allow_in_progress_plan=_allow_in_progress_plan,
+    )
     roots = _storage_roots(tensors)
-    object_ids = runtime._reserve_persistent_object_ids(len(roots))
+    object_ids = runtime._reserve_persistent_object_ids(
+        len(roots),
+        allow_in_progress_plan=_allow_in_progress_plan,
+    )
     library = runtime._installed.library
     created: list[PersistentStorage] = []
     try:
@@ -149,6 +172,27 @@ def unregister_tensor_storages(
             library.shadowspill_pytorch_unregister_object(item.current_object_id),
             f"release persistent object {item.current_object_id}",
         )
+
+
+def release_persistent_tensors(
+    target: object,
+    *,
+    runtime: Runtime,
+) -> PersistentState | None:
+    """Release runtime objects after their frontend views are no longer used.
+
+    This is an internal ownership primitive.  Unlike ``externalize_tensors``,
+    it performs no copy and no storage rebinding.  The caller must already have
+    rebound every live public tensor to independent storage, or be abandoning
+    the target during rollback.
+    """
+
+    registry = registry_for(runtime)
+    state = registry.get(target)
+    if state is None:
+        return None
+    unregister_tensor_storages(state.storages, runtime=runtime)
+    return registry.remove(target)
 
 
 def externalize_tensors(
@@ -333,8 +377,15 @@ def _restore_tensor_views(state: PersistentState) -> None:
             view.tensor.data = replacement
 
 
-def _validate_pool(runtime: Runtime, pool: str) -> None:
-    runtime._require_state_operation_allowed()
+def _validate_pool(
+    runtime: Runtime,
+    pool: str,
+    *,
+    allow_in_progress_plan: bool = False,
+) -> None:
+    runtime._require_state_operation_allowed(
+        allow_in_progress_plan=allow_in_progress_plan
+    )
     try:
         selected = runtime.pools[pool]
     except KeyError as exc:
@@ -367,6 +418,7 @@ __all__ = [
     "own_persistent_state",
     "persistent_state",
     "register_tensor_storages",
+    "release_persistent_tensors",
     "relocate_tensors",
     "restore_persistent_object_ids",
     "restore_persistent_state",

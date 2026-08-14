@@ -215,11 +215,20 @@ class TrainingMaterializedState:
                 raise PlanningError(
                     f"optimizer state for {alias_id!r} must begin on the CPU"
                 )
-            source_owner = torch.empty(0, dtype=torch.uint8, device="cpu")
-            source_owner.set_(source.untyped_storage())
-            self.bridge.register_host_tensor(
-                alias_id, source_owner, retain_spill_copy=True
+            persistent = adopt_persistent_tensor(
+                self.runtime,
+                optimizer,
+                source,
+                self.bridge,
+                alias_id,
             )
+            if persistent is None:
+                raise PlanningError(
+                    f"optimizer state alias {alias_id!r} has no relocated "
+                    "runtime storage"
+                )
+            source_owner = persistent.anchor
+            self._persistent_aliases.add(alias_id)
             owner = torch.empty(
                 source_owner.numel(), dtype=torch.uint8, device=self.device
             )

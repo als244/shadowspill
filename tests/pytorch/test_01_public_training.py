@@ -16,6 +16,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.pytorch.state.storage import persistent_state
 
 from .runtime_test_support import public_test_runtime
 
@@ -232,6 +233,13 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         planning_cachedir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
+    optimizer_owner = persistent_state(runtime, training._optimizer)
+    assert optimizer_owner is not None
+    assert optimizer_owner.storages
+    assert all(
+        item.current_object_id != item.persistent_object_id
+        for item in optimizer_owner.storages
+    )
     initial_state = training.state_dict()
     assert initial_state["optimizer"]["state"]
     training.load_state_dict(initial_state)
@@ -261,6 +269,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
                 assert torch.equal(value, other)
 
     training.close()
+    assert persistent_state(runtime, training._optimizer) is None
     externalize_model_state(model, runtime=runtime, release_runtime=True)
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
 
