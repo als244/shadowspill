@@ -2749,3 +2749,52 @@ the ignored internal progress log before this tracked summary is updated.
   exposed a zero-count null `memset` in the new cut-active bitmap; explicit
   zero-count guards fixed it and the sanitized planner/simulator canaries now
   pass.
+
+## 2026-08-14 — Full-model plan passes; checkpoint exposes a separate host peak
+
+- The optimizer-fixed mlops Llama 3 8B program successfully completed exact
+  planning and slab admission with a 16 GiB execution cap and a 96 GiB spill
+  pool. All 1,020 recomputation contexts were valid, all 40,800 candidates were
+  evaluated, exact PressureFit took 486.841 seconds in the memory-loaded live
+  process, and the full `plan_step()` call took 585.542 seconds. The isolated
+  direct PressureFit authority remains 96.004 seconds; this distinction is
+  retained rather than describing the integrated memory-contention wall as an
+  algorithmic regression.
+- The selected plan predicts an 85.4 GiB spill peak and passed exact spatial
+  admission. The process was subsequently killed while the qualification
+  harness entered `training.state_dict()`, before its warm execution step.
+  Peak RSS was 175,399,564 KiB. The 96 GiB fully committed pinned arena plus
+  live compiler/runtime state and the ordinary CPU model-and-optimizer
+  checkpoint copy exceeded practical host capacity.
+- This is not the historical negative-control failure. The pre-fix 8B fixture
+  must still surface the structured, task-attributed ShadowSpill no-progress
+  OOM for a 117,440,512-byte execution-pool request with 39,845,512 bytes free
+  and a 39,744,768-byte largest range. A Linux host OOM kill, admission error,
+  or raw CUDA invalid-address error does not satisfy that regression.
+- Qualification will use the smallest spill-pool cap that admits the unchanged
+  plan with explicit margin, leaving host capacity for the documented ordinary
+  CPU checkpoint. This changes neither the 16 GiB physical execution cap nor
+  any PressureFit directive, recomputation choice, or task ordering.
+
+## 2026-08-14 — Checkpoint restoration no longer manufactures device storage
+
+- Repeating the full-model checkpoint with an 88 GiB spill pool avoided the
+  Linux kill and exposed a second, deterministic defect after the CPU
+  optimizer snapshot had been copied. `_restore_optimizer_host_only()` raised
+  `Attempted to access the data pointer on an invalid python storage` while
+  binding a newly allocated placeholder.
+- The method was unnecessarily manufacturing a full-size CUDA allocation for
+  every optimizer-state alias, binding it, dematerializing it, and queuing a
+  release merely to restore CUDA device identity with a null pointer. The 8B
+  optimizer inventory is about 29.9 GiB while the execution slab is 16 GiB;
+  the loop could outrun asynchronous retirements and eventually receive the
+  allocator's null no-progress result. The subsequent `data_ptr()` access hid
+  that allocator cause behind the generic PyTorch storage error.
+- CPU exposure never changes the neutral runtime object. It now retains each
+  tensor's existing dematerialized CUDA view before temporarily assigning the
+  CPU snapshot view, then restores that exact view in `finally`. This performs
+  no device allocation, binding, action submission, or generation change.
+- The fresh-process training canary now asserts that `state_dict()` changes
+  neither CUDA allocation-callback nor free-callback counts. Numerical
+  checkpoint/replay remains bitwise, and the focused public training tests and
+  fresh-process canary pass.

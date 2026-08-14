@@ -64,6 +64,12 @@ class _TensorLayout:
     dtype: torch.dtype
 
 
+@dataclass(frozen=True, slots=True)
+class _ExposedOptimizerTensor:
+    tensor: torch.Tensor
+    cuda_placeholder: torch.Tensor
+
+
 @dataclass(slots=True)
 class _PreparedTask:
     run: _PlanRun
@@ -104,7 +110,8 @@ class TrainingExecutor:
         *,
         initial_allocation_placement_hints: Mapping[
             str, tuple[TaskAllocationPlacementHint, ...]
-        ] | None = None,
+        ]
+        | None = None,
         recurrent_allocation_placement_hints: Mapping[
             str, tuple[TaskAllocationPlacementHint, ...]
         ],
@@ -126,9 +133,7 @@ class TrainingExecutor:
                 *initial,
                 bridge=bridge,
                 functions=functions,
-                allocation_placement_hints=(
-                    initial_allocation_placement_hints or {}
-                ),
+                allocation_placement_hints=(initial_allocation_placement_hints or {}),
                 initial_prefetch_offsets=initial_prefetch_offsets or {},
                 action_prefetch_offsets=initial_action_prefetch_offsets or {},
             )
@@ -1291,10 +1296,10 @@ class TrainingExecutor:
 
     def _expose_optimizer_state_cpu(
         self,
-    ) -> tuple[tuple[str, torch.Tensor, _TensorLayout], ...]:
+    ) -> tuple[_ExposedOptimizerTensor, ...]:
         self._bridge.wait_idle()
         current = self._current_optimizer_bindings()
-        exposed: list[tuple[str, torch.Tensor, _TensorLayout]] = []
+        exposed: list[_ExposedOptimizerTensor] = []
         owners: dict[str, torch.Tensor] = {}
         for item in self._recurrent.lowered.optimizer_objects:
             actual = current.get(item.name)
@@ -1311,6 +1316,7 @@ class TrainingExecutor:
                 )
                 self._bridge.read_spill_tensor(alias_id, owner)
                 owners[alias_id] = owner
+            cuda_placeholder = tensor.data
             layout = _TensorLayout(
                 tuple(tensor.shape),
                 tuple(tensor.stride()),
@@ -1318,42 +1324,19 @@ class TrainingExecutor:
                 tensor.dtype,
             )
             tensor.data = self._view(owner, layout)
-            exposed.append((alias_id, tensor, layout))
+            exposed.append(_ExposedOptimizerTensor(tensor, cuda_placeholder))
         return tuple(exposed)
 
     def _restore_optimizer_host_only(
-        self, exposed: tuple[tuple[str, torch.Tensor, _TensorLayout], ...]
+        self, exposed: tuple[_ExposedOptimizerTensor, ...]
     ) -> None:
-        if not exposed:
-            return
-        owners: dict[str, torch.Tensor] = {}
-        released: set[str] = set()
-        actions: list[MemoryAction] = []
-        for alias_id, tensor, layout in exposed:
-            owner = owners.get(alias_id)
-            if owner is None:
-                owner = torch.empty(
-                    self._optimizer_size_by_alias[alias_id],
-                    dtype=torch.uint8,
-                    device=self._state.device,
-                )
-                owners[alias_id] = owner
-            tensor.data = self._view(owner, layout)
-            if alias_id in released:
-                continue
-            binding = self._bridge.bind_registered_tensor(alias_id, owner)
-            self._bridge.rebind(tensor, alias_id, binding)
-            self._state.object_store[alias_id] = tensor
-            self._state.generations[alias_id] = binding.generation
-            self._bridge.dematerialize(tensor, alias_id, binding.generation)
-            actions.append(
-                MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE)
-            )
-            released.add(alias_id)
-        self._bridge.submit_initial_actions(
-            tuple(actions), task_number=(1 << 57) + self._invocations
-        )
-        self._bridge.wait_idle()
+        # Exposing state never changes the neutral runtime object. Restore the
+        # exact dematerialized CUDA views that were present before the CPU
+        # snapshot; manufacturing temporary device allocations here would add
+        # no information and can exceed the execution pool for large AdamW
+        # inventories even though every individual task is feasible.
+        for item in exposed:
+            item.tensor.data = item.cuda_placeholder
 
     @staticmethod
     def _view(owner: torch.Tensor, layout: _TensorLayout) -> torch.Tensor:

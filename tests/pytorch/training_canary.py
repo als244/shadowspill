@@ -360,7 +360,18 @@ def main(arguments: Iterable[str] | None = None) -> int:
             ):
                 raise AssertionError("static objective metrics changed")
             if step == 2:
+                statistics_before_checkpoint = _statistics()
                 checkpoint = planned.state_dict()
+                statistics_after_checkpoint = _statistics()
+                if (
+                    statistics_after_checkpoint.allocation_callbacks
+                    != statistics_before_checkpoint.allocation_callbacks
+                    or statistics_after_checkpoint.free_callbacks
+                    != statistics_before_checkpoint.free_callbacks
+                ):
+                    raise AssertionError(
+                        "checkpointing manufactured CUDA placeholder allocations"
+                    )
         if len(optimizer_calls) != 5 or checkpoint is None:
             raise AssertionError("optimizer mutation count differs from step count")
         uninterrupted = _clone_model_state(planned.state_dict())
