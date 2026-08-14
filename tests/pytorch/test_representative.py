@@ -113,6 +113,33 @@ def test_missing_user_value_uses_explicit_deterministic_fallback() -> None:
     torch.testing.assert_close(first.arguments[0], second.arguments[0])
 
 
+def test_allocator_failure_is_checked_before_representative_population() -> None:
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_Add()),
+        example_inputs=(torch.empty(8), torch.empty(8)),
+        input_provenance=(
+            TaskInputProvenance(TaskInputRole.ACTIVATION, "activation.left"),
+            TaskInputProvenance(TaskInputRole.ACTIVATION, "activation.right"),
+        ),
+    )
+    operations: list[str] = []
+
+    def reject(operation: str) -> None:
+        operations.append(operation)
+        raise RuntimeError("allocation rejected")
+
+    with pytest.raises(RuntimeError, match="allocation rejected"):
+        materialize_representative_inputs(
+            artifact,
+            device_ordinal=0,
+            allocation_check=reject,
+        )
+
+    assert len(operations) == 1
+    assert "alias group" in operations[0]
+
+
 def test_tensor_spec_values_are_nonzero_deterministic_and_low_domain() -> None:
     floating = TensorSpec((4096,), torch.float32)
     integer = TensorSpec((32,), torch.int64)

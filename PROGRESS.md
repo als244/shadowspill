@@ -2538,3 +2538,28 @@ the ignored internal progress log before this tracked summary is updated.
   the constrained 520 MiB case carries the preflight note and never enters the
   PressureFit phase. Physical spill reservation, workspace/provider headroom,
   spatial replay, and pool sealing failures remain plain `AdmissionError`s.
+
+## 2026-08-14 — Null representative allocation rejected before CUDA use
+
+- The committed failure-handling baseline was exercised with the unchanged
+  16 GiB execution / 112 GiB spill mlops Llama 3 8B launcher. Structural
+  profile 13/16 reached optimizer ABI `3e5469863361...`; its next
+  representative owner requested 117,440,512 bytes with 39,845,512 bytes free
+  and a 39,744,768-byte largest free range. The allocator correctly latched a
+  no-progress OOM.
+- Remaining bug: `CUDAPluggableAllocator` returned a null pointer to
+  `torch.empty`, but PyTorch did not raise at that construction boundary. The
+  representative builder immediately launched `target.copy_(reference)` using
+  the invalid target. The first visible error was `CUDA_ERROR_INVALID_VALUE`,
+  followed asynchronously by an illegal-address fault that poisoned cleanup
+  and aborted process finalization.
+- Fix: representative-input materialization now checks the allocator's latched
+  failure immediately after creating each alias-group owner, before building
+  views or issuing any fill/copy/kernel. The common check preserves the precise
+  allocator OOM diagnostic and is reusable by other explicit frontend
+  allocation boundaries.
+- The exact 8B rerun now raises `RuntimeExecutionError: ShadowSpill no-progress
+  OOM` at the same 117,440,512-byte request and exits normally with status 1.
+  It emits no dependent `copy_`, invalid-address error, cleanup warning, or
+  process abort. This confirms failure reporting and teardown before optimizer
+  task partitioning changes begin.

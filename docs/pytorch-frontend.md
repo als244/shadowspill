@@ -107,6 +107,10 @@ specific source:
   out-of-memory/no-progress during profiling or execution.
 
 Only allocator OOM is translated from PyTorch's null-allocation consequence.
+Frontend-owned CUDA allocation boundaries check the allocator latch before
+issuing dependent fills, copies, or kernels; this is required because the
+pluggable allocator interface can return a null pointer without making tensor
+construction itself raise immediately.
 The planning wrappers preserve exact lower-level exceptions through
 `__cause__`. During execution of a returned callable, illegal memory accesses
 and other genuine provider failures retain their original exception rather

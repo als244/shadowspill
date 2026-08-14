@@ -21,6 +21,7 @@ from shadowspill.pytorch.optimizer import (
     materialize_opaque_optimizer,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, Allocation
+from shadowspill.pytorch.runtime_adapter.failures import raise_if_allocator_failed
 from shadowspill.pytorch.runtime_adapter.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
@@ -91,7 +92,13 @@ class CudaTaskProfiler:
         self._samples = sample_iterations
         self._telemetry_capacity = telemetry_capacity
         self._next_task_id = 1 << 62
-        self._executables = ProfileExecutableStore(device_ordinal=device_ordinal)
+        self._executables = ProfileExecutableStore(
+            device_ordinal=device_ordinal,
+            allocation_check=lambda operation: raise_if_allocator_failed(
+                self._library,
+                operation,
+            ),
+        )
         self._profiling_wall_time_ns = 0
         self._entrypoint_warmup_wall_time_ns = 0
         self._timing_events: tuple[Any, Any] | None = None

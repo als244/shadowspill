@@ -219,7 +219,7 @@ def test_explicit_inductor_path_matches_outer_aot_for_inference(
 def test_manifest_hydration_restores_arguments_before_measurement() -> None:
     artifact = _artifact()
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        _TaskLibrary(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
     profiler.prepare_manifests((artifact,))
     observed_arguments: list[int] = []
@@ -344,6 +344,11 @@ class _TaskLibrary:
 
     @staticmethod
     def shadowspill_pytorch_allocator_wait_idle() -> int:
+        return 0
+
+    @staticmethod
+    def shadowspill_pytorch_allocator_failure(*arguments: object) -> int:
+        del arguments
         return 0
 
 

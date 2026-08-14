@@ -31,6 +31,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     RuntimeExecutionError,
     allocator_oom_error,
     generic_runtime_error,
+    raise_if_allocator_failed,
     read_allocator_failure,
 )
 from shadowspill.pytorch.runtime_adapter.trace import (
@@ -1057,10 +1058,7 @@ class RuntimeBridge:
     def raise_if_allocator_failed(self, operation: str) -> None:
         """Raise the first callback failure without touching the device timeline."""
 
-        diagnostics = read_allocator_failure(self.library, operation)
-        if diagnostics is None:
-            return
-        raise generic_runtime_error(diagnostics)
+        raise_if_allocator_failed(self.library, operation)
 
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)

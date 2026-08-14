@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
@@ -97,6 +98,7 @@ def materialize_representative_inputs(
     artifact: GraphArtifact,
     *,
     device_ordinal: int,
+    allocation_check: Callable[[str], None] | None = None,
 ) -> RepresentativeInputSet:
     """Materialize exact state/user values and deterministic anonymous values."""
 
@@ -110,6 +112,7 @@ def materialize_representative_inputs(
             group,
             positions,
             device_ordinal=device_ordinal,
+            allocation_check=allocation_check,
         ):
             arguments[position] = target
             summaries[position] = summary
@@ -145,6 +148,7 @@ def _materialize_alias_group(
     positions: list[int],
     *,
     device_ordinal: int,
+    allocation_check: Callable[[str], None] | None,
 ) -> tuple[tuple[int, torch.Tensor, RepresentativeInputSummary], ...]:
     examples = tuple(artifact.example_arguments[position] for position in positions)
     if any(not isinstance(value, torch.Tensor) for value in examples):
@@ -156,6 +160,11 @@ def _materialize_alias_group(
         dtype=torch.uint8,
         device=target_device,
     )
+    if allocation_check is not None:
+        allocation_check(
+            "materialize representative input "
+            f"for ABI {artifact.compatibility_digest}, alias group {group}"
+        )
     values: list[tuple[int, torch.Tensor, RepresentativeInputSummary]] = []
     for position, example in zip(positions, tensors, strict=True):
         target = torch.empty(0, dtype=example.dtype, device=target_device).set_(

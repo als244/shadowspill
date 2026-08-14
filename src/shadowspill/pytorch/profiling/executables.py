@@ -52,8 +52,14 @@ class ProfileExecutable:
 class ProfileExecutableStore:
     """Own compiled code while releasing occurrence-local CUDA values eagerly."""
 
-    def __init__(self, *, device_ordinal: int) -> None:
+    def __init__(
+        self,
+        *,
+        device_ordinal: int,
+        allocation_check: Callable[[str], None] | None = None,
+    ) -> None:
         self._device_ordinal = device_ordinal
+        self._allocation_check = allocation_check
         self._items: dict[str, ProfileExecutable] = {}
         self._warmed: set[str] = set()
         self._compilation_wall_time_ns = 0
@@ -199,6 +205,7 @@ class ProfileExecutableStore:
         representatives = materialize_representative_inputs(
             executable.artifact,
             device_ordinal=self._device_ordinal,
+            allocation_check=self._allocation_check,
         )
         arguments = tuple(
             value.detach() if isinstance(value, torch.Tensor) else value
