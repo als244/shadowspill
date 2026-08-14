@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -86,9 +85,7 @@ def test_workspace_and_capacity_helpers_are_explicit() -> None:
         simulation_capacity(1, 2, ())
 
 
-def test_representatives_and_adapter_path_contract(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:
     values = representative_cpu_inputs(
         [TensorSpec((2, 3), torch.float32), torch.empty(4, device="meta"), "x"]
     )
@@ -96,12 +93,12 @@ def test_representatives_and_adapter_path_contract(
     assert values[1].device.type == "cpu" and values[1].shape == (4,)
     assert values[2] == "x"
 
-    configured = (
-        _adapter_path(None) if "SHADOWSPILL_PYTORCH_LIBRARY" in os.environ else None
-    )
+    try:
+        configured = _adapter_path(None)
+    except RuntimeError:
+        configured = None
     missing = tmp_path / "missing.so"
-    monkeypatch.setenv("SHADOWSPILL_PYTORCH_LIBRARY", str(missing))
     with pytest.raises(RuntimeError, match="not found"):
-        _adapter_path(None)
+        _adapter_path(missing)
     if configured is not None:
-        monkeypatch.setenv("SHADOWSPILL_PYTORCH_LIBRARY", str(configured))
+        assert _adapter_path(configured) == configured

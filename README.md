@@ -17,6 +17,11 @@ Development and qualification use the PyTorch build installed in the
 `shadowspill` Conda environment. The release installer remains a later release
 gate.
 
+The build installs the runtime, PyTorch adapter, simulator, and planner beneath
+the Python package. ShadowSpill resolves those package-owned libraries
+automatically; no library-path environment variables or Python monkeypatching
+are part of setup or execution.
+
 ## Training
 
 ```python

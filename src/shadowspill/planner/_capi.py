@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import ctypes
-import os
 from functools import cache
 from pathlib import Path
 
+from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
 ABI_VERSION = 5
@@ -187,21 +187,10 @@ class CPressureFitContextResult(ctypes.Structure):
     ]
 
 
-def _library_candidates() -> tuple[Path, ...]:
-    explicit = os.environ.get("SHADOWSPILL_PLANNER_LIBRARY")
-    packaged = Path(__file__).resolve().parents[1] / "lib/libshadowspill_planner.so"
-    if explicit:
-        return (Path(explicit).expanduser().resolve(), packaged)
-    return (packaged,)
-
-
 def planner_library_path() -> Path | None:
     """Return the selected planner library without loading it."""
 
-    for candidate in _library_candidates():
-        if candidate.is_file():
-            return candidate
-    return None
+    return resolve_library("libshadowspill_planner.so")
 
 
 @cache
@@ -211,8 +200,8 @@ def load_planner_library() -> ctypes.CDLL:
     path = planner_library_path()
     if path is None:
         raise RuntimeError(
-            "libshadowspill_planner.so is not installed; install the built "
-            "ShadowSpill wheel or set SHADOWSPILL_PLANNER_LIBRARY"
+            "libshadowspill_planner.so was not found; install ShadowSpill or "
+            "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))
     library.shadowspill_planner_abi_version.argtypes = []

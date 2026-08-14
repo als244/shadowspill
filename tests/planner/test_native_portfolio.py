@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import importlib
-import os
 
 import pytest
 
 from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner._capi import planner_library_path
 from shadowspill.planner.model import InitialPlacement
 
 from ._examples import (
@@ -15,8 +15,8 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    "SHADOWSPILL_PLANNER_LIBRARY" not in os.environ,
-    reason="compiled planner library was not supplied",
+    planner_library_path() is None,
+    reason="compiled planner library is not installed",
 )
 
 

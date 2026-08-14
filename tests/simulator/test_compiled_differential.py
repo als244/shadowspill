@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -24,6 +23,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
+from shadowspill.simulator._capi import simulator_library_path
 from shadowspill.simulator._compiled import simulate_compiled
 from shadowspill.simulator._python import simulate_python
 from tests.ir._examples import (
@@ -43,8 +43,8 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    "SHADOWSPILL_SIMULATOR_LIBRARY" not in os.environ,
-    reason="compiled simulator library was not supplied",
+    simulator_library_path() is None,
+    reason="compiled simulator library is not installed",
 )
 
 

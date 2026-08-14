@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -26,9 +25,7 @@ class _StatefulForward(nn.Module):
 
 def main() -> int:
     adapter = Path(sys.argv[1]).resolve()
-    os.environ["SHADOWSPILL_PYTORCH_LIBRARY"] = str(adapter)
     with tempfile.TemporaryDirectory() as cache:
-        os.environ["SHADOWSPILL_PROFILE_CACHE"] = cache
         torch.manual_seed(317)
         model = _StatefulForward().eval()
         reference = _StatefulForward().eval()
@@ -51,6 +48,7 @@ def main() -> int:
             execution="execution",
             spill="spill",
             partition="whole",
+            planning_cachedir=cache,
         )
         task = planned.plan_report.execution_plan.program.tasks[0]
         if len(task.mutations) != 1:

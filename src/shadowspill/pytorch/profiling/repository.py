@@ -41,11 +41,9 @@ class ProfileRepository:
         overwrite: bool = False,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
-        configured = os.environ.get("SHADOWSPILL_PROFILE_CACHE")
-        selected = root if root is not None else configured
         self.root = (
-            Path(selected).expanduser()
-            if selected is not None
+            Path(root).expanduser()
+            if root is not None
             else Path.home() / ".cache" / "shadowspill" / "profiles"
         )
         self.compiled_manifest_root = (

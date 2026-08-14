@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ctypes
-import os
 from functools import cache
 from pathlib import Path
+
+from shadowspill._libraries import resolve_library
 
 ABI_VERSION = 2
 NO_INDEX = (1 << 32) - 1
@@ -122,23 +123,8 @@ class CResult(ctypes.Structure):
     ]
 
 
-def _library_candidates(explicit: str | None) -> tuple[Path, ...]:
-    packaged = Path(__file__).resolve().parents[1] / "lib/libshadowspill_simulator.so"
-    if explicit:
-        return (Path(explicit).expanduser().resolve(), packaged)
-    return (packaged,)
-
-
-@cache
-def _resolved_library_path(explicit: str | None) -> Path | None:
-    for candidate in _library_candidates(explicit):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def simulator_library_path() -> Path | None:
-    return _resolved_library_path(os.environ.get("SHADOWSPILL_SIMULATOR_LIBRARY"))
+    return resolve_library("libshadowspill_simulator.so")
 
 
 @cache
@@ -146,8 +132,8 @@ def load_simulator_library() -> ctypes.CDLL:
     path = simulator_library_path()
     if path is None:
         raise RuntimeError(
-            "libshadowspill_simulator.so is not installed; install the built "
-            "ShadowSpill wheel or set SHADOWSPILL_SIMULATOR_LIBRARY"
+            "libshadowspill_simulator.so was not found; install ShadowSpill or "
+            "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))
     library.shadowspill_simulator_abi_version.argtypes = []

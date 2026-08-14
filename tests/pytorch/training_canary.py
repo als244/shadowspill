@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ctypes
-import os
 import sys
 import tempfile
 from collections.abc import Iterable
@@ -71,9 +70,7 @@ def _statistics() -> AdapterStatistics:
 def main(arguments: Iterable[str] | None = None) -> int:
     values = tuple(sys.argv[1:] if arguments is None else arguments)
     adapter = Path(values[0]).resolve()
-    os.environ["SHADOWSPILL_PYTORCH_LIBRARY"] = str(adapter)
     with tempfile.TemporaryDirectory() as cache:
-        os.environ["SHADOWSPILL_PROFILE_CACHE"] = cache
         torch.manual_seed(127)
         model = _Model()
         reference = _Model()

@@ -18,11 +18,6 @@ from qualification.numerical.cases import DEFAULT_DEVICE_BUDGETS
 
 _FAMILIES: Final = tuple(DEFAULT_DEVICE_BUDGETS)
 _IMPLEMENTATIONS: Final = ("pytorch", "mlops")
-_LIBRARIES: Final = {
-    "SHADOWSPILL_PYTORCH_LIBRARY": "libshadowspill_pytorch.so",
-    "SHADOWSPILL_SIMULATOR_LIBRARY": "libshadowspill_simulator.so",
-    "SHADOWSPILL_PLANNER_LIBRARY": "libshadowspill_planner.so",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,33 +65,6 @@ def _budget_overrides(
             )
         result[family] = _parse_bytes(budget)
     return result
-
-
-def _environment(
-    *, build_directory: Path | None, cache_directory: Path | None
-) -> dict[str, str]:
-    environment = dict(os.environ)
-    if build_directory is not None:
-        resolved = build_directory.expanduser().resolve()
-        for variable, filename in _LIBRARIES.items():
-            library = resolved / filename
-            if not library.is_file():
-                raise FileNotFoundError(f"missing {variable} library: {library}")
-            environment[variable] = str(library)
-    missing = [name for name in _LIBRARIES if name not in environment]
-    if missing:
-        raise RuntimeError(
-            "compiled libraries are not installed or configured; pass --build-dir "
-            "or set " + ", ".join(missing)
-        )
-    if cache_directory is not None:
-        resolved_cache = cache_directory.expanduser().resolve()
-        resolved_cache.mkdir(parents=True, exist_ok=True)
-        environment["SHADOWSPILL_PROFILE_CACHE"] = str(resolved_cache / "profiles")
-        environment["SHADOWSPILL_RECOMPUTATION_CACHE"] = str(
-            resolved_cache / "recomputation"
-        )
-    return environment
 
 
 def _run_case(
@@ -164,6 +132,12 @@ def _run_case(
     return_code = 0
     for command_index, command in enumerate(commands):
         command_environment = dict(environment)
+        is_reference = command_index == 0 and len(commands) == 2
+        plan_cache = (
+            (output_directory / "planning_cache" / prefix)
+            if cache_directory is None
+            else cache_directory.expanduser().resolve() / prefix
+        )
         if cold:
             cache_parent = (
                 output_directory / "cold_caches"
@@ -173,20 +147,18 @@ def _run_case(
             cache_root = (
                 cache_parent
                 / f"{prefix}-{uuid.uuid4().hex}"
-                / ("reference" if command_index == 0 and len(commands) == 2 else "plan")
+                / ("reference" if is_reference else "plan")
             )
             cache_root.mkdir(parents=True, exist_ok=False)
-            command_environment.update(
-                {
-                    "SHADOWSPILL_PROFILE_CACHE": str(cache_root / "profiles"),
-                    "SHADOWSPILL_RECOMPUTATION_CACHE": str(
-                        cache_root / "recomputation"
-                    ),
-                    "SHADOWSPILL_QUALIFICATION_COLD": "1",
-                    "TORCHINDUCTOR_CACHE_DIR": str(cache_root / "torchinductor"),
-                    "TRITON_CACHE_DIR": str(cache_root / "triton"),
-                }
+            plan_cache = cache_root / "shadowspill"
+            command_environment["TORCHINDUCTOR_CACHE_DIR"] = str(
+                cache_root / "torchinductor"
             )
+            command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
+        if not is_reference:
+            command.extend(("--planning-cachedir", str(plan_cache)))
+            if cold:
+                command.extend(("--force-fresh", "--overwrite-plan"))
         completed = subprocess.run(command, check=False, env=command_environment)
         return_code = completed.returncode
         if return_code != 0:
@@ -244,7 +216,6 @@ def main() -> int:
         type=Path,
         default=Path("qualification/results/numerical_matrix"),
     )
-    parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument(
         "--cold",
@@ -326,10 +297,7 @@ def main() -> int:
                 "custom model budgets must be explicit with --budget: "
                 + ", ".join(missing_budgets)
             )
-        environment = _environment(
-            build_directory=arguments.build_dir,
-            cache_directory=None if arguments.cold else arguments.cache_dir,
-        )
+        environment = dict(os.environ)
     except (argparse.ArgumentTypeError, FileNotFoundError, RuntimeError) as exc:
         parser.error(str(exc))
 

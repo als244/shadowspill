@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 
+from shadowspill.planner._capi import planner_library_path
 from shadowspill.planner._dense_residency import (
     compile_residency_template,
     reduce_residency_compiled,
@@ -22,8 +21,8 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    "SHADOWSPILL_PLANNER_LIBRARY" not in os.environ,
-    reason="compiled planner library was not supplied",
+    planner_library_path() is None,
+    reason="compiled planner library is not installed",
 )
 
 

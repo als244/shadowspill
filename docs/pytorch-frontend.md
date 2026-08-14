@@ -19,6 +19,11 @@ runtime = Runtime(
 )
 ```
 
+`Runtime` loads the adapter and the planning path loads the simulator and
+planner from the installed ShadowSpill package. Editable development builds use
+the configured project build directory. Binary selection is not controlled by
+environment variables and does not patch Python or PyTorch objects.
+
 `plan_forward(model, example_inputs=..., runtime=runtime, execution="device",
 spill="spill", partition="auto")` constructs forward-only execution.
 `plan_step(...)` constructs accumulated training. Planning must occur before an

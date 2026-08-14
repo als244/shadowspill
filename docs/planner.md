@@ -73,12 +73,13 @@ physical admission may reject the result but cannot move a trigger.
 
 ## Selection cache
 
-PyTorch planning persists a complete selected PressureFit result in
-`~/.cache/shadowspill/recomputation`, or in
-`SHADOWSPILL_RECOMPUTATION_CACHE` when configured. The content key includes the
-Program digest, initial/final residency, simulator capacities and transfer
-calibration, and every behavior-bearing planner option. Evaluation worker
-count is excluded because it cannot affect the deterministic result.
+PyTorch planning persists a complete selected PressureFit result beneath the
+explicit `planning_cachedir/pressurefit/selections` tree. When no directory is
+supplied, `~/.cache/shadowspill` is used. The content key includes the Program
+digest, initial/final residency, simulator capacities and transfer calibration,
+and every behavior-bearing planner option. Evaluation worker count is excluded
+because it cannot affect the deterministic result. ShadowSpill does not read an
+environment variable to redirect this cache.
 
 A cache hit does not trust stale timing evidence: ShadowSpill validates the
 schedule against the current Program and selections, replays it through the

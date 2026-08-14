@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import os
 from functools import partial
 
 import pytest
@@ -10,6 +9,7 @@ import torch.nn as nn
 
 from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan_step
 from shadowspill.pytorch.optimizer import capture as optimizer_module
+from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
 from .runtime_test_support import public_test_runtime
 
@@ -51,11 +51,18 @@ def _training_objective(
     )
 
 
+def _require_adapter() -> None:
+    if torch.cuda.is_initialized():
+        pytest.skip("public allocator installation requires a fresh process")
+    try:
+        _adapter_path(None)
+    except RuntimeError:
+        pytest.skip("the built PyTorch adapter is not installed")
+
+
 @pytest.mark.cuda
 def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> None:
-    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
-        pytest.skip("the built PyTorch adapter was not provided")
-    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    _require_adapter()
     torch.manual_seed(41)
     model = _TrainingNetwork()
     reference = _TrainingNetwork()
@@ -176,9 +183,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
 
 @pytest.mark.cuda
 def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
-    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
-        pytest.skip("the built PyTorch adapter was not provided")
-    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    _require_adapter()
     torch.manual_seed(73)
     model = _TrainingNetwork()
     examples = [
@@ -203,6 +208,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         runtime=public_test_runtime(),
         execution="execution",
         spill="spill",
+        planning_cachedir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is not None
     empty_state = training.state_dict()
@@ -241,9 +247,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
 def test_public_training_profiles_bounded_opaque_optimizer(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
-        pytest.skip("the built PyTorch adapter was not provided")
-    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    _require_adapter()
 
     def reject_graph(_optimizer: torch.optim.Optimizer) -> torch.fx.GraphModule:
         raise RuntimeError("optimizer graph intentionally unavailable")
@@ -268,6 +272,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
         runtime=public_test_runtime(),
         execution="execution",
         spill="spill",
+        planning_cachedir=tmp_path,
     )
     actual = training(values)
     torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
@@ -281,9 +286,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
     tmp_path: object,
 ) -> None:
     mlops = pytest.importorskip("mlops")
-    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
-        pytest.skip("the built PyTorch adapter was not provided")
-    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    _require_adapter()
 
     class Network(nn.Module):
         def __init__(self) -> None:
@@ -327,6 +330,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
         runtime=public_test_runtime(),
         execution="execution",
         spill="spill",
+        planning_cachedir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(

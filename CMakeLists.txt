@@ -473,8 +473,7 @@ if(BUILD_TESTING)
       shadowspill_pytorch_forward_canary
       PROPERTIES
         LABELS "cuda;pytorch"
-        ENVIRONMENT
-          "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src;SHADOWSPILL_SIMULATOR_LIBRARY=$<TARGET_FILE:shadowspill_simulator>;SHADOWSPILL_PLANNER_LIBRARY=$<TARGET_FILE:shadowspill_planner>"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
         TIMEOUT 90
     )
     add_test(
@@ -488,8 +487,7 @@ if(BUILD_TESTING)
       shadowspill_pytorch_mutation_canary
       PROPERTIES
         LABELS "cuda;pytorch"
-        ENVIRONMENT
-          "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src;SHADOWSPILL_SIMULATOR_LIBRARY=$<TARGET_FILE:shadowspill_simulator>;SHADOWSPILL_PLANNER_LIBRARY=$<TARGET_FILE:shadowspill_planner>"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
         TIMEOUT 90
     )
     add_test(
@@ -503,8 +501,7 @@ if(BUILD_TESTING)
       shadowspill_pytorch_training_canary
       PROPERTIES
         LABELS "cuda;pytorch"
-        ENVIRONMENT
-          "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src;SHADOWSPILL_SIMULATOR_LIBRARY=$<TARGET_FILE:shadowspill_simulator>;SHADOWSPILL_PLANNER_LIBRARY=$<TARGET_FILE:shadowspill_planner>"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
         TIMEOUT 120
     )
   endif()

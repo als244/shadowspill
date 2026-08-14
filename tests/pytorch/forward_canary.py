@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ctypes
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -44,9 +43,7 @@ def _statistics() -> AdapterStatistics:
 
 def main() -> int:
     adapter = Path(sys.argv[1]).resolve()
-    os.environ["SHADOWSPILL_PYTORCH_LIBRARY"] = str(adapter)
     with tempfile.TemporaryDirectory() as cache:
-        os.environ["SHADOWSPILL_PROFILE_CACHE"] = cache
         torch.manual_seed(31)
         model = _ForwardModel().eval()
         reference = _ForwardModel().eval()

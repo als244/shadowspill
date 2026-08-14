@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import InputGuardError, plan_forward
+from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
 from .runtime_test_support import public_test_runtime
 
@@ -25,9 +24,12 @@ class _Network(nn.Module):
 
 @pytest.mark.cuda
 def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
-    if "SHADOWSPILL_PYTORCH_LIBRARY" not in os.environ:
-        pytest.skip("the built PyTorch adapter was not provided")
-    os.environ["SHADOWSPILL_PROFILE_CACHE"] = str(tmp_path)
+    if torch.cuda.is_initialized():
+        pytest.skip("public allocator installation requires a fresh process")
+    try:
+        _adapter_path(None)
+    except RuntimeError:
+        pytest.skip("the built PyTorch adapter is not installed")
     torch.manual_seed(19)
     model = _Network().eval()
     reference = _Network().eval()

@@ -85,9 +85,6 @@ class PlanningCache:
     force_fresh: bool = False
     overwrite_plan: bool = False
     implementation_revision: str | None = None
-    _inductor_override: Path | None = field(default=None, repr=False)
-    _profiling_override: Path | None = field(default=None, repr=False)
-    _pressurefit_override: Path | None = field(default=None, repr=False)
     _ledger: _ArtifactLedger = field(
         default_factory=_ArtifactLedger,
         repr=False,
@@ -153,9 +150,6 @@ class PlanningCache:
             force_fresh,
             overwrite_plan,
             implementation_revision,
-            _path_from_environment(_PYTORCH_CACHE_ENVIRONMENT),
-            _path_from_environment("SHADOWSPILL_PROFILE_CACHE"),
-            _path_from_environment("SHADOWSPILL_RECOMPUTATION_CACHE"),
         )
 
     @property
@@ -164,15 +158,13 @@ class PlanningCache:
 
     @property
     def inductor(self) -> Path:
-        if self._inductor_override is not None:
-            return self._inductor_override
         revision = self.implementation_revision or "default"
         identity = hashlib.sha256(revision.encode()).hexdigest()[:12]
         return self.pytorch / "inductor" / f"{_safe_label(revision)}-{identity}"
 
     @property
     def profile_measurements(self) -> Path:
-        return self._profiling_override or self.profiling / "measurements" / "v12"
+        return self.profiling / "measurements" / "v12"
 
     @property
     def compiled_manifests(self) -> Path:
@@ -184,7 +176,7 @@ class PlanningCache:
 
     @property
     def pressurefit_selections(self) -> Path:
-        return self._pressurefit_override or self.pressurefit / "selections" / "v3"
+        return self.pressurefit / "selections" / "v3"
 
     @property
     def read_enabled(self) -> bool:
@@ -538,11 +530,6 @@ class PlanningCache:
             dependencies=(execution_plan.program.digest,),
         )
         return manifest_path
-
-
-def _path_from_environment(name: str) -> Path | None:
-    value = os.environ.get(name)
-    return None if value is None else Path(value).expanduser().resolve()
 
 
 def _clear_pytorch_compiler_caches() -> None:

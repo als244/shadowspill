@@ -65,11 +65,9 @@ class PressureFitCache:
         overwrite: bool = False,
         artifact_recorder: _ArtifactRecorder | None = None,
     ) -> None:
-        configured = os.environ.get("SHADOWSPILL_RECOMPUTATION_CACHE")
-        selected = root if root is not None else configured
         self.root = (
-            Path(selected).expanduser()
-            if selected is not None
+            Path(root).expanduser()
+            if root is not None
             else Path.home() / ".cache" / "shadowspill" / "recomputation"
         )
         self.read_enabled = read_enabled

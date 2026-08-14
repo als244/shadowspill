@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from shadowspill._libraries import resolve_library
 from shadowspill.memory import DevicePool, MemoryPoolConfig, PinnedHostPool
 from shadowspill.pytorch.runtime_adapter.abi import (
     TRANSFER_PROFILE_ABI_VERSION,
@@ -586,16 +587,14 @@ def _adapter_path(configured: str | Path | None) -> Path:
     if configured is not None:
         path = Path(configured).expanduser().resolve()
     else:
-        import os
-
-        environment = os.environ.get("SHADOWSPILL_PYTORCH_LIBRARY")
-        path = (
-            Path(environment).expanduser().resolve()
-            if environment
-            else Path(__file__).resolve().parents[1]
-            / "lib"
-            / "libshadowspill_pytorch.so"
-        )
+        discovered = resolve_library("libshadowspill_pytorch.so")
+        if discovered is None:
+            raise RuntimeConfigurationError(
+                "ShadowSpill's PyTorch adapter was not found; install "
+                "ShadowSpill or build the editable checkout at its configured "
+                "build location"
+            )
+        path = discovered
     if not path.is_file():
         raise RuntimeConfigurationError(
             f"ShadowSpill's PyTorch adapter was not found: {path}"
