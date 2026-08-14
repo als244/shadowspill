@@ -84,6 +84,11 @@ debug_result = train_step(
 )
 step_diagnostics = debug_result.diagnostics.result()
 
+# Checkpoint and restore the complete planned training state:
+checkpoint = train_step.state_dict()
+torch.save(checkpoint, "checkpoint.pt")
+train_step.load_state_dict(checkpoint)
+
 train_step.close()
 externalize_model_state(model, runtime=runtime, release_runtime=True)
 runtime.close()
@@ -92,6 +97,12 @@ runtime.close()
 The outer input sequence is the fixed gradient-accumulation count. ShadowSpill
 runs one forward/objective/backward contribution per inner sequence and one
 optimizer update per call. It does not divide accumulated gradients.
+
+`train_step.state_dict()` returns `model`, `optimizer`, and `step`. The model
+member is directly compatible with
+`fresh_model.load_state_dict(checkpoint["model"])`; see
+[PyTorch Frontend](docs/pytorch-frontend.md#checkpoints-and-ordinary-pytorch-restoration)
+for active-runtime and ordinary-PyTorch restore examples.
 
 `profiling_metadata` is planning-only cache metadata for value-sensitive task
 costs. It is not passed into the model; the corresponding concrete

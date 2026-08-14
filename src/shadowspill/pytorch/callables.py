@@ -69,14 +69,14 @@ class PlannedForward:
         return self._executor(inputs)
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
-        """Synchronously snapshot model state into ordinary CPU tensors."""
+        """Synchronously return a normal CPU model state mapping."""
 
         if self._closed:
             return OrderedDict(self._model.state_dict())
         return self._state.state_dict()
 
     def load_state_dict(self, state: Mapping[str, torch.Tensor]) -> None:
-        """Synchronously replace the current host-authoritative model state."""
+        """Synchronously load a normal model state mapping into the runtime."""
 
         if self._closed:
             self._model.load_state_dict(state)
@@ -195,7 +195,7 @@ class PlannedTrainStep:
         return self._executor.collect_selected_span_seconds()
 
     def state_dict(self) -> dict[str, object]:
-        """Synchronously snapshot model, optimizer, and logical step state."""
+        """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state."""
 
         if self._closed:
             model_state = OrderedDict(self._model.state_dict())
@@ -209,14 +209,14 @@ class PlannedTrainStep:
             "step": self._step,
         }
 
-    def load_state_dict(self, state: Mapping[str, object]) -> None:
-        """Restore an exact state produced by :meth:`state_dict`."""
+    def load_state_dict(self, checkpoint: Mapping[str, object]) -> None:
+        """Restore the complete three-key checkpoint produced by ``state_dict``."""
 
-        if set(state) != {"model", "optimizer", "step"}:
+        if set(checkpoint) != {"model", "optimizer", "step"}:
             raise RuntimeError("training state_dict keys differ")
-        model_state = state["model"]
-        optimizer_state = state["optimizer"]
-        step = state["step"]
+        model_state = checkpoint["model"]
+        optimizer_state = checkpoint["optimizer"]
+        step = checkpoint["step"]
         if not isinstance(model_state, Mapping) or not isinstance(
             optimizer_state, Mapping
         ):

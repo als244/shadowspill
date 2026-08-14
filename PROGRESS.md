@@ -2475,3 +2475,14 @@ the ignored internal progress log before this tracked summary is updated.
   old case-held model becomes collectible and teardown externalizes the model
   with `release_runtime=True` by default. A real CUDA helper round trip also
   confirms source collection, externalization, and clean runtime teardown.
+
+## 2026-08-14 — Checkpoint compatibility documented explicitly
+
+- The PyTorch frontend guide now documents the exact training checkpoint
+  schema, active-callable restore path, and ordinary PyTorch model/optimizer
+  restore path. It distinguishes the complete checkpoint from its conventional
+  `checkpoint["model"]` state mapping.
+- Public callable docstrings and the README now state that exported state is
+  synchronizing ordinary CPU state and explain when direct model loading
+  requires prior close/externalization. Application-owned RNG, scheduler,
+  scaler, and data-loader state are explicitly outside the three-key schema.

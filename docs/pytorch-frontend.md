@@ -83,10 +83,12 @@ pytrees are reconstructed from Export's user-output positions, and their live
 slab allocations transfer to ordinary caller ownership without a copy.
 
 `state_dict()` and `load_state_dict()` are explicitly synchronizing and use
-ordinary CPU tensors with the original model names. `close()` is synchronizing,
-idempotent, preserves the relocated model's Parameter objects and ties,
-restores spill-authoritative bytes, and unregisters plan objects. It does not
-release persistent model state. Use
+ordinary CPU tensors with the original model names. A training state mapping
+contains model, optimizer, and logical-step state; a forward-only mapping is
+directly a model state dict.
+`close()` is synchronizing, idempotent, preserves the relocated model's
+Parameter objects and ties, restores spill-authoritative bytes, and unregisters
+plan objects. It does not release persistent model state. Use
 `externalize_model_state(model, runtime=runtime, release_runtime=True)` to copy
 state into ordinary CPU allocations and release the runtime objects before
 closing the runtime. Caller-retained outputs remain valid after callable close
@@ -102,6 +104,56 @@ The public `plan_step()` callable composes every fixed microbatch position into
 forward, objective, backward, and gradient-accumulation tasks followed by one
 optimizer update. It preserves the relocated model and optimizer checkpoint
 schema and restores spill-backed CPU storage on deterministic close.
+
+## Checkpoints and ordinary PyTorch restoration
+
+Checkpoint methods belong to the planned callable. They are explicitly
+synchronizing and return ordinary CPU tensors that do not reference CUDA or
+runtime spill storage. A training checkpoint has exactly this structure:
+
+```python
+checkpoint = train_step.state_dict()
+
+assert set(checkpoint) == {"model", "optimizer", "step"}
+torch.save(checkpoint, checkpoint_path)
+```
+
+Restore the complete state into an active ShadowSpill callable through the
+callable, not through its temporarily runtime-owned model:
+
+```python
+checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+train_step.load_state_dict(checkpoint)
+```
+
+The `model` member is itself a conventional PyTorch model state dict with the
+original parameter and persistent-buffer names. A separately instantiated
+matching model and optimizer can therefore consume it normally:
+
+```python
+restored_model = CustomModel(...)
+restored_model.load_state_dict(checkpoint["model"], strict=True)
+
+restored_optimizer = optimizer_factory(restored_model.parameters())
+restored_optimizer.load_state_dict(checkpoint["optimizer"])
+logical_step = checkpoint["step"]
+```
+
+Do not pass the complete three-key training checkpoint to
+`model.load_state_dict()`; pass `checkpoint["model"]`. A forward-only
+callable's `state_dict()` is already the model mapping and can be passed
+directly to a matching ordinary model.
+
+For direct loading into the relocated model object, first close its planned
+callable and call
+`externalize_model_state(model, runtime=runtime, release_runtime=True)`.
+During active execution use `train_step.load_state_dict()` so ShadowSpill can
+update authoritative versions and optimizer-plan state correctly.
+
+The training checkpoint covers model state, optimizer state, and ShadowSpill's
+logical step number. Application-owned RNG state, schedulers, gradient scalers,
+and data-loader position must be saved separately when exact stochastic replay
+requires them.
 
 ## Planning and execution diagnostics
 
