@@ -711,8 +711,10 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         prepared = self._before_task(run, record)
         try:
-            raw_outputs = self._run_compiled_task(prepared)
-            return self._after_task(prepared, raw_outputs)
+            # Do not retain the compiled result in this caller frame.  The
+            # after-task boundary must be able to destroy every unadopted
+            # output before it publishes actions that reuse those ranges.
+            return self._after_task(prepared, self._run_compiled_task(prepared))
         except BaseException as error:
             self._abort_task(prepared, error)
             raise
@@ -958,6 +960,11 @@ class TrainingExecutor:
             processed, dematerialized = self._prepare_task_publication(
                 prepared, raw_outputs
             )
+            # The compiled result tuple owns every unadopted task output.  Drop
+            # this outer reference before publishing the task boundary so its
+            # allocator frees become causal predecessors of any action that
+            # reuses the task's spatial ranges.
+            del raw_outputs
             generations = self._publish_task_to_runtime(
                 prepared, processed, dematerialized
             )
@@ -975,7 +982,6 @@ class TrainingExecutor:
             f"shadowspill.output_processing.{prepared.record.trace_label}"
         ):
             processed = self._process_task_outputs(prepared, raw_outputs)
-            del raw_outputs
             dematerialized = self._dematerialization_tensors(prepared.record)
         if prepared.timing is not None:
             prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns

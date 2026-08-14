@@ -5,6 +5,7 @@
 static void latch_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatus status,
+    uint64_t task_id,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes,
@@ -21,7 +22,7 @@ static void latch_failure(
     }
     runtime->failure = (ShadowSpillRuntimeFailure){
         .status = (uint32_t)status,
-        .task_id = shadowspill_current_task_id(runtime),
+        .task_id = task_id,
         .object_id = object_id,
         .allocation_id = allocation_id,
         .requested_bytes = requested_bytes,
@@ -42,7 +43,7 @@ static void latch_failure(
     shadowspill_append_trace_event_locked(
         runtime,
         SHADOWSPILL_TRACE_FAILURE_LATCHED,
-        shadowspill_current_task_id(runtime),
+        task_id,
         object_id,
         allocation_id,
         requested_bytes,
@@ -68,6 +69,28 @@ void shadowspill_latch_failure_locked(
     latch_failure(
         runtime,
         status,
+        shadowspill_current_task_id(runtime),
+        object_id,
+        allocation_id,
+        requested_bytes,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        0U
+    );
+}
+
+void shadowspill_latch_task_failure(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatus status,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+) {
+    latch_failure(
+        runtime,
+        status,
+        task_id,
         object_id,
         allocation_id,
         requested_bytes,
@@ -87,6 +110,7 @@ void shadowspill_latch_placement_failure(
     latch_failure(
         runtime,
         SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+        shadowspill_current_task_id(runtime),
         SHADOWSPILL_RUNTIME_NO_ID,
         SHADOWSPILL_RUNTIME_NO_ID,
         requested_bytes,

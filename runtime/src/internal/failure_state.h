@@ -12,6 +12,16 @@ void shadowspill_latch_failure_locked(
     uint64_t requested_bytes
 );
 
+/* Publish a failure whose causal task is carried by asynchronous work. */
+void shadowspill_latch_task_failure(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatus status,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+);
+
 void shadowspill_latch_placement_failure(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,

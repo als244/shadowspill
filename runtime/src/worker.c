@@ -69,6 +69,24 @@ static void unlink_action_locked(
     action->next = NULL;
 }
 
+static void latch_action_failure(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillQueuedAction *action,
+    ShadowSpillRuntimeStatus status,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+) {
+    shadowspill_latch_task_failure(
+        runtime,
+        status,
+        action->task_id,
+        object_id,
+        allocation_id,
+        requested_bytes
+    );
+}
+
 static void complete_action(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
@@ -87,8 +105,9 @@ static void complete_action(
         if (shadowspill_event_lease_release(
                 runtime, action->completion_event
             ) != 0) {
-            shadowspill_latch_failure_locked(
+            latch_action_failure(
                 runtime,
+                action,
                 SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
                 action->object->object_id,
                 action->object->allocation_id,
@@ -135,6 +154,34 @@ static void release_action_claim(
     pthread_mutex_lock(&runtime->actions.lock);
     action->processing = 0U;
     pthread_mutex_unlock(&runtime->actions.lock);
+}
+
+static void relinquish_failed_action_priorities(ShadowSpillRuntime *runtime) {
+    pthread_mutex_lock(&runtime->actions.lock);
+    for (ShadowSpillQueuedAction *action = runtime->actions.head;
+         action != NULL; action = action->next) {
+        if (!action->destination_priority_declared) {
+            continue;
+        }
+        ShadowSpillMemoryPool *pool =
+            action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+            ? shadowspill_execution_pool(runtime)
+            : shadowspill_spill_pool(runtime);
+        shadowspill_memory_pool_relinquish_transfer(pool);
+        action->destination_priority_declared = 0U;
+    }
+    pthread_mutex_unlock(&runtime->actions.lock);
+}
+
+static void wait_for_failure_recovery_or_close(ShadowSpillRuntime *runtime) {
+    pthread_mutex_lock(&runtime->mutex);
+    while (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK &&
+           atomic_load_explicit(
+               &runtime->worker_stop, memory_order_acquire
+           ) == 0U) {
+        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+    }
+    pthread_mutex_unlock(&runtime->mutex);
 }
 
 static int event_complete_locked(
@@ -247,8 +294,9 @@ static int reserve_destination_locked(
         ShadowSpillRuntimeStatus status = range_status < 0
             ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
             : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-        shadowspill_latch_failure_locked(
+        latch_action_failure(
             runtime,
+            action,
             status,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
@@ -290,8 +338,9 @@ static int dispatch_offload_locked(
     if (allocation == NULL || allocation->pointer == NULL ||
         allocation->allocation_id != object->allocation_id ||
         allocation->generation != object->generation) {
-        shadowspill_latch_failure_locked(
+        latch_action_failure(
             runtime,
+            action,
             SHADOWSPILL_RUNTIME_INVALID_STATE,
             object->object_id,
             object->allocation_id,
@@ -307,8 +356,9 @@ static int dispatch_offload_locked(
     int spill_lease_created = 0;
     if (spill->lease == NULL) {
         if (action->destination_lease == NULL) {
-            shadowspill_latch_failure_locked(
+            latch_action_failure(
                 runtime,
+                action,
                 SHADOWSPILL_RUNTIME_INVALID_STATE,
                 object->object_id,
                 object->allocation_id,
@@ -374,8 +424,9 @@ static int dispatch_offload_locked(
             spill->lease = NULL;
             spill->owns_lease = 0U;
         }
-        shadowspill_latch_failure_locked(
+        latch_action_failure(
             runtime,
+            action,
             backend_failed ? SHADOWSPILL_RUNTIME_BACKEND_FAILURE
                            : SHADOWSPILL_RUNTIME_INVALID_STATE,
             object_id,
@@ -413,8 +464,9 @@ static int dispatch_prefetch_locked(
 ) {
     if (action->destination_lease == NULL ||
         shadowspill_spill_location(runtime, action->object)->lease == NULL) {
-        shadowspill_latch_failure_locked(
+        latch_action_failure(
             runtime,
+            action,
             SHADOWSPILL_RUNTIME_INVALID_STATE,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
@@ -483,8 +535,9 @@ static int dispatch_prefetch_locked(
         allocation->release_task_id = action->task_id;
         shadowspill_release_execution_lease_locked(runtime, allocation);
         pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
-        shadowspill_latch_failure_locked(
+        latch_action_failure(
             runtime,
+            action,
             backend_failed ? SHADOWSPILL_RUNTIME_BACKEND_FAILURE
                            : SHADOWSPILL_RUNTIME_INVALID_STATE,
             object_id,
@@ -539,8 +592,9 @@ static int handle_action(
                 if (shadowspill_task_fence_complete_locked(
                         runtime, action->fence, &complete
                     ) != 0) {
-                    shadowspill_latch_failure_locked(
+                    latch_action_failure(
                         runtime,
+                        action,
                         SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
@@ -564,8 +618,9 @@ static int handle_action(
                         shadowspill_memory_pool_unlock_reclamation(
                             shadowspill_execution_pool(runtime)
                         );
-                        shadowspill_latch_failure_locked(
+                        latch_action_failure(
                             runtime,
+                            action,
                             SHADOWSPILL_RUNTIME_INVALID_STATE,
                             object->object_id,
                             object->allocation_id,
@@ -595,8 +650,9 @@ static int handle_action(
                             shadowspill_memory_pool_unlock_reclamation(
                                 shadowspill_execution_pool(runtime)
                             );
-                            shadowspill_latch_failure_locked(
+                            latch_action_failure(
                                 runtime,
+                                action,
                                 SHADOWSPILL_RUNTIME_INVALID_STATE,
                                 object->object_id,
                                 allocation->allocation_id,
@@ -676,8 +732,9 @@ static int handle_action(
                 if (shadowspill_task_fence_complete_locked(
                         runtime, action->fence, &trigger_complete
                     ) != 0) {
-                    shadowspill_latch_failure_locked(
+                    latch_action_failure(
                         runtime,
+                        action,
                         SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
@@ -760,8 +817,9 @@ static int handle_action(
                         shadowspill_memory_pool_unlock_reclamation(
                             shadowspill_execution_pool(runtime)
                         );
-                        shadowspill_latch_failure_locked(
+                        latch_action_failure(
                             runtime,
+                            action,
                             SHADOWSPILL_RUNTIME_INVALID_STATE,
                             object->object_id,
                             object->allocation_id,
@@ -815,8 +873,9 @@ static int handle_action(
                             shadowspill_spill_pool(runtime)
                         );
                         if (range_status != 0) {
-                            shadowspill_latch_failure_locked(
+                            latch_action_failure(
                                 runtime,
+                                action,
                                 SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
                                 object->object_id,
                                 object->allocation_id,
@@ -852,8 +911,9 @@ static int handle_action(
                     shadowspill_event_lease_release(
                         runtime, readiness_to_release
                     ) != 0) {
-                    shadowspill_latch_failure_locked(
+                    latch_action_failure(
                         runtime,
+                        action,
                         SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
@@ -862,8 +922,9 @@ static int handle_action(
                     return -1;
                 }
                 if (shadowspill_transfer_lane_complete(lane, action) != 0) {
-                    shadowspill_latch_failure_locked(
+                    latch_action_failure(
                         runtime,
+                        action,
                         SHADOWSPILL_RUNTIME_INVALID_STATE,
                         object->object_id,
                         object->allocation_id,
@@ -946,12 +1007,16 @@ void *shadowspill_worker_main(void *pointer) {
         const ShadowSpillRetirementWork retirement_work =
             shadowspill_handle_retirements(runtime);
         /* Dispatch or complete ready release, fetch, and evict actions. */
-        if (!retirement_work.pool_busy) {
+        if (!retirement_work.pool_busy &&
+            shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK) {
             (void)handle_actions(runtime);
         }
-        /* Wake blocked callers immediately after a worker failure. */
+        /* Stop failed actions from retaining priority or spinning forever. */
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
+            relinquish_failed_action_priorities(runtime);
             pthread_cond_broadcast(&runtime->condition);
+            wait_for_failure_recovery_or_close(runtime);
+            continue;
         }
         /*
          * Park only when no work exists. With actions or retirements active,

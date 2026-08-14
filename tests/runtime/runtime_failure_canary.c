@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -303,9 +304,113 @@ done:
     return result;
 }
 
+static int failed_prefetch_releases_transfer_priority(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillRuntimeConfig config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillAllocation temporary = {0};
+    const ShadowSpillObjectDescription object = {
+        .object_id = 7U,
+        .size_bytes = 32U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction prefetch = {
+        .object_id = object.object_id,
+        .execution_offset = 0U,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .has_execution_offset = 1U,
+    };
+    const ShadowSpillAllocationPlacementHint placement = {
+        .allocation_ordinal = 0U,
+        .requested_bytes = 32U,
+        .slab_offset = 0U,
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 81U,
+        .actions = &prefetch,
+        .action_count = 1U,
+        .allocation_placement_hints = &placement,
+        .allocation_placement_hint_count = 1U,
+    };
+    int result = 0;
+    if (shadowspill_runtime_create(&config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &execution) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, execution.task_id, stream, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 32U, 1U, stream, &temporary) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(runtime, execution.task_id, stream) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+        goto done;
+    }
+
+    ShadowSpillRuntimeFailure failure = {0};
+    for (uint32_t attempt = 0U; attempt < 1000U; ++attempt) {
+        if (shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_RUNTIME_OK) {
+            result = -1;
+            goto done;
+        }
+        if (failure.status != SHADOWSPILL_RUNTIME_OK) {
+            break;
+        }
+        const struct timespec delay = {.tv_nsec = 1000000L};
+        (void)nanosleep(&delay, NULL);
+    }
+    const ShadowSpillRuntimeStatus free_status = shadowspill_free(
+        runtime, temporary.allocation_id, stream
+    );
+    if (failure.status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+        failure.task_id != execution.task_id ||
+        failure.object_id != object.object_id ||
+        failure.requested_bytes != object.size_bytes ||
+        free_status != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
+        fprintf(
+            stderr,
+            "failed prefetch recovery: status=%u task=%llu object=%llu bytes=%llu free_status=%u\n",
+            (unsigned)failure.status,
+            (unsigned long long)failure.task_id,
+            (unsigned long long)failure.object_id,
+            (unsigned long long)failure.requested_bytes,
+            (unsigned)free_status
+        );
+        result = -1;
+    }
+
+done:
+    shadowspill_runtime_destroy(runtime);
+    if (stream.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return result;
+}
+
 int main(void) {
     return impossible_oom() == 0 && fragmented_oom() == 0 &&
-            worker_failure() == 0 && failed_task_retirement_recovery() == 0
+            worker_failure() == 0 && failed_task_retirement_recovery() == 0 &&
+            failed_prefetch_releases_transfer_priority() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

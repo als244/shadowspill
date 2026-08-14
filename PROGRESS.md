@@ -2901,3 +2901,49 @@ the ignored internal progress log before this tracked summary is updated.
   preserving ordinary CUDA/kernel errors. The original pre-optimizer 8B
   fixture remains a distinct required `NoProgressOOM`: request 117,440,512,
   free 39,845,512, largest range 39,744,768.
+
+## 2026-08-14 — Backward-result lifetime caused an exact-range livelock
+
+- The first 10 GiB pure-PyTorch Llama qualification step stopped with both the
+  Python dispatcher and `shadowspill.wkr` consuming a CPU core while the GPU
+  was idle. GDB identified the trigger as `execution_000042`
+  (`microbatch_0001.stage_0008.backward.recompute`). Its final action fetches
+  the 29,360,128-byte optimizer-state object `alias_000411` into exact slab
+  offset zero for `execution_000043` (`optimizer.component_0003`).
+- The backward callable had produced three 29,360,128-byte anonymous result
+  leases at offsets 0, 29,360,128, and 58,720,256. The first still occupied
+  the fetch destination when the action reached the worker. This was not
+  physical exhaustion: the runtime had 5,465,342,576 bytes free and a
+  1,576,009,728-byte largest free range. The conflict was specifically at the
+  immutable planned address.
+- Root cause was Python ownership across the task boundary. `_execute_task()`
+  retained the compiled result tuple in a local while `_after_task()` queued
+  the task actions. Unadopted gradient results therefore reached PyTorch's
+  allocator `free` callbacks only after action publication. Deleting the
+  callee's `raw_outputs` parameter was insufficient because the caller frame
+  still owned the same tuple. `_execute_task()` now passes the result as an
+  unbound temporary; `_after_task()` destroys its last frontend reference
+  after classifying adopted outputs and before publishing runtime actions.
+- A second failure-path defect converted that ordering error into a livelock.
+  The worker correctly latched `PLAN_VIOLATION`, briefly relinquished the
+  fetch destination's pool priority, then retried the failed queued action and
+  re-declared transfer priority. Concurrent Python `free()` had entered its
+  two-phase retirement path and needed to reacquire the pool lock to publish
+  the retirement record. Foreground lock acquisition yielded to the fetch,
+  while the fetch waited for that unpublished retirement: neither side could
+  progress. The worker now clears destination priority for every failed
+  queued action, never retries actions while a failure is latched, and parks
+  until explicit no-progress recovery or close. Asynchronous action failures
+  also retain their causal execution-task ID.
+- Classification: this incident is neither a valid `NoProgressOOM` nor a valid
+  plan infeasibility. The planned range had a known causal release in the
+  current task's frontend cleanup; runtime publication simply occurred too
+  early. A genuine no-progress OOM has no pending causal source of capacity. A
+  plan violation is appropriate only if the exact range remains occupied
+  after the complete task-boundary cleanup contract has run.
+- Revalidation completed five planned steps at 0.326--0.329 seconds each plus
+  two checkpoint-replay steps at 0.325 seconds. Numerical qualification
+  passed, checkpoint replay was bitwise, peak process physical use was
+  9,512,681,472 bytes under the 10 GiB cap, and the process exited normally.
+  Focused Python ownership and native failed-fetch regressions cover both the
+  causal cleanup ordering and the former transfer-priority livelock.
