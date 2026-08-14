@@ -6,7 +6,7 @@ import copy
 import inspect
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -27,6 +27,7 @@ from .artifacts import (
     OptimizerTensorBinding,
     OptimizerTensorRole,
 )
+from .initialization import initialize_lazy_optimizer_state
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,11 +104,34 @@ def capture_optimizer(
     discovery = _discover_optimizer_state(inventory, optimizer)
     if isinstance(discovery, OptimizerCapture):
         return discovery
-    return _capture_recurrent_optimizer(
+    preinitialized_state_names: tuple[str, ...] = ()
+    if (
+        discovery.created_state_names
+        and not _has_optimizer_step_hooks(optimizer)
+        and initialize_lazy_optimizer_state(
+            inventory.canonical_parameters,
+            optimizer,
+            discovery.created_state_names,
+        )
+    ):
+        preinitialized_state_names = discovery.created_state_names
+        discovery = _discover_optimizer_state(inventory, optimizer)
+        if isinstance(discovery, OptimizerCapture):
+            return replace(
+                discovery,
+                preinitialized_state_names=preinitialized_state_names,
+            )
+    captured = _capture_recurrent_optimizer(
         discovery,
         optimizer,
         parameter_stage_owners=parameter_stage_owners,
     )
+    if preinitialized_state_names:
+        captured = replace(
+            captured,
+            preinitialized_state_names=preinitialized_state_names,
+        )
+    return captured
 
 
 def _validate_optimizer_inputs(

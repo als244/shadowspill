@@ -715,6 +715,9 @@ def admit_training_plan(
                 materialized.optimizer,
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None
+                    or bool(
+                        materialized.optimizer_capture.preinitialized_state_names
+                    )
                 ),
                 optimizer_state_was_lazy=bool(
                     materialized.optimizer_capture.created_state_names
@@ -1021,7 +1024,7 @@ def _training_task_inventory(
             (task.artifact.compatibility_digest, None),
             task.artifact,
         )
-    if optimizer_capture.initialized_state_dict is None:
+    if optimizer_capture.created_state_names:
         assert optimizer_capture.recurrent is not None
         compile_by_digest.setdefault(
             optimizer_capture.recurrent.compatibility_digest,

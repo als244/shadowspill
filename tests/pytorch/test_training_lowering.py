@@ -369,7 +369,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     assert parameter_aliases.isdisjoint(produced_aliases)
 
 
-def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
+def test_preinitialized_optimizer_uses_one_recurrent_state_flow() -> None:
     real_model = _Model()
     optimizer = torch.optim.AdamW(real_model.parameters(), lr=0.01, foreach=False)
     for parameter in real_model.parameters():
@@ -377,7 +377,8 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
-    assert optimizer_capture.first_step_is_opaque
+    assert not optimizer_capture.first_step_is_opaque
+    assert optimizer_capture.preinitialized_state_names
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_cuda_model(real_model, mode)
@@ -422,25 +423,18 @@ def test_lazy_optimizer_has_distinct_initial_and_recurrent_state_flow() -> None:
     )
     assert initial.optimizer_objects
     assert initial.program.objects == recurrent.program.objects
-    initial_task = initial.program.tasks[-1]
+    initial_tasks = tuple(
+        task
+        for task in initial.program.tasks
+        if task.task_id in initial.optimizer_task_ids
+    )
     recurrent_tasks = tuple(
         task
         for task in recurrent.program.tasks
         if task.task_id in recurrent.optimizer_task_ids
     )
-    created = {
-        item.object_id
-        for item in initial.optimizer_objects
-        if item.created_on_first_step
-    }
-    assert created == set(initial_task.outputs)
-    assert created.isdisjoint(initial_task.inputs)
-    assert created.issubset(
-        {object_id for task in recurrent_tasks for object_id in task.inputs}
-    )
-    assert created.issubset(
-        {mutation.object_id for task in recurrent_tasks for mutation in task.mutations}
-    )
+    assert not any(item.created_on_first_step for item in initial.optimizer_objects)
+    assert initial_tasks == recurrent_tasks
 
 
 def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:

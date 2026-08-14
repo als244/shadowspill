@@ -231,10 +231,10 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         spill="spill",
         planning_cachedir=tmp_path,
     )
-    assert training.plan_report.initial_execution_plan is not None
-    empty_state = training.state_dict()
-    assert empty_state["optimizer"]["state"] == {}
-    training.load_state_dict(empty_state)
+    assert training.plan_report.initial_execution_plan is None
+    initial_state = training.state_dict()
+    assert initial_state["optimizer"]["state"]
+    training.load_state_dict(initial_state)
 
     training(first_inputs)
     checkpoint = training.state_dict()
@@ -369,14 +369,14 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
         spill="spill",
         planning_cachedir=tmp_path,
     )
-    assert training.plan_report.initial_execution_plan is not None
+    assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(
         task
         for task in training.plan_report.execution_plan.program.tasks
         if task.phase == "optimizer"
     )
     assert len(optimizer_tasks) == 2
-    assert training.state_dict()["optimizer"]["state"] == {}
+    assert training.state_dict()["optimizer"]["state"]
 
     training(inputs(93))
     checkpoint = copy.deepcopy(training.state_dict())

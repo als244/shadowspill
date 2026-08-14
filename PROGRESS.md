@@ -2563,3 +2563,34 @@ the ignored internal progress log before this tracked summary is updated.
   It emits no dependent `copy_`, invalid-address error, cleanup warning, or
   process abort. This confirms failure reporting and teardown before optimizer
   task partitioning changes begin.
+
+## 2026-08-14 — Lazy optimizer state preinitialized at exact step zero
+
+- The clean no-progress OOM above was the expected pre-fix 8B result. Its
+  failing structural ABI was a monolithic recurrent optimizer graph with 1,164
+  fresh output roots. It existed only to discover lazy state on the first
+  optimizer step; the recurrent Program already had 32 dependency-closed,
+  stage-interleaved optimizer tasks.
+- Lazy optimizer tensor state is now initialized exactly at step zero before
+  structural compilation. Optimizers with an explicit per-parameter state
+  initializer use it directly. Ordinary traceable PyTorch optimizers run their
+  Python state-creation preamble through a one-use compiler boundary that stops
+  before the numerical update. Parameter version counters prove that no update
+  occurred. State that is itself a numerical graph output, such as SGD's first
+  momentum buffer, keeps the existing distinct initial-plan fallback.
+- This implements the previously selected single-recurrent-plan contract:
+  `state_dict()` before step one exposes normal zero-initialized optimizer
+  state, checkpoint/restore uses that same state, and the optimizer factory is
+  still invoked exactly once. The change is optimizer-capability based rather
+  than optimizer- or model-name based.
+- The unchanged 8B Llama run no longer profiles the monolithic ABI. Structural
+  optimizer ABIs fell from four to three, total profiles from 16 to 15, while
+  the intended 32 stage optimizer tasks remain. All 15 profiles completed in
+  9.005 seconds, proving the expected no-progress OOM was removed without
+  weakening the 16 GiB physical cap.
+- A separate planner-memory defect then surfaced: the native PressureFit path
+  retained all 1,020 full compiled selection contexts concurrently. With the
+  configured 112 GiB pinned spill arena, initialized workload state, and those
+  projections, Linux killed the process at about 170.1 GiB RSS. This is not the
+  optimizer fix and will be corrected separately with bounded context
+  production/consumption while preserving portfolio order and tie-breaking.

@@ -62,19 +62,23 @@ def test_recurrent_graph_matches_standard_optimizer(
     assert captured.recurrent.operator_targets
 
 
-def test_lazy_state_gets_distinct_opaque_first_step_without_mutation() -> None:
+def test_lazy_state_is_initialized_at_step_zero_without_parameter_mutation() -> None:
     parameter = torch.nn.Parameter(torch.ones(8))
     parameter.grad = torch.ones_like(parameter)
     optimizer = torch.optim.AdamW([parameter], lr=1e-3, foreach=False)
     captured = capture_optimizer({"weight": parameter}, optimizer)
-    assert captured.first_step_is_opaque
-    assert captured.created_state_names == (
+    assert not captured.first_step_is_opaque
+    assert captured.created_state_names == ()
+    assert captured.preinitialized_state_names == (
         "optimizer.weight.exp_avg",
         "optimizer.weight.exp_avg_sq",
         "optimizer.weight.step",
     )
     assert captured.recurrent is not None
-    assert optimizer.state == {}
+    state = optimizer.state[parameter]
+    assert state["step"].item() == 0
+    torch.testing.assert_close(state["exp_avg"], torch.zeros_like(parameter))
+    torch.testing.assert_close(state["exp_avg_sq"], torch.zeros_like(parameter))
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
@@ -86,16 +90,17 @@ def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
-    assert captured.first_step_is_opaque
+    assert not captured.first_step_is_opaque
     assert captured.recurrent is not None
     assert "mlops.master_adamw_.default" in captured.recurrent.operator_targets
-    assert captured.created_state_names == (
+    assert captured.created_state_names == ()
+    assert captured.preinitialized_state_names == (
         "optimizer.weight.exp_avg",
         "optimizer.weight.exp_avg_sq",
         "optimizer.weight.master_parameter",
         "optimizer.weight.step",
     )
-    assert optimizer.state == {}
+    assert optimizer.state[parameter]["step"].item() == 0
     assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
 
 
@@ -125,7 +130,8 @@ def test_cuda_only_discovery_inventories_every_parameter() -> None:
         for name in ("first", "second")
         for suffix in expected_suffixes
     }
-    assert captured.created_state_names == tuple(sorted(state_names))
+    assert captured.created_state_names == ()
+    assert len(captured.preinitialized_state_names) == 8
     assert captured.recurrent is not None
     assert (
         sum(
@@ -144,13 +150,28 @@ def test_cuda_only_discovery_inventories_every_parameter() -> None:
         )
         for task in captured.recurrent_tasks
     } == {"first", "second"}
-    assert optimizer.state == {}
+    assert optimizer.state[first]["step"].item() == 0
+    assert optimizer.state[second]["step"].item() == 0
     torch.testing.assert_close(first, torch.ones_like(first))
     torch.testing.assert_close(second, torch.full_like(second, 2.0))
     assert all(
         isinstance(binding.tensor, torch._subclasses.fake_tensor.FakeTensor)
         for binding in captured.bindings
     )
+
+
+def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
+    parameter = torch.nn.Parameter(torch.ones(8))
+    parameter.grad = torch.ones_like(parameter)
+    optimizer = torch.optim.SGD([parameter], lr=1e-3, momentum=0.9)
+
+    captured = capture_optimizer({"weight": parameter}, optimizer)
+
+    assert captured.first_step_is_opaque
+    assert captured.created_state_names == ("optimizer.weight.momentum_buffer",)
+    assert captured.preinitialized_state_names == ()
+    assert optimizer.state == {}
+    torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
 def test_optimizer_state_container_conversion_preserves_structure() -> None:

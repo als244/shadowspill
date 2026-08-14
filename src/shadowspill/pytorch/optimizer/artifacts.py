@@ -105,6 +105,7 @@ class OptimizerCapture:
     recurrent_tasks: tuple[OptimizerTask, ...]
     bindings: tuple[OptimizerTensorBinding, ...]
     mutation_names: tuple[str, ...]
+    preinitialized_state_names: tuple[str, ...] = ()
     opaque_reason: str | None = None
     initialized_state_dict: dict[str, Any] | None = field(
         default=None, repr=False, compare=False
