@@ -27,6 +27,15 @@ typedef struct ShadowSpillRangeAllocator {
     uint64_t allocated;
     uint64_t peak_allocated;
     ShadowSpillRange *free_ranges;
+    /*
+     * Production pools leave these fields null and allocate range nodes from
+     * the process heap. Admission workspaces supply a bounded borrowed arena
+     * so repeated candidate evaluation executes the identical range policy
+     * without per-operation heap traffic.
+     */
+    ShadowSpillRange *node_storage;
+    uint64_t node_capacity;
+    ShadowSpillRange *available_nodes;
 } ShadowSpillRangeAllocator;
 
 typedef struct ShadowSpillStreamRecord {
@@ -443,6 +452,12 @@ void shadowspill_idle_notify(ShadowSpillRuntime *runtime);
 int shadowspill_range_initialize(
     ShadowSpillRangeAllocator *allocator,
     uint64_t capacity
+);
+int shadowspill_range_initialize_with_nodes(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t capacity,
+    ShadowSpillRange *nodes,
+    uint64_t node_capacity
 );
 int shadowspill_range_clone_extended(
     const ShadowSpillRangeAllocator *source,

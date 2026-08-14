@@ -7,7 +7,7 @@ from functools import cache
 
 from shadowspill._libraries import resolve_library
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 NO_ID = (1 << 64) - 1
 
 

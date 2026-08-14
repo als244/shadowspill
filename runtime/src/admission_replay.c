@@ -5,6 +5,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct ReplayState {
     ShadowSpillMemoryPool pool;
@@ -15,6 +16,15 @@ typedef struct ReplayState {
     uint64_t peak_fragmentation_bytes;
     uint64_t digest;
 } ReplayState;
+
+struct ShadowSpillAdmissionReplayWorkspace {
+    ReplayState state;
+    ShadowSpillRange *range_nodes;
+    uint64_t range_node_capacity;
+    uint64_t lease_capacity;
+    uint64_t dependency_capacity;
+    uint8_t synchronization_initialized;
+};
 
 static uint64_t digest_u64(uint64_t digest, uint64_t value) {
     for (uint32_t byte = 0U; byte < 8U; ++byte) {
@@ -41,51 +51,54 @@ static void initialize_result(ShadowSpillAdmissionReplayResult *result) {
     };
 }
 
-static int initialize_state(
+static int reset_state(
     const ShadowSpillAdmissionReplayProgram *program,
-    ReplayState *state
+    ShadowSpillAdmissionReplayWorkspace *workspace
 ) {
-    state->leases = program->lease_count == 0U
-        ? NULL
-        : calloc((size_t)program->lease_count, sizeof(*state->leases));
-    state->events = program->dependency_count == 0U
-        ? NULL
-        : calloc((size_t)program->dependency_count, sizeof(*state->events));
-    state->expected_dependency_ids = program->lease_count == 0U
-        ? NULL
-        : malloc((size_t)program->lease_count * sizeof(*state->expected_dependency_ids));
-    if ((program->lease_count != 0U && state->leases == NULL) ||
-        (program->lease_count != 0U && state->expected_dependency_ids == NULL) ||
-        (program->dependency_count != 0U && state->events == NULL) ||
-        pthread_mutex_init(&state->pool.lock, NULL) != 0) {
-        free(state->expected_dependency_ids);
-        free(state->events);
-        free(state->leases);
+    ReplayState *state = &workspace->state;
+    if (program->lease_count > workspace->lease_capacity ||
+        program->dependency_count > workspace->dependency_capacity) {
         return -1;
     }
-    if (pthread_cond_init(&state->pool.capacity_changed, NULL) != 0) {
-        pthread_mutex_destroy(&state->pool.lock);
-        free(state->expected_dependency_ids);
-        free(state->events);
-        free(state->leases);
-        return -1;
-    }
-    if (shadowspill_range_initialize(
-            &state->pool.ranges, program->capacity_bytes
+    memset(
+        state->leases,
+        0,
+        (size_t)workspace->lease_capacity * sizeof(*state->leases)
+    );
+    memset(
+        state->events,
+        0,
+        (size_t)workspace->dependency_capacity * sizeof(*state->events)
+    );
+    memset(
+        state->expected_dependency_ids,
+        0xff,
+        (size_t)workspace->lease_capacity *
+            sizeof(*state->expected_dependency_ids)
+    );
+    if (shadowspill_range_initialize_with_nodes(
+            &state->pool.ranges,
+            program->capacity_bytes,
+            workspace->range_nodes,
+            workspace->range_node_capacity
         ) != 0) {
-        pthread_cond_destroy(&state->pool.capacity_changed);
-        pthread_mutex_destroy(&state->pool.lock);
-        free(state->expected_dependency_ids);
-        free(state->events);
-        free(state->leases);
         return -1;
     }
+    state->pool.leases = NULL;
+    state->pool.backend = (ShadowSpillMemoryPoolBackend){0};
+    state->pool.base = NULL;
+    state->pool.pool_id = 0U;
     state->pool.minimum_alignment = program->minimum_alignment;
     state->pool.next_request_sequence = 1U;
     state->pool.next_release_sequence = 1U;
+    state->pool.reserved_bytes = 0U;
     state->pool.initialized = 1U;
-    atomic_init(&state->pool.foreground_waiters, 0U);
-    atomic_init(&state->pool.reservation_waiters, 0U);
+    atomic_store_explicit(
+        &state->pool.foreground_waiters, 0U, memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &state->pool.reservation_waiters, 0U, memory_order_relaxed
+    );
     for (uint64_t index = 0U; index < program->lease_count; ++index) {
         state->leases[index].generation = index + 1U;
         atomic_init(&state->leases[index].references, 1U);
@@ -97,17 +110,10 @@ static int initialize_state(
         atomic_init(&state->events[index].references, 1U);
         atomic_init(&state->events[index].backend_complete, 0U);
     }
+    state->peak_reserved_bytes = 0U;
+    state->peak_fragmentation_bytes = 0U;
     state->digest = UINT64_C(1469598103934665603);
     return 0;
-}
-
-static void destroy_state(ReplayState *state) {
-    shadowspill_range_destroy(&state->pool.ranges);
-    pthread_cond_destroy(&state->pool.capacity_changed);
-    pthread_mutex_destroy(&state->pool.lock);
-    free(state->events);
-    free(state->leases);
-    free(state->expected_dependency_ids);
 }
 
 static int valid_program(
@@ -398,6 +404,123 @@ uint32_t shadowspill_admission_replay_abi_version(void) {
     return SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION;
 }
 
+ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
+    uint64_t lease_capacity,
+    uint64_t dependency_capacity,
+    ShadowSpillAdmissionReplayWorkspace **workspace
+) {
+    if (workspace == NULL || lease_capacity > SIZE_MAX ||
+        dependency_capacity > SIZE_MAX || lease_capacity == UINT64_MAX) {
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
+    }
+    *workspace = NULL;
+    ShadowSpillAdmissionReplayWorkspace *created = calloc(1U, sizeof(*created));
+    if (created == NULL) {
+        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+    }
+    created->lease_capacity = lease_capacity;
+    created->dependency_capacity = dependency_capacity;
+    created->range_node_capacity = lease_capacity + 1U;
+    created->state.leases = calloc(
+        lease_capacity == 0U ? 1U : (size_t)lease_capacity,
+        sizeof(*created->state.leases)
+    );
+    created->state.events = calloc(
+        dependency_capacity == 0U ? 1U : (size_t)dependency_capacity,
+        sizeof(*created->state.events)
+    );
+    created->state.expected_dependency_ids = malloc(
+        (lease_capacity == 0U ? 1U : (size_t)lease_capacity) *
+        sizeof(*created->state.expected_dependency_ids)
+    );
+    created->range_nodes = calloc(
+        (size_t)created->range_node_capacity,
+        sizeof(*created->range_nodes)
+    );
+    if (created->state.leases == NULL || created->state.events == NULL ||
+        created->state.expected_dependency_ids == NULL ||
+        created->range_nodes == NULL ||
+        pthread_mutex_init(&created->state.pool.lock, NULL) != 0) {
+        shadowspill_admission_replay_workspace_destroy(created);
+        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+    }
+    if (pthread_cond_init(&created->state.pool.capacity_changed, NULL) != 0) {
+        pthread_mutex_destroy(&created->state.pool.lock);
+        shadowspill_admission_replay_workspace_destroy(created);
+        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+    }
+    created->synchronization_initialized = 1U;
+    atomic_init(&created->state.pool.foreground_waiters, 0U);
+    atomic_init(&created->state.pool.reservation_waiters, 0U);
+    *workspace = created;
+    return SHADOWSPILL_ADMISSION_REPLAY_OK;
+}
+
+void shadowspill_admission_replay_workspace_destroy(
+    ShadowSpillAdmissionReplayWorkspace *workspace
+) {
+    if (workspace == NULL) {
+        return;
+    }
+    if (workspace->synchronization_initialized != 0U) {
+        pthread_cond_destroy(&workspace->state.pool.capacity_changed);
+        pthread_mutex_destroy(&workspace->state.pool.lock);
+    }
+    free(workspace->range_nodes);
+    free(workspace->state.events);
+    free(workspace->state.leases);
+    free(workspace->state.expected_dependency_ids);
+    free(workspace);
+}
+
+ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run_reusing(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ShadowSpillAdmissionReplayResult *result,
+    ShadowSpillAdmissionReplayWorkspace *workspace
+) {
+    if (result == NULL) {
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
+    }
+    initialize_result(result);
+    if (!valid_program(program, result) || workspace == NULL ||
+        program->lease_count > workspace->lease_capacity ||
+        program->dependency_count > workspace->dependency_capacity) {
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
+    }
+    if (reset_state(program, workspace) != 0) {
+        result->status = SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+    }
+    ReplayState *state = &workspace->state;
+    ShadowSpillAdmissionReplayStatus status = SHADOWSPILL_ADMISSION_REPLAY_OK;
+    for (uint64_t index = 0U; index < program->operation_count; ++index) {
+        status = apply_operation(program, state, result, index);
+        if (status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+            const ShadowSpillAdmissionReplayOperation *operation =
+                &program->operations[index];
+            result->error_operation_index = index;
+            result->error_lease_id = operation->lease_id;
+            result->error_requested_bytes = operation->bytes;
+            result->error_free_bytes = shadowspill_memory_pool_free_bytes_locked(
+                &state->pool
+            );
+            result->error_largest_free_range_bytes =
+                shadowspill_memory_pool_largest_free_locked(&state->pool);
+            break;
+        }
+    }
+    result->status = (uint32_t)status;
+    result->peak_allocated_bytes = state->pool.ranges.peak_allocated;
+    result->peak_reserved_bytes = state->peak_reserved_bytes;
+    result->peak_fragmentation_bytes = state->peak_fragmentation_bytes;
+    result->final_allocated_bytes = state->pool.ranges.allocated;
+    result->final_reserved_bytes = state->pool.reserved_bytes;
+    result->final_largest_free_range_bytes =
+        shadowspill_memory_pool_largest_free_locked(&state->pool);
+    result->decision_digest = state->digest;
+    return status;
+}
+
 ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result
@@ -409,38 +532,21 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run(
     if (!valid_program(program, result)) {
         return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
     }
-    ReplayState state = {0};
-    if (initialize_state(program, &state) != 0) {
-        result->status = SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
-        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+    ShadowSpillAdmissionReplayWorkspace *workspace = NULL;
+    ShadowSpillAdmissionReplayStatus status =
+        shadowspill_admission_replay_workspace_create(
+            program->lease_count,
+            program->dependency_count,
+            &workspace
+        );
+    if (status == SHADOWSPILL_ADMISSION_REPLAY_OK) {
+        status = shadowspill_admission_replay_run_reusing(
+            program, result, workspace
+        );
+    } else {
+        result->status = (uint32_t)status;
     }
-    ShadowSpillAdmissionReplayStatus status = SHADOWSPILL_ADMISSION_REPLAY_OK;
-    for (uint64_t index = 0U; index < program->operation_count; ++index) {
-        status = apply_operation(program, &state, result, index);
-        if (status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
-            const ShadowSpillAdmissionReplayOperation *operation =
-                &program->operations[index];
-            result->error_operation_index = index;
-            result->error_lease_id = operation->lease_id;
-            result->error_requested_bytes = operation->bytes;
-            result->error_free_bytes = shadowspill_memory_pool_free_bytes_locked(
-                &state.pool
-            );
-            result->error_largest_free_range_bytes =
-                shadowspill_memory_pool_largest_free_locked(&state.pool);
-            break;
-        }
-    }
-    result->status = (uint32_t)status;
-    result->peak_allocated_bytes = state.pool.ranges.peak_allocated;
-    result->peak_reserved_bytes = state.peak_reserved_bytes;
-    result->peak_fragmentation_bytes = state.peak_fragmentation_bytes;
-    result->final_allocated_bytes = state.pool.ranges.allocated;
-    result->final_reserved_bytes = state.pool.reserved_bytes;
-    result->final_largest_free_range_bytes =
-        shadowspill_memory_pool_largest_free_locked(&state.pool);
-    result->decision_digest = state.digest;
-    destroy_state(&state);
+    shadowspill_admission_replay_workspace_destroy(workspace);
     return status;
 }
 

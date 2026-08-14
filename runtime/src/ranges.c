@@ -17,6 +17,49 @@ static uint64_t align_down(uint64_t value, uint64_t alignment) {
     return value - value % alignment;
 }
 
+static ShadowSpillRange *acquire_node(ShadowSpillRangeAllocator *allocator) {
+    if (allocator->node_storage == NULL) {
+        return calloc(1U, sizeof(ShadowSpillRange));
+    }
+    ShadowSpillRange *node = allocator->available_nodes;
+    if (node == NULL) {
+        return NULL;
+    }
+    allocator->available_nodes = node->next;
+    *node = (ShadowSpillRange){0};
+    return node;
+}
+
+static void release_node(
+    ShadowSpillRangeAllocator *allocator,
+    ShadowSpillRange *node
+) {
+    if (node == NULL) {
+        return;
+    }
+    if (allocator->node_storage == NULL) {
+        free(node);
+        return;
+    }
+    *node = (ShadowSpillRange){.next = allocator->available_nodes};
+    allocator->available_nodes = node;
+}
+
+static void initialize_node_arena(
+    ShadowSpillRangeAllocator *allocator,
+    ShadowSpillRange *nodes,
+    uint64_t node_capacity
+) {
+    allocator->node_storage = nodes;
+    allocator->node_capacity = node_capacity;
+    allocator->available_nodes = NULL;
+    for (uint64_t index = node_capacity; index > 0U; --index) {
+        ShadowSpillRange *node = &nodes[index - 1U];
+        *node = (ShadowSpillRange){.next = allocator->available_nodes};
+        allocator->available_nodes = node;
+    }
+}
+
 static int allocate_from_range(
     ShadowSpillRangeAllocator *allocator,
     ShadowSpillRange *selected,
@@ -28,7 +71,7 @@ static int allocate_from_range(
     uint64_t leading = aligned - selected->offset;
     uint64_t trailing = selected->bytes - leading - bytes;
     if (leading != 0U && trailing != 0U) {
-        ShadowSpillRange *tail = calloc(1U, sizeof(*tail));
+        ShadowSpillRange *tail = acquire_node(allocator);
         if (tail == NULL) {
             return -1;
         }
@@ -44,10 +87,10 @@ static int allocate_from_range(
         selected->bytes = trailing;
     } else if (previous == NULL) {
         allocator->free_ranges = selected->next;
-        free(selected);
+        release_node(allocator, selected);
     } else {
         previous->next = selected->next;
-        free(selected);
+        release_node(allocator, selected);
     }
     allocator->allocated += bytes;
     if (allocator->allocated > allocator->peak_allocated) {
@@ -61,14 +104,38 @@ int shadowspill_range_initialize(
     ShadowSpillRangeAllocator *allocator,
     uint64_t capacity
 ) {
+    if (allocator == NULL) {
+        return -1;
+    }
+    *allocator = (ShadowSpillRangeAllocator){0};
     allocator->capacity = capacity;
-    allocator->allocated = 0U;
-    allocator->peak_allocated = 0U;
-    allocator->free_ranges = NULL;
     if (capacity == 0U) {
         return 0;
     }
-    allocator->free_ranges = calloc(1U, sizeof(*allocator->free_ranges));
+    allocator->free_ranges = acquire_node(allocator);
+    if (allocator->free_ranges == NULL) {
+        return -1;
+    }
+    allocator->free_ranges->bytes = capacity;
+    return 0;
+}
+
+int shadowspill_range_initialize_with_nodes(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t capacity,
+    ShadowSpillRange *nodes,
+    uint64_t node_capacity
+) {
+    if (allocator == NULL || nodes == NULL || node_capacity == 0U) {
+        return -1;
+    }
+    *allocator = (ShadowSpillRangeAllocator){0};
+    initialize_node_arena(allocator, nodes, node_capacity);
+    allocator->capacity = capacity;
+    if (capacity == 0U) {
+        return 0;
+    }
+    allocator->free_ranges = acquire_node(allocator);
     if (allocator->free_ranges == NULL) {
         return -1;
     }
@@ -132,10 +199,13 @@ int shadowspill_range_clone_extended(
 }
 
 void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator) {
+    if (allocator == NULL) {
+        return;
+    }
     ShadowSpillRange *range = allocator->free_ranges;
     while (range != NULL) {
         ShadowSpillRange *next = range->next;
-        free(range);
+        release_node(allocator, range);
         range = next;
     }
     *allocator = (ShadowSpillRangeAllocator){0};
@@ -339,7 +409,7 @@ int shadowspill_range_free(
     if (bytes == 0U) {
         return 0;
     }
-    ShadowSpillRange *node = calloc(1U, sizeof(*node));
+    ShadowSpillRange *node = acquire_node(allocator);
     if (node == NULL) {
         return -1;
     }
@@ -361,12 +431,12 @@ int shadowspill_range_free(
         ShadowSpillRange *next = node->next;
         node->bytes += next->bytes;
         node->next = next->next;
-        free(next);
+        release_node(allocator, next);
     }
     if (previous != NULL && previous->offset + previous->bytes == node->offset) {
         previous->bytes += node->bytes;
         previous->next = node->next;
-        free(node);
+        release_node(allocator, node);
     }
     allocator->allocated -= bytes;
     return 0;

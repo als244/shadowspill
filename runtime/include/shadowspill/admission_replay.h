@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION 1U
+#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION 2U
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
 typedef enum ShadowSpillAdmissionReplayStatus {
@@ -113,6 +113,14 @@ typedef struct ShadowSpillAdmissionReplayResult {
 } ShadowSpillAdmissionReplayResult;
 
 /*
+ * Opaque reusable scratch storage for repeated replay. A workspace owns no
+ * backend arena and performs no I/O. It is not thread-safe: one caller may
+ * use a workspace at a time, while distinct workspaces are independent.
+ */
+typedef struct ShadowSpillAdmissionReplayWorkspace
+    ShadowSpillAdmissionReplayWorkspace;
+
+/*
  * Replays one ordered script through the production MemoryPool policy. Input
  * and output buffers are borrowed for the call. Lease and dependency IDs are
  * dense zero-based indices bounded by their respective counts. The function
@@ -126,6 +134,30 @@ SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
 shadowspill_admission_replay_run(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result
+);
+
+/*
+ * Allocate all lease, dependency, synchronization, and range-node scratch
+ * used by repeated replay. Subsequent run_reusing calls perform no heap
+ * allocation when the supplied program fits these capacities.
+ */
+SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
+shadowspill_admission_replay_workspace_create(
+    uint64_t lease_capacity,
+    uint64_t dependency_capacity,
+    ShadowSpillAdmissionReplayWorkspace **workspace
+);
+
+SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
+shadowspill_admission_replay_run_reusing(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ShadowSpillAdmissionReplayResult *result,
+    ShadowSpillAdmissionReplayWorkspace *workspace
+);
+
+SHADOWSPILL_ADMISSION_REPLAY_API void
+shadowspill_admission_replay_workspace_destroy(
+    ShadowSpillAdmissionReplayWorkspace *workspace
 );
 
 SHADOWSPILL_ADMISSION_REPLAY_API const char *shadowspill_admission_replay_status_string(
