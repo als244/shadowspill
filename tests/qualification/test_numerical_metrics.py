@@ -3,7 +3,15 @@ from __future__ import annotations
 import torch
 
 from qualification.numerical.metrics import TensorMetrics, compare_states, state_digest
-from qualification.numerical.run import _meets_tensor_tolerance
+from qualification.numerical.run import (
+    _meets_tensor_tolerance,
+    _recomputation_savings_bytes,
+)
+from shadowspill.ir import (
+    RecomputationGroup,
+    RecomputationOption,
+    RecomputationSelection,
+)
 
 
 def test_state_metrics_are_path_specific_and_deterministic() -> None:
@@ -39,3 +47,45 @@ def test_numerical_gate_uses_one_global_tensor_policy() -> None:
     assert not _meets_tensor_tolerance(TensorMetrics(0.998, 0.0, 1.0, 0.0))
     assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.026, 1.0, 0.0))
     assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
+
+
+def test_recomputation_gate_counts_only_retained_physical_savings() -> None:
+    groups = (
+        RecomputationGroup(
+            "group_0",
+            (
+                RecomputationOption("save", (), ("a", "b")),
+                RecomputationOption("same_size", (), ("a", "c")),
+                RecomputationOption("recompute", (), ("a",)),
+            ),
+        ),
+    )
+    sizes = {"a": 64, "b": 32, "c": 32}
+
+    assert _recomputation_savings_bytes(
+        groups,
+        (RecomputationSelection("group_0", "same_size"),),
+        sizes,
+    ) == (32, 0)
+    assert _recomputation_savings_bytes(
+        groups,
+        (RecomputationSelection("group_0", "recompute"),),
+        sizes,
+    ) == (32, 32)
+
+
+def test_recomputation_gate_is_not_applicable_to_equal_footprints() -> None:
+    groups = (
+        RecomputationGroup(
+            "group_0",
+            (
+                RecomputationOption("save", (), ("a",)),
+                RecomputationOption("recompute", (), ("b",)),
+            ),
+        ),
+    )
+    assert _recomputation_savings_bytes(
+        groups,
+        (RecomputationSelection("group_0", "save"),),
+        {"a": 64, "b": 64},
+    ) == (0, 0)

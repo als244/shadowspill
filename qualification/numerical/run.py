@@ -11,13 +11,14 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal
 
 import torch
 
+from shadowspill.ir import RecomputationGroup, RecomputationSelection
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import Runtime, plan_step
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
@@ -42,6 +43,48 @@ def _meets_tensor_tolerance(metric: Any) -> bool:
         and metric.relative_l2 <= _MAXIMUM_RELATIVE_L2
         and metric.sign_agreement >= _MINIMUM_SIGN_AGREEMENT
     )
+
+
+def _recomputation_savings_bytes(
+    groups: Sequence[RecomputationGroup],
+    selections: Sequence[RecomputationSelection],
+    alias_sizes: Mapping[str, int],
+) -> tuple[int, int]:
+    """Return maximum available and actually selected retained-byte savings.
+
+    Qualification must not demand selection of an alternative whose retained
+    physical footprint is identical to the reference ``save`` option. Such an
+    option can change graph structure or runtime, but it cannot prove that
+    memory pressure exercised recomputation.
+    """
+
+    selected_by_group = {item.group_id: item.option_id for item in selections}
+    available = 0
+    selected = 0
+    for group in groups:
+        reference = next(
+            (item for item in group.options if item.option_id == "save"), None
+        )
+        if reference is None:
+            continue
+        reference_bytes = sum(
+            alias_sizes[alias_id]
+            for alias_id in set(reference.retained_alias_group_ids)
+        )
+        savings = {
+            item.option_id: max(
+                0,
+                reference_bytes
+                - sum(
+                    alias_sizes[alias_id]
+                    for alias_id in set(item.retained_alias_group_ids)
+                ),
+            )
+            for item in group.options
+        }
+        available += max(savings.values(), default=0)
+        selected += savings.get(selected_by_group.get(group.group_id, "save"), 0)
+    return available, selected
 
 
 def _state_tensor_at_path(state: object, path: str) -> torch.Tensor:
@@ -589,6 +632,16 @@ def _planned_worker(
     selections = tuple(
         (item.group_id, item.option_id) for item in report.execution_plan.selections
     )
+    available_recomputation_savings, selected_recomputation_savings = (
+        _recomputation_savings_bytes(
+            report.execution_plan.program.recomputation_groups,
+            report.execution_plan.selections,
+            {
+                group.alias_group_id: group.size_bytes
+                for group in report.execution_plan.program.alias_groups
+            },
+        )
+    )
     phase_seconds = {
         name: nanoseconds / 1e9 for name, nanoseconds in report.phase_timings_ns
     }
@@ -677,6 +730,11 @@ def _planned_worker(
         "selected_recomputation": any(
             option != "save" for _group, option in selections
         ),
+        "recomputation_memory_saving_available": bool(
+            available_recomputation_savings
+        ),
+        "maximum_recomputation_savings_bytes": available_recomputation_savings,
+        "selected_recomputation_savings_bytes": selected_recomputation_savings,
         "selection_count": len(selections),
         "task_count": len(
             report.execution_plan.program.selected_tasks(
@@ -770,12 +828,22 @@ def _planned_worker(
             and qualification_result["recomputation_cache_hits"] == 0
         )
     )
+    recomputation_gate_required = bool(
+        require_pressure and available_recomputation_savings > 0
+    )
+    recomputation_gate_passed = bool(
+        not recomputation_gate_required or selected_recomputation_savings > 0
+    )
+    qualification_result["recomputation_gate_required"] = (
+        recomputation_gate_required
+    )
+    qualification_result["recomputation_gate_passed"] = recomputation_gate_passed
     pressure_passed = bool(
         not require_pressure
         or (
             report.transfer_bytes_evicted > 0
             and report.transfer_bytes_fetched > 0
-            and qualification_result["selected_recomputation"]
+            and recomputation_gate_passed
         )
     )
     qualification_result["pressure_gate_passed"] = pressure_passed
