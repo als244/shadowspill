@@ -14,6 +14,7 @@ from torch.utils._pytree import TreeSpec, tree_flatten
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
     PressureFitInfeasibleError,
+    PressureFitResult,
     validate_schedule_feasibility,
 )
 from shadowspill.planner._cache import CachedPressureFitResult
@@ -381,9 +382,10 @@ def admit_forward_plan(
         workspace_reserve=program.workspace_reserve,
         admission_replay=selected_admission.replay,
     )
+    admitted_result = selected_admission.apply_prediction(selected)
     execution_plan = _forward_execution_plan(
         program.lowered,
-        selection,
+        admitted_result,
         admission,
     )
     bridge = RuntimeBridge(captured.installed.library, execution_plan.program)
@@ -419,6 +421,7 @@ def admit_forward_plan(
             profiled,
             program,
             selection,
+            admitted_result,
             execution_plan,
             artifact_cache=artifact_cache,
             memory=memory,
@@ -470,7 +473,7 @@ def _rollback_forward_failure(
 
 def _forward_execution_plan(
     lowered: LoweredForwardProgram,
-    selection: CachedPressureFitResult,
+    selection: PressureFitResult,
     admission: PhysicalAdmission,
 ) -> ExecutionPlan:
     entrypoints = tuple(
@@ -482,7 +485,7 @@ def _forward_execution_plan(
         )
         for index, item in enumerate(lowered.entrypoints)
     )
-    return selection.result.to_execution_plan(
+    return selection.to_execution_plan(
         entrypoints=entrypoints,
         admission=admission,
     )
@@ -494,6 +497,7 @@ def _forward_plan_report(
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
     selection: CachedPressureFitResult,
+    admitted_result: PressureFitResult,
     execution_plan: ExecutionPlan,
     *,
     artifact_cache: PlanningArtifactRepositories,
@@ -516,7 +520,7 @@ def _forward_plan_report(
         tuple(timer.values),
         started,
         recomputation_cache_hit=selection.cache_hit,
-        pressurefit_results=(selection.result,),
+        pressurefit_results=(admitted_result,),
         captured_stage_count=len(captured.partitioned.stages),
         aot_unique_stage_abis=profiled.profiles.unique_keys,
         task_stage_map=task_stage_map,

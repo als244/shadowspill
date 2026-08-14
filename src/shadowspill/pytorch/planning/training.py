@@ -766,6 +766,7 @@ def admit_training_plan(
             profiled,
             programs,
             selections,
+            admitted,
             recurrent_plan,
             initial_plan,
             optimizer_ordering=optimizer_ordering,
@@ -830,14 +831,14 @@ def _admit_training_execution_plans(
     )
     recurrent_plan = _execution_plan(
         programs.recurrent,
-        recurrent,
+        admissions[0].apply_prediction(recurrent),
         optimizer_capture.optimizer_type,
         admission,
     )
     initial_plan = (
         _execution_plan(
             programs.initial,
-            initial,
+            admissions[1].apply_prediction(initial),
             optimizer_capture.optimizer_type,
             admission,
         )
@@ -846,11 +847,19 @@ def _admit_training_execution_plans(
     )
     recurrent_admission = admissions[0]
     initial_admission = admissions[1] if len(admissions) == 2 else None
+    recurrent_result = recurrent_admission.apply_prediction(recurrent)
+    initial_result = (
+        None
+        if initial is None or initial_admission is None
+        else initial_admission.apply_prediction(initial)
+    )
     return TrainingAdmissionArtifacts(
         recurrent_plan,
         initial_plan,
         recurrent_admission,
         initial_admission,
+        recurrent_result,
+        initial_result,
     )
 
 
@@ -860,6 +869,7 @@ def _training_plan_report(
     profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
     selections: TrainingSelections,
+    admitted: TrainingAdmissionArtifacts,
     recurrent_plan: ExecutionPlan,
     initial_plan: ExecutionPlan | None,
     *,
@@ -901,7 +911,11 @@ def _training_plan_report(
         aot_unique_stage_abis=artifact_cache.graph_pairs.unique_keys,
         aot_graph_pair_cache_hits=artifact_cache.graph_pairs.hits,
         aot_graph_pair_cache_misses=artifact_cache.graph_pairs.misses,
-        pressurefit_results=selections.results,
+        pressurefit_results=(
+            (admitted.recurrent_result,)
+            if admitted.initial_result is None
+            else (admitted.initial_result, admitted.recurrent_result)
+        ),
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
         compiler_phase_timings_ns=profiled.profiler.compilation_phase_timings_ns,

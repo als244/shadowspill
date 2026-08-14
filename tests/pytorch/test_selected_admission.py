@@ -61,6 +61,35 @@ def test_selected_admission_requires_every_task_envelope_measurement() -> None:
         )
 
 
+def test_selected_admission_replaces_prediction_without_changing_schedule() -> None:
+    selected = _selected()
+    measurement = TaskMeasurement(
+        1_000,
+        0,
+        0,
+        (),
+        (1_000,),
+        "unit-test",
+    )
+    admitted = build_selected_admission(
+        selected,
+        {"task_abi": measurement},
+        execution_pool_bytes=122,
+        alignment=1,
+    )
+
+    adjusted = admitted.apply_prediction(selected)
+
+    assert adjusted.program is selected.program
+    assert adjusted.schedule is selected.schedule
+    assert adjusted.selections == selected.selections
+    assert adjusted.simulation == admitted.simulation
+    assert (
+        adjusted.diagnostics.selected_makespan_ns
+        == admitted.simulation.makespan_ns
+    )
+
+
 def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
     measurement = TaskMeasurement(
         10,

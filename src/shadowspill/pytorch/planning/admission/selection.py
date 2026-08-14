@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from shadowspill.planner import PressureFitResult
 from shadowspill.pytorch.profiling import (
@@ -12,9 +12,11 @@ from shadowspill.pytorch.profiling import (
 )
 from shadowspill.pytorch.runtime_adapter.bridge import TaskMemoryEnvelope
 from shadowspill.runtime import AdmissionReplayResult
+from shadowspill.simulator import SimulationAdmission, SimulationResult, simulate
 
 from .admission_replay import AdmissionReplay, replay_admission
 from .bindings import TaskOutputBinding, output_bindings_for_entrypoints
+from .simulation import simulation_admission_from_replay
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +25,8 @@ class SelectedAdmission:
 
     admission: AdmissionReplay
     task_envelopes: tuple[tuple[str, TaskMemoryEnvelope], ...]
+    simulation_admission: SimulationAdmission
+    simulation: SimulationResult
 
     @property
     def replay(self) -> AdmissionReplayResult:
@@ -32,6 +36,27 @@ class SelectedAdmission:
 
     def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
         return dict(self.task_envelopes)
+
+    def apply_prediction(self, selected: PressureFitResult) -> PressureFitResult:
+        """Return the selection with admission-aware simulator evidence."""
+
+        diagnostics = selected.diagnostics
+        candidates = tuple(
+            replace(item, makespan_ns=self.simulation.makespan_ns)
+            if item.candidate_id == diagnostics.selected_candidate_id
+            and item.selection_id == diagnostics.selected_selection_id
+            else item
+            for item in diagnostics.candidates
+        )
+        return replace(
+            selected,
+            simulation=self.simulation,
+            diagnostics=replace(
+                diagnostics,
+                selected_makespan_ns=self.simulation.makespan_ns,
+                candidates=candidates,
+            ),
+        )
 
 
 def admit_selected_schedule(
@@ -69,9 +94,23 @@ def build_selected_admission(
         alignment=alignment,
         output_bindings=output_bindings,
     )
+    simulation_admission = simulation_admission_from_replay(
+        admission,
+        selected.program,
+        selected.schedule,
+        selections=selected.selections,
+    )
     return SelectedAdmission(
         admission=admission,
         task_envelopes=_selected_task_envelopes(selected, measurements),
+        simulation_admission=simulation_admission,
+        simulation=simulate(
+            selected.program,
+            selected.schedule,
+            selections=selected.selections,
+            config=selected.simulation_config,
+            admission=simulation_admission,
+        ),
     )
 
 

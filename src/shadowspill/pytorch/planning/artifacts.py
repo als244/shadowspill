@@ -153,6 +153,8 @@ class TrainingAdmissionArtifacts:
     initial: ExecutionPlan | None
     recurrent_admission: SelectedAdmission
     initial_admission: SelectedAdmission | None
+    recurrent_result: PressureFitResult
+    initial_result: PressureFitResult | None
 
 
 __all__ = [
