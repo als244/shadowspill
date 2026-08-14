@@ -118,6 +118,7 @@ add_library(
   runtime/src/lifecycle.c
   runtime/src/memory_pool.c
   runtime/src/admission_replay.c
+  runtime/src/object_actions.c
   runtime/src/object_table.c
   runtime/src/objects.c
   runtime/src/profiler.c

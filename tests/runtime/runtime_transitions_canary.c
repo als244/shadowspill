@@ -1353,6 +1353,101 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
     return failed ? -1 : 0;
 }
 
+static int queued_release_causally_precedes_fetch(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = 1000000U,
+        .event_delay_nanoseconds = 50000000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription description = {
+        .object_id = 103U,
+        .size_bytes = 32U,
+        .initial_version = 7U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction release = {
+        .object_id = description.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = description.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const uint64_t input = description.object_id;
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 3U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillObjectSnapshot completed = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(runtime, &description) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            runtime, description.size_bytes, 1U, compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_bind_object(
+            runtime, description.object_id, allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &consumer) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_enqueue_compute(mock, compute, 100000000U) != 0 ||
+        shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 2U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, consumer.task_id, compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        binding.allocation_id == allocation.allocation_id ||
+        shadowspill_after_execution(runtime, consumer.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            runtime, description.object_id, &completed
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        completed.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        completed.execution_pointer == NULL ||
+        completed.authoritative_version != description.initial_version ||
+        statistics.fetch_transfers != 1U;
+
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 #define REQUIRE_CANARY(expression)                                           \
     do {                                                                     \
         if ((expression) != 0) {                                             \
@@ -1386,5 +1481,6 @@ int main(void) {
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());
+    REQUIRE_CANARY(queued_release_causally_precedes_fetch());
     return EXIT_SUCCESS;
 }

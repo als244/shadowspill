@@ -174,6 +174,11 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
     ShadowSpillQueuedAction *action = runtime->actions.head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
+        pthread_mutex_lock(&action->object->lock);
+        (void)shadowspill_object_remove_action_locked(
+            action->object, action
+        );
+        pthread_mutex_unlock(&action->object->lock);
         if (action->has_completion_event) {
             (void)shadowspill_event_lease_release(
                 runtime, action->completion_event
@@ -217,6 +222,8 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             action->active = 0U;
             action->previous = NULL;
             action->next = NULL;
+            action->object_previous = NULL;
+            action->object_next = NULL;
             action->lane_previous = NULL;
             action->lane_next = NULL;
         }

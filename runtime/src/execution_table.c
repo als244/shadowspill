@@ -501,8 +501,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
         ShadowSpillObject *object = record->unique_inputs[index];
         pthread_mutex_lock(&object->lock);
         while (status == SHADOWSPILL_RUNTIME_OK &&
-               object->residency == SHADOWSPILL_OBJECT_SPILL_ONLY &&
-               object->prefetch_pending) {
+               shadowspill_object_fetch_event_unpublished_locked(object)) {
             shadowspill_append_trace_event_locked(
                 runtime,
                 SHADOWSPILL_TRACE_READINESS_WAIT,

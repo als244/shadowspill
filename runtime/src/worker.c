@@ -91,6 +91,23 @@ static void complete_action(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
+    pthread_mutex_lock(&action->object->lock);
+    if (shadowspill_object_remove_action_locked(
+            action->object, action
+        ) != 0) {
+        pthread_mutex_unlock(&action->object->lock);
+        latch_action_failure(
+            runtime,
+            action,
+            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            action->object->object_id,
+            action->object->allocation_id,
+            0U
+        );
+        return;
+    }
+    action->state = SHADOWSPILL_ACTION_FINISHED;
+    pthread_mutex_unlock(&action->object->lock);
     pthread_mutex_lock(&runtime->actions.lock);
     unlink_action_locked(runtime, action);
     pthread_mutex_unlock(&runtime->actions.lock);
@@ -556,6 +573,10 @@ static int handle_action(
     if (pthread_mutex_trylock(&object->lock) != 0) {
         return 0;
     }
+    if (!shadowspill_object_action_is_head_locked(object, action)) {
+        pthread_mutex_unlock(&object->lock);
+        return 0;
+    }
     if (action->state == SHADOWSPILL_ACTION_QUEUED) {
             if (action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
                 int complete = 0;
@@ -736,6 +757,27 @@ static int handle_action(
                 if (!destination_dependency_is_published(action)) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
+                }
+                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                    ShadowSpillObjectLocation *spill =
+                        shadowspill_spill_location(runtime, object);
+                    if (object->residency !=
+                            SHADOWSPILL_OBJECT_SPILL_ONLY ||
+                        spill->lease == NULL || !spill->current ||
+                        spill->version != object->authoritative_version) {
+                        latch_action_failure(
+                            runtime,
+                            action,
+                            SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                            object->object_id,
+                            object->allocation_id,
+                            object->size_bytes
+                        );
+                        object->prefetch_pending = 0U;
+                        pthread_cond_broadcast(&object->state_changed);
+                        pthread_mutex_unlock(&object->lock);
+                        return -1;
+                    }
                 }
                 ShadowSpillTransferLane *lane =
                     shadowspill_transfer_lane_for_action(runtime, action);

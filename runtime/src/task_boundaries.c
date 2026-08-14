@@ -352,6 +352,9 @@ static void discard_action_batch_locked(
         ShadowSpillQueuedAction *next = action->next;
         release_reserved_destination(runtime, action);
         pthread_mutex_lock(&action->object->lock);
+        (void)shadowspill_object_remove_action_locked(
+            action->object, action
+        );
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             action->object->prefetch_pending = 0U;
         } else {
@@ -404,22 +407,18 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         pthread_mutex_lock(&object->lock);
         *failure_object_id = object->object_id;
         *failure_allocation_id = object->allocation_id;
-        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            if (object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
-                !shadowspill_spill_location(runtime, object)->current ||
-                shadowspill_spill_location(runtime, object)->version != object->authoritative_version) {
-                pthread_mutex_unlock(&object->lock);
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-            }
-        } else if (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-                   object->residency != SHADOWSPILL_OBJECT_PREFETCHING) {
-            pthread_mutex_unlock(&object->lock);
-            return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-        }
         ShadowSpillQueuedAction *queued = &record->queued_actions[index];
         if (queued->active) {
             pthread_mutex_unlock(&object->lock);
             return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        }
+        ShadowSpillRuntimeStatus status =
+            shadowspill_object_schedule_action_locked(
+                runtime, object, queued
+            );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            pthread_mutex_unlock(&object->lock);
+            return status;
         }
         const uint64_t expected_generation = object->generation;
         const uint64_t expected_version = object->authoritative_version;
@@ -431,6 +430,13 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         queued->state = SHADOWSPILL_ACTION_QUEUED;
         queued->fence = fence;
         shadowspill_retain_task_fence(fence);
+        if (batch->tail == NULL) {
+            batch->head = queued;
+        } else {
+            queued->previous = batch->tail;
+            batch->tail->next = queued;
+        }
+        batch->tail = queued;
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             object->prefetch_pending = 1U;
         } else {
@@ -463,14 +469,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             }
         }
         pthread_mutex_unlock(&object->lock);
-        if (batch->tail == NULL) {
-            batch->head = queued;
-        } else {
-            queued->previous = batch->tail;
-            batch->tail->next = queued;
-        }
-        batch->tail = queued;
-        ShadowSpillRuntimeStatus status = reserve_action_destination(
+        status = reserve_action_destination(
             runtime, queued, destination_required
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {

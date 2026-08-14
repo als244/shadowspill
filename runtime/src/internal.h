@@ -214,6 +214,8 @@ typedef struct ShadowSpillObjectLocation {
     uint8_t owns_lease;
 } ShadowSpillObjectLocation;
 
+typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
+
 typedef struct ShadowSpillObject {
     uint64_t object_id;
     uint64_t size_bytes;
@@ -236,6 +238,8 @@ typedef struct ShadowSpillObject {
     uint64_t handoff_destination_object_id;
     uint64_t handoff_task_id;
     uint64_t handoff_next_source_object_id;
+    ShadowSpillQueuedAction *action_head;
+    ShadowSpillQueuedAction *action_tail;
     struct ShadowSpillObject *ownership_next;
     struct ShadowSpillObject **ownership_previous_link;
     struct ShadowSpillObject *id_index_next;
@@ -263,7 +267,7 @@ typedef enum ShadowSpillQueuedActionState {
     SHADOWSPILL_ACTION_FINISHED = 2,
 } ShadowSpillQueuedActionState;
 
-typedef struct ShadowSpillQueuedAction {
+struct ShadowSpillQueuedAction {
     uint64_t task_id;
     uint8_t kind;
     uint8_t state;
@@ -278,12 +282,17 @@ typedef struct ShadowSpillQueuedAction {
     uint8_t processing;
     uint8_t admitted;
     uint8_t active;
+    uint8_t produces_current_execution;
+    uint8_t produces_current_spill;
+    uint64_t scheduled_version;
     struct ShadowSpillQueuedAction *previous;
     struct ShadowSpillQueuedAction *next;
+    struct ShadowSpillQueuedAction *object_previous;
+    struct ShadowSpillQueuedAction *object_next;
     struct ShadowSpillQueuedAction *lane_previous;
     struct ShadowSpillQueuedAction *lane_next;
     uint8_t lane_state;
-} ShadowSpillQueuedAction;
+};
 
 typedef struct ShadowSpillActionQueue {
     pthread_mutex_t lock;
@@ -671,6 +680,22 @@ int shadowspill_object_table_rekey(
 );
 void shadowspill_object_retain(ShadowSpillObject *object);
 void shadowspill_object_release(ShadowSpillObject *object);
+ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillObject *object,
+    ShadowSpillQueuedAction *action
+);
+int shadowspill_object_action_is_head_locked(
+    const ShadowSpillObject *object,
+    const ShadowSpillQueuedAction *action
+);
+int shadowspill_object_fetch_event_unpublished_locked(
+    const ShadowSpillObject *object
+);
+int shadowspill_object_remove_action_locked(
+    ShadowSpillObject *object,
+    ShadowSpillQueuedAction *action
+);
 ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,

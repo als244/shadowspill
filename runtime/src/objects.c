@@ -761,22 +761,14 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
         ShadowSpillObject *object = NULL;
         while (status == SHADOWSPILL_RUNTIME_OK) {
             object = shadowspill_find_object(runtime, input_object_ids[index]);
-            if (object == NULL ||
-                object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY) {
+            if (object == NULL) {
                 break;
             }
-            int pending_prefetch = 0;
-            pthread_mutex_lock(&runtime->actions.lock);
-            for (ShadowSpillQueuedAction *action = runtime->actions.head;
-                 action != NULL; action = action->next) {
-                if (action->object == object &&
-                    action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-                    pending_prefetch = 1;
-                    break;
-                }
-            }
-            pthread_mutex_unlock(&runtime->actions.lock);
-            if (!pending_prefetch) {
+            pthread_mutex_lock(&object->lock);
+            const int waits_for_fetch =
+                shadowspill_object_fetch_event_unpublished_locked(object);
+            pthread_mutex_unlock(&object->lock);
+            if (!waits_for_fetch) {
                 break;
             }
             shadowspill_append_trace_event_locked(

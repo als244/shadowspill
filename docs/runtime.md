@@ -191,11 +191,29 @@ that memory exists.
 `shadowspill_before_task` resolves the immutable execution record, acquires
 each distinct input generation, validates execution residency, and inserts a
 compute-lane wait for each unfinished fetch event. It returns current addresses
-without synchronizing the host.
+without synchronizing a device or transfer lane. If a fetch is causally queued
+behind an earlier release/eviction but has not yet published its readiness
+event, the caller waits on that object's condition rather than receiving the
+old retiring generation. As soon as the worker dispatches the fetch, the host
+continues after installing the ordinary stream wait; it does not wait for the
+copy itself to finish.
 
 `shadowspill_after_task` publishes declared mutations, records one task fence,
 and submits the plan's exact ordered release, evict, and fetch actions. It does
-not move triggers, substitute actions, or launch framework work.
+not move triggers, substitute actions, or launch framework work. Each object
+owns an O(1) causal action chain. At the trigger boundary, the action layer
+checks the state projected by that chain's tail—for example, a fetch may follow
+an unfinished release that will expose a current spill copy—and reserves its
+destination immediately. This is a logical transition check, not a query of
+whether the worker has already committed the predecessor.
+
+The worker processes only the head action for a given object. It validates the
+corresponding physical residency and version immediately before dispatch, then
+removes the completed head and exposes its successor. Thus release-to-fetch,
+evict-to-fetch, and fetch-to-evict legality follows admitted action order rather
+than dispatcher/worker timing. A missing physical source at the chain head is a
+real plan/runtime violation; a valid but unfinished predecessor merely keeps
+the successor queued.
 
 The worker repeatedly:
 
