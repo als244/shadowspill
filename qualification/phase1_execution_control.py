@@ -10,13 +10,12 @@ from pathlib import Path
 
 import torch
 
+from qualification.model_state import externalize_case_model, relocate_case_model
 from qualification.numerical.cases import build_case
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
     plan_step,
-    relocate_model_state,
 )
 
 
@@ -71,12 +70,8 @@ def main() -> int:
                 "spill": pinned_host(capacity=64 << 30),
             }
         )
-        model = relocate_model_state(
-            case.model,
-            runtime=runtime,
-            pool="spill",
-            release_source=True,
-        )
+        case = relocate_case_model(case, runtime=runtime)
+        model = case.model
         planning_start = time.perf_counter()
         training = plan_step(
             model,
@@ -128,7 +123,7 @@ def main() -> int:
 
         report = training.plan_report
         training.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        externalize_case_model(case, runtime=runtime)
         runtime.close()
 
     result = {

@@ -18,13 +18,12 @@ from typing import Any, Literal
 
 import torch
 
+from qualification.model_state import externalize_case_model, relocate_case_model
 from shadowspill.ir import RecomputationGroup, RecomputationSelection
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
     plan_step,
-    relocate_model_state,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
@@ -493,12 +492,8 @@ def _planned_worker(
                 "spill": pinned_host(capacity=_HOST_BUDGET),
             }
         )
-        model = relocate_model_state(
-            case.model,
-            runtime=runtime,
-            pool="spill",
-            release_source=True,
-        )
+        case = relocate_case_model(case, runtime=runtime)
+        model = case.model
         planning_started = time.perf_counter()
         training = plan_step(
             model,
@@ -600,7 +595,7 @@ def _planned_worker(
         report = training.plan_report
         runtime_statistics = _adapter_statistics()
         training.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        externalize_case_model(case, runtime=runtime)
         runtime.close()
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)

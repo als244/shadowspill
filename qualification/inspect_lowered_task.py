@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 
+from qualification.model_state import externalize_case_model, relocate_case_model
 from qualification.numerical.cases import build_case
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
     plan_step,
-    relocate_model_state,
 )
 
 
@@ -37,12 +36,8 @@ def main() -> int:
                 "spill": pinned_host(capacity=64 << 30),
             }
         )
-        model = relocate_model_state(
-            case.model,
-            runtime=runtime,
-            pool="spill",
-            release_source=True,
-        )
+        case = relocate_case_model(case, runtime=runtime)
+        model = case.model
         training = plan_step(
             model,
             objective=case.objective,
@@ -83,7 +78,7 @@ def main() -> int:
             raise RuntimeError("selected entrypoint has no graph artifact")
         print(entrypoint.artifact.graph_module.graph)
         training.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        externalize_case_model(case, runtime=runtime)
         runtime.close()
     return 0
 

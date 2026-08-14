@@ -2460,3 +2460,18 @@ the ignored internal progress log before this tracked summary is updated.
   deliberately need to retain an independent anonymous source allocation.
 - Public examples continue to spell `release_source=True` explicitly so the
   canonical ownership transfer remains visible at the call site.
+
+## 2026-08-14 — Qualification tooling adopts relocated model ownership
+
+- Audit finding: planned launchers relocated `case.model` into a local
+  variable, but the case container still retained the original anonymous CPU
+  model. That defeated `release_source=True` and duplicated model payloads.
+- Added one qualification helper that returns a replacement case whose
+  `.model` is the spill-backed result. All training-plan launchers now replace
+  their case before planning and use the matching centralized externalization
+  helper during teardown.
+- Standard-allocator numerical references and offline FakeTensor-only compiler
+  tools remain intentionally unrelocated. Focused ownership tests prove the
+  old case-held model becomes collectible and teardown externalizes the model
+  with `release_runtime=True` by default. A real CUDA helper round trip also
+  confirms source collection, externalization, and clean runtime teardown.
