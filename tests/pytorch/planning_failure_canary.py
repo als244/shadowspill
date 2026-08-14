@@ -310,7 +310,9 @@ def main() -> int:
                     [inputs],
                     runtime,
                     cache,
-                    execution_budget=520 << 20,
+                    execution_budget=(
+                        (520 << 20) + runtime._installed.fixed_execution_bytes
+                    ),
                 ),
                 text="could not construct a feasible memory schedule",
             )

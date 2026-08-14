@@ -468,6 +468,9 @@ int shadowspill_range_free(
 uint64_t shadowspill_range_free_bytes(
     const ShadowSpillRangeAllocator *allocator
 );
+uint64_t shadowspill_range_free_prefix(
+    const ShadowSpillRangeAllocator *allocator
+);
 uint64_t shadowspill_range_largest_free(
     const ShadowSpillRangeAllocator *allocator
 );
@@ -534,6 +537,9 @@ void shadowspill_memory_pool_rebase_locked(
     void *new_base
 );
 uint64_t shadowspill_memory_pool_free_bytes_locked(
+    const ShadowSpillMemoryPool *pool
+);
+uint64_t shadowspill_memory_pool_free_prefix_locked(
     const ShadowSpillMemoryPool *pool
 );
 uint64_t shadowspill_memory_pool_largest_free_locked(

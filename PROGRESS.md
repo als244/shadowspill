@@ -2825,3 +2825,43 @@ the ignored internal progress log before this tracked summary is updated.
   arithmetic. The historical pre-optimizer negative fixture remains distinct
   and must still raise its task-attributed no-progress OOM for a
   117,440,512-byte request with only 39,845,512 bytes free.
+
+## 2026-08-14 — Lazy provider state reserved before exact slab layouts
+
+- The optimizer-fixed mlops Llama 3 8B plan reached real execution, but
+  `execution_000028` (`microbatch_0000.stage_0028.forward.recompute`) failed a
+  fixed 64 MiB placement while roughly 9.8 GiB remained free. A temporary
+  overlap probe found one 32 MiB anonymous allocation with no execution-task
+  origin occupying the exact range. This was not a no-progress capacity OOM.
+- An isolated experiment reproduced the allocation without model operands:
+  the first `torch._C._cuda_getCurrentBlasHandle()` call creates PyTorch's lazy
+  32 MiB cuBLAS workspace through the installed allocator. A warm profile-cache
+  hit had skipped the earlier profiler conditioning path, so selected task
+  compilation created that persistent workspace only after representative
+  allocations had shaped the slab. Its address could therefore intersect the
+  immutable execution layout.
+- Allocator installation now initializes the provider handle while the slab is
+  otherwise empty. The high-address allocation policy places provider state in
+  one excluded tail. Planning reserves the observed bytes plus a 64 MiB growth
+  margin, rounded to 64 MiB; this machine admits a 128 MiB fixed tail. The same
+  bytes are subtracted consistently from PressureFit capacity, exact spatial
+  admission, and `PlanReport.fixed_slab_bytes`.
+- Failure rollback exposed a separate 16,388-byte retention: an intentionally
+  retained Python exception kept representative-input traceback frames alive.
+  Planning now clears traceback frame locals while preserving exception type,
+  text, chaining, source locations, and printable traceback. Callable close
+  also releases its compiled executor before releasing the native plan.
+- A warm replan then showed 33,554,452 live bytes rather than 33,554,432. An
+  exact ownership experiment proved the extra 20 bytes were valid caller-owned
+  `StepResult` scalars: deleting only retained results restored the pristine
+  32 MiB provider tail. Replanning must not invalidate caller results.
+- Runtime ABI v21 now reports the free low-address prefix. Admission requires
+  that this prefix cover every exact planned offset, while allowing provider
+  state and retained caller allocations to fragment only the excluded high
+  tail. This proves placement safety more strongly than total-free or
+  largest-hole checks and keeps retained results valid.
+- The full Python suite passes with five expected skips; all 23 native/CUDA
+  canaries pass; strict mypy and focused Ruff checks pass. The allocator OOM
+  canary still raises the structured task-attributed `ShadowSpill no-progress
+  OOM`. The historical pre-optimizer 8B fixture remains that expected negative
+  case and is not reclassified as admission infeasibility.

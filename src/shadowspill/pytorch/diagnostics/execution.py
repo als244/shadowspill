@@ -185,6 +185,7 @@ class AllocatorTrace:
     allocated_bytes_after: int
     peak_allocated_bytes: int
     free_bytes_after: int
+    free_prefix_bytes_after: int
     largest_free_range_bytes_after: int
     external_fragmentation_bytes_after: int
     blocked_allocators_after: int
@@ -212,6 +213,7 @@ class AllocatorTrace:
             "allocated_bytes_after": self.allocated_bytes_after,
             "peak_allocated_bytes": self.peak_allocated_bytes,
             "free_bytes_after": self.free_bytes_after,
+            "free_prefix_bytes_after": self.free_prefix_bytes_after,
             "largest_free_range_bytes_after": self.largest_free_range_bytes_after,
             "external_fragmentation_bytes_after": (
                 self.external_fragmentation_bytes_after

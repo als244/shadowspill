@@ -34,6 +34,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     _function_pointer,
     install_allocator,
     resize_spill_pool,
+    validate_fixed_execution_reservation,
 )
 
 
@@ -98,13 +99,13 @@ class _Library:
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 40
     assert ctypes.sizeof(AdapterCapabilities) == 20
-    assert ctypes.sizeof(RuntimeStatistics) == 28 * 8
+    assert ctypes.sizeof(RuntimeStatistics) == 29 * 8
     assert ctypes.sizeof(AllocationEvent) == 64
     assert ctypes.sizeof(Allocation) == 40
     assert ctypes.sizeof(CudaStatistics) == 22 * 8
     assert ctypes.sizeof(RuntimeFailure) == 48
     assert ctypes.sizeof(AdapterFailure) == 72
-    assert ctypes.sizeof(AdapterStatistics) == 480
+    assert ctypes.sizeof(AdapterStatistics) == 488
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 32
@@ -274,6 +275,53 @@ def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:
         resize_spill_pool(installed, spill_pool_bytes=31, spill_budget_bytes=64)
     with pytest.raises(AllocatorInstallError, match="exceeds"):
         resize_spill_pool(installed, spill_pool_bytes=40, spill_budget_bytes=64)
+
+
+def test_fixed_execution_reservation_requires_one_contiguous_tail() -> None:
+    class _StatisticsLibrary:
+        allocated = 16
+        free = 112
+        free_prefix = 112
+        largest = 112
+
+        @staticmethod
+        def shadowspill_pytorch_allocator_wait_idle() -> int:
+            return 0
+
+        def shadowspill_pytorch_allocator_statistics(self, output: object) -> int:
+            statistics = ctypes.cast(output, ctypes.POINTER(AdapterStatistics))[0]
+            statistics.runtime.allocated_bytes = self.allocated
+            statistics.runtime.free_bytes = self.free
+            statistics.runtime.free_prefix_bytes = self.free_prefix
+            statistics.runtime.largest_free_range_bytes = self.largest
+            return 0
+
+    admission = PhysicalAdmission()
+    admission.execution_pool_bytes = 128
+    library = _StatisticsLibrary()
+    installed = InstalledAllocator(
+        library=library,
+        allocator=object(),
+        path=Path("/adapter"),
+        admission=admission,
+        fixed_execution_bytes=16,
+    )
+
+    assert validate_fixed_execution_reservation(installed, reserved_bytes=16) == 16
+    with pytest.raises(ValueError, match="smaller"):
+        validate_fixed_execution_reservation(installed, reserved_bytes=15)
+    # Fragmentation is valid inside the excluded tail, including retained
+    # caller-owned outputs from an earlier callable.
+    library.allocated = 20
+    library.free = 108
+    library.free_prefix = 96
+    library.largest = 96
+    assert validate_fixed_execution_reservation(installed, reserved_bytes=32) == 20
+    with pytest.raises(AllocatorInstallError, match="exceed"):
+        validate_fixed_execution_reservation(installed, reserved_bytes=16)
+    library.free_prefix = 64
+    with pytest.raises(AllocatorInstallError, match="overlap the prefix"):
+        validate_fixed_execution_reservation(installed, reserved_bytes=32)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:

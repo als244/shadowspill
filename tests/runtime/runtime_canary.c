@@ -98,6 +98,7 @@ static int same_stream_split_retires_cleanly(void) {
         statistics.live_allocations != 0U ||
         statistics.allocated_bytes != 0U ||
         statistics.free_bytes != 128U ||
+        statistics.free_prefix_bytes != 128U ||
         statistics.largest_free_range_bytes != 128U;
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {

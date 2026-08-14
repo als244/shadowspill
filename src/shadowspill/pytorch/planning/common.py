@@ -199,6 +199,12 @@ def simulation_capacity(
     return usable_slab - workspace_reserve_bytes_ + maximum_workspace
 
 
+def fixed_execution_bytes(memory: PlanMemory, profiles: ProfilingResult) -> int:
+    """Return every process-persistent byte carved from the execution slab."""
+
+    return memory.installed.fixed_execution_bytes + profiles.fixed_slab_bytes
+
+
 def build_simulation_config(
     memory: PlanMemory,
     workspace_reserve_bytes_: int,
@@ -212,7 +218,7 @@ def build_simulation_config(
             memory.execution_budget,
             workspace_reserve_bytes_,
             profiles.measurements,
-            fixed_slab_bytes=profiles.fixed_slab_bytes,
+            fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
         host_capacity_bytes=memory.spill_budget,
         fetch_bandwidth_bytes_per_second=memory.transfers.route(

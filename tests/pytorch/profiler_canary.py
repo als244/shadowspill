@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import sys
 import tempfile
 from pathlib import Path
@@ -21,6 +22,7 @@ from shadowspill.pytorch.profiling import (
     profile_unique_artifacts,
 )
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
 
@@ -44,6 +46,8 @@ def main() -> int:
         provider_headroom_bytes=512 << 20,
         spill_pool_bytes=64 << 20,
     )
+    if installed.fixed_execution_bytes <= 0:
+        raise AssertionError("PyTorch provider state was not initialized")
     real_model = _Repeated()
     real_inputs = (torch.randn(16, 512),)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -104,6 +108,18 @@ def main() -> int:
         )
         if warm.cache_hits != 1 or warm.cache_misses != 0:
             raise AssertionError("warm profiling did not use the content cache")
+    statistics = AdapterStatistics()
+    if int(
+        installed.library.shadowspill_pytorch_allocator_statistics(
+            ctypes.byref(statistics)
+        )
+    ) != 0:
+        raise AssertionError("allocator statistics failed after profiling")
+    runtime = statistics.runtime
+    if int(runtime.allocated_bytes) > installed.fixed_execution_bytes:
+        raise AssertionError("isolated profiling exceeded the fixed provider reserve")
+    if int(runtime.free_bytes) != int(runtime.free_prefix_bytes):
+        raise AssertionError("fixed provider state no longer forms one slab tail")
     return 0
 
 

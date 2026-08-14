@@ -50,7 +50,10 @@ from shadowspill.pytorch.profiling.metadata import (
     training_profiling_metadata,
 )
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
-from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
+from shadowspill.pytorch.runtime_adapter.allocator import (
+    InstalledAllocator,
+    validate_fixed_execution_reservation,
+)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.state.optimizer import (
     release_optimizer_state_from_plan,
@@ -106,6 +109,7 @@ from .common import (
     PlanningTimer,
     build_simulation_config,
     estimate_spill_reservation,
+    fixed_execution_bytes,
     public_infeasible_plan_error,
     validate_budgets,
     validate_cpu_model,
@@ -682,6 +686,12 @@ def compile_selected_training_tasks(
         _verify_compiled_manifest_identity(profiled.manifests, compiled)
         profiled.profiler.discard_compiled_tasks()
         installed.library.shadowspill_pytorch_allocator_wait_idle()
+        validate_fixed_execution_reservation(
+            installed,
+            reserved_bytes=(
+                installed.fixed_execution_bytes + profiled.profiles.fixed_slab_bytes
+            ),
+        )
     timer.attribute_compilation_and_profiling(profiled.profiler)
     return TrainingExecutableArtifacts(compiled)
 
@@ -1147,7 +1157,8 @@ def _build_training_spatial_layouts(
                     selected,
                     programs.measurements_by_profile,
                     execution_pool_bytes=(
-                        memory.execution_budget - profiled.profiles.fixed_slab_bytes
+                        memory.execution_budget
+                        - fixed_execution_bytes(memory, profiled.profiles)
                     ),
                     output_bindings=output_bindings_for_entrypoints(
                         selected.program.selected_tasks(selected.selections),

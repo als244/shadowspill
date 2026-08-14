@@ -378,6 +378,13 @@ uint64_t shadowspill_range_free_bytes(
     return allocator->capacity - allocator->allocated;
 }
 
+uint64_t shadowspill_range_free_prefix(
+    const ShadowSpillRangeAllocator *allocator
+) {
+    const ShadowSpillRange *first = allocator->free_ranges;
+    return first != NULL && first->offset == 0U ? first->bytes : 0U;
+}
+
 uint64_t shadowspill_range_largest_free(
     const ShadowSpillRangeAllocator *allocator
 ) {

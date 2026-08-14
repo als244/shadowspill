@@ -423,6 +423,12 @@ uint64_t shadowspill_memory_pool_free_bytes_locked(
     return shadowspill_range_free_bytes(&pool->ranges);
 }
 
+uint64_t shadowspill_memory_pool_free_prefix_locked(
+    const ShadowSpillMemoryPool *pool
+) {
+    return shadowspill_range_free_prefix(&pool->ranges);
+}
+
 uint64_t shadowspill_memory_pool_largest_free_locked(
     const ShadowSpillMemoryPool *pool
 ) {

@@ -14,6 +14,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RUNTIME_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
+    AdapterStatistics,
     PhysicalAdmission,
     PhysicalMemory,
     configure_adapter_library,
@@ -24,6 +25,11 @@ class AllocatorInstallError(RuntimeError):
     """Raised when the process-global PyTorch allocator cannot be installed."""
 
 
+_MIB = 1 << 20
+_PROVIDER_GROWTH_MARGIN = 64 * _MIB
+_PROVIDER_RESERVATION_GRANULARITY = 64 * _MIB
+
+
 @dataclass(frozen=True)
 class InstalledAllocator:
     """Process-lifetime owners for PyTorch's selected allocator callbacks."""
@@ -32,6 +38,7 @@ class InstalledAllocator:
     allocator: Any
     path: Path
     admission: PhysicalAdmission
+    fixed_execution_bytes: int = 0
 
 
 _installed: InstalledAllocator | None = None
@@ -131,8 +138,116 @@ def install_allocator(
     )
     _validate_physical_usage(library, device_budget_bytes)
     cuda.memory.change_current_allocator(allocator)
-    _installed = InstalledAllocator(library, allocator, path, admission)
+    fixed_execution_bytes = _initialize_provider_state(library, admission)
+    _installed = InstalledAllocator(
+        library,
+        allocator,
+        path,
+        admission,
+        fixed_execution_bytes,
+    )
     return _installed
+
+
+def _initialize_provider_state(
+    library: Any,
+    admission: PhysicalAdmission,
+) -> int:
+    """Create persistent PyTorch CUDA provider state in one slab tail.
+
+    PyTorch lazily obtains its cuBLAS handle on the first matrix operation.
+    That handle's workspace is allocated through the selected allocator and
+    remains live. Creating it while the slab is otherwise empty lets the
+    high-address allocator place it in one tail reservation that planning can
+    exclude from every simulated and physical layout.
+    """
+
+    # Tiny allocator/failure canaries and genuinely small non-BLAS workloads
+    # need not reserve a 32 MiB library workspace merely to initialize the
+    # runtime. A real matrix task in such a pool will still receive the normal
+    # allocator failure if its provider state cannot fit.
+    if int(admission.execution_pool_bytes) < 64 << 20:
+        return 0
+
+    get_handle = getattr(torch._C, "_cuda_getCurrentBlasHandle", None)
+    if get_handle is None or not callable(get_handle):
+        raise AllocatorInstallError(
+            "this PyTorch build lacks the required CUDA provider initializer"
+        )
+    get_handle()
+    status = int(library.shadowspill_pytorch_allocator_wait_idle())
+    if status != 0:
+        raise AllocatorInstallError(
+            f"CUDA provider initialization did not become idle (status {status})"
+        )
+    statistics = AdapterStatistics()
+    status = int(
+        library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))
+    )
+    if status != 0:
+        raise AllocatorInstallError(
+            f"CUDA provider allocation accounting failed (status {status})"
+        )
+    runtime = statistics.runtime
+    fixed = int(runtime.allocated_bytes)
+    free = int(runtime.free_bytes)
+    capacity = int(admission.execution_pool_bytes)
+    if fixed + free != capacity or int(runtime.free_prefix_bytes) != free:
+        raise AllocatorInstallError(
+            "CUDA provider state did not occupy one contiguous slab tail"
+        )
+    required = fixed + _PROVIDER_GROWTH_MARGIN
+    return (
+        (required + _PROVIDER_RESERVATION_GRANULARITY - 1)
+        // _PROVIDER_RESERVATION_GRANULARITY
+        * _PROVIDER_RESERVATION_GRANULARITY
+    )
+
+
+def validate_fixed_execution_reservation(
+    installed: InstalledAllocator,
+    *,
+    reserved_bytes: int,
+) -> int:
+    """Verify persistent planning allocations still form the excluded tail."""
+
+    if reserved_bytes < installed.fixed_execution_bytes:
+        raise ValueError("fixed execution reservation is smaller than bootstrap")
+    status = int(installed.library.shadowspill_pytorch_allocator_wait_idle())
+    if status != 0:
+        raise AllocatorInstallError(
+            f"fixed execution reservation did not become idle (status {status})"
+        )
+    statistics = AdapterStatistics()
+    status = int(
+        installed.library.shadowspill_pytorch_allocator_statistics(
+            ctypes.byref(statistics)
+        )
+    )
+    if status != 0:
+        raise AllocatorInstallError(
+            f"fixed execution reservation accounting failed (status {status})"
+        )
+    runtime = statistics.runtime
+    allocated = int(runtime.allocated_bytes)
+    free = int(runtime.free_bytes)
+    capacity = int(installed.admission.execution_pool_bytes)
+    if allocated > reserved_bytes:
+        raise AllocatorInstallError(
+            "persistent provider allocations exceed the admitted slab reserve: "
+            f"observed={allocated}, reserved={reserved_bytes}"
+        )
+    usable_prefix = capacity - reserved_bytes
+    free_prefix = int(runtime.free_prefix_bytes)
+    if allocated + free != capacity or free_prefix < usable_prefix:
+        raise AllocatorInstallError(
+            "live execution allocations overlap the prefix reserved for the "
+            "admitted plan: "
+            f"observed={allocated}, reserved={reserved_bytes}, free={free}, "
+            f"free_prefix={free_prefix}, required_prefix={usable_prefix}, "
+            f"largest={int(runtime.largest_free_range_bytes)}, capacity={capacity}"
+        )
+    return allocated
 
 
 def _validate_install_request(

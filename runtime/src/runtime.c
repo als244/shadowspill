@@ -736,6 +736,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .allocated_bytes = shadowspill_execution_pool(runtime)->ranges.allocated,
         .free_bytes =
             shadowspill_memory_pool_free_bytes_locked(shadowspill_execution_pool(runtime)),
+        .free_prefix_bytes = shadowspill_memory_pool_free_prefix_locked(
+            shadowspill_execution_pool(runtime)
+        ),
         .largest_free_range_bytes =
             shadowspill_memory_pool_largest_free_locked(
                 shadowspill_execution_pool(runtime)

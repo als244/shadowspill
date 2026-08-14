@@ -37,6 +37,9 @@ from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
 )
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.runtime_adapter.allocator import (
+    validate_fixed_execution_reservation,
+)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
 
@@ -75,6 +78,7 @@ from .common import (
     PlanningTimer,
     build_simulation_config,
     estimate_spill_reservation,
+    fixed_execution_bytes,
     public_infeasible_plan_error,
     validate_budgets,
     validate_cpu_model,
@@ -256,6 +260,12 @@ def profile_forward_tasks(
         )
         _verify_manifest_identity(manifests, compiled_tasks)
         captured.installed.library.shadowspill_pytorch_allocator_wait_idle()
+        validate_fixed_execution_reservation(
+            captured.installed,
+            reserved_bytes=(
+                captured.installed.fixed_execution_bytes + profiles.fixed_slab_bytes
+            ),
+        )
     timer.attribute_compilation_and_profiling(profiler)
     return ForwardProfileArtifacts(profiler, manifests, profiles, compiled_tasks)
 
@@ -363,7 +373,7 @@ def admit_forward_plan(
             budget=memory.spill_budget,
         )
     spatial_layout = _build_forward_spatial_layout(
-        captured, profiled, program, selection, timer
+        captured, profiled, program, selection, memory, timer
     )
     admission = physical_admission(
         memory,
@@ -583,6 +593,7 @@ def _build_forward_spatial_layout(
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
     selection: CachedPressureFitResult,
+    memory: PlanMemory,
     timer: PlanningTimer,
 ) -> SelectedSpatialLayout:
     with timer.measure("slab_admission"):
@@ -591,8 +602,8 @@ def _build_forward_spatial_layout(
                 selection.result,
                 program.measurements_by_profile,
                 execution_pool_bytes=(
-                    int(captured.installed.admission.execution_pool_bytes)
-                    - profiled.profiles.fixed_slab_bytes
+                    memory.execution_budget
+                    - fixed_execution_bytes(memory, profiled.profiles)
                 ),
                 output_bindings=output_bindings_for_entrypoints(
                     selection.result.program.selected_tasks(

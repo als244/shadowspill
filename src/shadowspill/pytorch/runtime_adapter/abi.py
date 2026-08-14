@@ -6,7 +6,7 @@ import ctypes
 from typing import Any, Final
 
 ADAPTER_ABI_VERSION: Final = 30
-RUNTIME_ABI_VERSION: Final = 20
+RUNTIME_ABI_VERSION: Final = 21
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -82,6 +82,7 @@ class RuntimeStatistics(ctypes.Structure):
         ("peak_requested_allocated_bytes", ctypes.c_uint64),
         ("allocated_bytes", ctypes.c_uint64),
         ("free_bytes", ctypes.c_uint64),
+        ("free_prefix_bytes", ctypes.c_uint64),
         ("largest_free_range_bytes", ctypes.c_uint64),
         ("external_fragmentation_bytes", ctypes.c_uint64),
         ("peak_allocated_bytes", ctypes.c_uint64),

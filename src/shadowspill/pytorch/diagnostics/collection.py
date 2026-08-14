@@ -263,6 +263,7 @@ def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:
         allocated_bytes_after=int(after.allocated_bytes),
         peak_allocated_bytes=int(after.peak_allocated_bytes),
         free_bytes_after=int(after.free_bytes),
+        free_prefix_bytes_after=int(after.free_prefix_bytes),
         largest_free_range_bytes_after=int(after.largest_free_range_bytes),
         external_fragmentation_bytes_after=int(after.external_fragmentation_bytes),
         blocked_allocators_after=int(after.blocked_allocators),

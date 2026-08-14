@@ -25,6 +25,7 @@ from ..diagnostics import (
     PlanUniqueStage,
 )
 from ..runtime_adapter import PlanMemory
+from .common import fixed_execution_bytes
 
 
 def cache_artifacts(cache: PlanningCache) -> tuple[PlanCacheArtifact, ...]:
@@ -198,7 +199,7 @@ def _forward_report(
         phase_timings_ns=(*timings, ("total", elapsed)),
         recomputation_cache_hits=int(recomputation_cache_hit),
         recomputation_cache_misses=int(not recomputation_cache_hit),
-        fixed_slab_bytes=profiles.fixed_slab_bytes,
+        fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         pressurefit_results=pressurefit_results,
         captured_stage_count=captured_stage_count,
         aot_unique_stage_abis=aot_unique_stage_abis,

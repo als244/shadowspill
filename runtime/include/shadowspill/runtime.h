@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 20U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 21U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -262,6 +262,7 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t peak_requested_allocated_bytes;
     uint64_t allocated_bytes;
     uint64_t free_bytes;
+    uint64_t free_prefix_bytes;
     uint64_t largest_free_range_bytes;
     uint64_t external_fragmentation_bytes;
     uint64_t peak_allocated_bytes;
