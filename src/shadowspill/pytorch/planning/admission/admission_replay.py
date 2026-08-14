@@ -28,6 +28,7 @@ from shadowspill.runtime import (
 from shadowspill.runtime import (
     AdmissionReplayOperationKind,
     AdmissionReplayResult,
+    AdmissionReuseDependency,
     run_admission_replay,
 )
 
@@ -638,17 +639,17 @@ def replay_admission(
 
 
 def _resolve_dependency(
-    dependency: object,
+    dependency: AdmissionReuseDependency,
     *,
     pending_by_lease: Mapping[int, _PendingEviction],
     provenance_by_lease: Mapping[int, _LeaseProvenance],
 ) -> CausalAdmissionDependency:
-    predecessor_lease_id = int(dependency.predecessor_lease_id)  # type: ignore[attr-defined]
-    successor_lease_id = int(dependency.successor_lease_id)  # type: ignore[attr-defined]
+    predecessor_lease_id = dependency.predecessor_lease_id
+    successor_lease_id = dependency.successor_lease_id
     predecessor = pending_by_lease[predecessor_lease_id]
     successor = provenance_by_lease[successor_lease_id]
     return CausalAdmissionDependency(
-        dependency_id=int(dependency.dependency_id),  # type: ignore[attr-defined]
+        dependency_id=dependency.dependency_id,
         predecessor_lease_id=predecessor_lease_id,
         predecessor_task_id=predecessor.task_id,
         predecessor_alias_group_id=predecessor.alias_group_id,
@@ -657,9 +658,7 @@ def _resolve_dependency(
         successor_task_id=successor.task_id,
         successor_alias_group_id=successor.alias_group_id,
         successor_action_index=successor.action_index,
-        consumer_operation_index=int(  # type: ignore[attr-defined]
-            dependency.consumer_operation_index
-        ),
+        consumer_operation_index=dependency.consumer_operation_index,
     )
 
 

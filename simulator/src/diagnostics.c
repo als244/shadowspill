@@ -71,8 +71,9 @@ int shadowspill_report_deadlock(
         ShadowSpillAliasState *state = &work->aliases[alias];
         if (transfer->direction == SHADOWSPILL_TRANSFER_FETCH &&
             state->device_allocated == 0U) {
-            uint64_t used = work->device_object_bytes[device] +
-                work->device_workspace_bytes[device];
+            uint64_t used = shadowspill_device_used_bytes(
+                program, work, device
+            );
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
                     used, program->alias_size_bytes[alias], &total
@@ -146,17 +147,44 @@ int shadowspill_report_deadlock(
             }
         }
         uint32_t device = program->task_device[task];
-        uint64_t requested = program->task_workspace_bytes[task];
+        uint64_t logical_requested = program->task_workspace_bytes[task];
         uint32_t output_begin = program->output_offsets[task];
         uint32_t output_end = program->output_offsets[task + 1U];
         for (uint32_t index = output_begin; index < output_end; ++index) {
             uint32_t alias = program->output_aliases[index];
             if (work->aliases[alias].device_allocated == 0U) {
-                requested += program->alias_size_bytes[alias];
+                if (shadowspill_add_overflow_u64(
+                        logical_requested,
+                        program->alias_size_bytes[alias],
+                        &logical_requested
+                    )) {
+                    logical_requested = UINT64_MAX;
+                    break;
+                }
             }
         }
-        uint64_t used = work->device_object_bytes[device] +
-            work->device_workspace_bytes[device];
+        int64_t physical_delta = 0;
+        if (logical_requested > (uint64_t)INT64_MAX ||
+            !shadowspill_resolve_physical_delta(
+                program,
+                program->task_start_physical_deltas,
+                task,
+                (int64_t)logical_requested,
+                &physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                device
+            );
+            return 0;
+        }
+        uint64_t requested = physical_delta > 0
+            ? (uint64_t)physical_delta : 0U;
+        uint64_t used = shadowspill_device_used_bytes(program, work, device);
         uint64_t capacity = program->devices[device].capacity_bytes;
         uint64_t admitted_used = used > capacity ? capacity : used;
         if (requested > capacity - admitted_used) {

@@ -44,7 +44,8 @@ int shadowspill_inputs_ready(
 
 int shadowspill_try_launch_tasks(
     const ShadowSpillSimulationProgram *program,
-    ShadowSpillSimulationWork *work
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result
 ) {
     int changed = 0;
     for (uint32_t word = 0U; word < work->task_word_count; ++word) {
@@ -65,6 +66,12 @@ int shadowspill_try_launch_tasks(
                 state->ready_ns = work->now_ns > dependency_ready
                     ? work->now_ns
                     : dependency_ready;
+            }
+            if (!shadowspill_task_reuse_dependencies_complete(
+                    program, work, task
+                )) {
+                state->stall_mask |= SHADOWSPILL_STALL_MEMORY_REUSE;
+                continue;
             }
             if (!shadowspill_inputs_ready(program, work, task)) {
                 state->stall_mask |= SHADOWSPILL_STALL_INPUT_RESIDENCY;
@@ -91,13 +98,38 @@ int shadowspill_try_launch_tasks(
                 state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
                 continue;
             }
-            uint64_t used = work->device_object_bytes[device] +
-                work->device_workspace_bytes[device];
-            uint64_t requested =
-                output_bytes + program->task_workspace_bytes[task];
-            uint64_t total = 0U;
-            if (shadowspill_add_overflow_u64(used, requested, &total) ||
-                total > program->devices[device].capacity_bytes) {
+            uint64_t logical_requested = 0U;
+            if (shadowspill_add_overflow_u64(
+                    output_bytes,
+                    program->task_workspace_bytes[task],
+                    &logical_requested
+                )) {
+                state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+                continue;
+            }
+            int64_t physical_delta = 0;
+            int capacity_fits = 0;
+            if (program->use_admission_accounting != 0U) {
+                capacity_fits = logical_requested <= (uint64_t)INT64_MAX &&
+                    shadowspill_resolve_physical_delta(
+                        program,
+                        program->task_start_physical_deltas,
+                        task,
+                        (int64_t)logical_requested,
+                        &physical_delta
+                    ) && shadowspill_physical_delta_fits(
+                        program, work, device, physical_delta
+                    );
+            } else {
+                uint64_t used = shadowspill_device_used_bytes(
+                    program, work, device
+                );
+                capacity_fits = logical_requested <=
+                    program->devices[device].capacity_bytes &&
+                    used <= program->devices[device].capacity_bytes -
+                        logical_requested;
+            }
+            if (!capacity_fits) {
                 state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
                 continue;
             }
@@ -116,6 +148,20 @@ int shadowspill_try_launch_tasks(
             }
             work->device_workspace_bytes[device] +=
                 program->task_workspace_bytes[task];
+            if (program->use_admission_accounting != 0U &&
+                !shadowspill_apply_physical_delta(
+                    program, work, device, physical_delta
+                )) {
+                shadowspill_set_error(
+                    result,
+                    SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                    work,
+                    task,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    device
+                );
+                return -1;
+            }
             state->state = SHADOWSPILL_TASK_ACTIVE;
             work->lane_heads[word] &= ~(UINT64_C(1) << bit);
             work->active_tasks[word] |= UINT64_C(1) << bit;
@@ -165,6 +211,39 @@ int shadowspill_complete_task(
     ShadowSpillTaskState *task_state = &work->tasks[task];
     uint32_t device = program->task_device[task];
     work->device_workspace_bytes[device] -= program->task_workspace_bytes[task];
+    if (program->use_admission_accounting != 0U) {
+        if (program->task_workspace_bytes[task] > (uint64_t)INT64_MAX) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                device
+            );
+            return 0;
+        }
+        int64_t physical_delta = 0;
+        if (!shadowspill_resolve_physical_delta(
+                program,
+                program->task_completion_physical_deltas,
+                task,
+                -(int64_t)program->task_workspace_bytes[task],
+                &physical_delta
+            ) || !shadowspill_apply_physical_delta(
+                program, work, device, physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                device
+            );
+            return 0;
+        }
+    }
     uint32_t output_begin = program->output_offsets[task];
     uint32_t output_end = program->output_offsets[task + 1U];
     for (uint32_t index = output_begin; index < output_end; ++index) {

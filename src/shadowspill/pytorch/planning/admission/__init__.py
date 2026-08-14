@@ -17,6 +17,7 @@ from .selection import (
     build_selected_admission,
     output_bindings_for_entrypoints,
 )
+from .simulation import simulation_admission_from_replay
 
 __all__ = [
     "AdmissionReplay",
@@ -34,4 +35,5 @@ __all__ = [
     "reconcile_spill_pool",
     "replay_admission",
     "seal_physical_budget",
+    "simulation_admission_from_replay",
 ]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from shadowspill._libraries import resolve_library
 
-ABI_VERSION = 2
+ABI_VERSION = 3
 NO_INDEX = (1 << 32) - 1
 
 
@@ -35,6 +35,8 @@ class CProgram(ctypes.Structure):
         ("input_count", ctypes.c_uint32),
         ("output_count", ctypes.c_uint32),
         ("mutation_count", ctypes.c_uint32),
+        ("reuse_dependency_count", ctypes.c_uint32),
+        ("use_admission_accounting", ctypes.c_uint32),
         ("host_capacity_bytes", ctypes.c_uint64),
         ("devices", ctypes.POINTER(CDevice)),
         ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
@@ -46,6 +48,8 @@ class CProgram(ctypes.Structure):
         ("task_resource_lane", ctypes.POINTER(ctypes.c_uint32)),
         ("task_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
         ("task_workspace_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("task_start_physical_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("task_completion_physical_deltas", ctypes.POINTER(ctypes.c_int64)),
         ("dependency_offsets", ctypes.POINTER(ctypes.c_uint32)),
         ("dependencies", ctypes.POINTER(ctypes.c_uint32)),
         ("input_offsets", ctypes.POINTER(ctypes.c_uint32)),
@@ -58,10 +62,16 @@ class CProgram(ctypes.Structure):
         ("action_trigger_tasks", ctypes.POINTER(ctypes.c_uint32)),
         ("action_aliases", ctypes.POINTER(ctypes.c_uint32)),
         ("action_kinds", ctypes.POINTER(ctypes.c_uint8)),
+        ("action_trigger_physical_deltas", ctypes.POINTER(ctypes.c_int64)),
+        ("action_completion_physical_deltas", ctypes.POINTER(ctypes.c_int64)),
         ("initial_aliases", ctypes.POINTER(ctypes.c_uint32)),
         ("initial_locations", ctypes.POINTER(ctypes.c_uint8)),
+        ("initial_physical_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("final_aliases", ctypes.POINTER(ctypes.c_uint32)),
         ("final_locations", ctypes.POINTER(ctypes.c_uint8)),
+        ("reuse_predecessor_actions", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_successor_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("reuse_successor_actions", ctypes.POINTER(ctypes.c_uint32)),
     ]
 
 

@@ -85,6 +85,12 @@ static int try_start_direction(
             continue;
         }
         *cursor = index;
+        if (!shadowspill_action_reuse_dependencies_complete(
+                program, work, index
+            )) {
+            transfer->stall_mask |= SHADOWSPILL_STALL_MEMORY_REUSE;
+            return 0;
+        }
         uint32_t alias = transfer->alias;
         ShadowSpillAliasState *state = &work->aliases[alias];
         if (direction == SHADOWSPILL_TRANSFER_FETCH) {
@@ -148,6 +154,62 @@ static int submit_action(
     uint32_t device = program->alias_device[alias];
     uint8_t kind = program->action_kinds[action];
     ShadowSpillAliasState *state = &work->aliases[alias];
+    uint64_t size = program->alias_size_bytes[alias];
+    int64_t physical_delta = 0;
+    if (program->use_admission_accounting != 0U) {
+        if (size > (uint64_t)INT64_MAX) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                alias,
+                device
+            );
+            return 0;
+        }
+        int64_t default_physical_delta = 0;
+        if (kind == SHADOWSPILL_MEMORY_RELEASE) {
+            default_physical_delta = -(int64_t)size;
+        } else if (kind == SHADOWSPILL_MEMORY_PREFETCH &&
+            state->device_allocated == 0U) {
+            default_physical_delta = (int64_t)size;
+        }
+        if (!shadowspill_resolve_physical_delta(
+                program,
+                program->action_trigger_physical_deltas,
+                action,
+                default_physical_delta,
+                &physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                alias,
+                device
+            );
+            return 0;
+        }
+        if (!shadowspill_physical_delta_fits(
+                program, work, device, physical_delta
+            )) {
+            shadowspill_set_capacity_error(
+                result,
+                SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                work,
+                task,
+                alias,
+                device,
+                SHADOWSPILL_MEMORY_DEVICE,
+                program->devices[device].capacity_bytes,
+                shadowspill_device_used_bytes(program, work, device),
+                physical_delta > 0 ? (uint64_t)physical_delta : 0U
+            );
+            return 0;
+        }
+    }
     if (kind == SHADOWSPILL_MEMORY_RELEASE) {
         if (state->device_allocated == 0U || state->device_ready == 0U) {
             shadowspill_set_error(
@@ -179,6 +241,20 @@ static int submit_action(
             state->host_allocated = 0U;
             state->host_ready = 0U;
             work->host_bytes -= program->alias_size_bytes[alias];
+        }
+        if (program->use_admission_accounting != 0U &&
+            !shadowspill_apply_physical_delta(
+                program, work, device, physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                task,
+                alias,
+                device
+            );
+            return 0;
         }
         shadowspill_update_peaks(program, work);
         return 1;
@@ -244,31 +320,47 @@ static int submit_action(
         transfer->direction = SHADOWSPILL_TRANSFER_FETCH;
         transfer->sequence = work->fetch_sequence[device]++;
         if (state->device_allocated == 0U) {
-            uint64_t used = work->device_object_bytes[device] +
-                work->device_workspace_bytes[device];
-            uint64_t total = 0U;
-            if (shadowspill_add_overflow_u64(
-                    used, program->alias_size_bytes[alias], &total
-                ) || total > program->devices[device].capacity_bytes) {
-                shadowspill_set_capacity_error(
-                    result,
-                    SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
-                    work,
-                    task,
-                    alias,
-                    device,
-                    SHADOWSPILL_MEMORY_DEVICE,
-                    program->devices[device].capacity_bytes,
-                    used,
-                    program->alias_size_bytes[alias]
+            if (program->use_admission_accounting == 0U) {
+                uint64_t used = shadowspill_device_used_bytes(
+                    program, work, device
                 );
-                return 0;
+                if (size > program->devices[device].capacity_bytes ||
+                    used > program->devices[device].capacity_bytes - size) {
+                    shadowspill_set_capacity_error(
+                        result,
+                        SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                        work,
+                        task,
+                        alias,
+                        device,
+                        SHADOWSPILL_MEMORY_DEVICE,
+                        program->devices[device].capacity_bytes,
+                        used,
+                        size
+                    );
+                    return 0;
+                }
             }
             state->device_allocated = 1U;
             state->device_ready = 0U;
-            work->device_object_bytes[device] = total;
+            work->device_object_bytes[device] +=
+                program->alias_size_bytes[alias];
         }
         state->fetch_pending = 1U;
+    }
+    if (program->use_admission_accounting != 0U &&
+        !shadowspill_apply_physical_delta(
+            program, work, device, physical_delta
+        )) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            work,
+            task,
+            alias,
+            device
+        );
+        return 0;
     }
     transfer->state = SHADOWSPILL_TRANSFER_QUEUED;
     work->pending_transfers += 1U;
@@ -334,6 +426,43 @@ int shadowspill_complete_transfer(
     uint32_t index = (uint32_t)*active;
     ShadowSpillTransferState *transfer = &work->transfers[index];
     ShadowSpillAliasState *state = &work->aliases[transfer->alias];
+    uint64_t size = program->alias_size_bytes[transfer->alias];
+    int64_t physical_delta = 0;
+    if (program->use_admission_accounting != 0U) {
+        if (size > (uint64_t)INT64_MAX) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                transfer->trigger_task,
+                transfer->alias,
+                device
+            );
+            return 0;
+        }
+        int64_t default_physical_delta = 0;
+        if (direction == SHADOWSPILL_TRANSFER_EVICT &&
+            state->fetch_pending == 0U) {
+            default_physical_delta = -(int64_t)size;
+        }
+        if (!shadowspill_resolve_physical_delta(
+                program,
+                program->action_completion_physical_deltas,
+                index,
+                default_physical_delta,
+                &physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                work,
+                transfer->trigger_task,
+                transfer->alias,
+                device
+            );
+            return 0;
+        }
+    }
     if (direction == SHADOWSPILL_TRANSFER_FETCH) {
         state->device_ready = 1U;
         state->device_version = state->host_version;
@@ -353,6 +482,20 @@ int shadowspill_complete_transfer(
             work->device_object_bytes[device] -=
                 program->alias_size_bytes[transfer->alias];
         }
+    }
+    if (program->use_admission_accounting != 0U &&
+        !shadowspill_apply_physical_delta(
+            program, work, device, physical_delta
+        )) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            work,
+            transfer->trigger_task,
+            transfer->alias,
+            device
+        );
+        return 0;
     }
     transfer->state = SHADOWSPILL_TRANSFER_COMPLETE;
     work->pending_transfers -= 1U;

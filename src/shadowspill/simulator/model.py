@@ -92,6 +92,113 @@ class SimulationConfig:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class TaskPhysicalDelta:
+    """Physical execution-pool change at one task's causal boundaries."""
+
+    task_id: str
+    start_bytes: int
+    completion_bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.task_id or self.task_id.strip() != self.task_id:
+            raise ValueError("task_id must be a non-empty normalized string")
+        if isinstance(self.start_bytes, bool) or not isinstance(self.start_bytes, int):
+            raise ValueError("start_bytes must be an integer")
+        if isinstance(self.completion_bytes, bool) or not isinstance(
+            self.completion_bytes, int
+        ):
+            raise ValueError("completion_bytes must be an integer")
+
+
+@dataclass(frozen=True, slots=True)
+class ActionPhysicalDelta:
+    """Physical execution-pool change at one memory action's boundaries."""
+
+    action_index: int
+    trigger_bytes: int
+    completion_bytes: int
+
+    def __post_init__(self) -> None:
+        _require_non_negative(self.action_index, "action_index")
+        if isinstance(self.trigger_bytes, bool) or not isinstance(
+            self.trigger_bytes, int
+        ):
+            raise ValueError("trigger_bytes must be an integer")
+        if isinstance(self.completion_bytes, bool) or not isinstance(
+            self.completion_bytes, int
+        ):
+            raise ValueError("completion_bytes must be an integer")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryReuseDependency:
+    """Require one eviction action to complete before a successor may run."""
+
+    predecessor_action_index: int
+    successor_task_id: str | None = None
+    successor_action_index: int | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_negative(
+            self.predecessor_action_index, "predecessor_action_index"
+        )
+        if (self.successor_task_id is None) == (
+            self.successor_action_index is None
+        ):
+            raise ValueError(
+                "exactly one memory-reuse successor task or action is required"
+            )
+        if self.successor_task_id is not None and (
+            not self.successor_task_id
+            or self.successor_task_id.strip() != self.successor_task_id
+        ):
+            raise ValueError(
+                "successor_task_id must be a non-empty normalized string"
+            )
+        if self.successor_action_index is not None:
+            _require_non_negative(
+                self.successor_action_index, "successor_action_index"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationAdmission:
+    """Timing-independent physical admission facts consumed by simulation."""
+
+    initial_physical_bytes: tuple[tuple[str, int], ...]
+    task_deltas: tuple[TaskPhysicalDelta, ...] = ()
+    action_deltas: tuple[ActionPhysicalDelta, ...] = ()
+    reuse_dependencies: tuple[MemoryReuseDependency, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_unique_pairs(self.initial_physical_bytes, "initial_physical_bytes")
+        for device_id, bytes_ in self.initial_physical_bytes:
+            if not device_id or device_id.strip() != device_id:
+                raise ValueError(
+                    "initial physical device IDs must be normalized strings"
+                )
+            _require_non_negative(bytes_, "initial physical bytes")
+        _validate_unique_values(
+            tuple(item.task_id for item in self.task_deltas), "task_deltas"
+        )
+        _validate_unique_values(
+            tuple(item.action_index for item in self.action_deltas), "action_deltas"
+        )
+
+
+def _validate_unique_pairs(
+    values: tuple[tuple[str, int], ...],
+    field: str,
+) -> None:
+    _validate_unique_values(tuple(item[0] for item in values), field)
+
+
+def _validate_unique_values(values: tuple[object, ...], field: str) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"{field} contains duplicate identities")
+
+
 class TransferDirection(StrEnum):
     FETCH = "fetch"
     EVICT = "evict"
@@ -146,6 +253,7 @@ class MemorySnapshot:
     device_object_bytes: tuple[tuple[str, int], ...]
     device_workspace_bytes: tuple[tuple[str, int], ...]
     host_bytes: int
+    device_physical_bytes: tuple[tuple[str, int], ...] = ()
 
 
 class SimulationInfeasibleError(ValueError):
@@ -192,13 +300,17 @@ class SimulationResult:
 
 
 __all__ = [
+    "ActionPhysicalDelta",
     "DeviceMemoryPeak",
     "DeviceSimulationConfig",
+    "MemoryReuseDependency",
     "MemorySnapshot",
+    "SimulationAdmission",
     "SimulationConfig",
     "SimulationInfeasibleError",
     "SimulationResult",
     "TaskInterval",
+    "TaskPhysicalDelta",
     "TransferDirection",
     "TransferInterval",
 ]

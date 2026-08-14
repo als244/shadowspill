@@ -49,7 +49,7 @@ def select_compiled(
     if not candidates:
         raise ValueError("candidates must not be empty")
     projections: tuple[_Projection, ...] = tuple(
-        _project(item.program, item.schedule, item.selections, item.config)
+        _project(item.program, item.schedule, item.selections, item.config, None)
         for item in candidates
     )
     c_candidates = (CPlanCandidate * len(candidates))(

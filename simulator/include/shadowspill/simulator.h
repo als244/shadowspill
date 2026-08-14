@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_SIMULATOR_ABI_VERSION 2U
+#define SHADOWSPILL_SIMULATOR_ABI_VERSION 3U
 #define SHADOWSPILL_SIMULATOR_NO_INDEX UINT32_MAX
 
 typedef enum ShadowSpillSimulationStatus {
@@ -57,6 +57,7 @@ enum {
     SHADOWSPILL_STALL_DEVICE_CAPACITY = 1U << 1U,
     SHADOWSPILL_STALL_SOURCE_READINESS = 1U << 2U,
     SHADOWSPILL_STALL_HOST_CAPACITY = 1U << 3U,
+    SHADOWSPILL_STALL_MEMORY_REUSE = 1U << 4U,
 };
 
 typedef struct ShadowSpillSimulationDevice {
@@ -79,6 +80,8 @@ typedef struct ShadowSpillSimulationProgram {
     uint32_t input_count;
     uint32_t output_count;
     uint32_t mutation_count;
+    uint32_t reuse_dependency_count;
+    uint32_t use_admission_accounting;
     uint64_t host_capacity_bytes;
 
     const ShadowSpillSimulationDevice *devices;
@@ -92,6 +95,8 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *task_resource_lane;
     const uint64_t *task_runtime_ns;
     const uint64_t *task_workspace_bytes;
+    const int64_t *task_start_physical_deltas;
+    const int64_t *task_completion_physical_deltas;
     const uint32_t *dependency_offsets;
     const uint32_t *dependencies;
     const uint32_t *input_offsets;
@@ -105,10 +110,16 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *action_trigger_tasks;
     const uint32_t *action_aliases;
     const uint8_t *action_kinds;
+    const int64_t *action_trigger_physical_deltas;
+    const int64_t *action_completion_physical_deltas;
     const uint32_t *initial_aliases;
     const uint8_t *initial_locations;
+    const uint64_t *initial_physical_bytes;
     const uint32_t *final_aliases;
     const uint8_t *final_locations;
+    const uint32_t *reuse_predecessor_actions;
+    const uint32_t *reuse_successor_tasks;
+    const uint32_t *reuse_successor_actions;
 } ShadowSpillSimulationProgram;
 
 typedef struct ShadowSpillTaskInterval {

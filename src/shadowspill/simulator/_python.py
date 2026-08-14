@@ -20,6 +20,7 @@ from shadowspill.ir import (
 from .model import (
     DeviceMemoryPeak,
     MemorySnapshot,
+    SimulationAdmission,
     SimulationConfig,
     SimulationInfeasibleError,
     SimulationResult,
@@ -90,12 +91,14 @@ class _Simulator:
         selections: tuple[RecomputationSelection, ...],
         config: SimulationConfig,
         *,
+        admission: SimulationAdmission | None,
         record_timeline: bool,
     ) -> None:
         self.program = program
         self.schedule = schedule
         self.selections = selections
         self.config = config
+        self.admission = admission
         self.record_timeline = record_timeline
         self.tasks = program.selected_tasks(selections)
         self.task_by_id = {task.task_id: task for task in self.tasks}
@@ -108,6 +111,35 @@ class _Simulator:
             item.object_id: item.alias_group_id for item in program.objects
         }
         self.device_config = {item.device_id: item for item in config.devices}
+        self.task_physical_deltas = {
+            item.task_id: item
+            for item in (() if admission is None else admission.task_deltas)
+        }
+        self.action_physical_deltas = {
+            item.action_index: item
+            for item in (() if admission is None else admission.action_deltas)
+        }
+        self.task_reuse_dependencies: dict[str, tuple[int, ...]] = {}
+        self.action_reuse_dependencies: dict[int, tuple[int, ...]] = {}
+        if admission is not None:
+            task_dependencies: dict[str, list[int]] = {}
+            action_dependencies: dict[int, list[int]] = {}
+            for dependency in admission.reuse_dependencies:
+                if dependency.successor_task_id is not None:
+                    task_dependencies.setdefault(
+                        dependency.successor_task_id, []
+                    ).append(dependency.predecessor_action_index)
+                else:
+                    assert dependency.successor_action_index is not None
+                    action_dependencies.setdefault(
+                        dependency.successor_action_index, []
+                    ).append(dependency.predecessor_action_index)
+            self.task_reuse_dependencies = {
+                key: tuple(values) for key, values in task_dependencies.items()
+            }
+            self.action_reuse_dependencies = {
+                key: tuple(values) for key, values in action_dependencies.items()
+            }
         self._validate_inputs()
         self.alias_state = {
             item.alias_group_id: _AliasState(
@@ -124,6 +156,7 @@ class _Simulator:
         self.now_ns = 0
         self.unlaunched = {task.task_id for task in self.tasks}
         self.completed: dict[str, int] = {}
+        self.completed_transfer_actions: set[int] = set()
         self.active_tasks: dict[tuple[str, ResourceKind, int], _ActiveTask] = {}
         self.task_waits = {task.task_id: _TaskWait() for task in self.tasks}
         self.pending_fetch = {
@@ -137,6 +170,7 @@ class _Simulator:
         self.transfer_sequence: dict[tuple[str, TransferDirection], int] = {}
         self.device_object_bytes = {device.device_id: 0 for device in config.devices}
         self.device_workspace_bytes = {device.device_id: 0 for device in config.devices}
+        self.device_physical_bytes = {device.device_id: 0 for device in config.devices}
         self.device_object_peaks = {device.device_id: 0 for device in config.devices}
         self.device_workspace_peaks = {device.device_id: 0 for device in config.devices}
         self.device_total_peaks = {device.device_id: 0 for device in config.devices}
@@ -155,6 +189,48 @@ class _Simulator:
                 f"expected {sorted(program_devices)}, got {sorted(configured_devices)}"
             )
         self.schedule.validate(self.program, self.selections)
+        if self.admission is None:
+            return
+        initial_devices = dict(self.admission.initial_physical_bytes)
+        if set(initial_devices) != configured_devices:
+            raise ValueError(
+                "admission initial physical devices must exactly match simulation "
+                f"devices; expected {sorted(configured_devices)}, got "
+                f"{sorted(initial_devices)}"
+            )
+        unknown_tasks = sorted(set(self.task_physical_deltas) - self.task_by_id.keys())
+        if unknown_tasks:
+            raise ValueError(f"admission contains unknown tasks {unknown_tasks}")
+        action_count = len(self.schedule.actions)
+        unknown_actions = sorted(
+            index
+            for index in self.action_physical_deltas
+            if index >= action_count
+        )
+        if unknown_actions:
+            raise ValueError(
+                f"admission contains unknown action indices {unknown_actions}"
+            )
+        for dependency in self.admission.reuse_dependencies:
+            predecessor = dependency.predecessor_action_index
+            if predecessor >= action_count:
+                raise ValueError(
+                    f"memory-reuse predecessor action {predecessor} is unknown"
+                )
+            if self.schedule.actions[predecessor].kind is not MemoryActionKind.OFFLOAD:
+                raise ValueError(
+                    f"memory-reuse predecessor action {predecessor} is not an eviction"
+                )
+            successor_task = dependency.successor_task_id
+            if successor_task is not None and successor_task not in self.task_by_id:
+                raise ValueError(
+                    f"memory-reuse successor task {successor_task!r} is unknown"
+                )
+            successor_action = dependency.successor_action_index
+            if successor_action is not None and successor_action >= action_count:
+                raise ValueError(
+                    f"memory-reuse successor action {successor_action} is unknown"
+                )
 
     def _snapshot(self) -> None:
         for device_id in self.device_object_bytes:
@@ -167,7 +243,8 @@ class _Simulator:
                 self.device_workspace_peaks[device_id], workspace
             )
             self.device_total_peaks[device_id] = max(
-                self.device_total_peaks[device_id], objects + workspace
+                self.device_total_peaks[device_id],
+                self.device_physical_bytes[device_id],
             )
         self.host_peak_bytes = max(self.host_peak_bytes, self.host_bytes)
         if self.record_timeline:
@@ -177,6 +254,7 @@ class _Simulator:
                     device_object_bytes=tuple(self.device_object_bytes.items()),
                     device_workspace_bytes=tuple(self.device_workspace_bytes.items()),
                     host_bytes=self.host_bytes,
+                    device_physical_bytes=tuple(self.device_physical_bytes.items()),
                 )
             )
 
@@ -203,8 +281,14 @@ class _Simulator:
                     state.host_allocated = True
                     self.host_bytes += state.size_bytes
                 state.host_ready = True
+        if self.admission is None:
+            self.device_physical_bytes.update(self.device_object_bytes)
+        else:
+            self.device_physical_bytes.update(
+                dict(self.admission.initial_physical_bytes)
+            )
         self._snapshot()
-        for device_id, used in self.device_object_bytes.items():
+        for device_id, used in self.device_physical_bytes.items():
             capacity = self.device_config[device_id].capacity_bytes
             if used > capacity:
                 self._raise_capacity(
@@ -245,6 +329,39 @@ class _Simulator:
             capacity_bytes=capacity,
             used_bytes=used,
             requested_bytes=requested,
+        )
+
+    def _apply_physical_delta(self, device_id: str, delta: int) -> None:
+        updated = self.device_physical_bytes[device_id] + delta
+        if updated < 0:
+            raise ValueError(
+                "simulation admission underflows physical execution memory: "
+                f"device={device_id!r}, "
+                f"current={self.device_physical_bytes[device_id]}, "
+                f"delta={delta}"
+            )
+        self.device_physical_bytes[device_id] = updated
+
+    def _task_start_delta(self, task: TaskSpec, default: int) -> int:
+        admitted = self.task_physical_deltas.get(task.task_id)
+        return default if admitted is None else admitted.start_bytes
+
+    def _task_completion_delta(self, task: TaskSpec, default: int) -> int:
+        admitted = self.task_physical_deltas.get(task.task_id)
+        return default if admitted is None else admitted.completion_bytes
+
+    def _action_trigger_delta(self, action_index: int, default: int) -> int:
+        admitted = self.action_physical_deltas.get(action_index)
+        return default if admitted is None else admitted.trigger_bytes
+
+    def _action_completion_delta(self, action_index: int, default: int) -> int:
+        admitted = self.action_physical_deltas.get(action_index)
+        return default if admitted is None else admitted.completion_bytes
+
+    def _reuse_dependencies_complete(self, predecessors: tuple[int, ...]) -> bool:
+        return all(
+            predecessor in self.completed_transfer_actions
+            for predecessor in predecessors
         )
 
     def _resource_key(self, task: TaskSpec) -> tuple[str, ResourceKind, int]:
@@ -295,6 +412,10 @@ class _Simulator:
             )
             if wait.ready_ns is None:
                 wait.ready_ns = max(self.now_ns, dependency_ready)
+            reuse_dependencies = self.task_reuse_dependencies.get(task.task_id, ())
+            if not self._reuse_dependencies_complete(reuse_dependencies):
+                wait.reasons.add("memory-reuse")
+                continue
             missing = self._task_missing_inputs(task)
             if missing:
                 wait.reasons.add("input-residency")
@@ -307,11 +428,10 @@ class _Simulator:
                 if not self.alias_state[alias_id].device_allocated
             )
             device_id = task.resource.device_id
-            used = (
-                self.device_object_bytes[device_id]
-                + self.device_workspace_bytes[device_id]
-            )
-            requested = new_output_bytes + profile.workspace_bytes
+            logical_requested = new_output_bytes + profile.workspace_bytes
+            physical_delta = self._task_start_delta(task, logical_requested)
+            used = self.device_physical_bytes[device_id]
+            requested = max(physical_delta, 0)
             if used + requested > self.device_config[device_id].capacity_bytes:
                 wait.reasons.add("device-capacity")
                 continue
@@ -325,6 +445,7 @@ class _Simulator:
                 state.evict_pending = False
                 state.host_ready = False
             self.device_workspace_bytes[device_id] += profile.workspace_bytes
+            self._apply_physical_delta(device_id, physical_delta)
             start = self.now_ns
             end = start + profile.runtime_ns
             active = _ActiveTask(
@@ -418,10 +539,32 @@ class _Simulator:
             action = self.schedule.actions[action_index]
             if action.trigger_task_id not in self.completed:
                 return
+            state = self.alias_state[action.alias_group_id]
+            device_id = state.device_id
+            if action.kind is MemoryActionKind.RELEASE:
+                default_delta = -state.size_bytes
+            elif action.kind is MemoryActionKind.PREFETCH:
+                default_delta = 0 if state.device_allocated else state.size_bytes
+            else:
+                default_delta = 0
+            physical_delta = self._action_trigger_delta(
+                action_index, default_delta
+            )
+            requested = max(physical_delta, 0)
+            capacity = self.device_config[device_id].capacity_bytes
+            if self.device_physical_bytes[device_id] + requested > capacity:
+                self._raise_capacity(
+                    kind="prefetch-device-capacity",
+                    location=f"device:{device_id}",
+                    capacity=capacity,
+                    used=self.device_physical_bytes[device_id],
+                    requested=requested,
+                    task_id=action.trigger_task_id,
+                    aliases=(action.alias_group_id,),
+                )
             if action.kind is MemoryActionKind.RELEASE:
                 self._release(action)
             elif action.kind is MemoryActionKind.OFFLOAD:
-                state = self.alias_state[action.alias_group_id]
                 if not state.device_allocated or not state.device_ready:
                     raise SimulationInfeasibleError(
                         f"offload of {action.alias_group_id!r} lacks a device source",
@@ -453,7 +596,6 @@ class _Simulator:
                     TransferDirection.EVICT,
                 )
             else:
-                state = self.alias_state[action.alias_group_id]
                 if state.device_allocated and not state.evict_pending:
                     raise SimulationInfeasibleError(
                         f"prefetch of {action.alias_group_id!r} already has a "
@@ -472,22 +614,6 @@ class _Simulator:
                         alias_group_ids=(action.alias_group_id,),
                     )
                 if not state.device_allocated:
-                    device_id = state.device_id
-                    used = (
-                        self.device_object_bytes[device_id]
-                        + self.device_workspace_bytes[device_id]
-                    )
-                    capacity = self.device_config[device_id].capacity_bytes
-                    if used + state.size_bytes > capacity:
-                        self._raise_capacity(
-                            kind="prefetch-device-capacity",
-                            location=f"device:{device_id}",
-                            capacity=capacity,
-                            used=used,
-                            requested=state.size_bytes,
-                            task_id=action.trigger_task_id,
-                            aliases=(action.alias_group_id,),
-                        )
                     state.device_allocated = True
                     state.device_ready = False
                     self.device_object_bytes[device_id] += state.size_bytes
@@ -496,6 +622,7 @@ class _Simulator:
                     action,
                     TransferDirection.FETCH,
                 )
+            self._apply_physical_delta(device_id, physical_delta)
             self._snapshot()
             self.next_action_index += 1
 
@@ -504,6 +631,10 @@ class _Simulator:
         task = active.task
         device_id = task.resource.device_id
         self.device_workspace_bytes[device_id] -= active.workspace_bytes
+        self._apply_physical_delta(
+            device_id,
+            self._task_completion_delta(task, -active.workspace_bytes),
+        )
         for alias_id in active.output_aliases:
             state = self.alias_state[alias_id]
             state.device_ready = True
@@ -546,6 +677,12 @@ class _Simulator:
             return False
         pending = queue[0]
         state = self.alias_state[pending.alias_group_id]
+        reuse_dependencies = self.action_reuse_dependencies.get(
+            pending.action_index, ()
+        )
+        if not self._reuse_dependencies_complete(reuse_dependencies):
+            pending.stall_reasons.add("memory-reuse")
+            return False
         if direction is TransferDirection.FETCH:
             if state.evict_pending or not state.host_ready:
                 pending.stall_reasons.add("source-readiness")
@@ -586,6 +723,7 @@ class _Simulator:
             active = self.active_evict.pop(device_id)
         pending = active.pending
         state = self.alias_state[pending.alias_group_id]
+        default_physical_delta = 0
         if direction is TransferDirection.FETCH:
             state.device_ready = True
             state.device_version = state.host_version
@@ -602,6 +740,14 @@ class _Simulator:
             if not state.fetch_pending:
                 state.device_allocated = False
                 self.device_object_bytes[device_id] -= state.size_bytes
+                default_physical_delta = -state.size_bytes
+        self._apply_physical_delta(
+            device_id,
+            self._action_completion_delta(
+                pending.action_index, default_physical_delta
+            ),
+        )
+        self.completed_transfer_actions.add(pending.action_index)
         self.transfer_intervals.append(
             TransferInterval(
                 alias_group_id=pending.alias_group_id,
@@ -653,10 +799,7 @@ class _Simulator:
                 pending = queue[0]
                 state = self.alias_state[pending.alias_group_id]
                 if direction is TransferDirection.FETCH:
-                    used = (
-                        self.device_object_bytes[device_id]
-                        + self.device_workspace_bytes[device_id]
-                    )
+                    used = self.device_physical_bytes[device_id]
                     capacity = self.device_config[device_id].capacity_bytes
                     if (
                         not state.device_allocated
@@ -703,16 +846,14 @@ class _Simulator:
                 )
             profile = self.profile_by_id[task.profile_id]
             output_aliases = self._task_output_aliases(task)
-            requested = profile.workspace_bytes + sum(
+            logical_requested = profile.workspace_bytes + sum(
                 self.alias_state[alias_id].size_bytes
                 for alias_id in output_aliases
                 if not self.alias_state[alias_id].device_allocated
             )
             device_id = task.resource.device_id
-            used = (
-                self.device_object_bytes[device_id]
-                + self.device_workspace_bytes[device_id]
-            )
+            requested = max(self._task_start_delta(task, logical_requested), 0)
+            used = self.device_physical_bytes[device_id]
             if used + requested > self.device_config[device_id].capacity_bytes:
                 self._raise_capacity(
                     kind="task-device-capacity",
@@ -818,6 +959,7 @@ def simulate_python(
     *,
     selections: tuple[RecomputationSelection, ...] = (),
     config: SimulationConfig,
+    admission: SimulationAdmission | None = None,
     record_timeline: bool = False,
 ) -> SimulationResult:
     """Replay a validated schedule with the readable reference implementation."""
@@ -827,6 +969,7 @@ def simulate_python(
         schedule,
         selections,
         config,
+        admission=admission,
         record_timeline=record_timeline,
     ).run()
 

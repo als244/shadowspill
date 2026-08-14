@@ -62,6 +62,7 @@ typedef struct ShadowSpillSimulationWork {
     uint32_t *evict_sequence;
     uint64_t *device_object_bytes;
     uint64_t *device_workspace_bytes;
+    uint64_t *device_physical_bytes;
     uint64_t *device_object_peaks;
     uint64_t *device_workspace_peaks;
     uint64_t *device_total_peaks;
@@ -140,7 +141,48 @@ int shadowspill_inputs_ready(
 
 int shadowspill_try_launch_tasks(
     const ShadowSpillSimulationProgram *program,
-    ShadowSpillSimulationWork *work
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result
+);
+
+uint64_t shadowspill_device_used_bytes(
+    const ShadowSpillSimulationProgram *program,
+    const ShadowSpillSimulationWork *work,
+    uint32_t device
+);
+
+int shadowspill_resolve_physical_delta(
+    const ShadowSpillSimulationProgram *program,
+    const int64_t *deltas,
+    uint32_t index,
+    int64_t default_delta,
+    int64_t *result
+);
+
+int shadowspill_physical_delta_fits(
+    const ShadowSpillSimulationProgram *program,
+    const ShadowSpillSimulationWork *work,
+    uint32_t device,
+    int64_t delta
+);
+
+int shadowspill_apply_physical_delta(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    uint32_t device,
+    int64_t delta
+);
+
+int shadowspill_task_reuse_dependencies_complete(
+    const ShadowSpillSimulationProgram *program,
+    const ShadowSpillSimulationWork *work,
+    uint32_t task
+);
+
+int shadowspill_action_reuse_dependencies_complete(
+    const ShadowSpillSimulationProgram *program,
+    const ShadowSpillSimulationWork *work,
+    uint32_t action
 );
 
 int shadowspill_complete_task(

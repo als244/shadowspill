@@ -45,6 +45,9 @@ int shadowspill_allocate_work(
     work->device_workspace_bytes = calloc(
         program->device_count, sizeof(*work->device_workspace_bytes)
     );
+    work->device_physical_bytes = calloc(
+        program->device_count, sizeof(*work->device_physical_bytes)
+    );
     work->device_object_peaks = calloc(
         program->device_count, sizeof(*work->device_object_peaks)
     );
@@ -62,6 +65,7 @@ int shadowspill_allocate_work(
         work->evict_cursor == NULL || work->fetch_sequence == NULL ||
         work->evict_sequence == NULL || work->device_object_bytes == NULL ||
         work->device_workspace_bytes == NULL ||
+        work->device_physical_bytes == NULL ||
         work->device_object_peaks == NULL ||
         work->device_workspace_peaks == NULL ||
         work->device_total_peaks == NULL) {
@@ -109,6 +113,7 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->evict_sequence);
     free(work->device_object_bytes);
     free(work->device_workspace_bytes);
+    free(work->device_physical_bytes);
     free(work->device_object_peaks);
     free(work->device_workspace_peaks);
     free(work->device_total_peaks);
@@ -119,8 +124,7 @@ void shadowspill_update_peaks(
     ShadowSpillSimulationWork *work
 ) {
     for (uint32_t device = 0; device < program->device_count; ++device) {
-        uint64_t total = work->device_object_bytes[device] +
-            work->device_workspace_bytes[device];
+        uint64_t total = shadowspill_device_used_bytes(program, work, device);
         if (work->device_object_bytes[device] >
             work->device_object_peaks[device]) {
             work->device_object_peaks[device] =
@@ -219,9 +223,21 @@ int shadowspill_initialize_memory(
             state->host_ready = 1U;
         }
     }
+    if (program->use_admission_accounting != 0U) {
+        for (uint32_t device = 0; device < program->device_count; ++device) {
+            work->device_physical_bytes[device] =
+                program->initial_physical_bytes[device];
+        }
+    } else {
+        for (uint32_t device = 0; device < program->device_count; ++device) {
+            work->device_physical_bytes[device] =
+                work->device_object_bytes[device];
+        }
+    }
     shadowspill_update_peaks(program, work);
     for (uint32_t device = 0; device < program->device_count; ++device) {
-        if (work->device_object_bytes[device] >
+        uint64_t used = shadowspill_device_used_bytes(program, work, device);
+        if (used >
             program->devices[device].capacity_bytes) {
             shadowspill_set_capacity_error(
                 result,
@@ -232,7 +248,7 @@ int shadowspill_initialize_memory(
                 device,
                 SHADOWSPILL_MEMORY_DEVICE,
                 program->devices[device].capacity_bytes,
-                work->device_object_bytes[device],
+                used,
                 0U
             );
             return 0;

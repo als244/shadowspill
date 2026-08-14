@@ -50,7 +50,11 @@ ShadowSpillSimulationStatus shadowspill_simulate(
         int changed = 1;
         while (changed != 0) {
             changed = shadowspill_try_start_transfers(program, &work);
-            changed |= shadowspill_try_launch_tasks(program, &work);
+            int launched = shadowspill_try_launch_tasks(program, &work, result);
+            if (launched < 0) {
+                return finish_failure(&work, result);
+            }
+            changed |= launched;
         }
         uint64_t next = shadowspill_next_event_time(program, &work);
         if (next == UINT64_MAX) {

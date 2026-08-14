@@ -31,6 +31,7 @@ from ._capi import (
 from ._diagnostics import simulation_failure_detail, simulation_status_kind
 from .model import (
     DeviceMemoryPeak,
+    SimulationAdmission,
     SimulationConfig,
     SimulationInfeasibleError,
     SimulationResult,
@@ -58,7 +59,9 @@ _STALL_REASONS = (
     (1 << 1, "device-capacity"),
     (1 << 2, "source-readiness"),
     (1 << 3, "host-capacity"),
+    (1 << 4, "memory-reuse"),
 )
+_DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 
 def _u32_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
@@ -77,6 +80,11 @@ def _u64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
         if values
         else array_type()
     )
+
+
+def _i64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_int64]:
+    array_type = ctypes.c_int64 * max(1, len(values))
+    return array_type(*values) if values else array_type()
 
 
 def _u8_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
@@ -276,6 +284,9 @@ def compile_simulation_template(
     )
     empty_u32 = u32(())
     empty_u8 = u8(())
+    empty_u64 = u64(())
+    empty_i64 = _i64_array(())
+    keep(empty_i64)
     c_program = CProgram(
         abi_version=ABI_VERSION,
         device_count=len(device_ids),
@@ -288,6 +299,8 @@ def compile_simulation_template(
         input_count=len(input_values),
         output_count=len(output_values),
         mutation_count=len(mutation_values),
+        reuse_dependency_count=0,
+        use_admission_accounting=0,
         host_capacity_bytes=config.host_capacity_bytes,
         devices=c_devices,
         alias_device=alias_device,
@@ -299,6 +312,8 @@ def compile_simulation_template(
         task_resource_lane=task_lane,
         task_runtime_ns=task_runtime,
         task_workspace_bytes=task_workspace,
+        task_start_physical_deltas=empty_i64,
+        task_completion_physical_deltas=empty_i64,
         dependency_offsets=dependency_offsets_buffer,
         dependencies=dependency_buffer,
         input_offsets=input_offsets_buffer,
@@ -311,10 +326,16 @@ def compile_simulation_template(
         action_trigger_tasks=empty_u32,
         action_aliases=empty_u32,
         action_kinds=empty_u8,
+        action_trigger_physical_deltas=empty_i64,
+        action_completion_physical_deltas=empty_i64,
         initial_aliases=initial_aliases,
         initial_locations=initial_locations,
+        initial_physical_bytes=empty_u64,
         final_aliases=final_aliases,
         final_locations=final_locations,
+        reuse_predecessor_actions=empty_u32,
+        reuse_successor_tasks=empty_u32,
+        reuse_successor_actions=empty_u32,
     )
     return CompiledSimulationTemplate(
         c_program,
@@ -331,6 +352,7 @@ def compile_simulation_template(
 def _bind_schedule(
     template: CompiledSimulationTemplate,
     schedule: MemorySchedule,
+    admission: SimulationAdmission | None = None,
 ) -> _Projection:
     """Bind candidate-only arrays to one immutable compiled topology."""
 
@@ -361,17 +383,136 @@ def _bind_schedule(
     final_locations = _u8_array(
         tuple(_LOCATION_CODE[item.location] for item in schedule.final_residency)
     )
+    if admission is None:
+        initial_physical = _u64_array(())
+        task_start_deltas = _i64_array(())
+        task_completion_deltas = _i64_array(())
+        action_trigger_deltas = _i64_array(())
+        action_completion_deltas = _i64_array(())
+        reuse_predecessors = _u32_array(())
+        reuse_successor_tasks = _u32_array(())
+        reuse_successor_actions = _u32_array(())
+    else:
+        initial_by_device = dict(admission.initial_physical_bytes)
+        if set(initial_by_device) != set(template.device_ids):
+            raise ValueError(
+                "simulation admission devices must exactly match Program devices; "
+                f"expected {sorted(template.device_ids)}, "
+                f"got {sorted(initial_by_device)}"
+            )
+        task_deltas = {item.task_id: item for item in admission.task_deltas}
+        unknown_tasks = set(task_deltas) - set(template.task_ids)
+        if unknown_tasks:
+            raise ValueError(
+                "simulation admission contains unknown task IDs: "
+                f"{sorted(unknown_tasks)}"
+            )
+        action_deltas = {
+            item.action_index: item for item in admission.action_deltas
+        }
+        unknown_actions = set(action_deltas) - set(range(len(schedule.actions)))
+        if unknown_actions:
+            raise ValueError(
+                "simulation admission contains unknown action indices: "
+                f"{sorted(unknown_actions)}"
+            )
+        initial_physical = _u64_array(
+            tuple(initial_by_device[item] for item in template.device_ids)
+        )
+        task_start_deltas = _i64_array(
+            tuple(
+                task_deltas[item].start_bytes
+                if item in task_deltas
+                else _DEFAULT_PHYSICAL_DELTA
+                for item in template.task_ids
+            )
+        )
+        task_completion_deltas = _i64_array(
+            tuple(
+                task_deltas[item].completion_bytes
+                if item in task_deltas
+                else _DEFAULT_PHYSICAL_DELTA
+                for item in template.task_ids
+            )
+        )
+        action_trigger_deltas = _i64_array(
+            tuple(
+                action_deltas[index].trigger_bytes
+                if index in action_deltas
+                else _DEFAULT_PHYSICAL_DELTA
+                for index in range(len(schedule.actions))
+            )
+        )
+        action_completion_deltas = _i64_array(
+            tuple(
+                action_deltas[index].completion_bytes
+                if index in action_deltas
+                else _DEFAULT_PHYSICAL_DELTA
+                for index in range(len(schedule.actions))
+            )
+        )
+        predecessor_actions: list[int] = []
+        successor_tasks: list[int] = []
+        successor_actions: list[int] = []
+        for dependency in admission.reuse_dependencies:
+            predecessor = dependency.predecessor_action_index
+            if predecessor >= len(schedule.actions):
+                raise ValueError(
+                    "memory-reuse predecessor action is unknown: "
+                    f"{predecessor}"
+                )
+            if schedule.actions[predecessor].kind is not MemoryActionKind.OFFLOAD:
+                raise ValueError(
+                    "memory-reuse predecessor must be an OFFLOAD action: "
+                    f"{predecessor}"
+                )
+            predecessor_actions.append(predecessor)
+            if dependency.successor_task_id is None:
+                assert dependency.successor_action_index is not None
+                if dependency.successor_action_index >= len(schedule.actions):
+                    raise ValueError(
+                        "memory-reuse successor action is unknown: "
+                        f"{dependency.successor_action_index}"
+                    )
+                successor_tasks.append(NO_INDEX)
+                successor_actions.append(dependency.successor_action_index)
+            else:
+                try:
+                    successor_tasks.append(
+                        template.task_index[dependency.successor_task_id]
+                    )
+                except KeyError as exc:
+                    raise ValueError(
+                        "memory-reuse successor task is unknown: "
+                        f"{dependency.successor_task_id!r}"
+                    ) from exc
+                successor_actions.append(NO_INDEX)
+        reuse_predecessors = _u32_array(tuple(predecessor_actions))
+        reuse_successor_tasks = _u32_array(tuple(successor_tasks))
+        reuse_successor_actions = _u32_array(tuple(successor_actions))
     c_program = CProgram.from_buffer_copy(template.program)
     c_program.action_count = len(schedule.actions)
     c_program.initial_count = len(schedule.initial_residency)
     c_program.final_count = len(schedule.final_residency)
+    c_program.reuse_dependency_count = (
+        0 if admission is None else len(admission.reuse_dependencies)
+    )
+    c_program.use_admission_accounting = int(admission is not None)
     c_program.action_trigger_tasks = action_tasks
     c_program.action_aliases = action_aliases
     c_program.action_kinds = action_kinds
+    c_program.action_trigger_physical_deltas = action_trigger_deltas
+    c_program.action_completion_physical_deltas = action_completion_deltas
     c_program.initial_aliases = initial_aliases
     c_program.initial_locations = initial_locations
+    c_program.initial_physical_bytes = initial_physical
     c_program.final_aliases = final_aliases
     c_program.final_locations = final_locations
+    c_program.task_start_physical_deltas = task_start_deltas
+    c_program.task_completion_physical_deltas = task_completion_deltas
+    c_program.reuse_predecessor_actions = reuse_predecessors
+    c_program.reuse_successor_tasks = reuse_successor_tasks
+    c_program.reuse_successor_actions = reuse_successor_actions
     return _Projection(
         c_program,
         (
@@ -383,6 +524,14 @@ def _bind_schedule(
             initial_locations,
             final_aliases,
             final_locations,
+            initial_physical,
+            task_start_deltas,
+            task_completion_deltas,
+            action_trigger_deltas,
+            action_completion_deltas,
+            reuse_predecessors,
+            reuse_successor_tasks,
+            reuse_successor_actions,
         ),
         template.task_ids,
         template.alias_ids,
@@ -396,11 +545,13 @@ def _project(
     schedule: MemorySchedule,
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
+    admission: SimulationAdmission | None,
 ) -> _Projection:
     schedule.validate(program, selections)
     return _bind_schedule(
         compile_simulation_template(program, selections, config),
         schedule,
+        admission,
     )
 
 
@@ -455,20 +606,25 @@ def simulate_compiled(
     *,
     selections: tuple[RecomputationSelection, ...] = (),
     config: SimulationConfig,
+    admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
     """Replay through `libshadowspill_simulator.so`."""
 
-    projection = _project(program, schedule, selections, config)
+    projection = _project(program, schedule, selections, config, admission)
     return _simulate_projection(projection, schedule)
 
 
 def simulate_compiled_template(
     template: CompiledSimulationTemplate,
     schedule: MemorySchedule,
+    *,
+    admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
     """Replay a validated schedule using cached dense program geometry."""
 
-    return _simulate_projection(_bind_schedule(template, schedule), schedule)
+    return _simulate_projection(
+        _bind_schedule(template, schedule, admission), schedule
+    )
 
 
 def simulate_compiled_template_summary(

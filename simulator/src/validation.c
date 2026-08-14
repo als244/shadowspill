@@ -39,7 +39,8 @@ int shadowspill_validate_program(
 ) {
     if (program == NULL ||
         program->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
-        program->device_count == 0U) {
+        program->device_count == 0U ||
+        program->use_admission_accounting > 1U) {
         return 0;
     }
     if (!require_pointer(program->devices, program->device_count) ||
@@ -65,7 +66,31 @@ int shadowspill_validate_program(
         !require_pointer(program->initial_aliases, program->initial_count) ||
         !require_pointer(program->initial_locations, program->initial_count) ||
         !require_pointer(program->final_aliases, program->final_count) ||
-        !require_pointer(program->final_locations, program->final_count)) {
+        !require_pointer(program->final_locations, program->final_count) ||
+        (program->use_admission_accounting != 0U &&
+            (!require_pointer(
+                program->task_start_physical_deltas, program->task_count
+            ) || !require_pointer(
+                program->task_completion_physical_deltas,
+                program->task_count
+            ) || !require_pointer(
+                program->action_trigger_physical_deltas,
+                program->action_count
+            ) || !require_pointer(
+                program->action_completion_physical_deltas,
+                program->action_count
+            ) || !require_pointer(
+                program->initial_physical_bytes, program->device_count
+            ) || !require_pointer(
+                program->reuse_predecessor_actions,
+                program->reuse_dependency_count
+            ) || !require_pointer(
+                program->reuse_successor_tasks,
+                program->reuse_dependency_count
+            ) || !require_pointer(
+                program->reuse_successor_actions,
+                program->reuse_dependency_count
+            )))) {
         return 0;
     }
     if (!validate_offsets(
@@ -138,6 +163,22 @@ int shadowspill_validate_program(
     for (uint32_t index = 0; index < program->final_count; ++index) {
         if (program->final_aliases[index] >= program->alias_count ||
             program->final_locations[index] > SHADOWSPILL_MEMORY_HOST) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0; index < program->reuse_dependency_count; ++index) {
+        uint32_t predecessor = program->reuse_predecessor_actions[index];
+        uint32_t successor_task = program->reuse_successor_tasks[index];
+        uint32_t successor_action = program->reuse_successor_actions[index];
+        if (predecessor >= program->action_count ||
+            program->action_kinds[predecessor] !=
+                SHADOWSPILL_MEMORY_OFFLOAD ||
+            ((successor_task == SHADOWSPILL_SIMULATOR_NO_INDEX) ==
+                (successor_action == SHADOWSPILL_SIMULATOR_NO_INDEX)) ||
+            (successor_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&
+                successor_task >= program->task_count) ||
+            (successor_action != SHADOWSPILL_SIMULATOR_NO_INDEX &&
+                successor_action >= program->action_count)) {
             return 0;
         }
     }

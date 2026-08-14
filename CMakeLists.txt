@@ -25,6 +25,7 @@ target_compile_options(
 add_library(
   shadowspill_simulator
   SHARED
+  simulator/src/admission.c
   simulator/src/diagnostics.c
   simulator/src/events.c
   simulator/src/memory.c
