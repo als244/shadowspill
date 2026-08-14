@@ -10,10 +10,14 @@ borrows its vtable. Destroying it releases only ShadowSpill's primary-context
 reference; it neither resets the device nor owns PyTorch's context reference.
 
 One runtime creation results in one conventional `cuMemAlloc` for the complete
-slab and one `cuMemHostAlloc` for the complete pinned arena. Stream and event
-operations use nonblocking CUDA streams and timing-disabled events. Copies,
-event recording/query, and stream waits are asynchronous. Only the runtime's
-explicit close path calls stream synchronization.
+slab. The complete spill arena is obtained with the system allocator and then
+registered once with `cuMemHostRegister`; teardown calls
+`cuMemHostUnregister` before returning it to the system allocator. ShadowSpill
+does not use CUDA's pinned-host allocator or its power-of-two allocation
+policy. Stream and event operations use nonblocking CUDA streams and
+timing-disabled events. Copies, event recording/query, and stream waits are
+asynchronous. Only the runtime's explicit close path calls stream
+synchronization.
 
 `shadowspill_cuda_backend_profiler()` returns the neutral profiler vtable
 implemented with NVTX. It names the runtime worker and names the two transfer

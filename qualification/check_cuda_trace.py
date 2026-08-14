@@ -60,13 +60,13 @@ def check_trace(path: Path) -> None:
             SELECT count(*)
             FROM CUPTI_ACTIVITY_KIND_RUNTIME AS runtime
             JOIN StringIds AS names ON names.id = runtime.nameId
-            WHERE names.value = ?
+            WHERE names.value IN (?, ?)
             """,
-            ("cuMemHostAlloc",),
+            ("cuMemHostRegister", "cuMemHostRegister_v2"),
         )
         if pinned_count != 1:
             raise AssertionError(
-                f"expected one pinned-host allocation, observed {pinned_count}"
+                f"expected one host registration, observed {pinned_count}"
             )
         forbidden = connection.execute(
             """

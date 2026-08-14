@@ -158,15 +158,22 @@ static int free_execution(void *context, void *pointer) {
 
 static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
     ShadowSpillCudaBackend *backend = context;
-    if (pointer == NULL || activate_context(backend) != 0) {
+    if (pointer == NULL || bytes == 0U || bytes > SIZE_MAX ||
+        activate_context(backend) != 0) {
         return -1;
     }
-    CUresult result = cuMemHostAlloc(
-        pointer, (size_t)bytes, CU_MEMHOSTALLOC_PORTABLE
+    void *allocation = malloc((size_t)bytes);
+    if (allocation == NULL) {
+        return -1;
+    }
+    CUresult result = cuMemHostRegister(
+        allocation, (size_t)bytes, CU_MEMHOSTREGISTER_PORTABLE
     );
     if (record_result(backend, result) != 0) {
+        free(allocation);
         return -1;
     }
+    *pointer = allocation;
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.pinned_host_allocations;
     pthread_mutex_unlock(&backend->mutex);
@@ -175,13 +182,14 @@ static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
 
 static int free_spill(void *context, void *pointer) {
     ShadowSpillCudaBackend *backend = context;
-    if (activate_context(backend) != 0) {
+    if (pointer == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    CUresult result = cuMemFreeHost(pointer);
+    CUresult result = cuMemHostUnregister(pointer);
     if (record_result(backend, result) != 0) {
         return -1;
     }
+    free(pointer);
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.pinned_host_frees;
     pthread_mutex_unlock(&backend->mutex);
