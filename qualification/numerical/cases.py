@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import mlops
 import torch
 import torch.nn as nn
-from mlops.dispatch import use_implementations
 
 from models.mlops import (
     Llama3 as MlopsLlama3,
@@ -36,8 +35,10 @@ from models.pytorch import (
 from models.pytorch import (
     Qwen35 as PyTorchQwen35,
 )
-
-ModelImplementation = Literal["pytorch", "mlops"]
+from qualification.model_providers import (
+    ModelImplementation,
+    implementation_context,
+)
 
 _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
     {
@@ -49,37 +50,6 @@ _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
         "sequence_lengths": [17, 31, 48],
     },
 )
-
-_IMPLEMENTATIONS = {
-    "llama3": {
-        "embedding": "builtin.embedding.deterministic",
-        "rms_norm": "builtin.rms_norm.triton",
-        "rope": "builtin.rope.triton_table",
-        "flash_attention": "builtin.flash_attention.aten",
-        "swiglu": "builtin.swiglu.triton",
-        "head_loss": "builtin.head_loss.chunked",
-    },
-    "qwen35": {
-        "embedding": "builtin.embedding.deterministic",
-        "rms_norm": "builtin.rms_norm.triton",
-        "gated_rms_norm": "fla.gated_rms_norm",
-        "partial_rope": "builtin.partial_rope.triton",
-        "flash_attention": "builtin.flash_attention.aten",
-        "causal_conv_silu": "fla.causal_conv_silu",
-        "l2_norm": "fla.l2_norm",
-        "linear_attention": "fla.linear_attention.gated_delta_rule",
-        "swiglu": "builtin.swiglu.triton",
-        "head_loss": "builtin.head_loss.chunked",
-    },
-    "olmoe": {
-        "embedding": "builtin.embedding.deterministic",
-        "rms_norm": "builtin.rms_norm.triton",
-        "rope": "builtin.rope.triton_table",
-        "flash_attention": "builtin.flash_attention.aten",
-        "moe": "builtin.moe.grouped_gemm_composed",
-        "head_loss": "builtin.head_loss.chunked",
-    },
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +71,7 @@ class NumericalCase:
         return model.loss(tokens, targets, seq_lens=sequence_lengths)
 
     def implementations(self) -> AbstractContextManager[Any]:
-        if self.model_implementation == "pytorch":
-            return nullcontext()
-        return use_implementations(_IMPLEMENTATIONS[self.family])
+        return implementation_context(self.family, self.model_implementation)
 
     @staticmethod
     def optimizer(parameters: Any) -> torch.optim.Optimizer:
