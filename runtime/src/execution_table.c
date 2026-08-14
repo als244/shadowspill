@@ -94,6 +94,7 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
     free(record->updates);
     free(record->actions);
     free(record->queued_actions);
+    free(record->allocation_placement_hints);
     free(record);
 }
 
@@ -175,7 +176,9 @@ static int same_description(
 ) {
     if (record->input_count != description->input_count ||
         record->update_count != description->update_count ||
-        record->action_count != description->action_count) {
+        record->action_count != description->action_count ||
+        record->allocation_placement_hint_count !=
+            description->allocation_placement_hint_count) {
         return 0;
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
@@ -197,11 +200,29 @@ static int same_description(
                 description->actions[index].object_id ||
             record->actions[index].kind !=
                 description->actions[index].kind ||
+            record->actions[index].execution_offset !=
+                description->actions[index].execution_offset ||
+            record->actions[index].has_execution_offset !=
+                description->actions[index].has_execution_offset ||
             (description->actions[index].trace_label != NULL &&
              strcmp(
                  record->actions[index].trace_label,
                  description->actions[index].trace_label
              ) != 0)) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0U;
+         index < record->allocation_placement_hint_count; ++index) {
+        const ShadowSpillAllocationPlacementHint *existing =
+            &record->allocation_placement_hints[index];
+        const ShadowSpillAllocationPlacementHint *proposed =
+            &description->allocation_placement_hints[index];
+        if (existing->allocation_ordinal != proposed->allocation_ordinal ||
+            existing->requested_bytes != proposed->requested_bytes ||
+            existing->slab_offset != proposed->slab_offset ||
+            existing->reuse != proposed->reuse ||
+            existing->dynamic != proposed->dynamic) {
             return 0;
         }
     }
@@ -221,6 +242,8 @@ static ShadowSpillExecutionRecord *create_record(
     record->input_count = description->input_count;
     record->update_count = description->update_count;
     record->action_count = description->action_count;
+    record->allocation_placement_hint_count =
+        description->allocation_placement_hint_count;
     if (record->input_count != 0U) {
         record->inputs = calloc(record->input_count, sizeof(*record->inputs));
         record->unique_inputs = calloc(
@@ -242,13 +265,21 @@ static ShadowSpillExecutionRecord *create_record(
             record->action_count, sizeof(*record->queued_actions)
         );
     }
+    if (record->allocation_placement_hint_count != 0U) {
+        record->allocation_placement_hints = calloc(
+            record->allocation_placement_hint_count,
+            sizeof(*record->allocation_placement_hints)
+        );
+    }
     if ((record->input_count != 0U &&
          (record->inputs == NULL || record->unique_inputs == NULL ||
           record->input_unique_indices == NULL ||
           record->unique_first_positions == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
         (record->action_count != 0U &&
-         (record->actions == NULL || record->queued_actions == NULL))) {
+         (record->actions == NULL || record->queued_actions == NULL)) ||
+        (record->allocation_placement_hint_count != 0U &&
+         record->allocation_placement_hints == NULL)) {
         destroy_record(record);
         return NULL;
     }
@@ -290,7 +321,12 @@ static ShadowSpillExecutionRecord *create_record(
         };
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH) {
+        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH ||
+            description->actions[index].has_execution_offset > 1U ||
+            (description->actions[index].has_execution_offset &&
+             (description->actions[index].kind != SHADOWSPILL_RUNTIME_PREFETCH ||
+              description->actions[index].execution_offset %
+                  shadowspill_execution_pool(runtime)->minimum_alignment != 0U))) {
             destroy_record(record);
             return NULL;
         }
@@ -318,16 +354,41 @@ static ShadowSpillExecutionRecord *create_record(
         }
         record->actions[index] = (ShadowSpillExecutionAction){
             .object = object,
+            .execution_offset = description->actions[index].execution_offset,
             .kind = description->actions[index].kind,
+            .has_execution_offset =
+                description->actions[index].has_execution_offset,
             .trace_label = trace_label,
         };
         record->queued_actions[index] = (ShadowSpillQueuedAction){
             .task_id = record->task_id,
+            .execution_offset = description->actions[index].execution_offset,
             .kind = description->actions[index].kind,
+            .has_execution_offset =
+                description->actions[index].has_execution_offset,
             .object = object,
             .trace_label = trace_label,
             .admitted = 1U,
         };
+    }
+    for (uint32_t index = 0U;
+         index < record->allocation_placement_hint_count; ++index) {
+        const ShadowSpillAllocationPlacementHint hint =
+            description->allocation_placement_hints[index];
+        if (hint.requested_bytes == 0U || hint.reuse > 1U ||
+            hint.dynamic > 1U ||
+            hint.slab_offset %
+                shadowspill_execution_pool(runtime)->minimum_alignment != 0U ||
+            hint.slab_offset >
+                shadowspill_execution_pool(runtime)->ranges.capacity ||
+            hint.requested_bytes >
+                shadowspill_execution_pool(runtime)->ranges.capacity -
+                    hint.slab_offset ||
+            hint.allocation_ordinal != index) {
+            destroy_record(record);
+            return NULL;
+        }
+        record->allocation_placement_hints[index] = hint;
     }
     return record;
 }
@@ -340,7 +401,9 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
         (description->input_count != 0U &&
          description->input_object_ids == NULL) ||
         (description->update_count != 0U && description->updates == NULL) ||
-        (description->action_count != 0U && description->actions == NULL)) {
+        (description->action_count != 0U && description->actions == NULL) ||
+        (description->allocation_placement_hint_count != 0U &&
+         description->allocation_placement_hints == NULL)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
@@ -582,7 +645,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
         bindings[position] = bindings[first_position];
     }
     if (status == SHADOWSPILL_RUNTIME_OK &&
-        shadowspill_enter_task_scope(runtime, record->task_id) != 0) {
+        shadowspill_enter_execution_scope(runtime, record) != 0) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     return status;

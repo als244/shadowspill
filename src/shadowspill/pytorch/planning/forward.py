@@ -39,7 +39,6 @@ from shadowspill.pytorch.profiling.metadata import (
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
-from shadowspill.runtime import SlabReplay
 
 from ..cache import PlanningCache
 from ..callables import PlannedForward
@@ -60,10 +59,11 @@ from ..partition import (
 )
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
+    SelectedSpatialLayout,
+    build_selected_spatial_layout,
     output_bindings_for_entrypoints,
     physical_admission,
     reconcile_spill_pool,
-    replay_selected_schedule,
     seal_physical_budget,
 )
 from .artifacts import (
@@ -362,12 +362,14 @@ def admit_forward_plan(
             predicted_peak=selected.simulation.host_peak_bytes,
             budget=memory.spill_budget,
         )
-    slab_replay = _replay_forward_slab(captured, profiled, program, selection, timer)
+    spatial_layout = _build_forward_spatial_layout(
+        captured, profiled, program, selection, timer
+    )
     admission = physical_admission(
         memory,
         captured.installed,
         workspace_reserve=program.workspace_reserve,
-        slab_replay=slab_replay,
+        slab_replay=spatial_layout.replay,
     )
     execution_plan = _forward_execution_plan(
         program.lowered,
@@ -399,6 +401,13 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
+                allocation_placement_hints=spatial_layout.task_hints(),
+                initial_prefetch_offsets=(
+                    spatial_layout.initial_prefetch_offsets()
+                ),
+                action_prefetch_offsets=(
+                    spatial_layout.action_prefetch_offsets()
+                ),
             )
         report = _forward_plan_report(
             model,
@@ -569,16 +578,16 @@ def build_forward(
     )
 
 
-def _replay_forward_slab(
+def _build_forward_spatial_layout(
     captured: ForwardCaptureArtifacts,
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
     selection: CachedPressureFitResult,
     timer: PlanningTimer,
-) -> SlabReplay:
+) -> SelectedSpatialLayout:
     with timer.measure("slab_admission"):
         try:
-            return replay_selected_schedule(
+            return build_selected_spatial_layout(
                 selection.result,
                 program.measurements_by_profile,
                 execution_pool_bytes=(

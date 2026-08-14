@@ -11,6 +11,7 @@ __pycache__/
 .hypothesis/
 .coverage
 .coverage.*
+torch_compile_debug/
 
 # Native and packaging outputs
 /build/

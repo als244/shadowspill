@@ -259,6 +259,78 @@ int shadowspill_range_allocate_best_fit_high(
     );
 }
 
+int shadowspill_range_allocate_highest(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t minimum_offset,
+    uint64_t *offset
+) {
+    ShadowSpillRange *selected = NULL;
+    ShadowSpillRange *selected_previous = NULL;
+    uint64_t selected_aligned = 0U;
+    ShadowSpillRange *previous = NULL;
+    for (ShadowSpillRange *range = allocator->free_ranges; range != NULL;
+         range = range->next) {
+        const uint64_t end = range->offset + range->bytes;
+        const uint64_t start = range->offset > minimum_offset
+            ? range->offset
+            : minimum_offset;
+        if (end < range->offset || start > end || bytes > end - start) {
+            previous = range;
+            continue;
+        }
+        const uint64_t aligned = align_down(end - bytes, alignment);
+        if (aligned < start) {
+            previous = range;
+            continue;
+        }
+        if (selected == NULL || aligned > selected_aligned) {
+            selected = range;
+            selected_previous = previous;
+            selected_aligned = aligned;
+        }
+        previous = range;
+    }
+    if (selected == NULL) {
+        return 1;
+    }
+    return allocate_from_range(
+        allocator,
+        selected,
+        selected_previous,
+        selected_aligned,
+        bytes,
+        offset
+    );
+}
+
+int shadowspill_range_allocate_at(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t offset,
+    uint64_t bytes
+) {
+    if (allocator == NULL || bytes == 0U ||
+        offset > allocator->capacity || bytes > allocator->capacity - offset) {
+        return -1;
+    }
+    ShadowSpillRange *previous = NULL;
+    for (ShadowSpillRange *range = allocator->free_ranges; range != NULL;
+         range = range->next) {
+        if (offset < range->offset) {
+            return 1;
+        }
+        const uint64_t leading = offset - range->offset;
+        if (leading <= range->bytes && bytes <= range->bytes - leading) {
+            return allocate_from_range(
+                allocator, range, previous, offset, bytes, &(uint64_t){0}
+            );
+        }
+        previous = range;
+    }
+    return 1;
+}
+
 int shadowspill_range_free(
     ShadowSpillRangeAllocator *allocator,
     uint64_t offset,

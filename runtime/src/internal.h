@@ -234,7 +234,9 @@ typedef enum ShadowSpillQueuedActionState {
 
 typedef struct ShadowSpillQueuedAction {
     uint64_t task_id;
+    uint64_t execution_offset;
     uint8_t kind;
+    uint8_t has_execution_offset;
     uint8_t state;
     uint8_t destination_priority_declared;
     ShadowSpillMemoryLease *destination_lease;
@@ -291,7 +293,9 @@ typedef struct ShadowSpillExecutionUpdate {
 
 typedef struct ShadowSpillExecutionAction {
     ShadowSpillObject *object;
+    uint64_t execution_offset;
     uint8_t kind;
+    uint8_t has_execution_offset;
     char *trace_label;
 } ShadowSpillExecutionAction;
 
@@ -309,6 +313,8 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillExecutionAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
+    ShadowSpillAllocationPlacementHint *allocation_placement_hints;
+    uint32_t allocation_placement_hint_count;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
 } ShadowSpillExecutionRecord;
@@ -442,6 +448,18 @@ int shadowspill_range_allocate_best_fit_high(
     uint64_t alignment,
     uint64_t *offset
 );
+int shadowspill_range_allocate_highest(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t minimum_offset,
+    uint64_t *offset
+);
+int shadowspill_range_allocate_at(
+    ShadowSpillRangeAllocator *allocator,
+    uint64_t offset,
+    uint64_t bytes
+);
 int shadowspill_range_free(
     ShadowSpillRangeAllocator *allocator,
     uint64_t offset,
@@ -488,6 +506,19 @@ int shadowspill_memory_pool_reserve_lease_locked(
     uint64_t bytes,
     uint64_t alignment,
     ShadowSpillMemoryPlacement placement
+);
+int shadowspill_memory_pool_reserve_lease_at_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t offset
+);
+int shadowspill_memory_pool_reserve_lease_highest_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t minimum_offset
 );
 int shadowspill_memory_pool_release_lease_locked(
     ShadowSpillMemoryLease *lease
@@ -583,6 +614,24 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
+    ShadowSpillMemoryPlacement placement,
+    uint64_t origin_task_id,
+    ShadowSpillMemoryLease **record
+);
+ShadowSpillRuntimeStatus shadowspill_create_execution_lease_at_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes,
+    uint64_t offset,
+    int plan_owned,
+    uint64_t origin_task_id,
+    ShadowSpillMemoryLease **record
+);
+ShadowSpillRuntimeStatus shadowspill_create_execution_lease_highest_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t minimum_offset,
+    int plan_owned,
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 );
@@ -628,6 +677,19 @@ uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
+);
+int shadowspill_enter_execution_scope(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record
+);
+ShadowSpillRuntimeStatus shadowspill_next_allocation_placement(
+    ShadowSpillRuntime *runtime,
+    uint64_t requested_bytes,
+    const ShadowSpillAllocationPlacementHint **placement
+);
+ShadowSpillRuntimeStatus shadowspill_validate_allocation_placements(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record
 );
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime);
 void shadowspill_append_allocation_event_locked(

@@ -57,7 +57,6 @@ from shadowspill.pytorch.state.optimizer import (
     relocate_optimizer_state_for_plan,
 )
 from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
-from shadowspill.runtime import SlabReplay
 
 from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
@@ -87,10 +86,11 @@ from ..partition import (
 )
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
+    SelectedSpatialLayout,
+    build_selected_spatial_layout,
     output_bindings_for_entrypoints,
     physical_admission,
     reconcile_spill_pool,
-    replay_selected_schedule,
     seal_physical_budget,
 )
 from .artifacts import (
@@ -732,6 +732,30 @@ def admit_training_plan(
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
+                initial_allocation_placement_hints=(
+                    None
+                    if admitted.initial_layout is None
+                    else admitted.initial_layout.task_hints()
+                ),
+                recurrent_allocation_placement_hints=(
+                    admitted.recurrent_layout.task_hints()
+                ),
+                initial_prefetch_offsets=(
+                    None
+                    if admitted.initial_layout is None
+                    else admitted.initial_layout.initial_prefetch_offsets()
+                ),
+                initial_action_prefetch_offsets=(
+                    None
+                    if admitted.initial_layout is None
+                    else admitted.initial_layout.action_prefetch_offsets()
+                ),
+                recurrent_prefetch_offsets=(
+                    admitted.recurrent_layout.initial_prefetch_offsets()
+                ),
+                recurrent_action_prefetch_offsets=(
+                    admitted.recurrent_layout.action_prefetch_offsets()
+                ),
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None
                     or bool(
@@ -793,7 +817,7 @@ def _admit_training_execution_plans(
             ),
             budget=memory.spill_budget,
         )
-    replays = _replay_training_slabs(
+    layouts = _build_training_spatial_layouts(
         captured,
         profiled,
         programs,
@@ -805,7 +829,10 @@ def _admit_training_execution_plans(
         memory,
         captured.installed,
         workspace_reserve=programs.workspace_reserve,
-        slab_replay=max(replays, key=lambda item: item.peak_fragmentation_bytes),
+        slab_replay=max(
+            (item.replay for item in layouts),
+            key=lambda item: item.peak_fragmentation_bytes,
+        ),
     )
     recurrent_plan = _execution_plan(
         programs.recurrent,
@@ -823,7 +850,14 @@ def _admit_training_execution_plans(
         if initial is not None
         else None
     )
-    return TrainingAdmissionArtifacts(recurrent_plan, initial_plan)
+    recurrent_layout = layouts[0]
+    initial_layout = layouts[1] if len(layouts) == 2 else None
+    return TrainingAdmissionArtifacts(
+        recurrent_plan,
+        initial_plan,
+        recurrent_layout,
+        initial_layout,
+    )
 
 
 def _training_plan_report(
@@ -1095,21 +1129,21 @@ def _training_task_inventory(
     )
 
 
-def _replay_training_slabs(
+def _build_training_spatial_layouts(
     captured: TrainingCaptureArtifacts,
     profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
     selections: TrainingSelections,
     memory: PlanMemory,
     timer: PlanningTimer,
-) -> tuple[SlabReplay, ...]:
+) -> tuple[SelectedSpatialLayout, ...]:
     pairs = [(programs.recurrent, selections.recurrent.result)]
     if selections.initial is not None:
         pairs.append((programs.initial, selections.initial.result))
     with timer.measure("slab_admission"):
         try:
             return tuple(
-                replay_selected_schedule(
+                build_selected_spatial_layout(
                     selected,
                     programs.measurements_by_profile,
                     execution_pool_bytes=(

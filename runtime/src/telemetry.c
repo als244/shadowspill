@@ -7,11 +7,15 @@
 typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
     uint64_t task_id;
+    const ShadowSpillExecutionRecord *execution;
+    uint64_t allocation_ordinal;
+    uint32_t placement_hint_index;
 } ShadowSpillTaskScope;
 
 static _Thread_local ShadowSpillTaskScope task_scope = {
     .runtime = NULL,
     .task_id = SHADOWSPILL_RUNTIME_NO_ID,
+    .execution = NULL,
 };
 
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime) {
@@ -29,13 +33,94 @@ int shadowspill_enter_task_scope(
     }
     task_scope.runtime = runtime;
     task_scope.task_id = task_id;
+    task_scope.execution = NULL;
+    task_scope.allocation_ordinal = 0U;
+    task_scope.placement_hint_index = 0U;
     return 0;
+}
+
+int shadowspill_enter_execution_scope(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record
+) {
+    if (record == NULL || record->runtime_owner != runtime ||
+        shadowspill_enter_task_scope(runtime, record->task_id) != 0) {
+        return -1;
+    }
+    task_scope.execution = record;
+    return 0;
+}
+
+static ShadowSpillRuntimeStatus placement_violation(
+    ShadowSpillRuntime *runtime,
+    uint64_t requested_bytes
+) {
+    shadowspill_latch_failure_locked(
+        runtime,
+        SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        requested_bytes
+    );
+    return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+}
+
+ShadowSpillRuntimeStatus shadowspill_next_allocation_placement(
+    ShadowSpillRuntime *runtime,
+    uint64_t requested_bytes,
+    const ShadowSpillAllocationPlacementHint **placement
+) {
+    if (runtime == NULL || placement == NULL || requested_bytes == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *placement = NULL;
+    if (task_scope.runtime != runtime || task_scope.execution == NULL) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+
+    const ShadowSpillExecutionRecord *record = task_scope.execution;
+    const uint64_t ordinal = task_scope.allocation_ordinal++;
+    if (task_scope.placement_hint_index >=
+        record->allocation_placement_hint_count) {
+        return placement_violation(runtime, requested_bytes);
+    }
+    const ShadowSpillAllocationPlacementHint *hint =
+        &record->allocation_placement_hints[task_scope.placement_hint_index];
+    if (hint->allocation_ordinal != ordinal ||
+        hint->requested_bytes != requested_bytes) {
+        return placement_violation(runtime, requested_bytes);
+    }
+    *placement = hint;
+    ++task_scope.placement_hint_index;
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_validate_allocation_placements(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record
+) {
+    if (runtime == NULL || record == NULL || task_scope.runtime != runtime ||
+        task_scope.execution != record) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    if (task_scope.placement_hint_index ==
+            record->allocation_placement_hint_count &&
+        task_scope.allocation_ordinal ==
+            record->allocation_placement_hint_count) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    const ShadowSpillAllocationPlacementHint *missing =
+        &record->allocation_placement_hints[task_scope.placement_hint_index];
+    return placement_violation(runtime, missing->requested_bytes);
 }
 
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
     if (task_scope.runtime == runtime) {
         task_scope.runtime = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
+        task_scope.execution = NULL;
+        task_scope.allocation_ordinal = 0U;
+        task_scope.placement_hint_index = 0U;
     }
 }
 

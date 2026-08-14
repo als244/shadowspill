@@ -6,7 +6,10 @@ from shadowspill.ir import MutationSpec, ResourceKind, ResourceSpec, TaskSpec
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.planning.admission.spatial import (
     TaskOutputBinding,
+    _append_profiled_task_events,
+    _SpatialTimeline,
     _task_allocation_events,
+    _translate_spatial_timeline,
     _validate_profile_workspace,
     replay_selected_schedule,
 )
@@ -16,6 +19,8 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from shadowspill.runtime import plan_slab_layout
+from shadowspill.simulator import TaskInterval
 from tests.planner._examples import (
     config,
     exact_capacity_program,
@@ -140,6 +145,67 @@ def test_task_allocation_replay_preserves_callback_order_and_output_identity() -
         ("TASK_ALLOCATION", "gradient_alias"),
     ]
     assert events[-1].alias_output
+
+
+def test_persistent_output_placement_does_not_fragment_later_workspace() -> None:
+    task = TaskSpec(
+        "forward",
+        ResourceSpec("cuda_0", ResourceKind.COMPUTE),
+        "forward_profile",
+        outputs=("activation",),
+    )
+    measurement = TaskMeasurement(
+        10,
+        160,
+        160,
+        (160,),
+        (10,),
+        "unit-test",
+        (
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 100, 100),
+            TaskAllocationEvent(
+                1,
+                TaskAllocationOperation.ALLOCATE,
+                50,
+                50,
+                (2,),
+                (0,),
+            ),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 100, 100),
+            TaskAllocationEvent(2, TaskAllocationOperation.ALLOCATE, 160, 160),
+            TaskAllocationEvent(2, TaskAllocationOperation.FREE, 160, 160),
+        ),
+    )
+    allocations = _task_allocation_events(
+        task,
+        measurement,
+        (TaskOutputBinding(2, "activation_alias"),),
+        {"activation_alias": 50},
+    )
+    timeline = _SpatialTimeline()
+    _append_profiled_task_events(
+        task.task_id,
+        TaskInterval(
+            task.task_id,
+            "cuda_0",
+            ResourceKind.COMPUTE,
+            0,
+            0,
+            0,
+            10,
+            160,
+        ),
+        allocations,
+        timeline,
+    )
+
+    replay = plan_slab_layout(
+        300,
+        _translate_spatial_timeline(timeline.events, alignment=1).events,
+    ).replay
+
+    assert replay.peak_allocated_bytes == 210
+    assert replay.final_allocated_bytes == 50
 
 
 def test_task_allocation_replay_preserves_cached_extent_identity() -> None:

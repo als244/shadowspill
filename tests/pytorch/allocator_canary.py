@@ -189,7 +189,9 @@ def main() -> int:
 
     compute_stream = torch.cuda.current_stream().cuda_stream
     torch.cuda._sleep(100_000_000)
-    offload = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 1))
+    offload = (RuntimeAction * 1)(
+        RuntimeAction(object_id=binding.object_id, kind=1)
+    )
     status = int(
         library.shadowspill_pytorch_after_task(
             100,
@@ -224,7 +226,9 @@ def main() -> int:
     blocker = torch.empty(2 << 20, dtype=torch.float32, device="cuda")
     if blocker.data_ptr() != address:
         raise AssertionError("canary failed to occupy the object's former slab range")
-    prefetch = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 2))
+    prefetch = (RuntimeAction * 1)(
+        RuntimeAction(object_id=binding.object_id, kind=2)
+    )
     status = int(
         library.shadowspill_pytorch_after_task(
             101,
@@ -272,7 +276,9 @@ def main() -> int:
     torch.testing.assert_close(parameter.cpu(), expected)
 
     torch.cuda._sleep(100_000_000)
-    release = (RuntimeAction * 1)(RuntimeAction(binding.object_id, 0))
+    release = (RuntimeAction * 1)(
+        RuntimeAction(object_id=binding.object_id, kind=0)
+    )
     status = int(
         library.shadowspill_pytorch_after_task(
             103,
@@ -339,7 +345,7 @@ def main() -> int:
     )
     if status != 0:
         raise AssertionError(f"registered allocation bind failed with status {status}")
-    host_release = (RuntimeAction * 1)(RuntimeAction(3001, 0))
+    host_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
     if (
         int(
             library.shadowspill_pytorch_after_task(
@@ -354,7 +360,7 @@ def main() -> int:
     )
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("host placeholder release did not drain")
-    host_prefetch = (RuntimeAction * 1)(RuntimeAction(3001, 2))
+    host_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
     if (
         int(
             library.shadowspill_pytorch_after_task(

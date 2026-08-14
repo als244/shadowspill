@@ -181,12 +181,16 @@ static void discard_action_batch_locked(
         shadowspill_release_task_fence_locked(runtime, action->fence);
         if (action->admitted) {
             const uint8_t kind = action->kind;
+            const uint64_t execution_offset = action->execution_offset;
+            const uint8_t has_execution_offset = action->has_execution_offset;
             ShadowSpillObject *object = action->object;
             const uint64_t task_id = action->task_id;
             const char *trace_label = action->trace_label;
             *action = (ShadowSpillQueuedAction){
                 .task_id = task_id,
+                .execution_offset = execution_offset,
                 .kind = kind,
+                .has_execution_offset = has_execution_offset,
                 .object = object,
                 .trace_label = trace_label,
                 .admitted = 1U,
@@ -371,6 +375,9 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
 
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_validate_allocation_placements(runtime, record);
+    }
     if (status == SHADOWSPILL_RUNTIME_OK) {
         status = publish_mutations_locked(
             runtime, record, &failure_object_id, &failure_allocation_id

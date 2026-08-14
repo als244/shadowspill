@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from math import lcm
 
 from shadowspill.ir import PhysicalAdmission
 
@@ -69,6 +70,59 @@ class SlabReplay:
     peak_fragmentation_bytes: int
     final_allocated_bytes: int
     final_largest_free_range_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class SlabPlacement:
+    """One allocation identity's immutable offset in a static slab layout."""
+
+    allocation_id: str
+    offset: int
+    bytes: int
+
+    def __post_init__(self) -> None:
+        if not self.allocation_id:
+            raise ValueError("slab placement ID must be non-empty")
+        if self.offset < 0:
+            raise ValueError("slab placement offset must be non-negative")
+        if self.bytes <= 0:
+            raise ValueError("slab placement bytes must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class SlabLayout:
+    """Deterministic offline offsets plus their exact replay statistics."""
+
+    replay: SlabReplay
+    placements: tuple[SlabPlacement, ...]
+    layout_bytes: int
+    static_layout_bytes: int
+    dynamic_allocation_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.layout_bytes < 0 or self.layout_bytes > self.replay.slab_bytes:
+            raise ValueError("slab layout requirement exceeds its slab")
+        if self.static_layout_bytes < 0 or self.static_layout_bytes > self.layout_bytes:
+            raise ValueError("static slab layout height is invalid")
+
+    def offset_by_allocation(self) -> dict[str, int]:
+        """Return a fresh lookup table for callers constructing runtime records."""
+
+        return {item.allocation_id: item.offset for item in self.placements}
+
+
+@dataclass(slots=True)
+class _AllocationLifetime:
+    bytes: int
+    alignment: int
+    start: int
+    end: int = 0
+    identities: list[str] = field(default_factory=list)
+    offset: int = 0
+
+    @property
+    def duration(self) -> int:
+        return self.end - self.start
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +345,278 @@ def replay_slab_timeline(
         final_allocated_bytes=allocated,
         final_largest_free_range_bytes=final_largest,
     )
+
+
+def plan_slab_layout(
+    slab_bytes: int,
+    events: tuple[AllocationEvent, ...],
+    *,
+    dynamic_allocation_ids: frozenset[str] = frozenset(),
+) -> SlabLayout:
+    """Assign one deterministic address to every complete allocation lifetime.
+
+    Online best-fit can reject an otherwise feasible interval set because an
+    early choice fragments a later large request. This routine first observes
+    the complete causal lifetime stream, packs the largest/longest intervals
+    first, and then validates every allocation, reuse, and free against those
+    immutable offsets. It never changes event ordering or object lifetimes.
+    """
+
+    if slab_bytes < 0:
+        raise ValueError("slab bytes must be non-negative")
+    lifetimes, lifetime_by_identity = _allocation_lifetimes(events)
+    unknown_dynamic = dynamic_allocation_ids.difference(lifetime_by_identity)
+    if unknown_dynamic:
+        raise ValueError(
+            "dynamic slab identities are absent from the timeline: "
+            f"{sorted(unknown_dynamic)!r}"
+        )
+    dynamic_lifetimes = {
+        id(lifetime): lifetime
+        for identity in dynamic_allocation_ids
+        for lifetime in (lifetime_by_identity[identity],)
+    }
+    dynamic = list(dynamic_lifetimes.values())
+    static = [item for item in lifetimes if id(item) not in dynamic_lifetimes]
+    dynamic_bytes = _pack_lifetimes(dynamic)
+    static_bytes = _pack_lifetimes(static)
+    dynamic_alignment = 1
+    for lifetime in dynamic:
+        dynamic_alignment = lcm(dynamic_alignment, lifetime.alignment)
+    dynamic_base = (
+        0
+        if not dynamic
+        else ((slab_bytes - dynamic_bytes) // dynamic_alignment) * dynamic_alignment
+    )
+    static_boundary = (
+        _round_up(static_bytes, dynamic_alignment) if dynamic else static_bytes
+    )
+    dynamic_reserve = slab_bytes - dynamic_base if dynamic else 0
+    required = static_boundary + dynamic_reserve
+    if required > slab_bytes:
+        largest = max(lifetimes, key=lambda item: item.bytes, default=None)
+        largest_id = None if largest is None else largest.identities[0]
+        raise AdmissionError(
+            "static slab layout needs "
+            f"{required} bytes while capacity is {slab_bytes}; "
+            f"largest_allocation={largest_id!r}",
+            kind="slab_layout",
+            required_bytes=required,
+            capacity_bytes=slab_bytes,
+        )
+    for lifetime in dynamic:
+        lifetime.offset += dynamic_base
+
+    replay = _replay_static_layout(slab_bytes, events, lifetime_by_identity)
+    placements = tuple(
+        SlabPlacement(identity, lifetime.offset, lifetime.bytes)
+        for lifetime in sorted(lifetimes, key=lambda item: item.start)
+        for identity in lifetime.identities
+    )
+    expanded_dynamic = tuple(
+        sorted(identity for item in dynamic for identity in item.identities)
+    )
+    return SlabLayout(
+        replay,
+        placements,
+        required,
+        static_boundary,
+        expanded_dynamic,
+    )
+
+
+def _pack_lifetimes(lifetimes: list[_AllocationLifetime]) -> int:
+    """Pack one independently reserved address region from offset zero."""
+
+    placed: list[_AllocationLifetime] = []
+    for lifetime in sorted(
+        lifetimes,
+        key=lambda item: (
+            -item.bytes,
+            -item.duration,
+            item.start,
+            item.identities[0],
+        ),
+    ):
+        lifetime.offset = _lowest_available_offset(lifetime, placed)
+        placed.append(lifetime)
+    return max((item.offset + item.bytes for item in lifetimes), default=0)
+
+
+def _allocation_lifetimes(
+    events: tuple[AllocationEvent, ...],
+) -> tuple[list[_AllocationLifetime], dict[str, _AllocationLifetime]]:
+    previous_position = -1
+    live: dict[str, _AllocationLifetime] = {}
+    all_identities: set[str] = set()
+    lifetimes: list[_AllocationLifetime] = []
+    by_identity: dict[str, _AllocationLifetime] = {}
+    for index, event in enumerate(events):
+        if event.position < previous_position:
+            raise ValueError("allocation timeline positions must be non-decreasing")
+        previous_position = event.position
+        if event.operation is AllocationOperation.ALLOCATE:
+            if event.allocation_id in all_identities:
+                raise ValueError(
+                    "allocation identity appears more than once: "
+                    f"{event.allocation_id!r}"
+                )
+            lifetime = _AllocationLifetime(
+                event.bytes,
+                event.alignment,
+                index,
+                identities=[event.allocation_id],
+            )
+            lifetimes.append(lifetime)
+            live[event.allocation_id] = lifetime
+            by_identity[event.allocation_id] = lifetime
+            all_identities.add(event.allocation_id)
+        elif event.operation is AllocationOperation.REUSE:
+            if event.allocation_id in all_identities:
+                raise ValueError(
+                    "allocation identity appears more than once: "
+                    f"{event.allocation_id!r}"
+                )
+            source_id = event.source_allocation_id or ""
+            reused = live.pop(source_id) if source_id in live else None
+            if reused is None:
+                raise ValueError(f"reuse source {source_id!r} is not live")
+            if reused.bytes != event.bytes:
+                raise ValueError(
+                    f"reuse for {event.allocation_id!r} has {event.bytes} bytes; "
+                    f"source has {reused.bytes}"
+                )
+            reused.alignment = lcm(reused.alignment, event.alignment)
+            reused.identities.append(event.allocation_id)
+            live[event.allocation_id] = reused
+            by_identity[event.allocation_id] = reused
+            all_identities.add(event.allocation_id)
+        else:
+            released = (
+                live.pop(event.allocation_id)
+                if event.allocation_id in live
+                else None
+            )
+            if released is None:
+                raise ValueError(f"allocation {event.allocation_id!r} is not live")
+            if released.bytes != event.bytes:
+                raise ValueError(
+                    f"free for {event.allocation_id!r} has {event.bytes} bytes; "
+                    f"allocation has {released.bytes}"
+                )
+            released.end = index
+    terminal = len(events)
+    for lifetime in live.values():
+        lifetime.end = terminal
+    return lifetimes, by_identity
+
+
+def _lifetimes_overlap(
+    left: _AllocationLifetime, right: _AllocationLifetime
+) -> bool:
+    return left.start < right.end and right.start < left.end
+
+
+def _lowest_available_offset(
+    lifetime: _AllocationLifetime,
+    placed: list[_AllocationLifetime],
+) -> int:
+    occupied = sorted(
+        (
+            item.offset,
+            item.offset + item.bytes,
+        )
+        for item in placed
+        if _lifetimes_overlap(lifetime, item)
+    )
+    candidate = _round_up(0, lifetime.alignment)
+    occupied_end = 0
+    for start, end in occupied:
+        if end <= occupied_end:
+            continue
+        start = max(start, occupied_end)
+        if candidate + lifetime.bytes <= start:
+            return candidate
+        occupied_end = max(occupied_end, end)
+        candidate = _round_up(max(candidate, occupied_end), lifetime.alignment)
+    return candidate
+
+
+def _replay_static_layout(
+    slab_bytes: int,
+    events: tuple[AllocationEvent, ...],
+    lifetime_by_identity: dict[str, _AllocationLifetime],
+) -> SlabReplay:
+    live: dict[str, tuple[int, int]] = {}
+    allocated = 0
+    peak_allocated = 0
+    peak_fragmentation = 0
+    for event in events:
+        lifetime = lifetime_by_identity[event.allocation_id]
+        if event.operation is AllocationOperation.ALLOCATE:
+            _validate_static_allocation(live, event, lifetime.offset, slab_bytes)
+            live[event.allocation_id] = (lifetime.offset, event.bytes)
+            allocated += event.bytes
+        elif event.operation is AllocationOperation.REUSE:
+            source = live.pop(event.source_allocation_id or "", None)
+            if source is None or source != (lifetime.offset, event.bytes):
+                raise ValueError("static slab reuse changed its physical extent")
+            live[event.allocation_id] = source
+        else:
+            allocation = live.pop(event.allocation_id, None)
+            if allocation != (lifetime.offset, event.bytes):
+                raise ValueError("static slab free changed its physical extent")
+            allocated -= event.bytes
+        peak_allocated = max(peak_allocated, allocated)
+        free_ranges = _static_free_ranges(slab_bytes, live)
+        free_bytes = slab_bytes - allocated
+        largest = max((bytes_ for _, bytes_ in free_ranges), default=0)
+        peak_fragmentation = max(peak_fragmentation, free_bytes - largest)
+    final_ranges = _static_free_ranges(slab_bytes, live)
+    return SlabReplay(
+        slab_bytes=slab_bytes,
+        peak_allocated_bytes=peak_allocated,
+        peak_fragmentation_bytes=peak_fragmentation,
+        final_allocated_bytes=allocated,
+        final_largest_free_range_bytes=max(
+            (bytes_ for _, bytes_ in final_ranges), default=0
+        ),
+    )
+
+
+def _validate_static_allocation(
+    live: dict[str, tuple[int, int]],
+    event: AllocationEvent,
+    offset: int,
+    slab_bytes: int,
+) -> None:
+    if offset % event.alignment != 0:
+        raise ValueError("static slab placement violates allocation alignment")
+    if offset + event.bytes > slab_bytes:
+        raise ValueError("static slab placement exceeds capacity")
+    end = offset + event.bytes
+    for allocation_id, (other_offset, other_bytes) in live.items():
+        other_end = other_offset + other_bytes
+        if offset < other_end and other_offset < end:
+            raise ValueError(
+                "static slab placements overlap while live: "
+                f"{event.allocation_id!r} and {allocation_id!r}"
+            )
+
+
+def _static_free_ranges(
+    slab_bytes: int, live: dict[str, tuple[int, int]]
+) -> list[tuple[int, int]]:
+    occupied = sorted(set(live.values()))
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for offset, bytes_ in occupied:
+        if cursor < offset:
+            ranges.append((cursor, offset - cursor))
+        cursor = max(cursor, offset + bytes_)
+    if cursor < slab_bytes:
+        ranges.append((cursor, slab_bytes - cursor))
+    return ranges
 
 
 def admit_physical_budget(

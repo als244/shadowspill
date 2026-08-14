@@ -82,7 +82,11 @@ def _action(
     kind: int,
     semantic_label: str,
 ) -> RuntimeAction:
-    return RuntimeAction(object_id, kind, semantic_label.encode("utf-8"))
+    return RuntimeAction(
+        object_id=object_id,
+        kind=kind,
+        trace_label=semantic_label.encode("utf-8"),
+    )
 
 
 def main() -> int:
@@ -269,8 +273,8 @@ def main() -> int:
         203,
         stream_address,
         (
-            RuntimeAction(second_binding.object_id, 0),
-            RuntimeAction(third_binding.object_id, 0),
+            RuntimeAction(object_id=second_binding.object_id, kind=0),
+            RuntimeAction(object_id=third_binding.object_id, kind=0),
         ),
     )
     _require_ok(

@@ -6,18 +6,26 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill.ir import MemoryActionKind, MemoryLocation, TaskProfile, TaskSpec
+from shadowspill.ir import (
+    MemoryActionKind,
+    MemoryLocation,
+    ObjectRole,
+    TaskProfile,
+    TaskSpec,
+)
 from shadowspill.planner import PressureFitResult
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
 )
+from shadowspill.pytorch.runtime_adapter.bridge import TaskAllocationPlacementHint
 from shadowspill.runtime import (
     AllocationEvent,
     AllocationOperation,
+    SlabLayout,
     SlabReplay,
-    replay_slab_timeline,
+    plan_slab_layout,
 )
 from shadowspill.simulator import TaskInterval, TransferDirection
 
@@ -47,6 +55,9 @@ class _SpatialEvent:
     alias_output: bool = False
     source_identity: str | None = None
     task_id: str | None = None
+    allocation_ordinal: int | None = None
+    requested_bytes: int | None = None
+    caller_owned: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +70,7 @@ class _ReplayIndex:
     task_by_id: Mapping[str, TaskSpec]
     interval_by_task: Mapping[str, TaskInterval]
     bindings_by_task: Mapping[str, tuple[TaskOutputBinding, ...]]
+    caller_output_aliases: frozenset[str]
 
 
 class _SpatialTimeline:
@@ -78,6 +90,9 @@ class _SpatialTimeline:
         alias_output: bool = False,
         source_identity: str | None = None,
         task_id: str | None = None,
+        allocation_ordinal: int | None = None,
+        requested_bytes: int | None = None,
+        caller_owned: bool = False,
     ) -> None:
         self.events.append(
             _SpatialEvent(
@@ -90,6 +105,9 @@ class _SpatialTimeline:
                 alias_output=alias_output,
                 source_identity=source_identity,
                 task_id=task_id,
+                allocation_ordinal=allocation_ordinal,
+                requested_bytes=requested_bytes,
+                caller_owned=caller_owned,
             )
         )
 
@@ -112,6 +130,51 @@ class TaskOutputBinding:
             raise ValueError("storage handoff source and destination must differ")
 
 
+@dataclass(frozen=True, slots=True)
+class PrefetchPlacement:
+    """Exact execution-pool destination for one planned prefetch action."""
+
+    alias_group_id: str
+    offset: int
+    trigger_task_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SelectedSpatialLayout:
+    """Runtime guidance derived from one complete selected allocation timeline."""
+
+    slab: SlabLayout
+    task_allocations: tuple[tuple[str, TaskAllocationPlacementHint], ...]
+    prefetches: tuple[PrefetchPlacement, ...]
+
+    @property
+    def replay(self) -> SlabReplay:
+        return self.slab.replay
+
+    def task_hints(self) -> dict[str, tuple[TaskAllocationPlacementHint, ...]]:
+        result: dict[str, list[TaskAllocationPlacementHint]] = {}
+        for task_id, placement in self.task_allocations:
+            result.setdefault(task_id, []).append(placement)
+        return {
+            task_id: tuple(sorted(items, key=lambda item: item.allocation_ordinal))
+            for task_id, items in result.items()
+        }
+
+    def initial_prefetch_offsets(self) -> dict[str, int]:
+        return {
+            item.alias_group_id: item.offset
+            for item in self.prefetches
+            if item.trigger_task_id is None
+        }
+
+    def action_prefetch_offsets(self) -> dict[tuple[str, str], int]:
+        return {
+            (item.trigger_task_id, item.alias_group_id): item.offset
+            for item in self.prefetches
+            if item.trigger_task_id is not None
+        }
+
+
 def replay_selected_schedule(
     selected: PressureFitResult,
     measurements: Mapping[str, TaskMeasurement],
@@ -122,10 +185,55 @@ def replay_selected_schedule(
 ) -> SlabReplay:
     """Replay selected object lifetimes and task workspace through one slab."""
 
+    slab, _sources = _selected_slab_layout(
+        selected,
+        measurements,
+        execution_pool_bytes=execution_pool_bytes,
+        alignment=alignment,
+        output_bindings=output_bindings,
+    )
+    return slab.replay
+
+
+def build_selected_spatial_layout(
+    selected: PressureFitResult,
+    measurements: Mapping[str, TaskMeasurement],
+    *,
+    execution_pool_bytes: int,
+    alignment: int = 256,
+    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+) -> SelectedSpatialLayout:
+    """Assign immutable offsets to every selected execution-pool lifetime."""
+
+    slab, sources = _selected_slab_layout(
+        selected,
+        measurements,
+        execution_pool_bytes=execution_pool_bytes,
+        alignment=alignment,
+        output_bindings=output_bindings,
+    )
+    return _runtime_spatial_layout(slab, sources)
+
+
+def _selected_slab_layout(
+    selected: PressureFitResult,
+    measurements: Mapping[str, TaskMeasurement],
+    *,
+    execution_pool_bytes: int,
+    alignment: int,
+    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None,
+) -> tuple[SlabLayout, Mapping[str, _AllocationSource]]:
+    """Build the static slab layout before frontend callback reconciliation."""
+
     index = _index_selected_schedule(selected, output_bindings)
     timeline = _build_spatial_timeline(selected, measurements, index)
-    allocation_events = _translate_spatial_timeline(timeline.events, alignment)
-    return replay_slab_timeline(execution_pool_bytes, allocation_events)
+    translated = _translate_spatial_timeline(timeline.events, alignment)
+    slab = plan_slab_layout(
+        execution_pool_bytes,
+        translated.events,
+        dynamic_allocation_ids=translated.caller_owned_allocation_ids,
+    )
+    return slab, translated.sources
 
 
 def _index_selected_schedule(
@@ -151,6 +259,11 @@ def _index_selected_schedule(
             item.task_id: item for item in selected.simulation.task_intervals
         },
         bindings_by_task=dict(output_bindings or {}),
+        caller_output_aliases=frozenset(
+            item.alias_group_id
+            for item in program.objects
+            if item.role is ObjectRole.OUTPUT
+        ),
     )
 
 
@@ -203,6 +316,7 @@ def _append_task_lifetimes(
             bindings,
             index.alias_size,
             set(index.zero_aliases),
+            set(index.caller_output_aliases),
         )
         _append_profiled_task_events(task_id, interval, allocations, timeline)
         _validate_profile_workspace(
@@ -246,6 +360,8 @@ def _append_implicit_task_outputs(
             alias_id,
             index.alias_size[alias_id],
             alias_output=True,
+            task_id=task.task_id,
+            caller_owned=alias_id in index.caller_output_aliases,
         )
 
 
@@ -266,9 +382,16 @@ def _append_profiled_task_events(
             event.kind,
             event.identity,
             event.bytes,
+            planned=(
+                event.kind is _SpatialEventKind.TASK_ALLOCATION
+                and (event.alias_output or event.replacement_alias is not None)
+            ),
             alias_output=event.alias_output,
             source_identity=event.source_identity,
             task_id=task_id,
+            allocation_ordinal=event.allocation_ordinal,
+            requested_bytes=event.requested_bytes,
+            caller_owned=event.caller_owned,
         )
     for event in allocations:
         _append_task_terminal_event(event, task_id, interval, timeline)
@@ -326,6 +449,7 @@ def _append_transfer_lifetimes(
                 transfer.alias_group_id,
                 index.alias_size[transfer.alias_group_id],
                 planned=True,
+                task_id=transfer.trigger_task_id,
             )
         else:
             timeline.append(
@@ -384,16 +508,103 @@ class _AllocationReplayState:
     live_origins: dict[str, _SpatialEvent]
     generations: dict[str, int]
     events: list[AllocationEvent]
+    sources: dict[str, _AllocationSource]
+    caller_owned_allocation_ids: set[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _AllocationSource:
+    task_id: str | None = None
+    alias_group_id: str | None = None
+    allocation_ordinal: int | None = None
+    requested_bytes: int | None = None
+    reuse: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _TranslatedSpatialTimeline:
+    events: tuple[AllocationEvent, ...]
+    sources: Mapping[str, _AllocationSource]
+    caller_owned_allocation_ids: frozenset[str]
 
 
 def _translate_spatial_timeline(
     events: Sequence[_SpatialEvent],
     alignment: int,
-) -> tuple[AllocationEvent, ...]:
-    state = _AllocationReplayState({}, {}, {}, [])
+) -> _TranslatedSpatialTimeline:
+    state = _AllocationReplayState({}, {}, {}, [], {}, set())
     for position, event in enumerate(sorted(events, key=_spatial_event_order)):
         _translate_spatial_event(state, event, position, alignment)
-    return tuple(state.events)
+    return _TranslatedSpatialTimeline(
+        tuple(state.events),
+        state.sources,
+        frozenset(state.caller_owned_allocation_ids),
+    )
+
+
+def _runtime_spatial_layout(
+    slab: SlabLayout,
+    sources: Mapping[str, _AllocationSource],
+) -> SelectedSpatialLayout:
+    offsets = slab.offset_by_allocation()
+    dynamic_ids = frozenset(slab.dynamic_allocation_ids)
+    task_allocations: list[tuple[str, TaskAllocationPlacementHint]] = []
+    prefetches: list[PrefetchPlacement] = []
+    for allocation_id, source in sources.items():
+        offset = offsets[allocation_id]
+        if source.alias_group_id is not None:
+            prefetches.append(
+                PrefetchPlacement(
+                    source.alias_group_id,
+                    offset,
+                    source.task_id,
+                )
+            )
+            continue
+        if (
+            source.task_id is None
+            or source.allocation_ordinal is None
+            or source.requested_bytes is None
+        ):
+            raise ValueError(
+                f"allocation {allocation_id!r} lacks runtime placement identity: "
+                f"producer_task={source.task_id!r}"
+            )
+        task_allocations.append(
+            (
+                source.task_id,
+                TaskAllocationPlacementHint(
+                    source.allocation_ordinal,
+                    source.requested_bytes,
+                    (
+                        slab.static_layout_bytes
+                        if allocation_id in dynamic_ids
+                        else offset
+                    ),
+                    source.reuse,
+                    allocation_id in dynamic_ids,
+                ),
+            )
+        )
+    return SelectedSpatialLayout(
+        slab,
+        tuple(
+            sorted(
+                task_allocations,
+                key=lambda item: (item[0], item[1].allocation_ordinal),
+            )
+        ),
+        tuple(
+            sorted(
+                prefetches,
+                key=lambda item: (
+                    item.trigger_task_id is not None,
+                    item.trigger_task_id or "",
+                    item.alias_group_id,
+                ),
+            )
+        ),
+    )
 
 
 def _spatial_event_order(event: _SpatialEvent) -> tuple[int, int, int]:
@@ -458,6 +669,10 @@ def _translate_prefetch(
             alignment=alignment,
             planned=True,
         )
+    )
+    state.sources[allocation_id] = _AllocationSource(
+        task_id=event.task_id,
+        alias_group_id=event.identity,
     )
 
 
@@ -539,6 +754,8 @@ def _translate_task_allocation(
     alignment: int,
 ) -> None:
     allocation_id = _task_allocation_identity(state, event, position)
+    if event.caller_owned:
+        state.caller_owned_allocation_ids.add(allocation_id)
     operation = (
         AllocationOperation.REUSE
         if event.kind is _SpatialEventKind.TASK_REUSE
@@ -553,12 +770,19 @@ def _translate_task_allocation(
             operation,
             event.bytes,
             alignment=alignment,
+            planned=event.planned,
             source_allocation_id=(
                 event.source_identity
                 if operation is AllocationOperation.REUSE
                 else None
             ),
         )
+    )
+    state.sources[allocation_id] = _AllocationSource(
+        task_id=event.task_id,
+        allocation_ordinal=event.allocation_ordinal,
+        requested_bytes=event.requested_bytes,
+        reuse=operation is AllocationOperation.REUSE,
     )
 
 
@@ -631,9 +855,12 @@ class _TaskSpatialAllocation:
     kind: _SpatialEventKind
     identity: str
     bytes: int
+    allocation_ordinal: int | None = None
+    requested_bytes: int | None = None
     alias_output: bool = False
     source_identity: str | None = None
     replacement_alias: str | None = None
+    caller_owned: bool = False
 
 
 @dataclass(slots=True)
@@ -647,6 +874,7 @@ class _TaskAllocationBindingIndex:
     temporary_outputs: set[int]
     reused_ordinals: set[int]
     events: list[_TaskSpatialAllocation]
+    caller_output_aliases: set[str]
 
 
 def _task_allocation_events(
@@ -655,11 +883,16 @@ def _task_allocation_events(
     bindings: Sequence[TaskOutputBinding],
     alias_size: Mapping[str, int],
     zero_aliases: set[str] | None = None,
+    caller_output_aliases: set[str] | None = None,
 ) -> tuple[_TaskSpatialAllocation, ...]:
     """Bind one structural allocation trace to concrete Program outputs."""
 
     index = _index_task_output_bindings(
-        task, measurement, bindings, zero_aliases or set()
+        task,
+        measurement,
+        bindings,
+        zero_aliases or set(),
+        caller_output_aliases or set(),
     )
     for event in measurement.allocation_trace:
         _apply_task_allocation_event(task, event, alias_size, index)
@@ -674,6 +907,7 @@ def _index_task_output_bindings(
     measurement: TaskMeasurement,
     bindings: Sequence[TaskOutputBinding],
     zero_aliases: set[str],
+    caller_output_aliases: set[str],
 ) -> _TaskAllocationBindingIndex:
     alias_by_leaf = {item.leaf_index: item.alias_group_id for item in bindings}
     if len(alias_by_leaf) != len(bindings):
@@ -701,6 +935,7 @@ def _index_task_output_bindings(
             if event.reuses_ordinal is not None
         },
         events=[],
+        caller_output_aliases=caller_output_aliases,
     )
 
 
@@ -741,9 +976,12 @@ def _record_task_allocation(
             ),
             identity=identity,
             bytes=event.charged_bytes,
+            allocation_ordinal=event.allocation_ordinal,
+            requested_bytes=event.requested_bytes,
             alias_output=alias is not None and replacement is None,
             source_identity=source,
             replacement_alias=replacement,
+            caller_owned=alias in index.caller_output_aliases,
         )
     )
 
@@ -819,6 +1057,8 @@ def _record_task_free(
                 _SpatialEventKind.TASK_FREE,
                 identity,
                 event.charged_bytes,
+                allocation_ordinal=event.allocation_ordinal,
+                requested_bytes=event.requested_bytes,
             )
         )
 
@@ -971,7 +1211,10 @@ def output_bindings_for_entrypoints(
 
 
 __all__ = [
+    "PrefetchPlacement",
+    "SelectedSpatialLayout",
     "TaskOutputBinding",
+    "build_selected_spatial_layout",
     "output_bindings_for_entrypoints",
     "replay_selected_schedule",
 ]

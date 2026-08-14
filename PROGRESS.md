@@ -2639,3 +2639,77 @@ the ignored internal progress log before this tracked summary is updated.
 - The optimizer spill-ownership implementation passes Ruff, strict mypy, all
   23 native/CUDA canaries, and the complete Python suite with five expected
   skips. It is therefore ready to commit independently of the spatial fix.
+
+## 2026-08-14 — Task output placement made causal and allocation-exact
+
+- Root cause of the post-optimizer `task_000191` spatial failure was a
+  planner/runtime layout mismatch, not insufficient aggregate capacity. Exact
+  profiling already identified the 1,050,673,152-byte persistent output as
+  allocator callback ordinal 21, but both real execution and slab replay
+  treated every task-created allocation as anonymous until output binding
+  after the callable returned. The output was therefore placed from the high
+  workspace side and split the free space needed by callback ordinal 28.
+- Admission now records immutable allocation-placement hints per execution
+  task. Each hint contains the exact nonzero allocator callback ordinal,
+  requested byte count, and low/high spatial side. The dispatcher keeps the
+  ordinal counter in its task-local C scope. A mismatch or missing callback is
+  a plan violation; a matched hint changes only range selection. The lease
+  remains anonymous until normal output promotion, so semantic ownership and
+  failure cleanup are unchanged.
+- Fresh persistent outputs use low-side placement while anonymous workspace
+  remains high-side. Outputs that were measured reusing a task-local extent
+  keep that exact reuse path and receive no fresh-placement hint. This avoids
+  copies, changes no arithmetic or PressureFit directive, and makes exact slab
+  replay use the same placement rule as steady-state allocation.
+- Added a native execution canary proving callback ordinal 1 is placed below
+  surrounding workspace, plus a 300-byte isolated replay where all-high
+  placement fragments two 100/160-byte workspace lifetimes but output-low
+  placement succeeds with a 210-byte peak. Ruff, strict mypy, all 23
+  native/CUDA canaries, and the complete Python suite pass with five expected
+  skips. The cached 8B selection is the next validation gate.
+
+## 2026-08-14 — Correction: two-ended placement is not a completeness proof
+
+- The low-output/high-workspace rule above was a useful diagnosis but not a
+  sufficient admission contract. The authoritative 8B schedule has a
+  15,263,695,044-byte aggregate device peak in a 15,315,501,056-byte slab,
+  leaving roughly 51.8 MiB of byte capacity. Online best-fit nevertheless
+  rejected a 1,050,673,152-byte request with 1,644,592,960 bytes free because
+  its largest range was only 795,983,872 bytes. A rule choosing one of two
+  ends can still make a locally plausible placement that fragments a later
+  lifetime.
+- Admission now derives complete allocation lifetimes from the selected
+  schedule and the isolated per-task allocation traces, then deterministically
+  packs those intervals offline. Every nonzero admitted allocator callback is
+  identified by task-local ordinal and requested bytes and receives an exact
+  static offset. Fetch destinations are reserved at their causal directive
+  trigger, not at predicted on-wire time. The runtime fails closed on missing,
+  extra, reordered, or resized callbacks; it never changes a PressureFit
+  action or trigger to repair placement.
+- Caller-owned forward/output allocations are the intentional exception to a
+  fixed address. Admission reserves a non-overlapping high suffix for their
+  maximum simultaneous footprint, while static plan lifetimes occupy the low
+  prefix. Runtime allocates caller outputs dynamically within that suffix, so
+  retained outputs remain valid across calls and eventually produce the
+  documented no-progress OOM rather than colliding with the next call's static
+  layout.
+- Strict callback validation exposed a separate profiler defect in bounded
+  eager optimizers. `deepcopy(Parameter)` drops `.grad`, so opaque AdamW
+  profiling previously executed a no-op and recorded zero workspace while the
+  real task allocated two sequential 4 MiB temporaries. Profiling now restores
+  representative captured gradients on the copied Parameters; the corrected
+  trace reports an 8 MiB high-water with two 4 MiB extents. Its cache identity
+  is versioned only for opaque optimizers, preserving unrelated compiled-graph
+  measurements.
+- Hooked AdamW also exposed that side-effect-free lazy state initialization
+  had been disabled merely because step hooks existed. Discovery now invokes
+  the unwrapped step implementation, so hooks remain reserved for real
+  optimizer calls while structurally initializable state is created at exact
+  step zero. The real optimizer remains opaque and its hooks still execute
+  exactly once per public step.
+- All 23 native/CUDA canaries, the complete Python suite (five expected skips),
+  Ruff, and strict mypy pass. The original pre-fix full-model fixture remains
+  a required negative regression: it must raise the structured ShadowSpill
+  no-progress OOM for the 117,440,512-byte request with 39,845,512 bytes free
+  and a 39,744,768-byte largest range; it must not surface a generic CUDA or
+  admission error.

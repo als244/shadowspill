@@ -26,6 +26,9 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskHostTiming,
 )
+from shadowspill.pytorch.runtime_adapter.abi import (
+    AllocationPlacementHint as CAllocationPlacementHint,
+)
 from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     RuntimeExecutionError,
@@ -50,6 +53,29 @@ _ACTION_KIND = {
 
 
 @dataclass(frozen=True, slots=True)
+class TaskAllocationPlacementHint:
+    """Expected task-local allocator callback and exact slab address."""
+
+    allocation_ordinal: int
+    requested_bytes: int
+    slab_offset: int
+    reuse: bool = False
+    dynamic: bool = False
+
+    def __post_init__(self) -> None:
+        if self.allocation_ordinal < 0:
+            raise ValueError("allocation placement ordinal must be non-negative")
+        if self.requested_bytes <= 0:
+            raise ValueError("allocation placement size must be positive")
+        if self.slab_offset < 0:
+            raise ValueError("allocation placement offset must be non-negative")
+        if not isinstance(self.reuse, bool):
+            raise TypeError("allocation placement reuse flag must be boolean")
+        if not isinstance(self.dynamic, bool):
+            raise TypeError("allocation placement dynamic flag must be boolean")
+
+
+@dataclass(frozen=True, slots=True)
 class TaskHostTimestamps:
     before_task_enter_ns: int
     before_task_exit_ns: int
@@ -63,6 +89,7 @@ class _ExecutionBuffers:
     input_ids: Any
     updates: Any
     actions: Any
+    allocation_placement_hints: Any
     encoded_labels: tuple[bytes | None, ...]
 
 
@@ -83,6 +110,24 @@ def _action_labels(
     if len(resolved) != len(actions):
         raise ValueError("action trace labels must align with ordered actions")
     return resolved
+
+
+def _runtime_action(
+    object_id: int,
+    kind: int,
+    *,
+    execution_offset: int | None = None,
+    trace_label: bytes | None = None,
+) -> RuntimeAction:
+    """Construct one ABI action without relying on ctypes field ordering."""
+
+    return RuntimeAction(
+        object_id=object_id,
+        execution_offset=0 if execution_offset is None else execution_offset,
+        kind=kind,
+        has_execution_offset=int(execution_offset is not None),
+        trace_label=trace_label,
+    )
 
 
 class RuntimeBridge:
@@ -127,6 +172,10 @@ class RuntimeBridge:
         input_alias_ids: tuple[str, ...],
         actions: tuple[MemoryAction, ...],
         action_trace_labels: tuple[str, ...] | None = None,
+        allocation_placement_hints: tuple[
+            TaskAllocationPlacementHint, ...
+        ] = (),
+        prefetch_offsets: Mapping[str, int] | None = None,
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
@@ -145,6 +194,8 @@ class RuntimeBridge:
             runtime_inputs,
             mutations,
             action_pairs,
+            allocation_placement_hints,
+            {} if prefetch_offsets is None else prefetch_offsets,
         )
         self._require(
             self.library.shadowspill_pytorch_admit_execution(
@@ -203,6 +254,8 @@ class RuntimeBridge:
         inputs: tuple[str, ...],
         mutations: tuple[MutationSpec, ...],
         actions: tuple[tuple[MemoryAction, str], ...],
+        allocation_placement_hints: tuple[TaskAllocationPlacementHint, ...],
+        prefetch_offsets: Mapping[str, int],
     ) -> _ExecutionBuffers:
         input_ids = (ctypes.c_uint64 * len(inputs))(
             *(_dense_id(value, "alias_") for value in inputs)
@@ -219,12 +272,31 @@ class RuntimeBridge:
         labels = tuple(label.encode("utf-8") if label else None for _, label in actions)
         action_values = (RuntimeAction * len(actions))(
             *(
-                RuntimeAction(
+                _runtime_action(
                     _dense_id(action.alias_group_id, "alias_"),
                     _ACTION_KIND[action.kind],
-                    label,
+                    execution_offset=(
+                        prefetch_offsets.get(action.alias_group_id)
+                        if action.kind is MemoryActionKind.PREFETCH
+                        else None
+                    ),
+                    trace_label=label,
                 )
                 for (action, _text), label in zip(actions, labels, strict=True)
+            )
+        )
+        placement_values = (
+            CAllocationPlacementHint * len(allocation_placement_hints)
+        )(
+            *(
+                CAllocationPlacementHint(
+                    item.allocation_ordinal,
+                    item.requested_bytes,
+                    item.slab_offset,
+                    int(item.reuse),
+                    int(item.dynamic),
+                )
+                for item in allocation_placement_hints
             )
         )
         description = ExecutionDescription(
@@ -235,8 +307,19 @@ class RuntimeBridge:
             update_count=len(mutations),
             actions=action_values if actions else None,
             action_count=len(actions),
+            allocation_placement_hints=(
+                placement_values if allocation_placement_hints else None
+            ),
+            allocation_placement_hint_count=len(allocation_placement_hints),
         )
-        return _ExecutionBuffers(description, input_ids, updates, action_values, labels)
+        return _ExecutionBuffers(
+            description,
+            input_ids,
+            updates,
+            action_values,
+            placement_values,
+            labels,
+        )
 
     def _resolve_execution_handle(self, task_id: str) -> int:
         handle = ctypes.c_size_t()
@@ -764,7 +847,7 @@ class RuntimeBridge:
         )
         runtime_actions = (RuntimeAction * len(action_values))(
             *(
-                RuntimeAction(
+                _runtime_action(
                     _dense_id(item.alias_group_id, "alias_"),
                     _ACTION_KIND[item.kind],
                 )
@@ -784,7 +867,11 @@ class RuntimeBridge:
         )
 
     def submit_initial_actions(
-        self, actions: tuple[MemoryAction, ...], *, task_number: int
+        self,
+        actions: tuple[MemoryAction, ...],
+        *,
+        task_number: int,
+        prefetch_offsets: Mapping[str, int] | None = None,
     ) -> None:
         runtime_actions_values = tuple(
             item for item in actions if self.requires_storage(item.alias_group_id)
@@ -794,9 +881,15 @@ class RuntimeBridge:
         stream = torch.cuda.current_stream()
         runtime_actions = (RuntimeAction * len(runtime_actions_values))(
             *(
-                RuntimeAction(
+                _runtime_action(
                     _dense_id(item.alias_group_id, "alias_"),
                     _ACTION_KIND[item.kind],
+                    execution_offset=(
+                        None
+                        if prefetch_offsets is None
+                        or item.kind is not MemoryActionKind.PREFETCH
+                        else prefetch_offsets.get(item.alias_group_id)
+                    ),
                 )
                 for item in runtime_actions_values
             )

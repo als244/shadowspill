@@ -12,6 +12,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     Allocation,
     AllocationEvent,
+    AllocationPlacementHint,
     CudaStatistics,
     ObjectBinding,
     ObjectSnapshot,
@@ -106,7 +107,8 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterStatistics) == 480
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
-    assert ctypes.sizeof(RuntimeAction) == 24
+    assert ctypes.sizeof(RuntimeAction) == 32
+    assert ctypes.sizeof(AllocationPlacementHint) == 32
     assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32

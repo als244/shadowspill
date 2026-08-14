@@ -98,12 +98,16 @@ static void complete_action(
     }
     if (action->admitted) {
         const uint8_t kind = action->kind;
+        const uint64_t execution_offset = action->execution_offset;
+        const uint8_t has_execution_offset = action->has_execution_offset;
         ShadowSpillObject *object = action->object;
         const uint64_t task_id = action->task_id;
         const char *trace_label = action->trace_label;
         *action = (ShadowSpillQueuedAction){
             .task_id = task_id,
+            .execution_offset = execution_offset,
             .kind = kind,
+            .has_execution_offset = has_execution_offset,
             .object = object,
             .trace_label = trace_label,
             .admitted = 1U,
@@ -187,14 +191,24 @@ static int reserve_destination_locked(
     int range_status;
     if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
         ShadowSpillRuntimeStatus lease_status =
-            shadowspill_create_execution_lease_locked(
-                runtime,
-                action->object->size_bytes,
-                shadowspill_execution_pool(runtime)->minimum_alignment,
-                1,
-                action->task_id,
-                &action->destination_lease
-            );
+            action->has_execution_offset
+            ? shadowspill_create_execution_lease_at_locked(
+                  runtime,
+                  action->object->size_bytes,
+                  action->execution_offset,
+                  1,
+                  action->task_id,
+                  &action->destination_lease
+              )
+            : shadowspill_create_execution_lease_locked(
+                  runtime,
+                  action->object->size_bytes,
+                  shadowspill_execution_pool(runtime)->minimum_alignment,
+                  1,
+                  SHADOWSPILL_MEMORY_BEST_FIT_LOW,
+                  action->task_id,
+                  &action->destination_lease
+              );
         range_status = lease_status == SHADOWSPILL_RUNTIME_OK
             ? 0
             : (lease_status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY ? 1 : -1);

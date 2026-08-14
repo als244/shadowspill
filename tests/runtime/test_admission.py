@@ -7,6 +7,7 @@ from shadowspill.runtime import (
     AllocationEvent,
     AllocationOperation,
     admit_physical_budget,
+    plan_slab_layout,
     replay_slab_timeline,
     workspace_reserve_bytes,
 )
@@ -122,6 +123,69 @@ def test_pending_extent_reuse_preserves_its_physical_range() -> None:
     assert replay.peak_allocated_bytes == 64
     assert replay.final_allocated_bytes == 0
     assert replay.final_largest_free_range_bytes == 128
+
+
+def test_static_layout_avoids_online_fragmentation_and_preserves_reuse() -> None:
+    timeline = (
+        event(0, "long_middle", AllocationOperation.ALLOCATE, 32),
+        event(1, "short_left", AllocationOperation.ALLOCATE, 32),
+        event(2, "short_right", AllocationOperation.ALLOCATE, 32),
+        event(3, "short_left", AllocationOperation.FREE, 32),
+        event(4, "short_right", AllocationOperation.FREE, 32),
+        AllocationEvent(
+            5,
+            "large",
+            AllocationOperation.ALLOCATE,
+            64,
+            alignment=1,
+        ),
+        AllocationEvent(
+            6,
+            "large_reused",
+            AllocationOperation.REUSE,
+            64,
+            alignment=1,
+            source_allocation_id="large",
+        ),
+    )
+
+    layout = plan_slab_layout(96, timeline)
+    offsets = layout.offset_by_allocation()
+
+    assert offsets["large"] == offsets["large_reused"]
+    assert layout.layout_bytes == 96
+    assert layout.replay.peak_allocated_bytes == 96
+
+
+def test_dynamic_identity_reserves_its_complete_reuse_lifetime_in_suffix() -> None:
+    timeline = (
+        event(0, "static", AllocationOperation.ALLOCATE, 32),
+        event(1, "dynamic_source", AllocationOperation.ALLOCATE, 16),
+        AllocationEvent(
+            2,
+            "dynamic_result",
+            AllocationOperation.REUSE,
+            16,
+            alignment=16,
+            source_allocation_id="dynamic_source",
+        ),
+    )
+
+    layout = plan_slab_layout(
+        96,
+        timeline,
+        dynamic_allocation_ids=frozenset({"dynamic_result"}),
+    )
+    offsets = layout.offset_by_allocation()
+
+    assert layout.static_layout_bytes == 32
+    assert layout.layout_bytes == 48
+    assert layout.dynamic_allocation_ids == (
+        "dynamic_result",
+        "dynamic_source",
+    )
+    assert offsets["static"] == 0
+    assert offsets["dynamic_source"] == offsets["dynamic_result"] == 80
 
 
 def test_pending_extent_reuse_requires_a_live_size_matched_source() -> None:

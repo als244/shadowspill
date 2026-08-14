@@ -5,8 +5,11 @@ from .admission import (
     AdmissionPolicy,
     AllocationEvent,
     AllocationOperation,
+    SlabLayout,
+    SlabPlacement,
     SlabReplay,
     admit_physical_budget,
+    plan_slab_layout,
     replay_slab_timeline,
     workspace_reserve_bytes,
 )
@@ -16,8 +19,11 @@ __all__ = [
     "AdmissionPolicy",
     "AllocationEvent",
     "AllocationOperation",
+    "SlabLayout",
+    "SlabPlacement",
     "SlabReplay",
     "admit_physical_budget",
+    "plan_slab_layout",
     "replay_slab_timeline",
     "workspace_reserve_bytes",
 ]

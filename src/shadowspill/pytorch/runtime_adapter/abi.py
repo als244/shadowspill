@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 29
-RUNTIME_ABI_VERSION: Final = 19
+ADAPTER_ABI_VERSION: Final = 30
+RUNTIME_ABI_VERSION: Final = 20
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -292,8 +292,20 @@ class ObjectUpdate(ctypes.Structure):
 class RuntimeAction(ctypes.Structure):
     _fields_ = [
         ("object_id", ctypes.c_uint64),
+        ("execution_offset", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
+        ("has_execution_offset", ctypes.c_uint8),
         ("trace_label", ctypes.c_char_p),
+    ]
+
+
+class AllocationPlacementHint(ctypes.Structure):
+    _fields_ = [
+        ("allocation_ordinal", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("slab_offset", ctypes.c_uint64),
+        ("reuse", ctypes.c_uint8),
+        ("dynamic", ctypes.c_uint8),
     ]
 
 
@@ -306,6 +318,11 @@ class ExecutionDescription(ctypes.Structure):
         ("update_count", ctypes.c_uint32),
         ("actions", ctypes.POINTER(RuntimeAction)),
         ("action_count", ctypes.c_uint32),
+        (
+            "allocation_placement_hints",
+            ctypes.POINTER(AllocationPlacementHint),
+        ),
+        ("allocation_placement_hint_count", ctypes.c_uint32),
     ]
 
 

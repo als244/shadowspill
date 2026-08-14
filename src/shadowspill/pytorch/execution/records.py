@@ -11,7 +11,11 @@ from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingTaskEntrypoint,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge, actions_by_task
+from shadowspill.pytorch.runtime_adapter.bridge import (
+    RuntimeBridge,
+    TaskAllocationPlacementHint,
+    actions_by_task,
+)
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 
 
@@ -35,6 +39,8 @@ class ExecutionTaskRecord:
     handoff_source_aliases: frozenset[str]
     dematerialize_aliases: tuple[str, ...]
     released_ephemeral: tuple[tuple[str, tuple[str, ...]], ...]
+    allocation_placement_hints: tuple[TaskAllocationPlacementHint, ...]
+    prefetch_offsets: tuple[tuple[str, int], ...]
     native_handle: int = 0
 
     @property
@@ -76,7 +82,7 @@ class PlanRun:
     plan: ExecutionPlan
     expected_task_seconds: Mapping[str, float]
     execution: tuple[ExecutionTaskRecord, ...]
-    initial_device_aliases: tuple[str, ...]
+    initial_prefetches: tuple[tuple[str, int], ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
 
 
@@ -86,6 +92,11 @@ def build_plan_run(
     *,
     bridge: RuntimeBridge,
     functions: Mapping[str, Callable[..., object]],
+    allocation_placement_hints: Mapping[
+        str, tuple[TaskAllocationPlacementHint, ...]
+    ],
+    initial_prefetch_offsets: Mapping[str, int],
+    action_prefetch_offsets: Mapping[tuple[str, str], int],
 ) -> PlanRun:
     """Predecode one selected plan into allocation-free repeated-path records."""
 
@@ -112,6 +123,14 @@ def build_plan_run(
             identity=identities[entrypoint.task_id],
             bridge=bridge,
             functions=functions,
+            allocation_placement_hints=allocation_placement_hints.get(
+                entrypoint.task_id, ()
+            ),
+            prefetch_offsets=_task_prefetch_offsets(
+                entrypoint.task_id,
+                action_index.get(entrypoint.task_id, ()),
+                action_prefetch_offsets,
+            ),
         )
         for entrypoint in entrypoints
     )
@@ -123,10 +142,11 @@ def build_plan_run(
             for task_id, task in tasks.items()
         },
         execution=execution,
-        initial_device_aliases=tuple(
-            item.alias_group_id
+        initial_prefetches=tuple(
+            (item.alias_group_id, initial_prefetch_offsets[item.alias_group_id])
             for item in plan.schedule.initial_residency
             if item.location.value == "device"
+            and bridge.requires_storage(item.alias_group_id)
         ),
         public_by_microbatch=_public_outputs(entrypoints, bridge),
     )
@@ -144,6 +164,8 @@ def _build_task_record(
     identity: tuple[int, str],
     bridge: RuntimeBridge,
     functions: Mapping[str, Callable[..., object]],
+    allocation_placement_hints: tuple[TaskAllocationPlacementHint, ...],
+    prefetch_offsets: tuple[tuple[str, int], ...],
 ) -> ExecutionTaskRecord:
     artifact = entrypoint.artifact
     function = (
@@ -192,6 +214,22 @@ def _build_task_record(
             if item.kind is MemoryActionKind.RELEASE
             and item.alias_group_id in ephemeral_aliases
         ),
+        allocation_placement_hints=allocation_placement_hints,
+        prefetch_offsets=prefetch_offsets,
+    )
+
+
+def _task_prefetch_offsets(
+    task_id: str,
+    actions: tuple[MemoryAction, ...],
+    offsets: Mapping[tuple[str, str], int],
+) -> tuple[tuple[str, int], ...]:
+    """Resolve every planned prefetch to its admitted slab destination."""
+
+    return tuple(
+        (action.alias_group_id, offsets[(task_id, action.alias_group_id)])
+        for action in actions
+        if action.kind is MemoryActionKind.PREFETCH
     )
 
 

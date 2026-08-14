@@ -283,6 +283,66 @@ int shadowspill_memory_pool_reserve_lease_locked(
     return adopt_status;
 }
 
+int shadowspill_memory_pool_reserve_lease_at_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t offset
+) {
+    if (pool == NULL || lease == NULL || lease->state != SHADOWSPILL_LEASE_FREE ||
+        offset % pool->minimum_alignment != 0U) {
+        return -1;
+    }
+    const uint64_t charged = bytes == 0U ? 1U : bytes;
+    const int status = shadowspill_range_allocate_at(
+        &pool->ranges, offset, charged
+    );
+    if (status != 0) {
+        return status;
+    }
+    const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
+        pool, lease, bytes, offset
+    );
+    if (adopt_status != 0) {
+        (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
+    }
+    return adopt_status;
+}
+
+int shadowspill_memory_pool_reserve_lease_highest_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t minimum_offset
+) {
+    if (pool == NULL || lease == NULL || lease->state != SHADOWSPILL_LEASE_FREE) {
+        return -1;
+    }
+    if (alignment < pool->minimum_alignment) {
+        alignment = pool->minimum_alignment;
+    }
+    const uint64_t charged = bytes == 0U ? 1U : bytes;
+    uint64_t offset = 0U;
+    const int status = shadowspill_range_allocate_highest(
+        &pool->ranges,
+        charged,
+        alignment,
+        minimum_offset,
+        &offset
+    );
+    if (status != 0) {
+        return status;
+    }
+    const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
+        pool, lease, bytes, offset
+    );
+    if (adopt_status != 0) {
+        (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
+    }
+    return adopt_status;
+}
+
 int shadowspill_memory_pool_adopt_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,
