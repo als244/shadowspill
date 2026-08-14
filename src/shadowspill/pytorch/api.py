@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 from collections.abc import Sequence
 from typing import Any, Literal, NoReturn
 
@@ -59,9 +60,33 @@ def _surface_failed_plan(
         planning_started=planning_started,
         error=surfaced,
     )
+    _clear_failure_frame_locals(error)
+    if surfaced is not error:
+        _clear_failure_frame_locals(surfaced)
     if surfaced is error:
         raise error
     raise surfaced from error
+
+
+def _clear_failure_frame_locals(error: BaseException) -> None:
+    """Release task-local tensors without discarding traceback locations."""
+
+    pending = [error]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        if current.__traceback__ is not None:
+            traceback.clear_frames(current.__traceback__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
 
 
 def plan_forward(
