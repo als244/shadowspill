@@ -311,8 +311,8 @@ class Runtime:
             resolved_device = _resolve_execution_device(
                 execution_device, execution_pool
             )
-            resolved_execution = _resolve_budget(
-                execution_budget, execution_pool, "execution_budget"
+            resolved_execution = _resolve_execution_budget(
+                execution_budget, execution_pool
             )
             resolved_spill = _resolve_budget(spill_budget, spill_pool, "spill_budget")
             transfers = self._read_transfer_capabilities()
@@ -531,6 +531,46 @@ def _resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
             f"{name}={value} exceeds pool {pool.name!r} capacity={pool.capacity}"
         )
     return value
+
+
+def _resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
+    """Resolve the common physical-cap spelling to suballocatable bytes.
+
+    Runtime initialization subtracts the one-time accelerator context and
+    provider allowance from ``physical_capacity`` before creating the
+    execution pool.  Users naturally repeat that same physical cap at the
+    planning boundary.  Treating it as a raw pool size charges those fixed
+    bytes twice and rejects the most common call shape.
+
+    Values at or below ``pool.capacity`` retain the existing per-plan logical
+    limit semantics.  A value strictly between the derived pool capacity and
+    the configured physical cap is ambiguous and is rejected rather than
+    pretending that the already allocated process slab became smaller.
+    """
+
+    if value is None:
+        return pool.capacity
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("execution_budget must be an integer byte count or None")
+    if value <= 0:
+        raise RuntimeConfigurationError("execution_budget must be positive")
+    physical_capacity = pool.physical_capacity
+    if physical_capacity is not None and value == physical_capacity:
+        return pool.capacity
+    if value <= pool.capacity:
+        return value
+    if physical_capacity is not None and value < physical_capacity:
+        raise RuntimeConfigurationError(
+            "execution_budget falls between the initialized execution-pool "
+            "capacity and its complete physical cap; pass the runtime physical "
+            "cap for the full pool, or a value no larger than the derived pool "
+            f"capacity={pool.capacity}"
+        )
+    limit = physical_capacity if physical_capacity is not None else pool.capacity
+    raise RuntimeConfigurationError(
+        f"execution_budget={value} exceeds pool {pool.name!r} physical "
+        f"capacity={limit}"
+    )
 
 
 def _resolve_execution_device(value: object | None, pool: MemoryPool) -> int:

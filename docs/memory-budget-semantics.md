@@ -6,10 +6,13 @@ planner-visible tensors.
 
 Runtime initialization accounts for context and bounded provider headroom,
 then creates the execution pool arena from the remainder. `execution_budget`
-in `plan_step()` or `plan_forward()` defaults to that initialized arena
-capacity and may only reduce the capacity exposed to this plan. It cannot
-increase the physical cap. `spill_budget` has equivalent semantics for the
-selected spill pool.
+in `plan_step()` or `plan_forward()` may be omitted or set to the same complete
+physical cap used to configure the runtime; both select the complete derived
+execution pool. The fixed runtime cost is therefore subtracted exactly once.
+A value no larger than the derived pool capacity remains available as a
+logical per-plan limit. It cannot increase or physically shrink the arena that
+was allocated when the runtime was initialized. `spill_budget` has equivalent
+logical-limit semantics for the selected spill pool.
 
 `device()` reserves 1,280 MiB of provider headroom by default. This value is
 reported and can be overridden before runtime initialization; it is never

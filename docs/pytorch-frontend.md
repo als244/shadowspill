@@ -32,10 +32,15 @@ buffers start on CPU; the returned callable gives original registrations
 accelerator identity while it owns the model and restores them to CPU on
 `close()`.
 
-`execution_budget` and `spill_budget` default to the selected initialized pool
-capacities and may only reduce them. `execution_device=None` uses PyTorch's
-current accelerator device; an explicit ordinal or `torch.device` selects it.
-The resolved device must equal the execution pool's device.
+`execution_budget=None` and an explicit value equal to the runtime's complete
+execution-device physical cap both select the full derived execution pool.
+This lets the conventional `Runtime(...16 GiB...)` plus
+`plan_step(...execution_budget=16 GiB...)` spelling charge context/provider
+headroom exactly once. A value no larger than the derived pool capacity is a
+logical per-plan limit. `spill_budget` defaults to and may reduce its selected
+pool capacity. `execution_device=None` uses PyTorch's current accelerator
+device; an explicit ordinal or `torch.device` selects it. The resolved device
+must equal the execution pool's device.
 
 `planning_cachedir` selects one shared, inspectable artifact store. Export is
 rerun on every planning call, while graph pairs, compiler artifacts, task
