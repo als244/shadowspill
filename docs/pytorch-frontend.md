@@ -9,13 +9,20 @@ Initialize one process-lifetime runtime before planning:
 
 ```python
 from shadowspill.memory import device, pinned_host
-from shadowspill.pytorch import Runtime
+from shadowspill.pytorch import Runtime, relocate_model_state
 
 runtime = Runtime(
     pools={
         "device": device(physical_capacity=24 << 30),
         "spill": pinned_host(capacity=64 << 30),
     }
+)
+
+model = relocate_model_state(
+    model,
+    runtime=runtime,
+    pool="spill",
+    release_source=True,
 )
 ```
 
@@ -24,13 +31,23 @@ planner from the installed ShadowSpill package. Editable development builds use
 the configured project build directory. Binary selection is not controlled by
 environment variables and does not patch Python or PyTorch objects.
 
+`relocate_model_state()` is an explicit prerequisite to planning. It returns a
+distinct model hierarchy whose registered tensors point directly into the
+selected runtime pool. It preserves module topology, parameter ties, buffer
+views, values, layout, and model mode without copying the registered payload
+through a second anonymous model allocation. With `release_source=False`, the
+runtime state retains the input model as its source owner. With
+`release_source=True`, ShadowSpill retains no source reference; assigning the
+result back to `model` lets Python release the old model when no other caller
+reference exists.
+
 `plan_forward(model, example_inputs=..., runtime=runtime, execution="device",
 spill="spill", partition="auto")` constructs forward-only execution.
-`plan_step(...)` constructs accumulated training. Planning must occur before an
-incompatible accelerator allocator initializes the process. Parameters and
-buffers start on CPU; the returned callable gives original registrations
-accelerator identity while it owns the model and restores them to CPU on
-`close()`.
+`plan_step(...)` constructs accumulated training. Planning validates existing
+runtime object bindings and never copies or releases model state. Planning must
+occur before an incompatible accelerator allocator initializes the process.
+The callable gives the relocated registrations accelerator identity while it
+owns execution and restores their spill-backed CPU identity on `close()`.
 
 `execution_budget=None` and an explicit value equal to the runtime's complete
 execution-device physical cap both select the full derived execution pool.
@@ -66,9 +83,13 @@ slab allocations transfer to ordinary caller ownership without a copy.
 
 `state_dict()` and `load_state_dict()` are explicitly synchronizing and use
 ordinary CPU tensors with the original model names. `close()` is synchronizing,
-idempotent, preserves Parameter objects and ties, restores host-authoritative
-bytes, and unregisters plan objects. Caller-retained outputs remain valid after
-close because they are no longer plan-owned.
+idempotent, preserves the relocated model's Parameter objects and ties,
+restores spill-authoritative bytes, and unregisters plan objects. It does not
+release persistent model state. Use
+`externalize_model_state(model, runtime=runtime, release_runtime=True)` to copy
+state into ordinary CPU allocations and release the runtime objects before
+closing the runtime. Caller-retained outputs remain valid after callable close
+because they are no longer plan-owned.
 
 Registered buffers marked `persistent=False` remain runtime-owned and are
 restored on close, but they are omitted from checkpoints and are not required
@@ -78,8 +99,8 @@ overwrites only checkpoint-persistent entries.
 
 The public `plan_step()` callable composes every fixed microbatch position into
 forward, objective, backward, and gradient-accumulation tasks followed by one
-optimizer update. It preserves the original model and optimizer checkpoint
-schema and restores CPU storage on deterministic close.
+optimizer update. It preserves the relocated model and optimizer checkpoint
+schema and restores spill-backed CPU storage on deterministic close.
 
 ## Planning and execution diagnostics
 
@@ -340,8 +361,8 @@ Training exposes the corresponding `capture_training_graphs()`,
 `build_training_programs()`, `pressurefit_training_programs()`,
 `compile_selected_training_tasks()`, and `admit_training_plan()` functions.
 Every boundary returns an immutable artifact sufficient for the next one.
-`rollback_training_materialization()` explicitly restores CPU ownership if an
-advanced caller stops after optimizer materialization.
+`rollback_training_materialization()` explicitly restores spill-backed CPU
+bindings if an advanced caller stops after optimizer materialization.
 
 PressureFit itself remains framework neutral. A caller that only wants to
 sweep planner capacity starts from `planned.plan_report.program` and

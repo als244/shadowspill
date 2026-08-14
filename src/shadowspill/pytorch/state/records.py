@@ -1,0 +1,51 @@
+"""Persistent PyTorch state records backed by generic runtime objects."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+
+
+@dataclass(frozen=True, slots=True)
+class TensorView:
+    """One existing Tensor identity that views a persistent storage root."""
+
+    tensor: torch.Tensor
+    shape: tuple[int, ...]
+    stride: tuple[int, ...]
+    storage_offset: int
+    requires_grad: bool
+
+
+@dataclass(slots=True)
+class PersistentStorage:
+    """One authoritative runtime object and its frontend storage root."""
+
+    persistent_object_id: int
+    current_object_id: int
+    size_bytes: int
+    spill_pointer: int
+    anchor: torch.Tensor
+    views: tuple[TensorView, ...]
+    source_is_external: bool
+
+    @property
+    def storage_identity(self) -> int:
+        return int(self.anchor.untyped_storage()._cdata)
+
+
+@dataclass(slots=True)
+class PersistentState:
+    """All persistent storage roots associated with one public Python object."""
+
+    target: object
+    pool: str
+    storages: tuple[PersistentStorage, ...]
+    source_owner: object | None
+
+    def by_storage_identity(self) -> dict[int, PersistentStorage]:
+        return {item.storage_identity: item for item in self.storages}
+
+
+__all__ = ["PersistentState", "PersistentStorage", "TensorView"]

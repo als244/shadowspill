@@ -74,6 +74,7 @@ class _Library:
     shadowspill_pytorch_write_spill_object = _Function()
     shadowspill_pytorch_read_spill_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
+    shadowspill_pytorch_rekey_object = _Function()
     shadowspill_pytorch_bind_registered_allocation = _Function()
     shadowspill_pytorch_replace_registered_allocation = _Function()
     shadowspill_pytorch_transfer_output_to_caller = _Function()
@@ -88,6 +89,7 @@ class _Library:
     shadowspill_pytorch_before_execution_handle = _Function()
     shadowspill_pytorch_after_execution_handle = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
+    shadowspill_pytorch_validate_spill_binding = _Function()
     shadowspill_pytorch_abort_task_range = _Function()
 
 
@@ -104,7 +106,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24
-    assert ctypes.sizeof(ObjectSnapshot) == 88
+    assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32
     assert ctypes.sizeof(TaskHostTiming) == 88
@@ -197,6 +199,15 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_unregister_object.argtypes == [ctypes.c_uint64]
+    assert library.shadowspill_pytorch_rekey_object.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
+    assert library.shadowspill_pytorch_validate_spill_binding.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
     assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,

@@ -384,9 +384,6 @@ ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
         return status;
     }
     if (atomic_load_explicit(
-            &runtime->registered_objects, memory_order_acquire
-        ) != 0U ||
-        atomic_load_explicit(
             &runtime->actions.count, memory_order_acquire
         ) != 0U ||
         atomic_load_explicit(

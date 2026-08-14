@@ -19,6 +19,12 @@ from shadowspill.pytorch.contracts import PlanningError, TensorSpec
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.state.storage import (
+    adopt_persistent_tensor,
+    persistent_state,
+    restore_persistent_state,
+)
 
 
 def representative_cpu_inputs(values: Any) -> Any:
@@ -133,12 +139,14 @@ class MaterializedForwardState:
         example_inputs: Sequence[Any],
         bridge: RuntimeBridge,
         *,
+        runtime: Runtime,
         device_ordinal: int,
     ) -> None:
         self.model = model
         self.lowered = lowered
         self.capture = capture
         self.bridge = bridge
+        self.runtime = runtime
         self.device = torch.device("cuda", device_ordinal)
         self.root_arguments = flat_runtime_arguments(capture, model, example_inputs)
         self.object_store: dict[str, torch.Tensor] = {}
@@ -147,6 +155,8 @@ class MaterializedForwardState:
         self._state_names = tuple(model.state_dict().keys())
         self._model_aliases: set[str] = set()
         self._registered_model_aliases: set[str] = set()
+        self._persistent_aliases: set[str] = set()
+        self._persistent_state = persistent_state(runtime, model)
         self._user_alias_by_position: dict[int, str] = {}
         self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
             group.alias_group_id: tuple(
@@ -283,10 +293,15 @@ class MaterializedForwardState:
             return
         self.bridge.wait_idle()
         registrations = self._registrations()
-        owners = self._read_model_aliases()
+        restore_persistent_state(self.runtime, self._persistent_state)
+        owners = self._read_model_aliases(
+            aliases=self._registered_model_aliases - self._persistent_aliases
+        )
         by_alias: dict[str, list[_Registration]] = {}
         for item in registrations:
             alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            if alias_id in self._persistent_aliases:
+                continue
             if alias_id not in self._registered_model_aliases:
                 continue
             by_alias.setdefault(alias_id, []).append(item)
@@ -300,26 +315,37 @@ class MaterializedForwardState:
                 view = self._cpu_view(owner, tensor)
                 tensor.data = view
                 assigned.add(id(tensor))
-        self.bridge.unregister(self.bridge.registered_aliases())
+        self.bridge.unregister(
+            self.bridge.registered_aliases() - self._persistent_aliases
+        )
         self.object_store.clear()
         self.generations.clear()
         self._closed = True
 
-    def _empty_model_aliases(self) -> dict[str, torch.Tensor]:
+    def _empty_model_aliases(
+        self,
+        *,
+        aliases: set[str] | None = None,
+    ) -> dict[str, torch.Tensor]:
         result: dict[str, torch.Tensor] = {}
         sizes = {
             group.alias_group_id: group.size_bytes
             for group in self.lowered.program.alias_groups
         }
-        for alias_id in self._registered_model_aliases:
+        selected = self._registered_model_aliases if aliases is None else aliases
+        for alias_id in selected:
             result[alias_id] = torch.empty(
                 sizes[alias_id], dtype=torch.uint8, device="cpu"
             )
         return result
 
-    def _read_model_aliases(self) -> dict[str, torch.Tensor]:
+    def _read_model_aliases(
+        self,
+        *,
+        aliases: set[str] | None = None,
+    ) -> dict[str, torch.Tensor]:
         self.bridge.wait_idle()
-        owners = self._empty_model_aliases()
+        owners = self._empty_model_aliases(aliases=aliases)
         for alias_id, owner in owners.items():
             self.bridge.read_spill_tensor(alias_id, owner)
         return owners
@@ -364,9 +390,24 @@ class MaterializedForwardState:
             if not values:
                 continue
             source = values[0][0]
-            self.bridge.register_host_tensor(
-                alias_id, source, retain_spill_copy=retain[alias_id]
+            persistent = adopt_persistent_tensor(
+                self.runtime,
+                self.model,
+                source,
+                self.bridge,
+                alias_id,
             )
+            if persistent is None:
+                if alias_id in self._model_aliases:
+                    raise PlanningError(
+                        f"registered model alias {alias_id!r} has no relocated "
+                        "runtime storage"
+                    )
+                self.bridge.register_host_tensor(
+                    alias_id, source, retain_spill_copy=retain[alias_id]
+                )
+            else:
+                self._persistent_aliases.add(alias_id)
             if alias_id in self._model_aliases:
                 self._registered_model_aliases.add(alias_id)
             owner = torch.empty(

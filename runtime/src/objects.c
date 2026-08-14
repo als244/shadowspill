@@ -185,6 +185,54 @@ done:
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_rekey_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint64_t replacement_object_id
+) {
+    if (runtime == NULL || object_id == SHADOWSPILL_RUNTIME_NO_ID ||
+        replacement_object_id == SHADOWSPILL_RUNTIME_NO_ID ||
+        object_id == replacement_object_id) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&runtime->mutex);
+    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillObject *object = shadowspill_find_object(runtime, object_id);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (object == NULL ||
+        shadowspill_find_object(runtime, replacement_object_id) != NULL ||
+        object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID ||
+        object->has_readiness_event ||
+        (object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY &&
+         object->residency != SHADOWSPILL_OBJECT_RELEASED)) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
+    pthread_mutex_lock(&runtime->actions.lock);
+    for (ShadowSpillQueuedAction *action = runtime->actions.head;
+         action != NULL; action = action->next) {
+        if (action->object == object) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&runtime->actions.lock);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto done;
+    }
+    if (shadowspill_object_table_rekey(
+            &runtime->objects, object, replacement_object_id
+        ) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+
+done:
+    pthread_mutex_unlock(&runtime->mutex);
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_write_spill_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -576,6 +624,9 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         .has_spill_lease =
             shadowspill_spill_location(runtime, object)->lease != NULL,
         .execution_pointer = allocation == NULL ? NULL : allocation->pointer,
+        .spill_pointer = shadowspill_spill_location(runtime, object)->lease == NULL
+            ? NULL
+            : shadowspill_spill_location(runtime, object)->lease->pointer,
         .retired_generation = object->retired_generation,
         .retired_execution_pointer = object->retired_execution_pointer,
     };

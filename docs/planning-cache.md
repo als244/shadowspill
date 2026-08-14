@@ -5,6 +5,9 @@ graph pairs, task measurements, PressureFit inputs and outputs, and resolved
 plans. Pass it explicitly to `plan_step()` or `plan_forward()`:
 
 ```python
+model = relocate_model_state(
+    model, runtime=runtime, pool="spill", release_source=True
+)
 train_step = plan_step(
     model,
     ...,

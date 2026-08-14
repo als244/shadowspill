@@ -10,7 +10,12 @@ import torch
 import torch.nn as nn
 
 from shadowspill.memory import device, pinned_host
-from shadowspill.pytorch import Runtime, plan_forward
+from shadowspill.pytorch import (
+    Runtime,
+    externalize_model_state,
+    plan_forward,
+    relocate_model_state,
+)
 
 
 class _StatefulForward(nn.Module):
@@ -40,6 +45,12 @@ def main() -> int:
                 "spill": pinned_host(capacity=1 << 30),
             },
             library_path=adapter,
+        )
+        model = relocate_model_state(
+            model,
+            runtime=runtime,
+            pool="spill",
+            release_source=True,
         )
         planned = plan_forward(
             model,
@@ -74,6 +85,7 @@ def main() -> int:
         state = planned.state_dict()
         torch.testing.assert_close(state["running"], reference.running)
         planned.close()
+        externalize_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
         if model.running.device.type != "cpu":
             raise AssertionError("close did not restore mutated buffer to the CPU")

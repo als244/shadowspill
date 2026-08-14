@@ -7,7 +7,13 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import InputGuardError, ObjectiveResult, plan_step
+from shadowspill.pytorch import (
+    InputGuardError,
+    ObjectiveResult,
+    externalize_model_state,
+    plan_step,
+    relocate_model_state,
+)
 from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
@@ -67,7 +73,6 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     model = _TrainingNetwork()
     reference = _TrainingNetwork()
     reference.load_state_dict(model.state_dict())
-    parameter_ids = tuple(id(parameter) for parameter in model.parameters())
     examples = [
         [torch.randn(2, 6), torch.randn(2, 3), "left"],
         [torch.randn(4, 6), torch.randn(4, 3), "right"],
@@ -96,12 +101,20 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         reference_optimizer.step()
         expected_losses.append(tuple(losses))
 
+    runtime = public_test_runtime()
+    model = relocate_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
+    parameter_ids = tuple(id(parameter) for parameter in model.parameters())
     training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
-        runtime=public_test_runtime(),
+        runtime=runtime,
         execution="execution",
         spill="spill",
         planning_cachedir=tmp_path,
@@ -168,6 +181,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
 
     training.close()
     training.close()
+    externalize_model_state(model, runtime=runtime, release_runtime=True)
     assert tuple(id(parameter) for parameter in model.parameters()) == parameter_ids
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
     for actual, expected in zip(
@@ -200,12 +214,19 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         [torch.randn(2, 6), torch.randn(2, 3), "left"],
         [torch.randn(4, 6), torch.randn(4, 3), "right"],
     ]
+    runtime = public_test_runtime()
+    model = relocate_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
     training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(torch.optim.AdamW, lr=0.003, foreach=False),
         example_inputs=examples,
-        runtime=public_test_runtime(),
+        runtime=runtime,
         execution="execution",
         spill="spill",
         planning_cachedir=tmp_path,
@@ -240,6 +261,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
                 assert torch.equal(value, other)
 
     training.close()
+    externalize_model_state(model, runtime=runtime, release_runtime=True)
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
 
 
@@ -264,12 +286,19 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     expected.loss.backward()
     reference_optimizer.step()
 
+    runtime = public_test_runtime()
+    model = relocate_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
     training = plan_step(
         model,
         objective=_training_objective,
         opt=partial(_OpaqueSgd, lr=0.02),
         example_inputs=examples,
-        runtime=public_test_runtime(),
+        runtime=runtime,
         execution="execution",
         spill="spill",
         planning_cachedir=tmp_path,
@@ -277,6 +306,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     actual = training(values)
     torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
     training.close()
+    externalize_model_state(model, runtime=runtime, release_runtime=True)
     for planned, eager in zip(model.parameters(), reference.parameters(), strict=True):
         torch.testing.assert_close(planned, eager)
 
@@ -317,6 +347,13 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
 
     torch.manual_seed(91)
     model = Network()
+    runtime = public_test_runtime()
+    model = relocate_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
     training = plan_step(
         model,
         objective=objective,
@@ -327,7 +364,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
             master_parameter_dtype=torch.bfloat16,
         ),
         example_inputs=inputs(92),
-        runtime=public_test_runtime(),
+        runtime=runtime,
         execution="execution",
         spill="spill",
         planning_cachedir=tmp_path,
@@ -359,3 +396,4 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
             else:
                 assert value == other
     training.close()
+    externalize_model_state(model, runtime=runtime, release_runtime=True)

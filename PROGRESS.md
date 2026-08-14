@@ -2435,3 +2435,20 @@ the ignored internal progress log before this tracked summary is updated.
   expected CUDA skips; and all 20 native/CUDA/PyTorch CTest canaries pass.
   No Program topology, PressureFit policy, transfer trigger, arithmetic, or
   runtime synchronization behavior was intentionally changed.
+
+## 2026-08-14 — Explicit PyTorch state relocation
+
+- Added a dedicated persistent-state frontend with model/optimizer relocation,
+  externalization, runtime object IDs, exact spill-pointer validation, and
+  zero-copy adoption into resolved execution plans.
+- `relocate_model_state()` now returns a distinct module hierarchy whose state
+  directly views runtime spill leases. `release_source=False` retains the input
+  model; `release_source=True` retains no ShadowSpill reference, so assigning
+  the result back to the same variable permits immediate source collection.
+- Planning now requires the returned relocated model and never copies or
+  releases model storage. Callable close restores spill-backed CPU bindings;
+  `externalize_model_state(..., release_runtime=True)` is the explicit inverse.
+- A 64 MiB RSS/ledger probe and fresh-process forward, mutation, training,
+  transition, and relocation canaries confirm one spill object per unique
+  storage, no duplicate spill bytes during planning, preserved ties/views and
+  numerical values, source-lifetime semantics, and complete runtime release.

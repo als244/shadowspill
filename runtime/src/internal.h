@@ -571,6 +571,11 @@ int shadowspill_object_table_remove(
     ShadowSpillObjectTable *table,
     ShadowSpillObject *object
 );
+int shadowspill_object_table_rekey(
+    ShadowSpillObjectTable *table,
+    ShadowSpillObject *object,
+    uint64_t replacement_object_id
+);
 void shadowspill_object_retain(ShadowSpillObject *object);
 void shadowspill_object_release(ShadowSpillObject *object);
 ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(

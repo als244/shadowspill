@@ -12,7 +12,12 @@ import torch
 
 from qualification.numerical.cases import build_case
 from shadowspill.memory import device, pinned_host
-from shadowspill.pytorch import Runtime, plan_step
+from shadowspill.pytorch import (
+    Runtime,
+    externalize_model_state,
+    plan_step,
+    relocate_model_state,
+)
 
 
 def _event_bracket(
@@ -66,9 +71,15 @@ def main() -> int:
                 "spill": pinned_host(capacity=64 << 30),
             }
         )
+        model = relocate_model_state(
+            case.model,
+            runtime=runtime,
+            pool="spill",
+            release_source=True,
+        )
         planning_start = time.perf_counter()
         training = plan_step(
-            case.model,
+            model,
             objective=case.objective,
             opt=case.optimizer,
             example_inputs=case.microbatches,
@@ -117,6 +128,7 @@ def main() -> int:
 
         report = training.plan_report
         training.close()
+        externalize_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
 
     result = {

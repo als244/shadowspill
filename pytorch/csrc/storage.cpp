@@ -25,6 +25,115 @@ struct CallerLease {
   uint64_t allocation_id;
 };
 
+void relocate_cpu_storages(
+    at::TensorList tensors,
+    at::IntArrayRef target_addresses,
+    at::IntArrayRef object_ids,
+    at::IntArrayRef sizes
+) {
+  RangeGuard range_guard("shadowspill.pytorch.storage_relocate_cpu_batch");
+  const size_t count = tensors.size();
+  TORCH_CHECK(
+      target_addresses.size() == count && object_ids.size() == count &&
+          sizes.size() == count,
+      "CPU storage relocation fields must have equal lengths");
+  std::vector<uint64_t> current_addresses;
+  current_addresses.reserve(count);
+  for (const auto index : c10::irange(count)) {
+    const at::Tensor& tensor = tensors[index];
+    TORCH_CHECK(tensor.device().is_cpu(), "storage relocation requires CPU tensors");
+    TORCH_CHECK(target_addresses[index] >= 0, "spill address must be nonnegative");
+    TORCH_CHECK(object_ids[index] >= 0, "object ID must be nonnegative");
+    TORCH_CHECK(sizes[index] >= 0, "storage size must be nonnegative");
+    TORCH_CHECK(
+        static_cast<uint64_t>(tensor.storage().nbytes()) ==
+            static_cast<uint64_t>(sizes[index]),
+        "CPU storage size differs from its spill lease");
+    const ShadowSpillRuntimeStatus status =
+        shadowspill_pytorch_validate_spill_binding(
+            static_cast<uint64_t>(object_ids[index]),
+            static_cast<uint64_t>(target_addresses[index]),
+            static_cast<uint64_t>(sizes[index]));
+    TORCH_CHECK(
+        status == SHADOWSPILL_RUNTIME_OK,
+        "CPU storage relocation does not name a current spill lease: ",
+        shadowspill_runtime_status_string(status));
+    current_addresses.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        tensor.storage().data_ptr().get())));
+  }
+  for (const auto index : c10::irange(count)) {
+    if (current_addresses[index] ==
+        static_cast<uint64_t>(target_addresses[index])) {
+      continue;
+    }
+    c10::Storage storage = tensors[index].storage();
+    c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+        reinterpret_cast<void*>(
+            static_cast<uintptr_t>(target_addresses[index])),
+        c10::Device(c10::DeviceType::CPU)));
+    prior.clear();
+  }
+}
+
+at::Tensor make_spill_cpu_storage(
+    const at::Tensor& dispatch,
+    int64_t target_address,
+    int64_t object_id,
+    int64_t size_bytes
+) {
+  RangeGuard range_guard("shadowspill.pytorch.storage_make_spill_cpu");
+  TORCH_CHECK(dispatch.device().is_cpu(), "spill storage dispatch must be CPU");
+  TORCH_CHECK(target_address > 0, "spill address must be positive");
+  TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
+  TORCH_CHECK(size_bytes > 0, "spill storage size must be positive");
+  const ShadowSpillRuntimeStatus status =
+      shadowspill_pytorch_validate_spill_binding(
+          static_cast<uint64_t>(object_id),
+          static_cast<uint64_t>(target_address),
+          static_cast<uint64_t>(size_bytes));
+  TORCH_CHECK(
+      status == SHADOWSPILL_RUNTIME_OK,
+      "CPU spill storage does not name a current spill lease: ",
+      shadowspill_runtime_status_string(status));
+  return at::from_blob(
+      reinterpret_cast<void*>(static_cast<uintptr_t>(target_address)),
+      {size_bytes},
+      [](void*) {},
+      at::TensorOptions().dtype(at::kByte).device(at::kCPU));
+}
+
+void externalize_cpu_storages(
+    at::TensorList tensors,
+    at::TensorList owners
+) {
+  RangeGuard range_guard("shadowspill.pytorch.storage_externalize_cpu_batch");
+  TORCH_CHECK(
+      tensors.size() == owners.size(),
+      "CPU storage externalization fields must have equal lengths");
+  for (const auto index : c10::irange(tensors.size())) {
+    const at::Tensor& tensor = tensors[index];
+    const at::Tensor& owner = owners[index];
+    TORCH_CHECK(
+        tensor.device().is_cpu() && owner.device().is_cpu(),
+        "storage externalization requires CPU tensors");
+    TORCH_CHECK(
+        tensor.storage().nbytes() == owner.storage().nbytes(),
+        "external CPU owner has the wrong storage size");
+    TORCH_CHECK(
+        owner.storage().data_ptr().get() != nullptr ||
+            owner.storage().nbytes() == 0,
+        "external CPU owner has no allocation");
+  }
+  for (const auto index : c10::irange(tensors.size())) {
+    c10::Storage source = owners[index].storage();
+    c10::DataPtr replacement = source.set_data_ptr(c10::DataPtr(
+        nullptr, c10::Device(c10::DeviceType::CPU)));
+    c10::Storage destination = tensors[index].storage();
+    c10::DataPtr prior = destination.set_data_ptr(std::move(replacement));
+    prior.clear();
+  }
+}
+
 void release_caller_lease(void* context) {
   auto* lease = static_cast<CallerLease*>(context);
   if (lease != nullptr) {
@@ -515,6 +624,14 @@ at::Tensor transfer_storage_to_caller(
 
 TORCH_LIBRARY(shadowspill, library) {
   library.def(
+      "_relocate_cpu_storages(Tensor(a!)[] tensors, int[] addresses, "
+      "int[] object_ids, int[] sizes) -> ()");
+  library.def(
+      "_externalize_cpu_storages(Tensor(a!)[] tensors, Tensor[] owners) -> ()");
+  library.def(
+      "_make_spill_cpu_storage(Tensor dispatch, int address, int object_id, "
+      "int size) -> Tensor");
+  library.def(
       "_rebind_storage(Tensor(a!) tensor, int address, int object_id, "
       "int generation) -> Tensor(a!)");
   library.def(
@@ -540,6 +657,12 @@ TORCH_LIBRARY(shadowspill, library) {
   library.def(
       "_transfer_storage_to_caller(Tensor(a!) tensor, int object_id, "
       "int generation, int allocation_id) -> Tensor(a!)");
+}
+
+TORCH_LIBRARY_IMPL(shadowspill, CPU, library) {
+  library.impl("_relocate_cpu_storages", TORCH_FN(relocate_cpu_storages));
+  library.impl("_externalize_cpu_storages", TORCH_FN(externalize_cpu_storages));
+  library.impl("_make_spill_cpu_storage", TORCH_FN(make_spill_cpu_storage));
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {

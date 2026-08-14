@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 27U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 28U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -315,6 +315,13 @@ shadowspill_pytorch_read_spill_object(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_unregister_object(uint64_t object_id);
 
+/* Retarget one idle spill-resident object without moving its lease. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_rekey_object(
+    uint64_t object_id,
+    uint64_t replacement_object_id
+);
+
 /* Bind an already registered object to one ordinary framework allocation. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_bind_registered_allocation(
@@ -363,6 +370,14 @@ shadowspill_pytorch_validate_object_binding(
     uint64_t object_id,
     uint64_t address,
     uint64_t generation
+);
+
+/* Validate one CPU-addressable spill lease before rebinding CPU storage. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_validate_spill_binding(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes
 );
 
 /*

@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 27
-RUNTIME_ABI_VERSION: Final = 17
+ADAPTER_ABI_VERSION: Final = 28
+RUNTIME_ABI_VERSION: Final = 18
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -322,6 +322,7 @@ class ObjectSnapshot(ctypes.Structure):
         ("spill_current", ctypes.c_uint8),
         ("has_spill_lease", ctypes.c_uint8),
         ("execution_pointer", ctypes.c_void_p),
+        ("spill_pointer", ctypes.c_void_p),
         ("retired_generation", ctypes.c_uint64),
         ("retired_execution_pointer", ctypes.c_void_p),
     ]
@@ -569,6 +570,12 @@ def _configure_objects(library: Any) -> None:
         [ctypes.c_uint64],
         ctypes.c_uint32,
     )
+    _signature(
+        library,
+        "shadowspill_pytorch_rekey_object",
+        [ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
     binding = [
         ctypes.c_uint64,
         ctypes.c_uint64,
@@ -600,6 +607,12 @@ def _configure_objects(library: Any) -> None:
         library,
         "shadowspill_pytorch_object_snapshot",
         [ctypes.c_uint64, ctypes.POINTER(ObjectSnapshot)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_validate_spill_binding",
+        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
 

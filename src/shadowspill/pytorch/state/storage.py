@@ -1,0 +1,374 @@
+"""Generic tensor-storage relocation into persistent runtime objects."""
+
+from __future__ import annotations
+
+import ctypes
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
+
+import torch
+
+from shadowspill.pytorch.runtime_adapter.abi import ObjectSnapshot
+from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    Runtime,
+    RuntimeConfigurationError,
+)
+
+from .records import PersistentState, PersistentStorage, TensorView
+from .registry import registry_for
+
+
+@dataclass(frozen=True, slots=True)
+class NamedTensor:
+    """One diagnostic name and existing tensor identity in public state."""
+
+    name: str
+    tensor: torch.Tensor
+
+
+def relocate_tensors(
+    target: object,
+    tensors: Iterable[NamedTensor],
+    *,
+    runtime: Runtime,
+    pool: str,
+    release_source: bool,
+) -> PersistentState:
+    """Copy unique CPU storages into authoritative spill-pool objects."""
+
+    _validate_pool(runtime, pool)
+    registry = registry_for(runtime)
+    if registry.get(target) is not None:
+        raise RuntimeConfigurationError(
+            "state is already relocated; externalize it before relocating again"
+        )
+    created = list(register_tensor_storages(tensors, runtime=runtime, pool=pool))
+    try:
+        if release_source and created:
+            torch.ops.shadowspill._relocate_cpu_storages(
+                [item.anchor for item in created],
+                [item.spill_pointer for item in created],
+                [item.current_object_id for item in created],
+                [item.size_bytes for item in created],
+            )
+            for item in created:
+                item.source_is_external = False
+        state = PersistentState(
+            target=target,
+            pool=pool,
+            storages=tuple(created),
+            source_owner=None,
+        )
+        registry.add(state)
+        return state
+    except BaseException:
+        unregister_tensor_storages(created, runtime=runtime)
+        raise
+
+
+def register_tensor_storages(
+    tensors: Iterable[NamedTensor],
+    *,
+    runtime: Runtime,
+    pool: str,
+) -> tuple[PersistentStorage, ...]:
+    """Copy unique source storages into newly registered runtime objects."""
+
+    _validate_pool(runtime, pool)
+    roots = _storage_roots(tensors)
+    object_ids = runtime._reserve_persistent_object_ids(len(roots))
+    library = runtime._installed.library
+    created: list[PersistentStorage] = []
+    try:
+        for object_id, (anchor, views) in zip(object_ids, roots, strict=True):
+            size_bytes = int(anchor.untyped_storage().nbytes())
+            _require_status(
+                library.shadowspill_pytorch_register_host_object(
+                    object_id,
+                    size_bytes,
+                    1,
+                    int(anchor.untyped_storage().data_ptr()),
+                ),
+                f"relocate persistent object {object_id}",
+            )
+            snapshot = _snapshot(library, object_id)
+            spill_pointer = int(snapshot.spill_pointer or 0)
+            if not snapshot.has_spill_lease or not snapshot.spill_current:
+                raise RuntimeError(
+                    f"persistent object {object_id} has no authoritative spill lease"
+                )
+            created.append(
+                PersistentStorage(
+                    persistent_object_id=object_id,
+                    current_object_id=object_id,
+                    size_bytes=size_bytes,
+                    spill_pointer=spill_pointer,
+                    anchor=anchor,
+                    views=views,
+                    source_is_external=True,
+                )
+            )
+        return tuple(created)
+    except BaseException:
+        unregister_tensor_storages(created, runtime=runtime)
+        raise
+
+
+def own_persistent_state(
+    target: object,
+    *,
+    runtime: Runtime,
+    pool: str,
+    storages: Iterable[PersistentStorage],
+    source_owner: object | None = None,
+) -> PersistentState:
+    """Publish runtime storage ownership for one frontend object."""
+
+    state = PersistentState(
+        target=target,
+        pool=pool,
+        storages=tuple(storages),
+        source_owner=source_owner,
+    )
+    registry_for(runtime).add(state)
+    return state
+
+
+def unregister_tensor_storages(
+    storages: Iterable[PersistentStorage],
+    *,
+    runtime: Runtime,
+) -> None:
+    """Release newly registered storages during rollback."""
+
+    library = runtime._installed.library
+    for item in reversed(tuple(storages)):
+        _require_status(
+            library.shadowspill_pytorch_unregister_object(item.current_object_id),
+            f"release persistent object {item.current_object_id}",
+        )
+
+
+def externalize_tensors(
+    target: object,
+    *,
+    runtime: Runtime,
+    release_runtime: bool,
+) -> PersistentState | None:
+    """Copy authoritative spill bytes into ordinary CPU storage roots."""
+
+    runtime._require_state_operation_allowed()
+    registry = registry_for(runtime)
+    state = registry.get(target)
+    if state is None:
+        return None
+    library = runtime._installed.library
+    _require_status(
+        library.shadowspill_pytorch_allocator_wait_idle(),
+        "wait before state externalization",
+    )
+    owners = [
+        torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
+        for item in state.storages
+    ]
+    for item, owner in zip(state.storages, owners, strict=True):
+        _require_status(
+            library.shadowspill_pytorch_read_spill_object(
+                item.current_object_id,
+                item.size_bytes,
+                int(owner.untyped_storage().data_ptr()),
+            ),
+            f"externalize persistent object {item.current_object_id}",
+        )
+    if state.storages:
+        torch.ops.shadowspill._externalize_cpu_storages(
+            [item.anchor for item in state.storages], owners
+        )
+    for item in state.storages:
+        item.source_is_external = True
+    _restore_tensor_views(state)
+    if release_runtime:
+        for item in state.storages:
+            _require_status(
+                library.shadowspill_pytorch_unregister_object(item.current_object_id),
+                f"release persistent object {item.current_object_id}",
+            )
+        registry.remove(target)
+        return None
+    return state
+
+
+def persistent_state(runtime: Runtime, target: object) -> PersistentState | None:
+    """Return internal persistent state for materialization integration."""
+
+    return registry_for(runtime).get(target)
+
+
+def adopt_persistent_tensor(
+    runtime: Runtime,
+    target: object,
+    tensor: torch.Tensor,
+    bridge: RuntimeBridge,
+    alias_id: str,
+) -> PersistentStorage | None:
+    """Adopt the tensor's existing persistent object into one plan alias."""
+
+    state = persistent_state(runtime, target)
+    if state is None:
+        return None
+    item = state.by_storage_identity().get(int(tensor.untyped_storage()._cdata))
+    if item is None:
+        return None
+    library = runtime._installed.library
+    if item.source_is_external:
+        _require_status(
+            library.shadowspill_pytorch_write_spill_object(
+                item.current_object_id,
+                item.size_bytes,
+                int(item.anchor.untyped_storage().data_ptr()),
+            ),
+            f"refresh persistent object {item.current_object_id}",
+        )
+    item.current_object_id = bridge.adopt_persistent_spill_object(
+        alias_id,
+        current_object_id=item.current_object_id,
+        size_bytes=item.size_bytes,
+        spill_pointer=item.spill_pointer,
+    )
+    return item
+
+
+def restore_persistent_state(
+    runtime: Runtime,
+    state: PersistentState | None,
+) -> None:
+    """Restore frontend tensor views after one adopted plan becomes idle."""
+
+    if state is None:
+        return
+    library = runtime._installed.library
+    for item in state.storages:
+        if not item.source_is_external:
+            continue
+        _require_status(
+            library.shadowspill_pytorch_read_spill_object(
+                item.current_object_id,
+                item.size_bytes,
+                int(item.anchor.untyped_storage().data_ptr()),
+            ),
+            f"restore persistent object {item.current_object_id}",
+        )
+    _restore_tensor_views(state)
+
+
+def restore_persistent_object_ids(runtime: Runtime) -> None:
+    """Return adopted objects to their stable IDs after execution records clear."""
+
+    library = runtime._installed.library
+    for state in registry_for(runtime).values():
+        for item in state.storages:
+            if item.current_object_id == item.persistent_object_id:
+                continue
+            _require_status(
+                library.shadowspill_pytorch_rekey_object(
+                    item.current_object_id,
+                    item.persistent_object_id,
+                ),
+                f"restore persistent object ID {item.persistent_object_id}",
+            )
+            item.current_object_id = item.persistent_object_id
+
+
+def _storage_roots(
+    tensors: Iterable[NamedTensor],
+) -> tuple[tuple[torch.Tensor, tuple[TensorView, ...]], ...]:
+    grouped: dict[int, tuple[torch.Tensor, list[TensorView]]] = {}
+    seen_tensors: set[int] = set()
+    for item in tensors:
+        tensor = item.tensor
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"state entry {item.name!r} is not a tensor")
+        if tensor.device.type != "cpu":
+            raise RuntimeConfigurationError(
+                f"state entry {item.name!r} must be CPU resident before relocation"
+            )
+        if tensor.layout is not torch.strided:
+            raise RuntimeConfigurationError(
+                f"state entry {item.name!r} must use strided storage"
+            )
+        storage = tensor.untyped_storage()
+        if storage.nbytes() == 0 or id(tensor) in seen_tensors:
+            continue
+        seen_tensors.add(id(tensor))
+        storage_identity = int(storage._cdata)
+        entry = grouped.get(storage_identity)
+        if entry is None:
+            anchor = torch.empty(0, dtype=torch.uint8, device="cpu").set_(storage)
+            entry = (anchor, [])
+            grouped[storage_identity] = entry
+        entry[1].append(
+            TensorView(
+                tensor=tensor,
+                shape=tuple(tensor.shape),
+                stride=tuple(tensor.stride()),
+                storage_offset=int(tensor.storage_offset()),
+                requires_grad=bool(tensor.requires_grad),
+            )
+        )
+    return tuple((anchor, tuple(views)) for anchor, views in grouped.values())
+
+
+def _restore_tensor_views(state: PersistentState) -> None:
+    for storage in state.storages:
+        for view in storage.views:
+            replacement = torch.empty(0, dtype=view.tensor.dtype, device="cpu").set_(
+                storage.anchor.untyped_storage(),
+                view.storage_offset,
+                view.shape,
+                view.stride,
+            )
+            replacement.requires_grad_(view.requires_grad)
+            view.tensor.data = replacement
+
+
+def _validate_pool(runtime: Runtime, pool: str) -> None:
+    runtime._require_state_operation_allowed()
+    try:
+        selected = runtime.pools[pool]
+    except KeyError as exc:
+        raise RuntimeConfigurationError(f"unknown runtime pool {pool!r}") from exc
+    if selected.kind != "pinned_host":
+        raise RuntimeConfigurationError(
+            "the current PyTorch state relocation path requires a pinned-host pool"
+        )
+
+
+def _snapshot(library: Any, object_id: int) -> ObjectSnapshot:
+    result = ObjectSnapshot()
+    _require_status(
+        library.shadowspill_pytorch_object_snapshot(object_id, ctypes.byref(result)),
+        f"inspect persistent object {object_id}",
+    )
+    return result
+
+
+def _require_status(raw_status: Any, operation: str) -> None:
+    status = int(raw_status)
+    if status != 0:
+        raise RuntimeError(f"{operation} failed with status {status}")
+
+
+__all__ = [
+    "NamedTensor",
+    "adopt_persistent_tensor",
+    "externalize_tensors",
+    "own_persistent_state",
+    "persistent_state",
+    "register_tensor_storages",
+    "relocate_tensors",
+    "restore_persistent_object_ids",
+    "restore_persistent_state",
+    "unregister_tensor_storages",
+]

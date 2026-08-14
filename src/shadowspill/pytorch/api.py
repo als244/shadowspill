@@ -13,6 +13,32 @@ from shadowspill.pytorch.cache import PlanningCache
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
+from shadowspill.pytorch.state.model import require_model_state_for_plan
+from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+
+
+def _cleanup_failed_plan(
+    runtime: Runtime,
+    *,
+    planning_started: bool,
+    error: BaseException,
+) -> None:
+    """Best-effort rollback while retaining every cleanup failure as context."""
+
+    operations: list[tuple[str, Any]] = []
+    if planning_started:
+        operations.append(("abort runtime plan", runtime._abort_plan))
+    operations.append(
+        (
+            "restore persistent object identities",
+            lambda: restore_persistent_object_ids(runtime),
+        )
+    )
+    for description, operation in operations:
+        try:
+            operation()
+        except BaseException as cleanup_error:
+            error.add_note(f"Failed to {description}: {cleanup_error}")
 
 
 def plan_forward(
@@ -36,6 +62,10 @@ def plan_forward(
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
+    ``model`` must be the value returned by :func:`relocate_model_state` for
+    this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
+    bindings; it never relocates or releases model storage.
+
     The runtime and pool roles are explicit. The original model remains
     runtime-owned until the returned callable is closed. ``profiling_metadata``
     is a JSON-compatible, key-only description of value-sensitive profiling
@@ -55,21 +85,28 @@ def plan_forward(
 
     from .planning.forward import build_forward
 
-    memory = runtime._resolve_plan(
-        execution=execution,
-        spill=spill,
-        execution_budget=execution_budget,
-        spill_budget=spill_budget,
-        execution_device=execution_device,
+    require_model_state_for_plan(
+        model,
+        runtime=runtime,
+        pool=spill,
     )
-    cache = PlanningCache.resolve(
-        planning_cachedir,
-        save_plan=save_plan,
-        force_fresh=force_fresh,
-        overwrite_plan=overwrite_plan,
-        implementation_revision=implementation_revision,
-    )
+    planning_started = False
     try:
+        memory = runtime._resolve_plan(
+            execution=execution,
+            spill=spill,
+            execution_budget=execution_budget,
+            spill_budget=spill_budget,
+            execution_device=execution_device,
+        )
+        planning_started = True
+        cache = PlanningCache.resolve(
+            planning_cachedir,
+            save_plan=save_plan,
+            force_fresh=force_fresh,
+            overwrite_plan=overwrite_plan,
+            implementation_revision=implementation_revision,
+        )
         with cache.activate_pytorch():
             return build_forward(
                 model,
@@ -81,10 +118,11 @@ def plan_forward(
                 profiling_metadata=profiling_metadata,
             )
     except BaseException as error:
-        try:
-            runtime._abort_plan()
-        except BaseException as cleanup_error:
-            error.add_note(f"Runtime planning cleanup also failed: {cleanup_error}")
+        _cleanup_failed_plan(
+            runtime,
+            planning_started=planning_started,
+            error=error,
+        )
         raise
 
 
@@ -112,6 +150,10 @@ def plan_step(
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
+    ``model`` must be the value returned by :func:`relocate_model_state` for
+    this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
+    bindings; it never relocates or releases model storage.
+
     ``verbose=True`` reports each planning phase and unique structural ABI as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
@@ -127,21 +169,28 @@ def plan_step(
 
     from .planning.training import build_training
 
-    memory = runtime._resolve_plan(
-        execution=execution,
-        spill=spill,
-        execution_budget=execution_budget,
-        spill_budget=spill_budget,
-        execution_device=execution_device,
+    require_model_state_for_plan(
+        model,
+        runtime=runtime,
+        pool=spill,
     )
-    cache = PlanningCache.resolve(
-        planning_cachedir,
-        save_plan=save_plan,
-        force_fresh=force_fresh,
-        overwrite_plan=overwrite_plan,
-        implementation_revision=implementation_revision,
-    )
+    planning_started = False
     try:
+        memory = runtime._resolve_plan(
+            execution=execution,
+            spill=spill,
+            execution_budget=execution_budget,
+            spill_budget=spill_budget,
+            execution_device=execution_device,
+        )
+        planning_started = True
+        cache = PlanningCache.resolve(
+            planning_cachedir,
+            save_plan=save_plan,
+            force_fresh=force_fresh,
+            overwrite_plan=overwrite_plan,
+            implementation_revision=implementation_revision,
+        )
         with cache.activate_pytorch():
             return build_training(
                 model,
@@ -156,10 +205,11 @@ def plan_step(
                 profiling_metadata=profiling_metadata,
             )
     except BaseException as error:
-        try:
-            runtime._abort_plan()
-        except BaseException as cleanup_error:
-            error.add_note(f"Runtime planning cleanup also failed: {cleanup_error}")
+        _cleanup_failed_plan(
+            runtime,
+            planning_started=planning_started,
+            error=error,
+        )
         raise
 
 

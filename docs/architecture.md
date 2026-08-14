@@ -155,6 +155,14 @@ pytorch/materialization/
 ├── forward.py         forward model/input storage ownership
 └── training.py        accumulated-training and optimizer storage ownership
 
+pytorch/state/
+├── model.py           public model relocation/externalization lifecycle
+├── model_copy.py      payload-free module copy over runtime spill storages
+├── optimizer.py       optimizer-state relocation/externalization
+├── storage.py         generic tensor-storage/runtime-object operations
+├── records.py         persistent storage, view, and source-owner records
+└── registry.py        runtime-scoped persistent frontend ownership
+
 pytorch/execution/
 ├── forward.py         ordinary forward task dispatch
 ├── training.py        centralized before/run/after training dispatch

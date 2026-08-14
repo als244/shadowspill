@@ -750,6 +750,18 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
     return shadowspill_register_object(runtime, &description);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_rekey_object(
+    uint64_t object_id,
+    uint64_t replacement_object_id
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_rekey_object(runtime, object_id, replacement_object_id);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_write_spill_object(
     uint64_t object_id,
     uint64_t size_bytes,
@@ -1243,6 +1255,28 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     return shadowspill_object_snapshot(runtime, object_id, snapshot);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_validate_spill_binding(
+    uint64_t object_id,
+    uint64_t address,
+    uint64_t size_bytes
+) {
+    if (address == 0U && size_bytes != 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatus status = shadowspill_pytorch_object_snapshot(
+        object_id, &snapshot
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    return snapshot.size_bytes == size_bytes && snapshot.has_spill_lease &&
+            snapshot.spill_current &&
+            snapshot.spill_pointer == (void *)(uintptr_t)address
+        ? SHADOWSPILL_RUNTIME_OK
+        : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_task_labels_configure(

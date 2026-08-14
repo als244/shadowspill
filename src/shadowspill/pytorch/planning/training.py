@@ -71,7 +71,7 @@ from ..materialization import representative_cpu_inputs
 from ..partition import (
     PartitionSpec,
 )
-from ..runtime_adapter import PlanMemory
+from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
     output_bindings_for_entrypoints,
     physical_admission,
@@ -268,6 +268,7 @@ def materialize_training_state(
     captured: TrainingCaptureArtifacts,
     *,
     opt: Callable[[Any], torch.optim.Optimizer],
+    runtime: Runtime,
     timer: PlanningTimer,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once."""
@@ -282,6 +283,7 @@ def materialize_training_state(
                 captured.captures,
                 captured.cpu_inputs,
                 bridge,
+                runtime=runtime,
                 device_ordinal=captured.device_ordinal,
             )
         with timer.measure("optimizer_capture"):
@@ -875,7 +877,13 @@ def build_training(
         artifact_cache=artifacts,
         timer=timer,
     )
-    materialized = materialize_training_state(model, captured, opt=opt, timer=timer)
+    materialized = materialize_training_state(
+        model,
+        captured,
+        opt=opt,
+        runtime=memory.runtime,
+        timer=timer,
+    )
     try:
         profiled = profile_training_tasks(
             captured,

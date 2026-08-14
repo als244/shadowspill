@@ -360,6 +360,7 @@ def admit_forward_plan(
                 captured.capture,
                 captured.cpu_inputs,
                 bridge,
+                runtime=memory.runtime,
                 device_ordinal=captured.device_ordinal,
             )
         with timer.measure("physical_sealing"):

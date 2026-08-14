@@ -19,6 +19,7 @@ from shadowspill.pytorch.materialization import (
     TrainingMaterializedState,
 )
 from shadowspill.pytorch.runtime_adapter import Runtime
+from shadowspill.pytorch.state.storage import restore_persistent_object_ids
 
 
 class PlannedForward:
@@ -93,6 +94,7 @@ class PlannedForward:
         self._state.restore_cpu_and_unregister()
         self._closed = True
         self._runtime._release_plan()
+        restore_persistent_object_ids(self._runtime)
 
     def __enter__(self) -> PlannedForward:
         if self._closed:
@@ -243,6 +245,7 @@ class PlannedTrainStep:
         self._state.restore_cpu_and_unregister()
         self._closed = True
         self._runtime._release_plan()
+        restore_persistent_object_ids(self._runtime)
 
     def __enter__(self) -> PlannedTrainStep:
         if self._closed:

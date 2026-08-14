@@ -182,6 +182,8 @@ class Runtime:
             self._closed = False
             self._active_plans = 0
             self._planning = False
+            self._persistent_state_count = 0
+            self._next_persistent_object_id = 1 << 62
             execution_pool = MemoryPool(
                 name=device_name,
                 pool_id=0,
@@ -259,6 +261,11 @@ class Runtime:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while a callable or in-progress plan owns it"
                 )
+            if self._persistent_state_count != 0:
+                raise RuntimeConfigurationError(
+                    "cannot close Runtime while persistent PyTorch state remains; "
+                    "externalize it with release_runtime=True first"
+                )
             status = int(
                 self._installed.library.shadowspill_pytorch_allocator_wait_idle()
             )
@@ -267,6 +274,41 @@ class Runtime:
                     f"runtime idle wait failed with status {status}"
                 )
             self._closed = True
+
+    def _reserve_persistent_object_ids(self, count: int) -> tuple[int, ...]:
+        """Reserve frontend-owned runtime identities outside dense plan IDs."""
+
+        if count < 0:
+            raise ValueError("persistent object count must be non-negative")
+        with self._lock:
+            self._require_state_operation_allowed()
+            first = self._next_persistent_object_id
+            limit = first + count
+            if limit >= (1 << 63):
+                raise RuntimeConfigurationError(
+                    "persistent PyTorch object identity space is exhausted"
+                )
+            self._next_persistent_object_id = limit
+            return tuple(range(first, limit))
+
+    def _retain_persistent_state(self) -> None:
+        with self._lock:
+            self._require_state_operation_allowed()
+            self._persistent_state_count += 1
+
+    def _release_persistent_state(self) -> None:
+        with self._lock:
+            if self._persistent_state_count <= 0:
+                raise RuntimeError("persistent state ownership underflow")
+            self._persistent_state_count -= 1
+
+    def _require_state_operation_allowed(self) -> None:
+        with self._lock:
+            self._require_open()
+            if self._active_plans != 0 or self._planning:
+                raise RuntimeConfigurationError(
+                    "persistent state relocation requires an idle Runtime"
+                )
 
     def __enter__(self) -> Runtime:
         self._require_open()

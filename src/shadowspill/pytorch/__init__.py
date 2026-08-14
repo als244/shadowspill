@@ -41,6 +41,12 @@ from .runtime_adapter import (
     TransferCapabilities,
     TransferProfile,
 )
+from .state import (
+    externalize_model_state,
+    externalize_optimizer_state,
+    relocate_model_state,
+    relocate_optimizer_state,
+)
 
 __all__ = [
     "CaptureError",
@@ -79,6 +85,10 @@ __all__ = [
     "TensorSpec",
     "TransferCapabilities",
     "TransferProfile",
+    "externalize_model_state",
+    "externalize_optimizer_state",
     "plan_forward",
     "plan_step",
+    "relocate_model_state",
+    "relocate_optimizer_state",
 ]

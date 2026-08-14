@@ -4,7 +4,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import InputGuardError, plan_forward
+from shadowspill.pytorch import (
+    InputGuardError,
+    externalize_model_state,
+    plan_forward,
+    relocate_model_state,
+)
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
 from .runtime_test_support import public_test_runtime
@@ -34,13 +39,20 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     model = _Network().eval()
     reference = _Network().eval()
     reference.load_state_dict(model.state_dict())
-    parameter_ids = tuple(id(value) for value in model.parameters())
     inputs = torch.randn(3, 128)
+    runtime = public_test_runtime()
+    model = relocate_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
+    parameter_ids = tuple(id(value) for value in model.parameters())
 
     planned = plan_forward(
         model,
         example_inputs=[inputs, 17],
-        runtime=public_test_runtime(),
+        runtime=runtime,
         execution="execution",
         spill="spill",
         planning_cachedir=tmp_path,
@@ -79,6 +91,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         planned([inputs, 16])
     planned.close()
     planned.close()
+    externalize_model_state(model, runtime=runtime, release_runtime=True)
 
     assert tuple(id(value) for value in model.parameters()) == parameter_ids
     assert all(value.device.type == "cpu" for value in model.parameters())

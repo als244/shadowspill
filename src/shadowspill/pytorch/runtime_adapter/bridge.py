@@ -413,6 +413,39 @@ class RuntimeBridge:
         )
         self._registered.add(alias_id)
 
+    def adopt_persistent_spill_object(
+        self,
+        alias_id: str,
+        *,
+        current_object_id: int,
+        size_bytes: int,
+        spill_pointer: int,
+    ) -> int:
+        """Adopt one preloaded spill lease without allocating or copying it."""
+
+        expected = self._size(alias_id)
+        if size_bytes != expected:
+            raise PlanningError(
+                f"persistent payload for {alias_id!r} has {size_bytes} bytes; "
+                f"the plan requires {expected}"
+            )
+        target_object_id = _dense_id(alias_id, "alias_")
+        if current_object_id != target_object_id:
+            self._require(
+                self.library.shadowspill_pytorch_rekey_object(
+                    current_object_id, target_object_id
+                ),
+                f"adopt persistent object as {alias_id}",
+            )
+        self._require(
+            self.library.shadowspill_pytorch_validate_spill_binding(
+                target_object_id, spill_pointer, size_bytes
+            ),
+            f"validate persistent object {alias_id}",
+        )
+        self._registered.add(alias_id)
+        return target_object_id
+
     def register_placeholder(self, alias_id: str) -> None:
         """Register a logical alias bundle before its first production."""
 

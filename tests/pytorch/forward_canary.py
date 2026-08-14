@@ -11,7 +11,13 @@ import torch
 import torch.nn as nn
 
 from shadowspill.memory import device, pinned_host
-from shadowspill.pytorch import InputGuardError, Runtime, plan_forward
+from shadowspill.pytorch import (
+    InputGuardError,
+    Runtime,
+    externalize_model_state,
+    plan_forward,
+    relocate_model_state,
+)
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
 
@@ -48,7 +54,6 @@ def main() -> int:
         model = _ForwardModel().eval()
         reference = _ForwardModel().eval()
         reference.load_state_dict(model.state_dict())
-        parameter_ids = tuple(id(value) for value in model.parameters())
         inputs = torch.randn(4, 256)
         runtime = Runtime(
             pools={
@@ -60,6 +65,13 @@ def main() -> int:
             },
             library_path=adapter,
         )
+        model = relocate_model_state(
+            model,
+            runtime=runtime,
+            pool="spill",
+            release_source=True,
+        )
+        parameter_ids = tuple(id(value) for value in model.parameters())
         planned = plan_forward(
             model,
             example_inputs=[inputs, 16],
@@ -154,6 +166,7 @@ def main() -> int:
 
         planned.close()
         planned.close()
+        externalize_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("close replaced a Parameter object")

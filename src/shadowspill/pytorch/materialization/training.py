@@ -22,6 +22,12 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.state.storage import (
+    adopt_persistent_tensor,
+    persistent_state,
+    restore_persistent_state,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,12 +50,14 @@ class TrainingMaterializedState:
         example_inputs: tuple[Sequence[Any], ...],
         bridge: RuntimeBridge,
         *,
+        runtime: Runtime,
         device_ordinal: int,
     ) -> None:
         self.model = model
         self.layout = layout
         self.captures = captures
         self.bridge = bridge
+        self.runtime = runtime
         self.device = torch.device("cuda", device_ordinal)
         self.object_store: dict[str, torch.Tensor] = {}
         self.object_tensors: dict[str, torch.Tensor] = {}
@@ -61,6 +69,8 @@ class TrainingMaterializedState:
         self._input_aliases: set[str] = set()
         self._user_alias_by_position: tuple[dict[int, str], ...] = ()
         self._planning_cpu_owners: dict[str, torch.Tensor] = {}
+        self._persistent_aliases: set[str] = set()
+        self._persistent_state = persistent_state(runtime, model)
         self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
             group.alias_group_id: tuple(
                 item.object_id
@@ -329,19 +339,27 @@ class TrainingMaterializedState:
         if self._closed:
             return
         self.bridge.wait_idle()
+        restore_persistent_state(self.runtime, self._persistent_state)
         owners = (
             self._planning_cpu_owners
             if self._model_on_cpu
-            else self._read_model_aliases()
+            else self._read_model_aliases(
+                aliases=self._model_aliases - self._persistent_aliases
+            )
         )
         assigned: set[int] = set()
         for item in self._registrations():
             if id(item.tensor) in assigned:
                 continue
             alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            if alias_id in self._persistent_aliases:
+                assigned.add(id(item.tensor))
+                continue
             item.tensor.data = self._cpu_view(owners[alias_id], item.tensor)
             assigned.add(id(item.tensor))
-        self.bridge.unregister(self.bridge.registered_aliases())
+        self.bridge.unregister(
+            self.bridge.registered_aliases() - self._persistent_aliases
+        )
         self.object_store.clear()
         self.object_tensors.clear()
         self.generations.clear()
@@ -408,12 +426,28 @@ class TrainingMaterializedState:
         ordinal: int,
     ) -> None:
         source = values[0][0]
-        self.bridge.register_host_tensor(
-            alias_id,
+        persistent = adopt_persistent_tensor(
+            self.runtime,
+            self.model,
             source,
-            retain_spill_copy=retain_spill_copy,
+            self.bridge,
+            alias_id,
         )
-        self._preserve_planning_cpu_owner(alias_id, source)
+        if persistent is None:
+            if alias_id in self._model_aliases:
+                raise PlanningError(
+                    f"registered model alias {alias_id!r} has no relocated "
+                    "runtime storage"
+                )
+            self.bridge.register_host_tensor(
+                alias_id,
+                source,
+                retain_spill_copy=retain_spill_copy,
+            )
+            self._preserve_planning_cpu_owner(alias_id, source)
+        else:
+            self._persistent_aliases.add(alias_id)
+            self._planning_cpu_owners[alias_id] = persistent.anchor
         owner = torch.empty(
             source.untyped_storage().nbytes(),
             dtype=torch.uint8,
@@ -509,21 +543,30 @@ class TrainingMaterializedState:
             task_number=(1 << 61) + ordinal,
         )
 
-    def _read_model_aliases(self) -> dict[str, torch.Tensor]:
+    def _read_model_aliases(
+        self,
+        *,
+        aliases: set[str] | None = None,
+    ) -> dict[str, torch.Tensor]:
         self.bridge.wait_idle()
-        owners = self._empty_model_aliases()
+        owners = self._empty_model_aliases(aliases=aliases)
         for alias_id, owner in owners.items():
             self.bridge.read_spill_tensor(alias_id, owner)
         return owners
 
-    def _empty_model_aliases(self) -> dict[str, torch.Tensor]:
+    def _empty_model_aliases(
+        self,
+        *,
+        aliases: set[str] | None = None,
+    ) -> dict[str, torch.Tensor]:
         sizes = {
             item.alias_group_id: item.size_bytes
             for item in self.layout.program.alias_groups
         }
+        selected = self._model_aliases if aliases is None else aliases
         return {
             alias_id: torch.empty(sizes[alias_id], dtype=torch.uint8, device="cpu")
-            for alias_id in self._model_aliases
+            for alias_id in selected
         }
 
     def _registrations(self) -> tuple[_Registration, ...]:

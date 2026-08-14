@@ -166,6 +166,39 @@ int shadowspill_object_table_remove(
     return 0;
 }
 
+int shadowspill_object_table_rekey(
+    ShadowSpillObjectTable *table,
+    ShadowSpillObject *object,
+    uint64_t replacement_object_id
+) {
+    if (table == NULL || object == NULL || table->by_id == NULL ||
+        replacement_object_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        return -1;
+    }
+    pthread_rwlock_wrlock(&table->lock);
+    if (object->ownership_previous_link == NULL ||
+        find_unlocked(table, replacement_object_id) != NULL) {
+        pthread_rwlock_unlock(&table->lock);
+        return -1;
+    }
+    const uint64_t previous_bucket = object_bucket(table, object->object_id);
+    ShadowSpillObject **previous_link = &table->by_id[previous_bucket];
+    while (*previous_link != NULL && *previous_link != object) {
+        previous_link = &(*previous_link)->id_index_next;
+    }
+    if (*previous_link != object) {
+        pthread_rwlock_unlock(&table->lock);
+        return -1;
+    }
+    *previous_link = object->id_index_next;
+    object->object_id = replacement_object_id;
+    const uint64_t replacement_bucket = object_bucket(table, replacement_object_id);
+    object->id_index_next = table->by_id[replacement_bucket];
+    table->by_id[replacement_bucket] = object;
+    pthread_rwlock_unlock(&table->lock);
+    return 0;
+}
+
 void shadowspill_object_retain(ShadowSpillObject *object) {
     if (object != NULL) {
         (void)atomic_fetch_add_explicit(

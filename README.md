@@ -30,13 +30,25 @@ from functools import partial
 import torch
 
 from shadowspill.memory import device, pinned_host
-from shadowspill.pytorch import Runtime, plan_step
+from shadowspill.pytorch import (
+    Runtime,
+    externalize_model_state,
+    plan_step,
+    relocate_model_state,
+)
 
 runtime = Runtime(
     pools={
         "device": device(physical_capacity=24 << 30),
         "spill": pinned_host(capacity=64 << 30),
     }
+)
+
+model = relocate_model_state(
+    model,
+    runtime=runtime,
+    pool="spill",
+    release_source=True,
 )
 
 train_step = plan_step(
@@ -73,6 +85,7 @@ debug_result = train_step(
 step_diagnostics = debug_result.diagnostics.result()
 
 train_step.close()
+externalize_model_state(model, runtime=runtime, release_runtime=True)
 runtime.close()
 ```
 
@@ -87,7 +100,18 @@ costs. It is not passed into the model; the corresponding concrete
 ## Forward
 
 ```python
-from shadowspill.pytorch import plan_forward
+from shadowspill.pytorch import (
+    externalize_model_state,
+    plan_forward,
+    relocate_model_state,
+)
+
+model = relocate_model_state(
+    model,
+    runtime=runtime,
+    pool="spill",
+    release_source=True,
+)
 
 run_forward = plan_forward(
     model,
@@ -98,6 +122,9 @@ run_forward = plan_forward(
 )
 
 outputs = run_forward([tokens, conditioning, metadata])
+
+run_forward.close()
+externalize_model_state(model, runtime=runtime, release_runtime=True)
 ```
 
 `execution_device=None` uses PyTorch's current accelerator device. Passing an

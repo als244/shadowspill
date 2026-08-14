@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include <shadowspill/backend_mock.h>
@@ -60,6 +61,73 @@ static void sleep_milliseconds(uint64_t milliseconds) {
         .tv_nsec = (long)((milliseconds % 1000U) * 1000000U),
     };
     (void)nanosleep(&delay, NULL);
+}
+
+static int spill_object_rekey_preserves_authoritative_lease(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const uint64_t persistent_id = 1001U;
+    const uint64_t plan_id = 17U;
+    const ShadowSpillObjectDescription description = {
+        .object_id = persistent_id,
+        .size_bytes = 32U,
+        .initial_version = 9U,
+        .initially_spill_resident = 1U,
+        .retain_spill_copy = 1U,
+    };
+    uint8_t payload[32];
+    uint8_t restored[32] = {0};
+    for (uint32_t index = 0U; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(index * 7U + 3U);
+    }
+    ShadowSpillObjectSnapshot before = {0};
+    ShadowSpillObjectSnapshot after = {0};
+    ShadowSpillObjectSnapshot fetched = {0};
+    ShadowSpillRuntimeStatistics before_statistics = {0};
+    ShadowSpillRuntimeStatistics after_statistics = {0};
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = plan_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    int failed = shadowspill_register_object(fixture.runtime, &description) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_write_spill_object(
+            fixture.runtime, persistent_id, payload, sizeof(payload)
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+            fixture.runtime, persistent_id, &before
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
+            fixture.runtime, &before_statistics
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_rekey_object(
+            fixture.runtime, persistent_id, plan_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+            fixture.runtime, persistent_id, &after
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_object_snapshot(
+            fixture.runtime, plan_id, &after
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
+            fixture.runtime, &after_statistics
+        ) != SHADOWSPILL_RUNTIME_OK || after.object_id != plan_id ||
+        after.spill_pointer != before.spill_pointer ||
+        after.spill_version != before.spill_version ||
+        after.authoritative_version != before.authoritative_version ||
+        after_statistics.spill_allocated_bytes !=
+            before_statistics.spill_allocated_bytes ||
+        after_statistics.registered_objects !=
+            before_statistics.registered_objects || shadowspill_read_spill_object(
+            fixture.runtime, plan_id, restored, sizeof(restored)
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        memcmp(payload, restored, sizeof(payload)) != 0 || shadowspill_after_task(
+            fixture.runtime, 1U, fixture.compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+            fixture.runtime
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+            fixture.runtime, plan_id, &fetched
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        fetched.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        fetched.execution_pointer == NULL ||
+        memcmp(payload, fetched.execution_pointer, sizeof(payload)) != 0;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
 }
 
 static int prefetch_window_is_enqueued_without_host_blocking(void) {
@@ -774,13 +842,11 @@ static int execution_plan_lifecycle(void) {
             fixture.runtime, &first_plan
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
             fixture.runtime
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_unregister_object(
-            fixture.runtime, object.object_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
-            fixture.runtime
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_resolve_execution(
             fixture.runtime, first_plan.task_id, &handle
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_unregister_object(
+            fixture.runtime, object.object_id
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
             fixture.runtime, &second_plan
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
             fixture.runtime
@@ -971,7 +1037,8 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
 }
 
 int main(void) {
-    return invalid_action(0U, SHADOWSPILL_RUNTIME_PREFETCH) == 0 &&
+    return spill_object_rekey_preserves_authoritative_lease() == 0 &&
+            invalid_action(0U, SHADOWSPILL_RUNTIME_PREFETCH) == 0 &&
             invalid_action(1U, SHADOWSPILL_RUNTIME_RELEASE) == 0 &&
             invalid_action(1U, SHADOWSPILL_RUNTIME_OFFLOAD) == 0 &&
             invalid_before_task(0U) == 0 &&

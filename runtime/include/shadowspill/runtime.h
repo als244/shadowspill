@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 17U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 18U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -289,6 +289,7 @@ typedef struct ShadowSpillObjectSnapshot {
     uint8_t spill_current;
     uint8_t has_spill_lease;
     void *execution_pointer;
+    void *spill_pointer;
     uint64_t retired_generation;
     void *retired_execution_pointer;
 } ShadowSpillObjectSnapshot;
@@ -414,6 +415,19 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
 );
 
 /*
+ * Changes the public identity of one idle SPILL_ONLY or RELEASED object
+ * without moving any pool lease or payload. This is used by framework
+ * adapters to transfer a preloaded generic lease into and out of a resolved
+ * execution plan. No execution record or queued action may reference the
+ * object while it is rekeyed.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_rekey_object(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint64_t replacement_object_id
+);
+
+/*
  * Copies one exact object payload into its existing spill lease before execution
  * materialization. The object must be SPILL_ONLY with no execution allocation.
  * Source is borrowed for the call and may be NULL only for a zero-size object.
@@ -521,10 +535,11 @@ shadowspill_admit_execution(
 
 /*
  * Releases every immutable execution record admitted for the completed plan.
- * The runtime must be idle, no task boundary may be active, and every logical
- * plan object must already be unregistered. Ordinary caller-owned allocations
- * are unaffected. This explicitly synchronizing lifecycle boundary permits a
- * later plan to reuse the same dense task and object identities.
+ * The runtime must be idle and no task boundary may be active. Logical objects
+ * may outlive an execution plan; persistent frontend state is one such owner.
+ * Ordinary caller-owned allocations are unaffected. This explicitly
+ * synchronizing lifecycle boundary permits a later plan to reuse the same
+ * dense task identities.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);
