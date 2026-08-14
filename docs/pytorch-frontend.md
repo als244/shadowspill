@@ -119,10 +119,11 @@ assert set(checkpoint) == {"model", "optimizer", "step"}
 torch.save(checkpoint, checkpoint_path)
 ```
 
-### Saving asynchronously
+### Overlapping filesystem serialization with training
 
-Because `state_dict()` returns an isolated copy, filesystem serialization may
-run in a background thread while later training steps use and mutate the
+After the synchronous `state_dict()` call has finished creating its isolated
+anonymous-memory copy, serialization from that copy to the filesystem may run
+in a background thread while later training steps use and mutate the original
 runtime-owned state:
 
 ```python
@@ -148,10 +149,12 @@ with ThreadPoolExecutor(max_workers=1) as checkpoint_io:
 del checkpoint  # Permit the ordinary CPU snapshot allocations to be reclaimed.
 ```
 
-Only serialization is asynchronous in this example; `state_dict()` itself is
-synchronous. Its tensors occupy ordinary anonymous, pageable CPU memory. That
-memory is not allocated from a ShadowSpill pool, is not included in
-`spill_budget`, and is not reported by ShadowSpill memory telemetry. The
+The overlap begins only after `state_dict()` returns. The runtime-to-anonymous
+memory synchronization and copy are entirely synchronous; only the subsequent
+anonymous-memory-to-filesystem serialization is asynchronous with respect to
+continued training. Snapshot tensors occupy ordinary anonymous, pageable CPU
+memory. That memory is not allocated from a ShadowSpill pool, is not included
+in `spill_budget`, and is not reported by ShadowSpill memory telemetry. The
 process can therefore use approximately one additional checkpoint's worth of
 system RAM until serialization completes and all references to the checkpoint
 are released.
