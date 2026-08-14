@@ -421,7 +421,9 @@ def main() -> int:
     if (
         int(
             library.shadowspill_pytorch_transfer_output_to_caller(
-                caller_binding.object_id, ctypes.byref(caller_allocation)
+                caller_binding.object_id,
+                torch.cuda.current_stream().cuda_stream,
+                ctypes.byref(caller_allocation),
             )
         )
         != 0

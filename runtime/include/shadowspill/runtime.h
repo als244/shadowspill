@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 23U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 24U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -496,14 +496,17 @@ shadowspill_replace_object_allocation(
 );
 
 /*
- * Removes one EXECUTION_READY object while leaving its allocation live under
- * ordinary caller ownership. No queued action may reference the object. The
+ * Removes one EXECUTION_READY or PREFETCHING object while leaving its
+ * allocation live under ordinary caller ownership.  If a fetch is still in
+ * flight, the function inserts its readiness dependency on consumer_stream;
+ * the fetch action retains the detached object until completion.  The
  * framework's eventual logical free and recorded streams govern range reuse.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_transfer_object_to_caller(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
+    ShadowSpillBackendStream consumer_stream,
     ShadowSpillAllocation *allocation
 );
 

@@ -956,6 +956,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_replace_registered_allocation(
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_output_to_caller(
     uint64_t object_id,
+    uintptr_t consumer_stream,
     ShadowSpillAllocation *allocation
 ) {
     int32_t device_ordinal;
@@ -964,12 +965,16 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_output_to_caller(
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
         : shadowspill_transfer_object_to_caller(
-              runtime, object_id, allocation
+              runtime,
+              object_id,
+              shadowspill_cuda_wrap_stream(consumer_stream),
+              allocation
           );
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
-    uint64_t allocation_id
+    uint64_t allocation_id,
+    uintptr_t stream
 ) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -977,7 +982,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
         : shadowspill_free(
-              runtime, allocation_id, shadowspill_cuda_wrap_stream(0U)
+              runtime, allocation_id, shadowspill_cuda_wrap_stream(stream)
           );
 }
 

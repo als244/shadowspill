@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 32
-RUNTIME_ABI_VERSION: Final = 23
+ADAPTER_ABI_VERSION: Final = 33
+RUNTIME_ABI_VERSION: Final = 24
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -615,7 +615,7 @@ def _configure_objects(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_transfer_output_to_caller",
-        [ctypes.c_uint64, ctypes.POINTER(Allocation)],
+        [ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(Allocation)],
         ctypes.c_uint32,
     )
     _signature(

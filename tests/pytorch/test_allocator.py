@@ -218,6 +218,7 @@ def test_adapter_signatures_are_configured_together() -> None:
     ]
     assert library.shadowspill_pytorch_transfer_output_to_caller.argtypes == [
         ctypes.c_uint64,
+        ctypes.c_size_t,
         ctypes.POINTER(Allocation),
     ]
     assert library.shadowspill_pytorch_promote_allocation.argtypes == [

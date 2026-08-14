@@ -222,6 +222,77 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
     return failed ? -1 : 0;
 }
 
+static int inflight_prefetch_transfers_to_caller(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = 100000000U,
+        .event_delay_nanoseconds = 50000000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 100000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+    const ShadowSpillObjectDescription object = {
+        .object_id = 71U,
+        .size_bytes = 32U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillAllocation caller = {0};
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_task(
+            runtime, 2U, compute, &object.object_id, 1U, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 2U, compute, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_transfer_object_to_caller(
+            runtime, object.object_id, compute, &caller
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        caller.allocation_id != binding.allocation_id ||
+        shadowspill_object_snapshot(
+            runtime, object.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_free(runtime, caller.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.fetch_transfers != 1U ||
+        statistics.live_allocations != 0U;
+    shadowspill_runtime_destroy(runtime);
+    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int offload_window_is_enqueued_without_host_serialization(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
@@ -736,7 +807,7 @@ static int valid_transition_paths(void) {
     }
     ShadowSpillAllocation caller = {0};
     if (shadowspill_transfer_object_to_caller(
-            fixture.runtime, device_created.object_id, &caller
+            fixture.runtime, device_created.object_id, fixture.compute, &caller
         ) != SHADOWSPILL_RUNTIME_OK ||
         caller.allocation_id != third.allocation_id ||
         shadowspill_object_snapshot(
@@ -1302,6 +1373,7 @@ int main(void) {
     REQUIRE_CANARY(chained_output_allocation_handoff());
     REQUIRE_CANARY(valid_transition_paths());
     REQUIRE_CANARY(prefetch_window_is_enqueued_without_host_blocking());
+    REQUIRE_CANARY(inflight_prefetch_transfers_to_caller());
     REQUIRE_CANARY(offload_window_is_enqueued_without_host_serialization());
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());

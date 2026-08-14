@@ -23,6 +23,7 @@ struct RangeGuard {
 
 struct CallerLease {
   uint64_t allocation_id;
+  int32_t device_ordinal;
 };
 
 void relocate_cpu_storages(
@@ -137,7 +138,11 @@ void externalize_cpu_storages(
 void release_caller_lease(void* context) {
   auto* lease = static_cast<CallerLease*>(context);
   if (lease != nullptr) {
-    (void)shadowspill_pytorch_release_caller_allocation(lease->allocation_id);
+    const c10::cuda::CUDAStream stream =
+        c10::cuda::getCurrentCUDAStream(lease->device_ordinal);
+    (void)shadowspill_pytorch_release_caller_allocation(
+        lease->allocation_id,
+        reinterpret_cast<uintptr_t>(stream.stream()));
     delete lease;
   }
 }
@@ -596,17 +601,13 @@ at::Tensor transfer_storage_to_caller(
       "caller output binding is invalid: ",
       shadowspill_runtime_status_string(status));
 
-  auto* lease = new CallerLease{static_cast<uint64_t>(allocation_id)};
-  c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
-      reinterpret_cast<void*>(static_cast<uintptr_t>(address)),
-      lease,
-      release_caller_lease,
-      tensor.device()));
-  prior.clear();
-
   ShadowSpillAllocation allocation = {};
+  const c10::cuda::CUDAStream stream = c10::cuda::getCurrentCUDAStream(
+      static_cast<c10::DeviceIndex>(tensor.get_device()));
   status = shadowspill_pytorch_transfer_output_to_caller(
-      static_cast<uint64_t>(object_id), &allocation);
+      static_cast<uint64_t>(object_id),
+      reinterpret_cast<uintptr_t>(stream.stream()),
+      &allocation);
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "caller output transfer failed: ",
@@ -617,6 +618,14 @@ at::Tensor transfer_storage_to_caller(
           allocation.pointer == reinterpret_cast<void*>(
               static_cast<uintptr_t>(address)),
       "caller output allocation changed during transfer");
+  auto* lease = new CallerLease{
+      static_cast<uint64_t>(allocation_id), tensor.get_device()};
+  c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
+      reinterpret_cast<void*>(static_cast<uintptr_t>(address)),
+      lease,
+      release_caller_lease,
+      tensor.device()));
+  prior.clear();
   return tensor;
 }
 
