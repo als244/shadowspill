@@ -31,7 +31,8 @@ typedef struct ShadowSpillMemoryPoolBackend {
     uint32_t abi_version;
     void *context;
     int (*allocate_arena)(void *context, uint64_t bytes, void **base);
-    int (*free_arena)(void *context, void *base);
+    /* Idempotently close and release this pool's physical arena. */
+    int (*close)(void *context, void *base);
 } ShadowSpillMemoryPoolBackend;
 
 /*

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import replace
+from typing import Any
 
 import pytest
 import torch
@@ -11,6 +12,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     RuntimeExecutionError,
 )
+from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 from tests.ir._examples import representative_program
 
 
@@ -18,9 +20,7 @@ class _FailureLibrary:
     def shadowspill_pytorch_abort_task_range(self) -> None:
         self.aborted = True
 
-    def shadowspill_pytorch_allocator_failure(self, output: object) -> int:
-        failure = ctypes.cast(output, ctypes.POINTER(ctypes.c_uint8))
-        del failure
+    def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
         from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 
         result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
@@ -40,24 +40,36 @@ def test_failed_task_translates_latched_allocator_diagnostics() -> None:
     library = _FailureLibrary()
     bridge = RuntimeBridge(library, representative_program())
     original = RuntimeError("tensor data is not allocated")
+    task = ExecutionTaskIdentity(
+        "execution_000017",
+        "microbatch_0001.stage_0004.backward.recompute",
+        "task_000007",
+    )
 
     with pytest.raises(RuntimeExecutionError) as caught:
-        bridge.abort_task_after_failure("execute task task_000007", original)
+        bridge.abort_task_after_failure("execute task task_000007", original, task=task)
 
     assert library.aborted
     assert caught.value.__cause__ is original
     message = str(caught.value)
-    assert "task_000007" in message
-    assert "requested=525336576" in message
-    assert "free=600000000" in message
-    assert "largest_free_range=400000000" in message
+    assert "ShadowSpill no-progress OOM" in message
+    assert "execution_task: execution_000017" in message
+    assert "semantic_task: microbatch_0001.stage_0004.backward.recompute" in message
+    assert "canonical_task: task_000007" in message
+    assert "requested: 525336576" in message
+    assert "free: 600000000" in message
+    assert "largest_free_range: 400000000" in message
+    assert caught.value.diagnostics is not None
+    assert caught.value.diagnostics.as_dict()["execution_task_id"] == (
+        "execution_000017"
+    )
 
 
 class _HealthyLibrary:
     def shadowspill_pytorch_abort_task_range(self) -> None:
         self.aborted = True
 
-    def shadowspill_pytorch_allocator_failure(self, output: object) -> int:
+    def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
         del output
         return 0
 
@@ -72,12 +84,33 @@ def test_failed_task_preserves_original_error_without_allocator_failure() -> Non
     assert library.aborted
 
 
+class _BackendFailureLibrary(_FailureLibrary):
+    def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
+        from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+
+        result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
+        result.status = 7
+        result.device_ordinal = 0
+        result.runtime.status = 7
+        return 7
+
+
+def test_failed_task_preserves_original_error_for_non_oom_runtime_failure() -> None:
+    library = _BackendFailureLibrary()
+    bridge = RuntimeBridge(library, representative_program())
+    original = RuntimeError("CUDA illegal memory access")
+
+    bridge.abort_task_after_failure("execute task task_000007", original)
+
+    assert library.aborted
+
+
 class _LabelLibrary:
     def __init__(self) -> None:
         self.labels: tuple[str, ...] = ()
 
     def shadowspill_pytorch_task_labels_configure(
-        self, values: object, count: int
+        self, values: Any, count: int
     ) -> int:
         labels = ctypes.cast(values, ctypes.POINTER(ctypes.c_char_p))
         self.labels = tuple(labels[index].decode() for index in range(count))

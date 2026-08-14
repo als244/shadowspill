@@ -86,3 +86,63 @@ ShadowSpillRuntimeStatus shadowspill_runtime_failure(
     pthread_mutex_unlock(&runtime->failure_lock);
     return SHADOWSPILL_RUNTIME_OK;
 }
+
+ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
+    ShadowSpillRuntime *runtime
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
+    shadowspill_memory_pool_lock_foreground(pool);
+    pthread_mutex_lock(&runtime->failure_lock);
+    const ShadowSpillRuntimeStatus failure = shadowspill_failure_status(runtime);
+    ShadowSpillRuntimeStatus status = failure;
+    if (failure == SHADOWSPILL_RUNTIME_OK) {
+        status = SHADOWSPILL_RUNTIME_OK;
+    } else if (failure != SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+        status = failure;
+    } else if (runtime->blocked_allocators != 0U) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    } else {
+        /*
+         * Never clear the latch while a logically freed execution lease has
+         * no published retirement record. A fence without a queued record is
+         * not a progress source either. The task boundary or abort path must
+         * publish the complete causal retirement before recovery.
+         */
+        for (const ShadowSpillMemoryLease *allocation =
+                 runtime->active_execution_leases;
+             allocation != NULL; allocation = allocation->active_next) {
+            if (allocation->logical_freed && allocation->pointer != NULL &&
+                !allocation->retirement_preparing &&
+                allocation->retirement_enqueued_generation !=
+                    allocation->generation) {
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+                break;
+            }
+        }
+    }
+    if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+        runtime->failure = (ShadowSpillRuntimeFailure){
+            .status = SHADOWSPILL_RUNTIME_OK,
+            .object_id = SHADOWSPILL_RUNTIME_NO_ID,
+            .allocation_id = SHADOWSPILL_RUNTIME_NO_ID,
+        };
+        atomic_store_explicit(
+            &runtime->failure_status,
+            SHADOWSPILL_RUNTIME_OK,
+            memory_order_release
+        );
+        status = SHADOWSPILL_RUNTIME_OK;
+    }
+    pthread_mutex_unlock(&runtime->failure_lock);
+    shadowspill_memory_pool_unlock_foreground(pool);
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        pthread_cond_broadcast(&runtime->condition);
+        pthread_cond_broadcast(&pool->capacity_changed);
+        shadowspill_idle_notify(runtime);
+        shadowspill_notify_worker(runtime);
+    }
+    return status;
+}

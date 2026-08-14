@@ -233,6 +233,54 @@ def _selection_portfolio(
     )
 
 
+def validate_schedule_feasibility(
+    program: Program,
+    *,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...] = (),
+    config: SimulationConfig,
+) -> None:
+    """Reject irreducible capacity failures before schedule search.
+
+    This is a necessary-condition preflight, not a PressureFit candidate
+    search. It accepts when at least one legal recomputation selection has a
+    task-by-task residency floor that fits the declared capacity. PressureFit
+    retains the same checks internally as defensive invariants.
+    """
+
+    if not isinstance(program, Program):
+        raise TypeError("program must be a Program")
+    if not isinstance(initial_residency, tuple):
+        raise TypeError("initial_residency must be a tuple")
+    if not isinstance(final_residency, tuple):
+        raise TypeError("final_residency must be a tuple")
+    if not isinstance(config, SimulationConfig):
+        raise TypeError("config must be a SimulationConfig")
+
+    failures: list[PressureFitInfeasibleError] = []
+    for selections in _selection_portfolio(program):
+        try:
+            facts = build_facts(
+                program,
+                selections,
+                initial_residency,
+                final_residency,
+                config,
+            )
+            assert_required_floor(facts)
+        except PressureFitInfeasibleError as error:
+            failures.append(error)
+        else:
+            return
+
+    if failures:
+        raise failures[0]
+    raise PressureFitInfeasibleError(
+        "no recomputation selection could be constructed",
+        kind="recomputation_selection",
+    )
+
+
 def _repair_pressure(
     facts: PlanningFacts,
     error: SimulationInfeasibleError,
@@ -904,8 +952,7 @@ def pressurefit(
             f"elapsed={(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
         )
     if all(
-        context.compiled_template is not None and
-        context.compiled_residency is not None
+        context.compiled_template is not None and context.compiled_residency is not None
         for context in contexts
     ):
         candidates_started = time.perf_counter_ns()
@@ -1015,4 +1062,4 @@ def pressurefit(
     )
 
 
-__all__ = ["pressurefit"]
+__all__ = ["pressurefit", "validate_schedule_feasibility"]

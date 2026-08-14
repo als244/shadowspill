@@ -461,7 +461,7 @@ int shadowspill_memory_pool_initialize(
     uint64_t capacity,
     uint64_t minimum_alignment
 );
-void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool);
+void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_declare_transfer(ShadowSpillMemoryPool *pool);
@@ -599,6 +599,11 @@ int shadowspill_task_fence_complete_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillTaskFence *fence,
     int *complete
+);
+ShadowSpillRuntimeStatus shadowspill_fence_task_retirements_locked(
+    ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    ShadowSpillBackendStream stream
 );
 void shadowspill_finalize_aborted_task_retirements(
     ShadowSpillRuntime *runtime,

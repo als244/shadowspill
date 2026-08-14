@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 
 from .records import (
     ProfileEnvironment,
@@ -134,7 +134,7 @@ def _resolve_measurement(
     if measurement is not None and validate is not None:
         try:
             validate(artifact, measurement)
-        except CaptureError:
+        except (CaptureError, ProfilingError):
             _report_progress(progress, index, total, "cache-invalid", key.digest)
             measurement = None
             replace_invalid = True

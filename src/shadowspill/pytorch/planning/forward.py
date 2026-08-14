@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, NoReturn
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,10 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import TreeSpec, tree_flatten
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
+from shadowspill.planner import (
+    PressureFitInfeasibleError,
+    validate_schedule_feasibility,
+)
 from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
@@ -34,11 +38,12 @@ from shadowspill.pytorch.profiling.metadata import (
 )
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
-from shadowspill.runtime import AdmissionError, SlabReplay
+from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
+from shadowspill.runtime import SlabReplay
 
 from ..cache import PlanningCache
 from ..callables import PlannedForward
-from ..contracts import PlanningError
+from ..contracts import AdmissionError, CaptureError, CompilationError, PlanningError
 from ..diagnostics import PlanReport
 from ..execution import ForwardExecutor
 from ..guards import InputSignature, capture_input_signature
@@ -53,7 +58,7 @@ from ..partition import (
     PartitionSpec,
     partition_export,
 )
-from ..runtime_adapter import PlanMemory
+from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
     output_bindings_for_entrypoints,
     physical_admission,
@@ -70,6 +75,7 @@ from .common import (
     PlanningTimer,
     build_simulation_config,
     estimate_spill_reservation,
+    public_infeasible_plan_error,
     validate_budgets,
     validate_cpu_model,
     workspace_reserve,
@@ -164,31 +170,36 @@ def _capture_partitioned_forward(
     tuple[GraphArtifact, ...],
     TreeSpec,
 ]:
-    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-    fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
-    fake_inputs = fake_cuda_inputs(
-        cpu_inputs,
-        fake_mode,
-        device_index=device_ordinal,
-    )
-    with fake_mode, torch.no_grad():
-        output_leaves, output_tree_spec = tree_flatten(fake_model(*fake_inputs))
-        del output_leaves
-        capture = capture_forward(fake_model, fake_inputs)
-    with timer.measure("export_archival"):
-        artifact_cache.archive_export(capture, mode="forward", position=0)
-    representative_roots = tuple(
-        value.detach() if isinstance(value, torch.Tensor) else value
-        for value in flat_runtime_arguments(capture, model, cpu_inputs)
-    )
-    with fake_mode, torch.no_grad():
-        partitioned = partition_export(
-            capture,
-            fake_model,
-            partition=partition,
-            representative_root_inputs=representative_roots,
+    try:
+        fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+        fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
+        fake_inputs = fake_cuda_inputs(
+            cpu_inputs,
+            fake_mode,
+            device_index=device_ordinal,
         )
-        tasks = capture_forward_stage_artifacts(partitioned)
+        with fake_mode, torch.no_grad():
+            output_leaves, output_tree_spec = tree_flatten(fake_model(*fake_inputs))
+            del output_leaves
+            capture = capture_forward(fake_model, fake_inputs)
+        with timer.measure("export_archival"):
+            artifact_cache.archive_export(capture, mode="forward", position=0)
+        representative_roots = tuple(
+            value.detach() if isinstance(value, torch.Tensor) else value
+            for value in flat_runtime_arguments(capture, model, cpu_inputs)
+        )
+        with fake_mode, torch.no_grad():
+            partitioned = partition_export(
+                capture,
+                fake_model,
+                partition=partition,
+                representative_root_inputs=representative_roots,
+            )
+            tasks = capture_forward_stage_artifacts(partitioned)
+    except CaptureError:
+        raise
+    except BaseException as error:
+        raise CaptureError(f"forward graph capture failed: {error}") from error
     return fake_model, capture, partitioned, tasks, output_tree_spec
 
 
@@ -309,13 +320,26 @@ def pressurefit_forward_program(
 ) -> CachedPressureFitResult:
     """Resolve the exact PressureFit result for a canonical forward Program."""
 
+    with timer.measure("feasibility_preflight"):
+        try:
+            validate_schedule_feasibility(
+                program.lowered.program,
+                initial_residency=program.lowered.initial_residency,
+                final_residency=program.lowered.final_residency,
+                config=program.simulation_config,
+            )
+        except PressureFitInfeasibleError as error:
+            raise public_infeasible_plan_error(error) from error
     with timer.measure("pressurefit_simulation"):
-        return artifact_cache.resolve_pressurefit(
-            program.lowered.program,
-            initial_residency=program.lowered.initial_residency,
-            final_residency=program.lowered.final_residency,
-            config=program.simulation_config,
-        )
+        try:
+            return artifact_cache.resolve_pressurefit(
+                program.lowered.program,
+                initial_residency=program.lowered.initial_residency,
+                final_residency=program.lowered.final_residency,
+                config=program.simulation_config,
+            )
+        except PressureFitInfeasibleError as error:
+            raise public_infeasible_plan_error(error) from error
 
 
 def admit_forward_plan(
@@ -396,10 +420,39 @@ def admit_forward_plan(
             report,
             memory.runtime,
         )
-    except BaseException:
+    except BaseException as error:
         if state is not None:
-            state.restore_cpu_and_unregister()
+            _rollback_forward_failure(
+                memory.runtime,
+                error,
+                state.restore_cpu_and_unregister,
+                operation="admit forward plan",
+            )
         raise
+
+
+def _rollback_forward_failure(
+    runtime: Runtime,
+    error: BaseException,
+    rollback: Callable[[], None],
+    *,
+    operation: str,
+) -> NoReturn:
+    """Recover a planning OOM before releasing materialized frontend state."""
+
+    translated = runtime._translate_allocator_failure(error, operation=operation)
+    surfaced = error if translated is None else translated
+    if translated is not None:
+        runtime._prepare_failure_cleanup(surfaced)
+    try:
+        rollback()
+    except BaseException as cleanup_error:
+        surfaced.add_note(
+            f"Failed to roll back materialized forward state: {cleanup_error}"
+        )
+    if surfaced is error:
+        raise error
+    raise surfaced from error
 
 
 def _forward_execution_plan(
@@ -543,8 +596,8 @@ def _replay_forward_slab(
                     },
                 ),
             )
-        except AdmissionError as exc:
-            raise PlanningError(f"slab spatial admission failed: {exc}") from exc
+        except RuntimeAdmissionError as exc:
+            raise AdmissionError(f"slab spatial admission failed: {exc}") from exc
 
 
 def _verify_manifest_identity(
@@ -556,7 +609,7 @@ def _verify_manifest_identity(
         if expected is None or (
             expected.compatibility_digest != manifest.compatibility_digest
         ):
-            raise PlanningError(
+            raise CompilationError(
                 f"compiled entrypoint changed its storage ABI: artifact={digest}"
             )
 

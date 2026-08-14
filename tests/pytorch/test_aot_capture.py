@@ -94,6 +94,29 @@ def test_objective_schema_preserves_position_specific_static_metrics() -> None:
     assert second.objective_schema.static_metric_leaves == ((1, 3),)
 
 
+def test_training_objective_probe_wraps_dynamic_output_shape() -> None:
+    class _DynamicOutput(nn.Module):
+        def forward(self, values: torch.Tensor) -> torch.Tensor:
+            return torch.bincount(values)
+
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    with mode:
+        values = mode.from_tensor(torch.tensor([0, 1, 1]))
+        with pytest.raises(
+            CaptureError,
+            match=r"training objective capture failed: aten\.bincount\.default",
+        ) as captured:
+            capture_training_objective(
+                _DynamicOutput(),
+                lambda model, inputs: model(inputs).float().sum(),
+                [values],
+            )
+    assert isinstance(
+        captured.value.__cause__,
+        torch._subclasses.fake_tensor.DynamicOutputShapeException,
+    )
+
+
 def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> None:
     model = _Network().eval()
     mode = FakeTensorMode(allow_non_fake_inputs=True)

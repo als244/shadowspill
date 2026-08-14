@@ -59,6 +59,18 @@ static int impossible_oom(void) {
         failure.largest_free_range_bytes != 0U) {
         result = -1;
     }
+    if (shadowspill_runtime_recover_no_progress(runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, full.allocation_id, stream) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 1U, 1U, stream, &impossible) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+    }
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     shadowspill_mock_backend_destroy(mock);
@@ -215,9 +227,85 @@ done:
     return result;
 }
 
+static int failed_task_retirement_recovery(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillRuntimeConfig config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 1U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillAllocation live = {0};
+    ShadowSpillAllocation impossible = {0};
+    ShadowSpillAllocation recovered = {0};
+    int result = 0;
+    if (shadowspill_runtime_create(&config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_before_task(
+            runtime, 41U, stream, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 128U, 1U, stream, &live) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(runtime, 1U, 1U, stream, &impossible) !=
+            SHADOWSPILL_RUNTIME_NO_PROGRESS ||
+        shadowspill_free(runtime, live.allocation_id, stream) !=
+            SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+        result = -1;
+        goto done;
+    }
+    ShadowSpillRuntimeStatistics statistics = {0};
+    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.pending_retirements != 1U ||
+        statistics.retirement_records_unfenced != 1U ||
+        shadowspill_runtime_recover_no_progress(runtime) !=
+            SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        shadowspill_after_task(
+            runtime, 41U, stream, NULL, 0U, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_NO_PROGRESS ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.pending_retirements != 1U ||
+        statistics.retirement_records_fenced != 1U ||
+        statistics.retirement_records_unfenced != 0U ||
+        shadowspill_runtime_recover_no_progress(runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.pending_retirements != 0U ||
+        statistics.allocated_bytes != 0U ||
+        shadowspill_allocate(runtime, 1U, 1U, stream, &recovered) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, recovered.allocation_id, stream) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+    }
+
+done:
+    shadowspill_runtime_destroy(runtime);
+    if (stream.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return result;
+}
+
 int main(void) {
     return impossible_oom() == 0 && fragmented_oom() == 0 &&
-            worker_failure() == 0
+            worker_failure() == 0 && failed_task_retirement_recovery() == 0
         ? EXIT_SUCCESS
         : EXIT_FAILURE;
 }

@@ -9,7 +9,7 @@ from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.runtime import SlabReplay
 
-from ...contracts import PlanningError
+from ...contracts import AdmissionError
 from ...runtime_adapter import PlanMemory
 from ..common import round_up
 
@@ -20,9 +20,9 @@ def reconcile_spill_pool(*, predicted_peak: int, budget: int) -> None:
     """Reject a selected schedule that exceeds its public spill budget."""
 
     if predicted_peak < 0:
-        raise PlanningError("predicted spill peak must be non-negative")
+        raise AdmissionError("predicted spill peak must be non-negative")
     if predicted_peak > budget:
-        raise PlanningError(
+        raise AdmissionError(
             "predicted spill-pool peak exceeds the selected plan budget: "
             f"peak={predicted_peak}, budget={budget}"
         )
@@ -60,7 +60,7 @@ def seal_physical_budget(
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
     if status != 0:
-        raise PlanningError(
+        raise AdmissionError(
             f"provider allocations exceeded physical admission (status {status})"
         )
     statistics = AdapterStatistics()
@@ -68,7 +68,7 @@ def seal_physical_budget(
         library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))
     )
     if status != 0:
-        raise PlanningError(f"allocator statistics failed with status {status}")
+        raise AdmissionError(f"allocator statistics failed with status {status}")
     required = max(
         int(installed.admission.provider_headroom_bytes),
         round_up(
@@ -97,7 +97,7 @@ def seal_physical_budget(
     )
     if status != 0:
         reserved = int(installed.admission.provider_headroom_bytes)
-        raise PlanningError(
+        raise AdmissionError(
             "observed provider memory exceeds the reserved headroom: "
             f"required={required}, reserved={reserved}"
         )

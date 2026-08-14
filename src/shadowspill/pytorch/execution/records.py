@@ -12,6 +12,7 @@ from shadowspill.pytorch.lowering.training import (
     TrainingTaskEntrypoint,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge, actions_by_task
+from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,16 @@ class ExecutionTaskRecord:
     dematerialize_aliases: tuple[str, ...]
     released_ephemeral: tuple[tuple[str, tuple[str, ...]], ...]
     native_handle: int = 0
+
+    @property
+    def identity(self) -> ExecutionTaskIdentity:
+        """Return the three task identities used in public diagnostics."""
+
+        return ExecutionTaskIdentity(
+            execution_task_id=f"execution_{self.execution_ordinal:06d}",
+            semantic_name=self.semantic_name,
+            canonical_task_id=self.task.task_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)

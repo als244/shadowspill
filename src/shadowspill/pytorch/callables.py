@@ -47,6 +47,7 @@ class PlannedForward:
         self._runtime = runtime
         self._runtime._adopt_plan()
         self._closed = False
+        self._closing = False
         self._profiler_annotations_active = False
 
     def __call__(
@@ -66,7 +67,17 @@ class PlannedForward:
             self._executor.set_profiler_annotations(True)
             self._profiler_annotations_active = True
         self._signature.validate(inputs)
-        return self._executor(inputs)
+        try:
+            return self._executor(inputs)
+        except BaseException as error:
+            translated = self._runtime._translate_allocator_failure(
+                error, operation="execute planned forward"
+            )
+            surfaced = error if translated is None else translated
+            self._close_after_failure(surfaced)
+            if surfaced is error:
+                raise
+            raise surfaced from error
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         """Synchronously return a normal CPU model state mapping."""
@@ -88,22 +99,57 @@ class PlannedForward:
 
         if self._closed:
             return
+        self._close(primary_error=None)
+
+    def _close_after_failure(self, error: BaseException) -> None:
+        self._runtime._prepare_failure_cleanup(error)
+        self._close(primary_error=error)
+
+    def _close(self, *, primary_error: BaseException | None) -> None:
+        if self._closed or self._closing:
+            return
+        self._closing = True
+        operations: list[tuple[str, Any]] = []
         if self._profiler_annotations_active:
-            self._executor.finish_profiler_annotations()
-            self._profiler_annotations_active = False
-        self._state.restore_cpu_and_unregister()
-        self._closed = True
-        self._runtime._release_plan()
-        restore_persistent_object_ids(self._runtime)
+            operations.append(
+                ("finish profiler annotations", self._finish_profiler_annotations)
+            )
+        operations.extend(
+            (
+                ("restore model state", self._state.restore_cpu_and_unregister),
+                ("release runtime plan", self._runtime._release_plan),
+                (
+                    "restore persistent object identities",
+                    lambda: restore_persistent_object_ids(self._runtime),
+                ),
+            )
+        )
+        try:
+            _run_cleanup_operations(operations, primary_error=primary_error)
+        finally:
+            self._closed = True
+            self._closing = False
+
+    def _finish_profiler_annotations(self) -> None:
+        self._executor.finish_profiler_annotations()
+        self._profiler_annotations_active = False
 
     def __enter__(self) -> PlannedForward:
         if self._closed:
             raise RuntimeError("planned forward callable is closed")
         return self
 
-    def __exit__(self, *exception: object) -> None:
-        del exception
-        self.close()
+    def __exit__(
+        self,
+        exception_type: object,
+        exception: object,
+        traceback: object,
+    ) -> None:
+        del exception_type, traceback
+        if isinstance(exception, BaseException):
+            self._close(primary_error=exception)
+        else:
+            self.close()
 
 
 class PlannedTrainStep:
@@ -129,6 +175,7 @@ class PlannedTrainStep:
         self._runtime._adopt_plan()
         self._step = 0
         self._closed = False
+        self._closing = False
         self._trace_prepared = False
         self._pending_diagnostics: DiagnosticsHandle | None = None
         self._profiler_annotations_active = False
@@ -171,10 +218,23 @@ class PlannedTrainStep:
             self._executor.arm_compute_timing(trace_setup_ns=trace_setup_ns)
         try:
             objectives, metrics = self._executor(inputs)
-        except BaseException:
+        except BaseException as error:
             if runtime_trace:
-                self._executor.cancel_execution_timing()
-            raise
+                try:
+                    self._executor.cancel_execution_timing()
+                except BaseException as timing_error:
+                    error.add_note(
+                        "Failed to cancel execution timing during fault cleanup: "
+                        f"{timing_error}"
+                    )
+            translated = self._runtime._translate_allocator_failure(
+                error, operation="execute planned training step"
+            )
+            surfaced = error if translated is None else translated
+            self._close_after_failure(surfaced)
+            if surfaced is error:
+                raise
+            raise surfaced from error
         self._step += 1
         diagnostics = (
             DiagnosticsHandle(self._executor.collect_step_diagnostics)
@@ -231,30 +291,94 @@ class PlannedTrainStep:
     def close(self) -> None:
         if self._closed:
             return
+        self._close(primary_error=None)
+
+    def _close_after_failure(self, error: BaseException) -> None:
+        self._runtime._prepare_failure_cleanup(error)
+        self._close(primary_error=error)
+
+    def _close(self, *, primary_error: BaseException | None) -> None:
+        if self._closed or self._closing:
+            return
+        self._closing = True
+        operations: list[tuple[str, Any]] = []
         if (
             self._pending_diagnostics is not None
             and not self._pending_diagnostics.resolved
         ):
-            self._pending_diagnostics.result()
+            operations.append(
+                ("resolve pending diagnostics", self._pending_diagnostics.result)
+            )
         if self._profiler_annotations_active:
-            self._executor.finish_profiler_annotations()
-            self._profiler_annotations_active = False
+            operations.append(
+                ("finish profiler annotations", self._finish_profiler_annotations)
+            )
+        operations.extend(
+            (
+                ("clear parameter gradients", self._clear_parameter_gradients),
+                ("restore optimizer state", self._executor.restore_optimizer_cpu),
+                ("restore model state", self._state.restore_cpu_and_unregister),
+                ("release runtime plan", self._runtime._release_plan),
+                (
+                    "restore persistent object identities",
+                    lambda: restore_persistent_object_ids(self._runtime),
+                ),
+            )
+        )
+        try:
+            _run_cleanup_operations(operations, primary_error=primary_error)
+        finally:
+            self._closed = True
+            self._closing = False
+
+    def _finish_profiler_annotations(self) -> None:
+        self._executor.finish_profiler_annotations()
+        self._profiler_annotations_active = False
+
+    def _clear_parameter_gradients(self) -> None:
         for parameter in self._model.parameters():
             parameter.grad = None
-        self._executor.restore_optimizer_cpu()
-        self._state.restore_cpu_and_unregister()
-        self._closed = True
-        self._runtime._release_plan()
-        restore_persistent_object_ids(self._runtime)
 
     def __enter__(self) -> PlannedTrainStep:
         if self._closed:
             raise RuntimeError("planned training callable is closed")
         return self
 
-    def __exit__(self, *exception: object) -> None:
-        del exception
-        self.close()
+    def __exit__(
+        self,
+        exception_type: object,
+        exception: object,
+        traceback: object,
+    ) -> None:
+        del exception_type, traceback
+        if isinstance(exception, BaseException):
+            self._close(primary_error=exception)
+        else:
+            self.close()
+
+
+def _run_cleanup_operations(
+    operations: Sequence[tuple[str, Any]],
+    *,
+    primary_error: BaseException | None,
+) -> None:
+    """Run every independent teardown operation without masking the cause."""
+
+    failures: list[tuple[str, BaseException]] = []
+    for description, operation in operations:
+        try:
+            operation()
+        except BaseException as error:
+            failures.append((description, error))
+            if primary_error is not None:
+                primary_error.add_note(f"Failed to {description}: {error}")
+    if primary_error is not None or not failures:
+        return
+    description, first = failures[0]
+    for later_description, later in failures[1:]:
+        first.add_note(f"Failed to {later_description}: {later}")
+    first.add_note(f"Callable close failed while attempting to {description}")
+    raise first
 
 
 __all__ = ["PlannedForward", "PlannedTrainStep"]

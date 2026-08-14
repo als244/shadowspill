@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 18U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 19U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -668,6 +668,16 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_trace_read(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 );
+
+/*
+ * Clears a latched NO_PROGRESS allocation failure after every external
+ * producer stream has been synchronized and the failed allocator caller has
+ * returned. This exists only for deterministic fault teardown: it allows the
+ * worker to drain already-owned actions so objects and pool leases can be
+ * reclaimed. Every other failure remains permanently latched.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
 
 /*
  * Planning-only growth of the one pinned-host arena. The runtime must be idle;

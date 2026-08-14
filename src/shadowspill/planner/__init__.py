@@ -8,7 +8,7 @@ from .model import (
     PressureFitOptions,
     PressureFitResult,
 )
-from .pressurefit import pressurefit
+from .pressurefit import pressurefit, validate_schedule_feasibility
 
 __all__ = [
     "CandidateDiagnostic",
@@ -18,4 +18,5 @@ __all__ = [
     "PressureFitOptions",
     "PressureFitResult",
     "pressurefit",
+    "validate_schedule_feasibility",
 ]

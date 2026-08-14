@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.planner import PressureFitInfeasibleError
 from shadowspill.pytorch.profiling import (
     ProfilingResult,
     TaskMeasurement,
@@ -17,7 +18,7 @@ from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
-from ..contracts import PlanningError
+from ..contracts import AdmissionError, PlanInfeasibleError, PlanningError
 from ..runtime_adapter import PlanMemory
 
 _MIB = 1 << 20
@@ -127,9 +128,9 @@ def validate_budgets(execution_budget: int, spill_budget: int) -> None:
     if isinstance(spill_budget, bool) or not isinstance(spill_budget, int):
         raise TypeError("spill_budget must be an integer byte count")
     if execution_budget <= 0:
-        raise PlanningError("execution_budget must be positive")
+        raise AdmissionError("execution_budget must be positive")
     if spill_budget <= 0:
-        raise PlanningError("spill_budget must be positive")
+        raise AdmissionError("spill_budget must be positive")
 
 
 def estimate_spill_reservation(
@@ -158,7 +159,7 @@ def estimate_spill_reservation(
         _SPILL_ALIGNMENT,
     )
     if requested > spill_budget:
-        raise PlanningError(
+        raise AdmissionError(
             "spill-pool budget cannot hold model/input storage plus admission "
             f"leeway: required={requested}, budget={spill_budget}"
         )
@@ -183,12 +184,12 @@ def simulation_capacity(
 
     usable_slab = execution_pool_bytes - fixed_slab_bytes
     if fixed_slab_bytes < 0 or usable_slab < 0:
-        raise PlanningError(
+        raise AdmissionError(
             "fixed provider allocations exceed the admitted slab: "
             f"slab={execution_pool_bytes}, fixed={fixed_slab_bytes}"
         )
     if workspace_reserve_bytes_ > usable_slab:
-        raise PlanningError(
+        raise AdmissionError(
             "the admitted slab is smaller than the workspace reserve: "
             f"usable_slab={usable_slab}, reserve={workspace_reserve_bytes_}"
         )
@@ -233,6 +234,34 @@ def build_simulation_config(
     )
 
 
+def public_infeasible_plan_error(
+    error: PressureFitInfeasibleError,
+) -> PlanInfeasibleError:
+    """Preserve PressureFit's structured infeasibility at the public boundary."""
+
+    fields = [
+        "ShadowSpill could not construct a feasible memory schedule",
+        f"constraint: {error.kind}",
+    ]
+    if error.device_id is not None:
+        fields.append(f"device: {error.device_id}")
+    if error.boundary_task_id is not None:
+        fields.append(f"boundary_task: {error.boundary_task_id}")
+    if error.required_bytes is not None:
+        fields.append(f"required: {error.required_bytes}")
+    if error.capacity_bytes is not None:
+        fields.append(f"capacity: {error.capacity_bytes}")
+    fields.append(f"detail: {error}")
+    return PlanInfeasibleError(
+        "\n".join(fields),
+        kind=error.kind,
+        device_id=error.device_id,
+        boundary_task_id=error.boundary_task_id,
+        required_bytes=error.required_bytes,
+        capacity_bytes=error.capacity_bytes,
+    )
+
+
 def round_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
@@ -241,6 +270,7 @@ __all__ = [
     "PlanningTimer",
     "build_simulation_config",
     "estimate_spill_reservation",
+    "public_infeasible_plan_error",
     "simulation_capacity",
     "validate_budgets",
     "validate_cpu_model",

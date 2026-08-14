@@ -16,6 +16,65 @@ class CaptureError(PlanningError):
     """Raised when PyTorch cannot represent the requested fixed graph."""
 
 
+class CompilationError(PlanningError):
+    """Raised when a captured structural task cannot be compiled."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        structural_abi: str | None = None,
+        task_kind: str | None = None,
+        operators: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.structural_abi = structural_abi
+        self.task_kind = task_kind
+        self.operators = operators
+
+
+class ProfilingError(PlanningError):
+    """Raised when an isolated task cannot be measured or audited."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        structural_abi: str | None = None,
+        task_kind: str | None = None,
+        operators: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.structural_abi = structural_abi
+        self.task_kind = task_kind
+        self.operators = operators
+
+
+class AdmissionError(PlanningError):
+    """Raised when requested memory resources cannot be physically admitted."""
+
+
+class PlanInfeasibleError(AdmissionError):
+    """Raised when no schedule satisfies the declared planning constraints."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str,
+        device_id: str | None = None,
+        boundary_task_id: str | None = None,
+        required_bytes: int | None = None,
+        capacity_bytes: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.device_id = device_id
+        self.boundary_task_id = boundary_task_id
+        self.required_bytes = required_bytes
+        self.capacity_bytes = capacity_bytes
+
+
 class InputGuardError(ValueError):
     """Raised before mutation when runtime inputs differ from the template."""
 

@@ -10,6 +10,12 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from shadowspill.pytorch.runtime_adapter.failures import (
+    ExecutionTaskIdentity,
+    RuntimeExecutionError,
+    allocator_oom_error,
+    read_allocator_failure,
+)
 
 NO_PROGRESS = 4
 REQUEST_BYTES = 128 << 20
@@ -39,6 +45,50 @@ def main() -> int:
         raise AssertionError("adapter did not preserve the runtime's first cause")
     if failure.runtime.free_bytes != installed.admission.execution_pool_bytes:
         raise AssertionError("diagnostic free-space accounting is incorrect")
+    task = ExecutionTaskIdentity(
+        execution_task_id="execution_000017",
+        semantic_name="dummy_model.stage_0003.forward",
+        canonical_task_id="task_000011",
+    )
+    diagnostics = read_allocator_failure(
+        installed.library,
+        "allocate dummy-model task workspace",
+        task=task,
+    )
+    if diagnostics is None:
+        raise AssertionError("public failure translation lost the allocator failure")
+    try:
+        raise allocator_oom_error(diagnostics)
+    except RuntimeExecutionError as error:
+        message = str(error)
+        for expected in (
+            "ShadowSpill no-progress OOM",
+            "execution_task: execution_000017",
+            "semantic_task: dummy_model.stage_0003.forward",
+            "canonical_task: task_000011",
+            f"requested: {REQUEST_BYTES}",
+        ):
+            if expected not in message:
+                raise AssertionError(
+                    f"structured OOM omitted {expected!r}: {message}"
+                ) from error
+        if error.diagnostics is not diagnostics:
+            raise AssertionError(
+                "structured OOM did not retain its diagnostics"
+            ) from error
+    del impossible
+    torch.cuda.synchronize()
+    if int(installed.library.shadowspill_pytorch_recover_no_progress()) != 0:
+        raise AssertionError("failed to recover no-progress for teardown")
+    if int(
+        installed.library.shadowspill_pytorch_allocator_failure(
+            ctypes.byref(failure)
+        )
+    ) != 0:
+        raise AssertionError("adapter failure remained latched after recovery")
+    probe = torch.empty((1024,), dtype=torch.uint8, device="cuda")
+    if probe.data_ptr() == 0:
+        raise AssertionError("allocator remained unusable after recovery")
     return 0
 
 

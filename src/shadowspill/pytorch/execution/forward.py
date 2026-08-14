@@ -15,6 +15,7 @@ from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.partition import PartitionedExport
 from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge, actions_by_task
+from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 
 
@@ -35,6 +36,7 @@ class _ExecutingStage(nn.Module):
         bridge: RuntimeBridge,
         state: MaterializedForwardState,
         actions: tuple[MemoryAction, ...],
+        identity: ExecutionTaskIdentity,
     ) -> None:
         super().__init__()
         self._entrypoint = entrypoint
@@ -43,6 +45,7 @@ class _ExecutingStage(nn.Module):
         self._bridge = bridge
         self._state = state
         self._actions = actions
+        self._identity = identity
 
     def forward(self, *arguments: object) -> object:
         prepared = self._before_task(arguments)
@@ -89,7 +92,9 @@ class _ExecutingStage(nn.Module):
         except BaseException as error:
             if runtime_scope_open:
                 self._bridge.abort_task_after_failure(
-                    f"prepare task {self._task.task_id}", error
+                    f"prepare task {self._task.task_id}",
+                    error,
+                    task=self._identity,
                 )
             raise
 
@@ -170,7 +175,9 @@ class _ExecutingStage(nn.Module):
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
             self._bridge.abort_task_after_failure(
-                f"execute task {self._task.task_id}", error
+                f"execute task {self._task.task_id}",
+                error,
+                task=self._identity,
             )
 
 
@@ -206,7 +213,7 @@ class ForwardExecutor:
         }
         bridge.configure_task_labels(trace_labels)
         transfer_labels = TransferLabelIndex(plan.program, trace_labels)
-        for entrypoint in lowered.entrypoints:
+        for execution_ordinal, entrypoint in enumerate(lowered.entrypoints):
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
             bridge.admit_execution(
@@ -226,6 +233,14 @@ class ForwardExecutor:
                 bridge,
                 state,
                 task_actions,
+                ExecutionTaskIdentity(
+                    execution_task_id=f"execution_{execution_ordinal:06d}",
+                    semantic_name=(
+                        f"forward.stage_{execution_ordinal:04d}."
+                        f"{entrypoint.module_target}"
+                    ),
+                    canonical_task_id=task.task_id,
+                ),
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         output_objects = {

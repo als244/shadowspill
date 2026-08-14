@@ -53,7 +53,7 @@ from shadowspill.pytorch.compilation.inductor_manifest import (
     load_task_manifest,
     store_task_manifest,
 )
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.contracts import CaptureError, CompilationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +356,7 @@ class _ManifestCompiler:
         capture_ns: int,
     ) -> None:
         if len(graph_lowerings) > 1:
-            raise CaptureError(
+            raise CompilationError(
                 "Inductor exposed multiple GraphLowering results: "
                 f"observed={len(graph_lowerings)}"
             )
@@ -473,7 +473,7 @@ def compile_inductor_task(
     try:
         compiled = invoke_compiler()
     except BaseException as exc:
-        raise CaptureError(f"Inductor task compilation failed: {exc}") from exc
+        raise CompilationError(f"Inductor task compilation failed: {exc}") from exc
     if not manifests:
         cache_key = _fx_graph_cache_key(compiled)
         if cache_key is not None:
@@ -495,13 +495,13 @@ def compile_inductor_task(
                 with inductor_config.patch({"force_disable_caches": True}):
                     compiled = invoke_compiler()
             except BaseException as exc:
-                raise CaptureError(
+                raise CompilationError(
                     f"Inductor task manifest regeneration failed: {exc}"
                 ) from exc
             if len(manifests) == 1 and cache_key is not None:
                 _store_cached_manifest(cache_key, manifests[0])
     if len(manifests) != 1:
-        raise CaptureError(
+        raise CompilationError(
             "Inductor task compilation did not expose one optimized root graph: "
             f"observed={len(manifests)}"
         )
@@ -601,7 +601,7 @@ def _normalize_explicit_graph(
                 _allow_non_fake_inputs=True,
             )(*fake_inputs)
     except BaseException as error:
-        raise CaptureError(
+        raise CompilationError(
             f"explicit Inductor task normalization failed: {error}"
         ) from error
     _record_compilation_phase(timings, "torch_decomposition_normalization", started_ns)
@@ -674,7 +674,7 @@ def _compile_with_manifest_regeneration(
     try:
         compiled = invoke()
     except BaseException as error:
-        raise CaptureError(
+        raise CompilationError(
             f"explicit Inductor task compilation failed: {error}"
         ) from error
     if not manifests:
@@ -684,11 +684,11 @@ def _compile_with_manifest_regeneration(
             with inductor_config.patch({"force_disable_caches": True}):
                 compiled = invoke()
         except BaseException as error:
-            raise CaptureError(
+            raise CompilationError(
                 f"explicit Inductor manifest regeneration failed: {error}"
             ) from error
     if len(manifests) != 1:
-        raise CaptureError(
+        raise CompilationError(
             "explicit Inductor compilation did not expose one root graph: "
             f"observed={len(manifests)}"
         )
@@ -897,7 +897,7 @@ def _load_cached_manifest(
             ),
             capture_ns=capture_ns,
         )
-    except (CaptureError, ValueError):
+    except (CaptureError, CompilationError, ValueError):
         return None
     return (
         manifest

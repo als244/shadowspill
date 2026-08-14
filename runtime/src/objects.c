@@ -1103,6 +1103,30 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
     pthread_cond_broadcast(&runtime->condition);
 
 done:
+    /*
+     * A failure can be latched by an allocator callback while the compiled
+     * task is still unwinding. Tensor destruction after that callback may add
+     * task-local retirements. They still need a compute-stream fence; leaving
+     * them unfenced gives wait_idle no possible progress source during
+     * rollback.
+     */
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+        const ShadowSpillRuntimeStatus retirement_status =
+            shadowspill_fence_task_retirements_locked(
+                runtime, task_id, compute_stream
+            );
+        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+        if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                retirement_status,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                0U
+            );
+        }
+    }
     shadowspill_append_trace_event_locked(
         runtime,
         SHADOWSPILL_TRACE_AFTER_TASK,

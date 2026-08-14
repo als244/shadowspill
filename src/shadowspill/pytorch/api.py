@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 import torch
 import torch.nn as nn
@@ -39,6 +39,29 @@ def _cleanup_failed_plan(
             operation()
         except BaseException as cleanup_error:
             error.add_note(f"Failed to {description}: {cleanup_error}")
+
+
+def _surface_failed_plan(
+    runtime: Runtime,
+    *,
+    planning_started: bool,
+    operation: str,
+    error: BaseException,
+) -> NoReturn:
+    """Recover allocator OOM teardown, roll back, and preserve other errors."""
+
+    translated = runtime._translate_allocator_failure(error, operation=operation)
+    surfaced = error if translated is None else translated
+    if translated is not None:
+        runtime._prepare_failure_cleanup(surfaced)
+    _cleanup_failed_plan(
+        runtime,
+        planning_started=planning_started,
+        error=surfaced,
+    )
+    if surfaced is error:
+        raise error
+    raise surfaced from error
 
 
 def plan_forward(
@@ -118,12 +141,12 @@ def plan_forward(
                 profiling_metadata=profiling_metadata,
             )
     except BaseException as error:
-        _cleanup_failed_plan(
+        _surface_failed_plan(
             runtime,
             planning_started=planning_started,
+            operation="plan forward",
             error=error,
         )
-        raise
 
 
 def plan_step(
@@ -205,12 +228,12 @@ def plan_step(
                 profiling_metadata=profiling_metadata,
             )
     except BaseException as error:
-        _cleanup_failed_plan(
+        _surface_failed_plan(
             runtime,
             planning_started=planning_started,
+            operation="plan training step",
             error=error,
         )
-        raise
 
 
 __all__ = [

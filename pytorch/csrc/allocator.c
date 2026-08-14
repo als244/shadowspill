@@ -43,6 +43,8 @@ static ShadowSpillPytorchAdapterState adapter = {
     .device_ordinal = -1,
 };
 
+static uint8_t process_exit_registered;
+
 struct ShadowSpillDebugTaskRecord {
     uint64_t task_id;
     _Atomic uint64_t before_task_enter_timestamp_ns;
@@ -213,6 +215,36 @@ static ShadowSpillRuntime *bound_runtime(int32_t *device_ordinal) {
     return runtime;
 }
 
+static void shadowspill_pytorch_process_exit(void) {
+    pthread_mutex_lock(&adapter.mutex);
+    ShadowSpillRuntime *runtime = adapter.runtime;
+    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    char **task_labels = adapter.task_labels;
+    const uint32_t task_label_count = adapter.task_label_count;
+    ShadowSpillDebugTaskRecord *debug_records = adapter.debug_task_records;
+    adapter.runtime = NULL;
+    adapter.cuda = NULL;
+    adapter.profiler = (ShadowSpillProfiler){0};
+    adapter.task_labels = NULL;
+    adapter.task_label_count = 0U;
+    adapter.debug_task_records = NULL;
+    adapter.debug_task_capacity = 0U;
+    atomic_store_explicit(
+        &adapter.debug_task_timing_enabled, 0U, memory_order_release
+    );
+    pthread_mutex_unlock(&adapter.mutex);
+
+    /*
+     * runtime_destroy stops and joins the worker before releasing anything it
+     * can observe. Keep the CUDA backend alive until all lanes, events, pinned
+     * registrations, and pool arenas have been explicitly closed.
+     */
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_cuda_backend_destroy(cuda);
+    free_task_labels(task_labels, task_label_count);
+    free(debug_records);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     const ShadowSpillPytorchAdapterConfig *config
 ) {
@@ -291,6 +323,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         shadowspill_runtime_destroy(runtime);
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    if (!process_exit_registered) {
+        if (atexit(shadowspill_pytorch_process_exit) != 0) {
+            pthread_mutex_unlock(&adapter.mutex);
+            shadowspill_runtime_destroy(runtime);
+            shadowspill_cuda_backend_destroy(cuda);
+            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        }
+        process_exit_registered = 1U;
     }
     adapter.cuda = cuda;
     adapter.profiler = runtime_config.profiler;
@@ -519,6 +560,30 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_failure(
         }
     }
     return (ShadowSpillRuntimeStatus)failure->status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_recover_no_progress(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillRuntimeStatus status =
+        shadowspill_runtime_recover_no_progress(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    if (adapter.failure.status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+        memset(&adapter.failure, 0, sizeof(adapter.failure));
+        adapter.failure.device_ordinal = device_ordinal;
+        adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    } else if (adapter.failure.status != SHADOWSPILL_RUNTIME_OK) {
+        status = (ShadowSpillRuntimeStatus)adapter.failure.status;
+    }
+    pthread_mutex_unlock(&adapter.mutex);
+    return status;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_wait_idle(void) {

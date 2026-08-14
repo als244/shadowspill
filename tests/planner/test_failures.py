@@ -14,7 +14,11 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import PressureFitInfeasibleError, pressurefit
+from shadowspill.planner import (
+    PressureFitInfeasibleError,
+    pressurefit,
+    validate_schedule_feasibility,
+)
 
 from ._examples import config
 
@@ -59,21 +63,36 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
         ),
     )
 
-    with pytest.raises(PressureFitInfeasibleError) as caught:
-        pressurefit(
+    initial_residency = (
+        ResidencySpec("left_storage", MemoryLocation.DEVICE),
+        ResidencySpec("right_storage", MemoryLocation.DEVICE),
+    )
+    simulation_config = config(122)
+
+    with pytest.raises(PressureFitInfeasibleError) as preflight:
+        validate_schedule_feasibility(
             program,
-            initial_residency=(
-                ResidencySpec("left_storage", MemoryLocation.DEVICE),
-                ResidencySpec("right_storage", MemoryLocation.DEVICE),
-            ),
-            config=config(122),
+            initial_residency=initial_residency,
+            config=simulation_config,
         )
 
-    error = caught.value
+    error = preflight.value
     assert error.kind == "required_capacity"
     assert error.boundary_task_id == "impossible"
     assert error.required_bytes == 183
     assert error.capacity_bytes == 122
+
+    # Direct framework-neutral PressureFit callers retain the same check as a
+    # defensive invariant even though public planning runs preflight first.
+    with pytest.raises(PressureFitInfeasibleError) as pressurefit_failure:
+        pressurefit(
+            program,
+            initial_residency=initial_residency,
+            config=simulation_config,
+        )
+    assert pressurefit_failure.value.kind == error.kind
+    assert pressurefit_failure.value.required_bytes == error.required_bytes
+    assert pressurefit_failure.value.capacity_bytes == error.capacity_bytes
 
 
 def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:

@@ -425,6 +425,26 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
             failure_allocation_id,
             0U
         );
+        /*
+         * Preserve causal retirement even when the first failure came from
+         * an allocator callback inside this task. Such frees occur after the
+         * failure is latched and otherwise have no completion source.
+         */
+        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+        const ShadowSpillRuntimeStatus retirement_status =
+            shadowspill_fence_task_retirements_locked(
+                runtime, record->task_id, compute_stream
+            );
+        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+        if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
+            shadowspill_latch_failure_locked(
+                runtime,
+                retirement_status,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                0U
+            );
+        }
     }
     shadowspill_append_trace_event_locked(
         runtime,

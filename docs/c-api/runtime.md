@@ -7,7 +7,7 @@ Public declarations live in:
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
-The runtime ABI is version 13. Public functions return
+The runtime ABI is version 19. Public functions return
 `ShadowSpillRuntimeStatus` except documented idempotent destroy/read-only
 operations. Call `shadowspill_runtime_abi_version()` before constructing a
 runtime and validate every supplied vtable ABI.
@@ -40,6 +40,19 @@ fetch is unfinished.
 `shadowspill_runtime_wait_idle`, transfer recalibration, pool reconfiguration,
 and close are explicit idle/lifecycle boundaries. Close drains work, joins the
 worker, and releases owned resources while preserving the first failure.
+
+`shadowspill_runtime_recover_no_progress` is a narrow rollback operation. It
+may clear only a latched `SHADOWSPILL_RUNTIME_NO_PROGRESS`, after the failed
+allocator callback has returned, device work has been quiesced, and no
+allocator waiter remains. It never retries an allocation and cannot clear a
+backend, worker, plan, state, or closed-runtime failure.
+
+The call also requires every logically freed lease to have a completely
+published retirement record. Failed task boundaries preserve their compute
+fence, and explicit task abort records known stream uses. If either path leaves
+an orphaned retirement, recovery returns `SHADOWSPILL_RUNTIME_INVALID_STATE`
+without clearing the original latch; it never converts an impossible idle wait
+into an unbounded block.
 
 ## Ownership
 

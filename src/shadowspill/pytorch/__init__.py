@@ -3,11 +3,15 @@
 from .api import plan_forward, plan_step
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
+    AdmissionError,
     CaptureError,
+    CompilationError,
     InputGuardError,
     ObjectiveError,
     ObjectiveResult,
+    PlanInfeasibleError,
     PlanningError,
+    ProfilingError,
     TensorSpec,
 )
 from .diagnostics import (
@@ -35,9 +39,12 @@ from .diagnostics import (
 )
 from .partition import PartitionPolicy, PartitionSpec
 from .runtime_adapter import (
+    ExecutionTaskIdentity,
     MemoryPool,
     Runtime,
     RuntimeConfigurationError,
+    RuntimeExecutionError,
+    RuntimeFailureDiagnostics,
     TransferCapabilities,
     TransferProfile,
 )
@@ -49,8 +56,11 @@ from .state import (
 )
 
 __all__ = [
+    "AdmissionError",
     "CaptureError",
+    "CompilationError",
     "DiagnosticsHandle",
+    "ExecutionTaskIdentity",
     "ExecutionTiming",
     "InputGuardError",
     "MemoryPool",
@@ -66,6 +76,7 @@ __all__ = [
     "PlanDiagnostics",
     "PlanGraphPair",
     "PlanGraphProfile",
+    "PlanInfeasibleError",
     "PlanMutationBinding",
     "PlanObjectFootprint",
     "PlanOutputView",
@@ -78,8 +89,11 @@ __all__ = [
     "PlannedForward",
     "PlannedTrainStep",
     "PlanningError",
+    "ProfilingError",
     "Runtime",
     "RuntimeConfigurationError",
+    "RuntimeExecutionError",
+    "RuntimeFailureDiagnostics",
     "StepDiagnostics",
     "StepResult",
     "TensorSpec",

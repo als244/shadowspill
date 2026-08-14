@@ -12,8 +12,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import torch
+
 from shadowspill._libraries import resolve_library
 from shadowspill.memory import DevicePool, MemoryPoolConfig, PinnedHostPool
+from shadowspill.pytorch.contracts import AdmissionError
 from shadowspill.pytorch.runtime_adapter.abi import (
     TRANSFER_PROFILE_ABI_VERSION,
     TransferCalibrationConfig,
@@ -25,6 +28,13 @@ from shadowspill.pytorch.runtime_adapter.abi import (
 from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
     install_allocator,
+)
+from shadowspill.pytorch.runtime_adapter.failures import (
+    ExecutionTaskIdentity,
+    RuntimeExecutionError,
+    RuntimeFailureDiagnostics,
+    allocator_oom_error,
+    read_allocator_failure,
 )
 
 _INITIALIZATION_PROVENANCE = 0
@@ -180,6 +190,8 @@ class Runtime:
             self._installed = installed
             self._lock = threading.RLock()
             self._closed = False
+            self._unusable_reason: str | None = None
+            self._last_failure: RuntimeFailureDiagnostics | None = None
             self._active_plans = 0
             self._planning = False
             self._persistent_state_count = 0
@@ -221,6 +233,13 @@ class Runtime:
         with self._lock:
             self._require_open()
             return self._read_transfer_capabilities()
+
+    @property
+    def last_failure(self) -> RuntimeFailureDiagnostics | None:
+        """Return the latest structured frontend failure, if any."""
+
+        with self._lock:
+            return self._last_failure
 
     def calibrate_transfer_capabilities(
         self,
@@ -395,8 +414,13 @@ class Runtime:
         with self._lock:
             if self._active_plans != 1 or self._planning:
                 raise RuntimeError("Runtime plan ownership underflow")
-            self._clear_execution_plan()
-            self._active_plans = 0
+            try:
+                self._clear_execution_plan()
+            except BaseException as error:
+                self._unusable_reason = f"execution-plan teardown failed: {error}"
+                raise
+            finally:
+                self._active_plans = 0
 
     def _abort_plan(self) -> None:
         """Release cold-path execution records after a failed planning call."""
@@ -404,8 +428,13 @@ class Runtime:
         with self._lock:
             if not self._planning or self._active_plans != 0:
                 raise RuntimeError("Runtime planning ownership underflow")
-            self._clear_execution_plan()
-            self._planning = False
+            try:
+                self._clear_execution_plan()
+            except BaseException as error:
+                self._unusable_reason = f"execution-plan rollback failed: {error}"
+                raise
+            finally:
+                self._planning = False
 
     def _clear_execution_plan(self) -> None:
         status = int(self._installed.library.shadowspill_pytorch_clear_execution_plan())
@@ -413,6 +442,71 @@ class Runtime:
             raise RuntimeConfigurationError(
                 f"execution-plan teardown failed with status {status}"
             )
+
+    def _translate_allocator_failure(
+        self,
+        cause: BaseException,
+        *,
+        operation: str,
+        task: ExecutionTaskIdentity | None = None,
+    ) -> RuntimeExecutionError | None:
+        """Translate only the allocator OOM/null-pointer failure mode."""
+
+        if isinstance(cause, RuntimeExecutionError):
+            diagnostics = cause.diagnostics
+            if diagnostics is not None:
+                self._record_failure(diagnostics)
+            return (
+                cause
+                if diagnostics is not None and diagnostics.is_allocator_oom
+                else None
+            )
+        diagnostics = read_allocator_failure(
+            self._installed.library, operation, task=task
+        )
+        if diagnostics is None or not diagnostics.is_allocator_oom:
+            return None
+        self._record_failure(diagnostics)
+        return allocator_oom_error(diagnostics)
+
+    def _prepare_failure_cleanup(self, error: BaseException) -> None:
+        """Quiesce compute and recover a no-progress latch before teardown."""
+
+        if isinstance(error, RuntimeExecutionError) and not error._begin_cleanup():
+            return
+        diagnostics = (
+            error.diagnostics if isinstance(error, RuntimeExecutionError) else None
+        )
+        if diagnostics is not None:
+            self._record_failure(diagnostics)
+        try:
+            torch.cuda.synchronize(int(self._installed.admission.device_ordinal))
+        except BaseException as synchronize_error:
+            error.add_note(
+                "Failed to synchronize the execution device during fault cleanup: "
+                f"{synchronize_error}"
+            )
+            self._mark_unusable("execution-device synchronization failed")
+            return
+        if diagnostics is None or not diagnostics.is_recoverable_no_progress:
+            return
+        status = int(self._installed.library.shadowspill_pytorch_recover_no_progress())
+        if status != 0:
+            error.add_note(
+                f"Failed to recover the no-progress latch for teardown: status {status}"
+            )
+            self._mark_unusable(
+                f"no-progress teardown recovery failed with status {status}"
+            )
+
+    def _record_failure(self, diagnostics: RuntimeFailureDiagnostics) -> None:
+        with self._lock:
+            self._last_failure = diagnostics
+
+    def _mark_unusable(self, reason: str) -> None:
+        with self._lock:
+            if self._unusable_reason is None:
+                self._unusable_reason = reason
 
     def _calibrate(
         self,
@@ -532,6 +626,10 @@ class Runtime:
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeConfigurationError("ShadowSpill Runtime is closed")
+        if self._unusable_reason is not None:
+            raise RuntimeConfigurationError(
+                f"ShadowSpill Runtime is unusable: {self._unusable_reason}"
+            )
 
 
 def _validate_pool_configs(
@@ -567,9 +665,9 @@ def _resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer byte count or None")
     if value <= 0:
-        raise RuntimeConfigurationError(f"{name} must be positive")
+        raise AdmissionError(f"{name} must be positive")
     if value > pool.capacity:
-        raise RuntimeConfigurationError(
+        raise AdmissionError(
             f"{name}={value} exceeds pool {pool.name!r} capacity={pool.capacity}"
         )
     return value
@@ -595,23 +693,22 @@ def _resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError("execution_budget must be an integer byte count or None")
     if value <= 0:
-        raise RuntimeConfigurationError("execution_budget must be positive")
+        raise AdmissionError("execution_budget must be positive")
     physical_capacity = pool.physical_capacity
     if physical_capacity is not None and value == physical_capacity:
         return pool.capacity
     if value <= pool.capacity:
         return value
     if physical_capacity is not None and value < physical_capacity:
-        raise RuntimeConfigurationError(
+        raise AdmissionError(
             "execution_budget falls between the initialized execution-pool "
             "capacity and its complete physical cap; pass the runtime physical "
             "cap for the full pool, or a value no larger than the derived pool "
             f"capacity={pool.capacity}"
         )
     limit = physical_capacity if physical_capacity is not None else pool.capacity
-    raise RuntimeConfigurationError(
-        f"execution_budget={value} exceeds pool {pool.name!r} physical "
-        f"capacity={limit}"
+    raise AdmissionError(
+        f"execution_budget={value} exceeds pool {pool.name!r} physical capacity={limit}"
     )
 
 

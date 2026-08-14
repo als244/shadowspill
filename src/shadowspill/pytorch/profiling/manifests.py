@@ -9,7 +9,7 @@ from typing import Protocol
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 
 from .manifest_repository import CompiledManifestRepository
 from .records import ProfileEnvironment, ProfileKey, TaskMeasurement
@@ -49,14 +49,26 @@ def validate_compiled_profile(
     try:
         manifest = manifests[artifact.compatibility_digest]
     except KeyError as exc:
-        raise CaptureError(
-            "compiled task manifest is missing during profile validation"
+        raise ProfilingError(
+            "compiled task manifest is missing during profile validation",
+            structural_abi=artifact.compatibility_digest,
+            task_kind=artifact.kind,
+            operators=tuple(artifact.operator_targets),
         ) from exc
-    reconcile_compiled_task_layout(
-        manifest.storage_contract,
-        measurement,
-        root_allocations=manifest.root_allocations,
-    )
+    try:
+        reconcile_compiled_task_layout(
+            manifest.storage_contract,
+            measurement,
+            root_allocations=manifest.root_allocations,
+        )
+    except CaptureError as exc:
+        raise ProfilingError(
+            "compiled task profile disagrees with structural ABI "
+            f"{artifact.compatibility_digest}: {exc}",
+            structural_abi=artifact.compatibility_digest,
+            task_kind=artifact.kind,
+            operators=tuple(artifact.operator_targets),
+        ) from exc
 
 
 def resolve_task_manifests(

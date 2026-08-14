@@ -23,7 +23,7 @@ int shadowspill_memory_pool_backend_is_valid(
 ) {
     return backend != NULL &&
         backend->abi_version == SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION &&
-        backend->allocate_arena != NULL && backend->free_arena != NULL;
+        backend->allocate_arena != NULL && backend->close != NULL;
 }
 
 int shadowspill_transfer_route_is_valid(
@@ -43,7 +43,7 @@ static int legacy_allocate_execution(
     return backend->allocate_execution(backend->context, bytes, base);
 }
 
-static int legacy_free_execution(void *context, void *base) {
+static int legacy_close_execution_pool(void *context, void *base) {
     ShadowSpillBackend *backend = context;
     return backend->free_execution(backend->context, base);
 }
@@ -53,7 +53,7 @@ static int legacy_allocate_spill(void *context, uint64_t bytes, void **base) {
     return backend->allocate_spill(backend->context, bytes, base);
 }
 
-static int legacy_free_spill(void *context, void *base) {
+static int legacy_close_spill_pool(void *context, void *base) {
     ShadowSpillBackend *backend = context;
     return backend->free_spill(backend->context, base);
 }
@@ -259,10 +259,9 @@ static void release_resources(ShadowSpillRuntime *runtime) {
         );
         runtime->evict_stream_created = 0;
     }
-    ShadowSpillMemoryPool *execution_pool = shadowspill_execution_pool(runtime);
-    ShadowSpillMemoryPool *spill_pool = shadowspill_spill_pool(runtime);
-    shadowspill_memory_pool_destroy(execution_pool);
-    shadowspill_memory_pool_destroy(spill_pool);
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        shadowspill_memory_pool_close(&runtime->pools[pool_id]);
+    }
     free(runtime->pools);
     runtime->pools = NULL;
     runtime->pool_count = 0U;
@@ -301,13 +300,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
         .context = &runtime->backend,
         .allocate_arena = legacy_allocate_execution,
-        .free_arena = legacy_free_execution,
+        .close = legacy_close_execution_pool,
     };
     const ShadowSpillMemoryPoolBackend spill_backend = {
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
         .context = &runtime->backend,
         .allocate_arena = legacy_allocate_spill,
-        .free_arena = legacy_free_spill,
+        .close = legacy_close_spill_pool,
     };
     runtime->fetch_route = (ShadowSpillTransferRoute){
         .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
@@ -474,7 +473,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
             config->spill_pool_bytes,
             1U
         ) != 0) {
-        shadowspill_memory_pool_destroy(shadowspill_execution_pool(runtime));
+        shadowspill_memory_pool_close(shadowspill_execution_pool(runtime));
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto fail;
     }
@@ -594,17 +593,17 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool_legacy(
             spill_pool_bytes,
             &ranges
         ) != 0) {
-        (void)spill_pool->backend.free_arena(
+        (void)spill_pool->backend.close(
             spill_pool->backend.context, replacement
         );
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    if (spill_pool->base != NULL && spill_pool->backend.free_arena(
+    if (spill_pool->base != NULL && spill_pool->backend.close(
             spill_pool->backend.context, spill_pool->base
         ) != 0) {
         shadowspill_range_destroy(&ranges);
-        (void)spill_pool->backend.free_arena(
+        (void)spill_pool->backend.close(
             spill_pool->backend.context, replacement
         );
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;

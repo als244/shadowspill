@@ -88,6 +88,30 @@ uses a no-op-capable `ShadowSpillProfiler` vtable for thread/stream names and
 ranges. NVTX exists only in the NVIDIA provider implementation; a ROCm provider
 can supply rocTX without changing neutral runtime code.
 
+## Failure semantics
+
+The runtime latches the first native failure and wakes every dependent waiter.
+A no-progress allocation record includes the active task when one exists,
+requested bytes, total free bytes, largest free range, object/allocation IDs,
+and pool/device identity. The PyTorch frontend translates only the allocator
+out-of-memory statuses; other backend errors remain provider exceptions.
+
+`shadowspill_runtime_recover_no_progress` is a narrow rollback primitive. It
+is legal only after the failed allocator caller has returned, participating
+compute work is synchronized, and no allocator waiter remains. It clears only
+`NO_PROGRESS`; it cannot clear backend, worker, state, plan, or device faults.
+Recovery permits teardown and a later independent planning attempt. It never
+retries the failed allocation or makes an infeasible plan feasible.
+
+Allocator failure does not cancel stream causality. Tensor destruction while a
+failed task unwinds may still issue logical frees. The failed `after_task`
+boundary records one compute-stream fence for those task-local retirements;
+the abort path records their known stream uses when no `after_task` boundary is
+reached. Recovery refuses to clear the failure latch unless every pending
+retirement has a fully published queue record. This fail-closed check prevents
+an idle wait from accepting an orphaned retirement with no possible completion
+source.
+
 ## Lifecycle
 
 `shadowspill_runtime_wait_idle` and close are explicitly synchronizing.
@@ -95,3 +119,10 @@ Ordinary task boundaries, allocation, result construction, and trace append are
 not device-wide synchronization points. Close rejects new work, drains owned
 work, joins the worker, and releases pools, routes, events, queues, and tables
 while preserving the first failure.
+
+Each `MemoryPool` backend owns its close operation. Runtime teardown iterates
+the pool registry rather than naming execution/spill implementations. The
+CUDA device-pool close frees its conventional slab; the pinned-host close uses
+`cuMemHostUnregister` followed by ordinary `free`. A C process-exit handler
+also performs final native teardown, stopping and joining the worker before
+closing pools, transfer streams, event leases, queues, and lookup tables.

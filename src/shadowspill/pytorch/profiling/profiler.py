@@ -15,7 +15,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     materialize_opaque_optimizer,
@@ -136,18 +136,26 @@ class CudaTaskProfiler:
 
         if isinstance(artifact, OpaqueOptimizerArtifact):
             profiling_started = time.perf_counter_ns()
-            measurement = self._measure_opaque_optimizer(artifact)
-            profiling_wall = time.perf_counter_ns() - profiling_started
-            self._profiling_wall_time_ns += profiling_wall
-            return replace(measurement, profiling_wall_time_ns=profiling_wall)
+            try:
+                measurement = self._measure_opaque_optimizer(artifact)
+                profiling_wall = time.perf_counter_ns() - profiling_started
+                return replace(measurement, profiling_wall_time_ns=profiling_wall)
+            except ProfilingError:
+                raise
+            except BaseException as error:
+                raise _profiling_error(artifact, error) from error
+            finally:
+                self._profiling_wall_time_ns += (
+                    time.perf_counter_ns() - profiling_started
+                )
         if not isinstance(artifact, GraphArtifact):
             raise TypeError(f"unsupported profiling artifact {type(artifact).__name__}")
 
         digest = artifact.compatibility_digest
         executable = self._compiled(artifact)
-        if not executable.example_arguments and artifact.example_arguments:
-            executable = self._restore_example_arguments(executable)
         try:
+            if not executable.example_arguments and artifact.example_arguments:
+                executable = self._restore_example_arguments(executable)
             profiling_started = time.perf_counter_ns()
             measurement = self._measure_callable(
                 executable,
@@ -162,16 +170,12 @@ class CudaTaskProfiler:
             )
             self._profiling_wall_time_ns += measurement.profiling_wall_time_ns
             self._executables.mark_warmed(digest)
-        except AllocationTelemetryError as exc:
-            self._executables.remove(digest)
-            raise AllocationTelemetryError(
-                "allocator trace is incomplete for structural ABI "
-                f"{digest} ({artifact.kind}; operators="
-                f"{artifact.operator_targets}): {exc}"
-            ) from exc
-        except BaseException:
+        except ProfilingError:
             self._executables.remove(digest)
             raise
+        except BaseException as error:
+            self._executables.remove(digest)
+            raise _profiling_error(artifact, error) from error
         else:
             # The compiled function does not own its example arguments. Keeping
             # every unique ABI's CUDA examples alive until take_functions()
@@ -566,11 +570,17 @@ class CudaTaskProfiler:
     ) -> None:
         stream = torch.cuda.current_stream(self._device_ordinal)
         started = time.perf_counter_ns()
-        for _ in range(self._warmups):
-            self._invoke_profile_task(executable, stream)
-        stream.synchronize()
-        self._diagnose_allocator_idle(context=f"compiled entrypoint {digest}")
-        self._entrypoint_warmup_wall_time_ns += time.perf_counter_ns() - started
+        try:
+            for _ in range(self._warmups):
+                self._invoke_profile_task(executable, stream)
+            stream.synchronize()
+            self._diagnose_allocator_idle(context=f"compiled entrypoint {digest}")
+        except ProfilingError:
+            raise
+        except BaseException as error:
+            raise _profiling_error(executable.artifact, error) from error
+        finally:
+            self._entrypoint_warmup_wall_time_ns += time.perf_counter_ns() - started
 
     def discard_compiled_tasks(self) -> None:
         """Drop compiled but unselected callables retained during planning."""
@@ -725,6 +735,28 @@ class CudaTaskProfiler:
                 "compiled task returned storage outside the ShadowSpill slab"
             )
         return allocation
+
+
+def _profiling_error(
+    artifact: GraphArtifact | OpaqueOptimizerArtifact,
+    cause: BaseException,
+) -> ProfilingError:
+    kind: str
+    if isinstance(artifact, GraphArtifact):
+        kind = artifact.kind
+        operators = tuple(artifact.operator_targets)
+    else:
+        kind = "opaque_optimizer"
+        operators = ()
+    operator_text = ", ".join(operators) or "none"
+    return ProfilingError(
+        "ShadowSpill failed to profile structural ABI "
+        f"{artifact.compatibility_digest} "
+        f"(kind={kind}, operators=[{operator_text}]): {cause}",
+        structural_abi=artifact.compatibility_digest,
+        task_kind=kind,
+        operators=operators,
+    )
 
 
 def _persistent_profile_extents(

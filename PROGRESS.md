@@ -2492,3 +2492,49 @@ the ignored internal progress log before this tracked summary is updated.
   only the later anonymous-memory-to-filesystem I/O is asynchronous. Snapshot
   tensors use pageable CPU memory outside ShadowSpill pool budgets and
   telemetry.
+
+## 2026-08-14 — Planning failures are typed and rollback cannot orphan retirement
+
+- Added distinct public planning failures for capture, compilation, profiling,
+  physical admission, and PressureFit infeasibility. Compiler/profile failures
+  retain structural ABI, task kind, operator inventory, and the original
+  PyTorch exception through exception chaining. Allocator no-progress failures
+  retain requested/free/largest-range accounting and active execution-task
+  identity. Genuine CUDA faults remain their original provider exceptions.
+- A realistic profiling OOM uncovered a teardown deadlock. The failed callback
+  requested 2,147,483,648 bytes with 1,054,834,684 bytes free and a
+  1,029,684,992-byte largest range. Tensor destruction after the latch created
+  one task-local logical free. Immediately before plan clearing the runtime had
+  one pending retirement, zero actions, and exactly one unfenced retirement.
+- Root cause: `after_task` observed the existing `NO_PROGRESS` status, skipped
+  normal fence publication, and then cleared the thread-local task scope. The
+  subsequent abort call could no longer identify the owning task. Recovery
+  cleared the latch, after which `wait_idle` waited for a retirement that had
+  no event, fence, or queue record and therefore no possible progress source.
+- Fix: failed task boundaries now publish a compute-stream fence for every
+  task-local retirement before leaving scope. The explicit abort path publishes
+  known stream events even when another failure is already latched. Recovery
+  refuses to clear `NO_PROGRESS` unless each pending retirement has a complete
+  queued record, converting any future invariant break into an immediate
+  `INVALID_STATE` rather than an unbounded wait.
+- A native canary reproduces the exact latch/free/failed-after-task sequence,
+  proves premature recovery is rejected, then proves fenced recovery drains
+  and a subsequent allocation succeeds. The CUDA planning-failure canary now
+  raises the intended OOM, rolls back, and successfully plans/executes a later
+  model on the same runtime; the complete failure canary finishes in 5.6 s.
+- Pure-PyTorch OLMoE exposed a separate capture-boundary hole. Its FakeTensor
+  objective-schema probe raises `DynamicOutputShapeException` at
+  `aten.bincount.default` before strict Export begins, so the raw PyTorch type
+  escaped. The probe now raises `CaptureError` from that exact exception,
+  preserving the complete PyTorch model traceback and both planning-phase
+  notes without synthesizing model-specific context.
+- Failure-taxonomy correction: an irreducible task live set that exceeds
+  execution capacity is a `PlanInfeasibleError`, but it is not a PressureFit
+  search failure. Added a framework-neutral feasibility preflight over every
+  legal recomputation selection. Public forward/training planning now runs it
+  in a distinct `feasibility_preflight` phase before cache lookup or
+  `pressurefit_simulation`; PressureFit retains the same floor assertion only
+  as a defensive invariant for direct callers. The CUDA failure canary proves
+  the constrained 520 MiB case carries the preflight note and never enters the
+  PressureFit phase. Physical spill reservation, workspace/provider headroom,
+  spatial replay, and pool sealing failures remain plain `AdmissionError`s.

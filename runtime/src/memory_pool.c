@@ -103,14 +103,14 @@ int shadowspill_memory_pool_initialize(
     }
     if (pthread_mutex_init(&pool->lock, NULL) != 0) {
         if (base != NULL) {
-            (void)backend->free_arena(backend->context, base);
+            (void)backend->close(backend->context, base);
         }
         return -1;
     }
     if (pthread_cond_init(&pool->capacity_changed, NULL) != 0) {
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
-            (void)backend->free_arena(backend->context, base);
+            (void)backend->close(backend->context, base);
         }
         return -1;
     }
@@ -118,7 +118,7 @@ int shadowspill_memory_pool_initialize(
         pthread_cond_destroy(&pool->capacity_changed);
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
-            (void)backend->free_arena(backend->context, base);
+            (void)backend->close(backend->context, base);
         }
         return -1;
     }
@@ -132,13 +132,13 @@ int shadowspill_memory_pool_initialize(
     return 0;
 }
 
-void shadowspill_memory_pool_destroy(ShadowSpillMemoryPool *pool) {
+void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
     if (pool == NULL || !pool->initialized) {
         return;
     }
     shadowspill_range_destroy(&pool->ranges);
     if (pool->base != NULL) {
-        (void)pool->backend.free_arena(pool->backend.context, pool->base);
+        (void)pool->backend.close(pool->backend.context, pool->base);
     }
     pthread_cond_destroy(&pool->capacity_changed);
     pthread_mutex_destroy(&pool->lock);

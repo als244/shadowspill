@@ -18,7 +18,6 @@ from shadowspill.ir import (
 )
 from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.runtime_adapter.abi import (
-    AdapterFailure,
     AdapterStatistics,
     ExecutionDescription,
     ObjectBinding,
@@ -27,6 +26,13 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskHostTiming,
 )
+from shadowspill.pytorch.runtime_adapter.failures import (
+    ExecutionTaskIdentity,
+    RuntimeExecutionError,
+    allocator_oom_error,
+    generic_runtime_error,
+    read_allocator_failure,
+)
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
     begin_runtime_trace,
@@ -34,11 +40,6 @@ from shadowspill.pytorch.runtime_adapter.trace import (
     prepare_runtime_trace,
     read_runtime_trace,
 )
-
-
-class RuntimeExecutionError(RuntimeError):
-    """A native runtime transition rejected the immutable execution plan."""
-
 
 _ACTION_KIND = {
     MemoryActionKind.RELEASE: 0,
@@ -1034,25 +1035,32 @@ class RuntimeBridge:
     def abort_task(self) -> None:
         self.library.shadowspill_pytorch_abort_task_range()
 
-    def abort_task_after_failure(self, operation: str, cause: BaseException) -> None:
-        """Close a failed task boundary and expose a latched allocator cause."""
+    def abort_task_after_failure(
+        self,
+        operation: str,
+        cause: BaseException,
+        *,
+        task: ExecutionTaskIdentity | None = None,
+    ) -> None:
+        """Close a failed boundary and translate only allocator OOM failures.
+
+        Backend, worker, invalid-state, and ordinary CUDA failures deliberately
+        remain the original exception raised by PyTorch.  This avoids masking
+        illegal memory accesses or bad kernels with stale runtime diagnostics.
+        """
 
         self.abort_task()
-        try:
-            self.raise_if_allocator_failed(operation)
-        except RuntimeExecutionError as error:
-            raise error from cause
+        diagnostics = read_allocator_failure(self.library, operation, task=task)
+        if diagnostics is not None and diagnostics.is_allocator_oom:
+            raise allocator_oom_error(diagnostics) from cause
 
     def raise_if_allocator_failed(self, operation: str) -> None:
         """Raise the first callback failure without touching the device timeline."""
 
-        failure = AdapterFailure()
-        status = int(
-            self.library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))
-        )
-        if status == 0:
+        diagnostics = read_allocator_failure(self.library, operation)
+        if diagnostics is None:
             return
-        raise RuntimeExecutionError(self._failure_message(operation, status, failure))
+        raise generic_runtime_error(diagnostics)
 
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)
@@ -1114,24 +1122,10 @@ class RuntimeBridge:
         status = int(raw_status)
         if status == 0:
             return
-        failure = AdapterFailure()
-        self.library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))
-        raise RuntimeExecutionError(self._failure_message(operation, status, failure))
-
-    @staticmethod
-    def _failure_message(operation: str, status: int, failure: AdapterFailure) -> str:
-        requested = max(
-            int(failure.requested_bytes), int(failure.runtime.requested_bytes)
-        )
-        return (
-            f"{operation} failed with status {status}; "
-            f"device={failure.device_ordinal}, "
-            f"object={failure.runtime.object_id}, "
-            f"allocation={failure.runtime.allocation_id}, "
-            f"requested={requested}, "
-            f"free={failure.runtime.free_bytes}, "
-            f"largest_free_range={failure.runtime.largest_free_range_bytes}"
-        )
+        diagnostics = read_allocator_failure(self.library, operation)
+        if diagnostics is not None:
+            raise generic_runtime_error(diagnostics)
+        raise RuntimeExecutionError(f"{operation} failed with status {status}")
 
 
 def actions_by_task(

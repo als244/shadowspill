@@ -247,13 +247,20 @@ def capture_training_objective(
 ) -> TrainingObjectiveCapture:
     """Export an objective without constructing an unused whole-model VJP."""
 
-    probe_loss, probe_metrics = normalize_objective_result(
-        objective(model, *microbatch), require_grad=True
-    )
-    del probe_loss
-    schema = capture_objective_schema(probe_metrics)
-    capture_module = _ObjectiveModule(model, objective, schema)
-    exported = _export(capture_module, microbatch)
+    try:
+        probe_loss, probe_metrics = normalize_objective_result(
+            objective(model, *microbatch), require_grad=True
+        )
+        del probe_loss
+        schema = capture_objective_schema(probe_metrics)
+        capture_module = _ObjectiveModule(model, objective, schema)
+        exported = _export(capture_module, microbatch)
+    except (CaptureError, ObjectiveError):
+        raise
+    except BaseException as error:
+        raise CaptureError(
+            f"training objective capture failed: {error}"
+        ) from error
     return TrainingObjectiveCapture(
         exported=exported,
         capture_module=capture_module,

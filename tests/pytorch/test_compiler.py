@@ -24,7 +24,11 @@ from shadowspill.pytorch.compilation.inductor import (
     compile_explicit_inductor_task,
     compile_inductor_task,
 )
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.contracts import (
+    CaptureError,
+    CompilationError,
+    ProfilingError,
+)
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.profiling import (
     TaskMeasurement,
@@ -568,6 +572,64 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     profiler._compiled(artifact)
     profiler._compiled(artifact)
     assert calls == [artifact.compatibility_digest, artifact.compatibility_digest]
+
+
+def test_compiler_failure_has_structural_context_and_preserves_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = _artifact()
+
+    def fail_compile(value: GraphArtifact, *, device_ordinal: int) -> CompiledTask:
+        del value, device_ordinal
+        raise RuntimeError("compiler exploded")
+
+    monkeypatch.setattr(compiler_module, "compile_artifact", fail_compile)
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+
+    with pytest.raises(CompilationError, match="compiler exploded") as captured:
+        profiler._compiled(artifact)
+
+    assert captured.value.structural_abi == artifact.compatibility_digest
+    assert captured.value.task_kind == artifact.kind
+    assert captured.value.operators == artifact.operator_targets
+    assert isinstance(captured.value.__cause__, RuntimeError)
+
+
+def test_profile_failure_has_structural_context_and_preserves_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = _artifact()
+    arguments = (torch.ones(1),)
+
+    monkeypatch.setattr(
+        compiler_module,
+        "compile_artifact",
+        lambda value, *, device_ordinal: _compiled_task(
+            value,
+            lambda *items: items,
+            arguments,
+        ),
+    )
+    profiler = CudaTaskProfiler(
+        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+    )
+    monkeypatch.setattr(
+        profiler,
+        "_measure_callable",
+        lambda *arguments, **options: (_ for _ in ()).throw(
+            RuntimeError("kernel exploded")
+        ),
+    )
+
+    with pytest.raises(ProfilingError, match="kernel exploded") as captured:
+        profiler.measure(artifact)
+
+    assert captured.value.structural_abi == artifact.compatibility_digest
+    assert captured.value.task_kind == artifact.kind
+    assert captured.value.operators == artifact.operator_targets
+    assert isinstance(captured.value.__cause__, RuntimeError)
 
 
 def test_measurement_releases_cuda_examples_between_structural_abis(

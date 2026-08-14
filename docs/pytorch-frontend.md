@@ -82,6 +82,40 @@ ordinary PyTorch call wrapped by `before_task` and `after_task`. Public output
 pytrees are reconstructed from Export's user-output positions, and their live
 slab allocations transfer to ordinary caller ownership without a copy.
 
+Planning is transactional. `plan_step()` and `plan_forward()` either return a
+fully admitted callable or raise after rolling back provisional task records,
+object IDs, materialization, and allocator state. Failures retain their
+specific source:
+
+- `CaptureError` identifies graphs that strict Export/AOT cannot represent and
+  chains the exact PyTorch exception as its cause;
+- `CompilationError` identifies Inductor construction or executable-storage
+  contract failures and retains the structural ABI, task kind, operators, and
+  exact compiler exception as its cause;
+- `ProfilingError` identifies isolated task warmup, measurement, provider-kernel,
+  or allocation-telemetry failures and retains the same structural context and
+  original cause;
+- `AdmissionError` reports invalid or insufficient execution/spill budgets,
+  workspace/provider headroom, physical replay, and pool sealing failures;
+- `PlanInfeasibleError`, a specialized `AdmissionError`, reports the exact
+  capacity/residency constraint that prevents any valid schedule and retains
+  its machine-readable fields. Irreducible task-capacity failures are detected
+  by feasibility preflight before PressureFit candidate search begins;
+- `PlanningError` remains the common planning base and directly reports
+  non-resource signature and optimizer-contract errors; and
+- `RuntimeExecutionError` carries structured allocator diagnostics for
+  out-of-memory/no-progress during profiling or execution.
+
+Only allocator OOM is translated from PyTorch's null-allocation consequence.
+The planning wrappers preserve exact lower-level exceptions through
+`__cause__`. During execution of a returned callable, illegal memory accesses
+and other genuine provider failures retain their original exception rather
+than being mislabeled as profiling failures. A recoverable planning-time
+no-progress OOM is quiesced,
+its latch is cleared, and provisional state is rolled back; the failed
+operation is never resumed or silently retried. `Runtime.last_failure` retains
+the latest structured allocator failure for inspection.
+
 `state_dict()` and `load_state_dict()` are explicitly synchronizing and use
 ordinary CPU tensors with the original model names. A training state mapping
 contains model, optimizer, and logical-step state; a forward-only mapping is
@@ -93,6 +127,14 @@ plan objects. It does not release persistent model state. Use
 state into ordinary CPU allocations and release the runtime objects before
 closing the runtime. Caller-retained outputs remain valid after callable close
 because they are no longer plan-owned.
+
+If execution raises, callable cleanup is attempted before the original error
+is re-raised. Cleanup failures become exception notes and cannot mask the first
+cause. The process-global PyTorch allocator cannot be uninstalled safely, so a
+C `atexit` handler performs final native teardown: it rejects new callbacks,
+stops and joins the worker, closes every memory pool, unregisters pinned spill
+memory, and frees the device slab. Explicit callable and runtime close remain
+the normal lifecycle.
 
 Registered buffers marked `persistent=False` remain runtime-owned and are
 restored on close, but they are omitted from checkpoints and are not required

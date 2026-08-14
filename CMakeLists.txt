@@ -372,6 +372,10 @@ if(BUILD_TESTING)
     shadowspill_runtime_completion_canary
     PROPERTIES TIMEOUT 10
   )
+  set_tests_properties(
+    shadowspill_runtime_failure_canary
+    PROPERTIES TIMEOUT 10
+  )
 
   if(TARGET shadowspill_backend_cuda)
     add_executable(
@@ -447,6 +451,34 @@ if(BUILD_TESTING)
       PROPERTIES
         LABELS "cuda;pytorch"
         ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    add_test(
+      NAME shadowspill_pytorch_invalid_access_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/invalid_access_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_invalid_access_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+        TIMEOUT 60
+    )
+    add_test(
+      NAME shadowspill_pytorch_planning_failure_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/planning_failure_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_planning_failure_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+        TIMEOUT 120
     )
     add_test(
       NAME shadowspill_pytorch_profiler_canary

@@ -272,7 +272,7 @@ static int has_release_source(const ShadowSpillRuntime *runtime) {
     ) != 0U;
 }
 
-static ShadowSpillRuntimeStatus fence_task_retirements_locked(
+ShadowSpillRuntimeStatus shadowspill_fence_task_retirements_locked(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream
@@ -731,7 +731,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         }
         const uint64_t task_id = shadowspill_current_task_id(runtime);
         if (task_id != SHADOWSPILL_RUNTIME_NO_ID) {
-            status = fence_task_retirements_locked(
+            status = shadowspill_fence_task_retirements_locked(
                 runtime, task_id, stream
             );
             if (status != SHADOWSPILL_RUNTIME_OK) {
@@ -1073,6 +1073,7 @@ void shadowspill_finalize_aborted_task_retirements(
             continue;
         }
         ShadowSpillEventRecord *events = NULL;
+        int event_failure = 0;
         for (ShadowSpillStreamRecord *item = allocation->streams;
              item != NULL; item = item->next) {
             ShadowSpillEventRecord *event = calloc(1U, sizeof(*event));
@@ -1101,15 +1102,16 @@ void shadowspill_finalize_aborted_task_retirements(
                     allocation->allocation_id,
                     0U
                 );
+                event_failure = 1;
                 break;
             }
             event->next = events;
             events = event;
         }
-        allocation->retirement_events = events;
-        if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        if (event_failure) {
             break;
         }
+        allocation->retirement_events = events;
         const ShadowSpillRuntimeStatus enqueue_status =
             shadowspill_retirement_enqueue_locked(runtime, allocation);
         if (enqueue_status != SHADOWSPILL_RUNTIME_OK) {

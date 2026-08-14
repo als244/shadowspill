@@ -12,6 +12,7 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_api
 from shadowspill.pytorch.compilation.compiler import CompiledTask, CompiledTaskSet
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
+from shadowspill.pytorch.contracts import CompilationError
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 
 from .inputs import RepresentativeInputSummary, materialize_representative_inputs
@@ -171,10 +172,17 @@ class ProfileExecutableStore:
     def _compile(self, artifact: GraphArtifact) -> ProfileExecutable:
         started = time.perf_counter_ns()
         try:
-            compiled = compiler_api.compile_artifact(
-                artifact,
-                device_ordinal=self._device_ordinal,
-            )
+            try:
+                compiled = compiler_api.compile_artifact(
+                    artifact,
+                    device_ordinal=self._device_ordinal,
+                )
+            except CompilationError as error:
+                if error.structural_abi is not None:
+                    raise
+                raise _compilation_error(artifact, error) from error
+            except BaseException as error:
+                raise _compilation_error(artifact, error) from error
             phases = compiled.compilation_phase_timings_ns
             for name, duration in phases:
                 self._phase_totals[name] = self._phase_totals.get(name, 0) + duration
@@ -234,6 +242,22 @@ def _without_arguments(executable: ProfileExecutable) -> ProfileExecutable:
         compiled=replace(executable.compiled, example_arguments=()),
         example_arguments=(),
         representative_inputs=(),
+    )
+
+
+def _compilation_error(
+    artifact: GraphArtifact,
+    cause: BaseException,
+) -> CompilationError:
+    operators = tuple(artifact.operator_targets)
+    operator_text = ", ".join(operators) or "none"
+    return CompilationError(
+        "ShadowSpill failed to compile structural ABI "
+        f"{artifact.compatibility_digest} "
+        f"(kind={artifact.kind}, operators=[{operator_text}]): {cause}",
+        structural_abi=artifact.compatibility_digest,
+        task_kind=artifact.kind,
+        operators=operators,
     )
 
 

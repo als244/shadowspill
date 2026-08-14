@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 28U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 29U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -205,6 +205,13 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_failure(
     ShadowSpillPytorchAdapterFailure *failure
 );
+
+/*
+ * Fault-teardown helper. The frontend must first synchronize the execution
+ * device. Only a latched NO_PROGRESS allocator failure can be cleared.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_recover_no_progress(void);
 
 /* Explicitly synchronizing qualification/checkpoint helper. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
@@ -445,7 +452,9 @@ SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_abort_task_range(void);
 /*
  * Exact callback ABI consumed by torch.cuda.memory.CUDAPluggableAllocator.
  * These functions never throw across the C boundary. Failures are latched and
- * malloc returns NULL so PyTorch raises through its ordinary OOM path.
+ * malloc returns NULL after latching diagnostics. CUDAPluggableAllocator does
+ * not validate that pointer before constructing a DataPtr, so the frontend
+ * callable translates only the resulting OOM/null-dereference case.
  */
 SHADOWSPILL_PYTORCH_API void *shadowspill_pytorch_cuda_malloc(
     ptrdiff_t bytes,

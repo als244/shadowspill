@@ -52,6 +52,7 @@ class _Library:
     shadowspill_pytorch_allocator_bootstrap = _Function()
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
+    shadowspill_pytorch_recover_no_progress = _Function()
     shadowspill_pytorch_allocator_wait_idle = _Function()
     shadowspill_pytorch_calibrate_transfer_capabilities = _Function()
     shadowspill_pytorch_transfer_profiles = _Function()

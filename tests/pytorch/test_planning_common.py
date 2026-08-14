@@ -7,11 +7,18 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import PlanningError, TensorSpec
+from shadowspill.planner import PressureFitInfeasibleError
+from shadowspill.pytorch import (
+    AdmissionError,
+    PlanInfeasibleError,
+    PlanningError,
+    TensorSpec,
+)
 from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.planning.common import (
     PlanningTimer,
     estimate_spill_reservation,
+    public_infeasible_plan_error,
     simulation_capacity,
     validate_budgets,
     validate_cpu_model,
@@ -71,14 +78,36 @@ def test_planning_admission_helpers_reject_invalid_values() -> None:
         validate_budgets(True, 1 << 30)
     with pytest.raises(TypeError, match="spill_budget"):
         validate_budgets(1 << 30, True)
-    with pytest.raises(PlanningError, match="positive"):
+    with pytest.raises(AdmissionError, match="positive"):
         validate_budgets(0, 1 << 30)
-    with pytest.raises(PlanningError, match="spill_budget"):
+    with pytest.raises(AdmissionError, match="spill_budget"):
         validate_budgets(1 << 30, 0)
     with pytest.raises(PlanningError, match="CPU resident"):
         validate_cpu_model(nn.Linear(2, 2, device="meta"))
-    with pytest.raises(PlanningError, match="spill-pool budget"):
+    with pytest.raises(AdmissionError, match="spill-pool budget"):
         estimate_spill_reservation(model, [torch.ones(2)], 1)
+
+
+def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
+    internal = PressureFitInfeasibleError(
+        "task cannot fit",
+        kind="task_footprint",
+        device_id="cuda_0",
+        boundary_task_id="task_000017",
+        required_bytes=123,
+        capacity_bytes=100,
+    )
+
+    public = public_infeasible_plan_error(internal)
+
+    assert isinstance(public, PlanInfeasibleError)
+    assert isinstance(public, AdmissionError)
+    assert public.kind == "task_footprint"
+    assert public.boundary_task_id == "task_000017"
+    assert public.required_bytes == 123
+    assert public.capacity_bytes == 100
+    assert "could not construct a feasible memory schedule" in str(public)
+    assert "boundary_task: task_000017" in str(public)
 
 
 def test_workspace_and_capacity_helpers_are_explicit() -> None:
@@ -96,7 +125,7 @@ def test_workspace_and_capacity_helpers_are_explicit() -> None:
         )
         == (512 << 20) + 68
     )
-    with pytest.raises(PlanningError, match="smaller"):
+    with pytest.raises(AdmissionError, match="smaller"):
         simulation_capacity(1, 2, ())
 
 

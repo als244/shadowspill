@@ -5,14 +5,18 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import (
+    PressureFitInfeasibleError,
+    PressureFitResult,
+    validate_schedule_feasibility,
+)
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
@@ -48,11 +52,17 @@ from shadowspill.pytorch.profiling.metadata import (
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
-from shadowspill.runtime import AdmissionError, SlabReplay
+from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
+from shadowspill.runtime import SlabReplay
 
 from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
-from ..contracts import ObjectiveResult, PlanningError
+from ..contracts import (
+    AdmissionError,
+    CompilationError,
+    ObjectiveResult,
+    PlanningError,
+)
 from ..diagnostics import PlanReport
 from ..execution import TrainingExecutor
 from ..graph_pairs import (
@@ -92,6 +102,7 @@ from .common import (
     PlanningTimer,
     build_simulation_config,
     estimate_spill_reservation,
+    public_infeasible_plan_error,
     validate_budgets,
     validate_cpu_model,
     workspace_reserve,
@@ -308,11 +319,16 @@ def materialize_training_state(
                     f"{optimizer_capture.opaque_reason}"
                 )
         return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
-    except BaseException:
+    except BaseException as error:
         for parameter in model.parameters():
             parameter.grad = None
         if state is not None:
-            state.restore_cpu_and_unregister()
+            _rollback_training_failure(
+                runtime,
+                error,
+                lambda: state.restore_cpu_and_unregister(),
+                operation="materialize training state",
+            )
         raise
 
 
@@ -569,28 +585,48 @@ def pressurefit_training_programs(
 ) -> TrainingSelections:
     """Resolve recurrent and, when required, lazy-state first-step selections."""
 
+    needs_initial = any(
+        item.created_on_first_step for item in programs.initial.optimizer_objects
+    )
+    with timer.measure("feasibility_preflight"):
+        try:
+            validate_schedule_feasibility(
+                programs.recurrent.program,
+                initial_residency=programs.recurrent.initial_residency,
+                final_residency=programs.recurrent.final_residency,
+                config=programs.simulation_config,
+            )
+            if needs_initial:
+                validate_schedule_feasibility(
+                    programs.initial.program,
+                    initial_residency=programs.initial.initial_residency,
+                    final_residency=programs.initial.final_residency,
+                    config=programs.simulation_config,
+                )
+        except PressureFitInfeasibleError as error:
+            raise public_infeasible_plan_error(error) from error
     with timer.measure("pressurefit_simulation"):
-        recurrent = artifact_cache.resolve_pressurefit(
-            programs.recurrent.program,
-            initial_residency=programs.recurrent.initial_residency,
-            final_residency=programs.recurrent.final_residency,
-            config=programs.simulation_config,
-            progress=timer.progress,
-        )
-        needs_initial = any(
-            item.created_on_first_step for item in programs.initial.optimizer_objects
-        )
-        initial = (
-            artifact_cache.resolve_pressurefit(
-                programs.initial.program,
-                initial_residency=programs.initial.initial_residency,
-                final_residency=programs.initial.final_residency,
+        try:
+            recurrent = artifact_cache.resolve_pressurefit(
+                programs.recurrent.program,
+                initial_residency=programs.recurrent.initial_residency,
+                final_residency=programs.recurrent.final_residency,
                 config=programs.simulation_config,
                 progress=timer.progress,
             )
-            if needs_initial
-            else None
-        )
+            initial = (
+                artifact_cache.resolve_pressurefit(
+                    programs.initial.program,
+                    initial_residency=programs.initial.initial_residency,
+                    final_residency=programs.initial.final_residency,
+                    config=programs.simulation_config,
+                    progress=timer.progress,
+                )
+                if needs_initial
+                else None
+            )
+        except PressureFitInfeasibleError as error:
+            raise public_infeasible_plan_error(error) from error
     return TrainingSelections(recurrent, initial)
 
 
@@ -707,9 +743,13 @@ def admit_training_plan(
             report,
             memory.runtime,
         )
-    except BaseException:
-        rollback_training_materialization(model, materialized)
-        raise
+    except BaseException as error:
+        _rollback_training_failure(
+            memory.runtime,
+            error,
+            lambda: rollback_training_materialization(model, materialized),
+            operation="admit training plan",
+        )
 
 
 def _admit_training_execution_plans(
@@ -843,6 +883,30 @@ def rollback_training_materialization(
     materialized.state.restore_cpu_and_unregister()
 
 
+def _rollback_training_failure(
+    runtime: Runtime,
+    error: BaseException,
+    rollback: Callable[[], None],
+    *,
+    operation: str,
+) -> NoReturn:
+    """Recover a planning OOM before releasing materialized frontend state."""
+
+    translated = runtime._translate_allocator_failure(error, operation=operation)
+    surfaced = error if translated is None else translated
+    if translated is not None:
+        runtime._prepare_failure_cleanup(surfaced)
+    try:
+        rollback()
+    except BaseException as cleanup_error:
+        surfaced.add_note(
+            f"Failed to roll back materialized training state: {cleanup_error}"
+        )
+    if surfaced is error:
+        raise error
+    raise surfaced from error
+
+
 def build_training(
     model: nn.Module,
     *,
@@ -906,9 +970,13 @@ def build_training(
             installed=captured.installed,
             timer=timer,
         )
-    except BaseException:
-        rollback_training_materialization(model, materialized)
-        raise
+    except BaseException as error:
+        _rollback_training_failure(
+            memory.runtime,
+            error,
+            lambda: rollback_training_materialization(model, materialized),
+            operation="profile and lower training plan",
+        )
     return admit_training_plan(
         model,
         captured,
@@ -1003,8 +1071,8 @@ def _replay_training_slabs(
                 )
                 for lowered, selected in pairs
             )
-        except AdmissionError as exc:
-            raise PlanningError(f"slab spatial admission failed: {exc}") from exc
+        except RuntimeAdmissionError as exc:
+            raise AdmissionError(f"slab spatial admission failed: {exc}") from exc
 
 
 def _selected_artifact_digests(
@@ -1030,7 +1098,7 @@ def _verify_compiled_manifest_identity(
         if expected is None or (
             expected.compatibility_digest != manifest.compatibility_digest
         ):
-            raise PlanningError(
+            raise CompilationError(
                 "selected compiled entrypoint changed its storage ABI: "
                 f"artifact={digest}"
             )
