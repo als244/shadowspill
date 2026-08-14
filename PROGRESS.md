@@ -2798,3 +2798,30 @@ the ignored internal progress log before this tracked summary is updated.
   neither CUDA allocation-callback nor free-callback counts. Numerical
   checkpoint/replay remains bitwise, and the focused public training tests and
   fresh-process canary pass.
+
+## 2026-08-14 — Initial-residency spatial tie ordering corrected
+
+- The optimizer-fixed 16 GiB mlops Llama 3 8B plan passed PressureFit and
+  exact slab admission, but its first real task failed on allocator callback
+  ordinal 11, a 16-byte temporary inside the fused-attention call. The runtime
+  still had 3,542,376,412 bytes free and a 1,330,995,200-byte largest range,
+  proving this was not aggregate execution-pool exhaustion.
+- A temporary exact-offset overlap probe identified the occupant mechanically:
+  callback ordinal 11 had been assigned offset 0, which was occupied by the
+  initially resident 1,050,673,152-byte token-embedding weight
+  (`alias_000000`, runtime allocation 2715). The weight is a declared input to
+  `execution_000000` and is released only after that task completes.
+- Root cause was deterministic event tie ordering in spatial admission. All
+  intra-task allocation and free callbacks are conservatively placed at the
+  task start timestamp. The first task starts at time zero, as does initial
+  residency. The old tie-breaker processed every task-local callback,
+  including the 16-byte free, before initial-residency allocation. Interval
+  packing therefore saw disjoint lifetimes and legally assigned both offset 0,
+  although runtime causality requires initial residency before task entry.
+- Initial-residency events now sort before every task-local callback at the
+  same timestamp. A focused 116-byte regression proves that a 100-byte initial
+  input and 16-byte first-task temporary require distinct simultaneous ranges.
+  This changes no PressureFit selection, action, trigger, transfer timing, or
+  arithmetic. The historical pre-optimizer negative fixture remains distinct
+  and must still raise its task-attributed no-progress OOM for a
+  117,440,512-byte request with only 39,845,512 bytes free.

@@ -608,6 +608,14 @@ def _runtime_spatial_layout(
 
 
 def _spatial_event_order(event: _SpatialEvent) -> tuple[int, int, int]:
+    # Initial execution residency is a precondition of the first task.  Its
+    # lifetime must begin before task-local callbacks even when that task's
+    # simulated start timestamp is also zero.
+    if (
+        event.kind is _SpatialEventKind.ALLOCATE_PREFETCH
+        and event.task_id is None
+    ):
+        return event.time_ns, -1, event.sequence
     task_local = event.kind in {
         _SpatialEventKind.TASK_ALLOCATION,
         _SpatialEventKind.TASK_FREE,

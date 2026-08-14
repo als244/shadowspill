@@ -7,6 +7,7 @@ from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.planning.admission.spatial import (
     TaskOutputBinding,
     _append_profiled_task_events,
+    _SpatialEventKind,
     _SpatialTimeline,
     _task_allocation_events,
     _translate_spatial_timeline,
@@ -206,6 +207,44 @@ def test_persistent_output_placement_does_not_fragment_later_workspace() -> None
 
     assert replay.peak_allocated_bytes == 210
     assert replay.final_allocated_bytes == 50
+
+
+def test_initial_residency_overlaps_first_task_temporaries_at_time_zero() -> None:
+    timeline = _SpatialTimeline()
+    timeline.append(
+        0,
+        _SpatialEventKind.ALLOCATE_PREFETCH,
+        "initial_input",
+        100,
+        planned=True,
+    )
+    timeline.append(
+        0,
+        _SpatialEventKind.TASK_ALLOCATION,
+        "first_task_workspace",
+        16,
+        task_id="first_task",
+        allocation_ordinal=0,
+        requested_bytes=16,
+    )
+    timeline.append(
+        0,
+        _SpatialEventKind.TASK_FREE,
+        "first_task_workspace",
+        16,
+        task_id="first_task",
+        allocation_ordinal=0,
+        requested_bytes=16,
+    )
+
+    layout = plan_slab_layout(
+        116,
+        _translate_spatial_timeline(timeline.events, alignment=1).events,
+    )
+    offsets = layout.offset_by_allocation()
+
+    assert offsets["initial_input:0"] != offsets["first_task_workspace"]
+    assert layout.layout_bytes == 116
 
 
 def test_task_allocation_replay_preserves_cached_extent_identity() -> None:
