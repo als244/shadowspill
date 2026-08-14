@@ -1,6 +1,6 @@
 #include "internal.h"
 
-#include <shadowspill/memory_replay.h>
+#include <shadowspill/admission_replay.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -25,15 +25,15 @@ static uint64_t digest_u64(uint64_t digest, uint64_t value) {
     return digest;
 }
 
-static void initialize_result(ShadowSpillMemoryReplayResult *result) {
-    ShadowSpillMemoryReplayDecision *decisions = result->decisions;
+static void initialize_result(ShadowSpillAdmissionReplayResult *result) {
+    ShadowSpillAdmissionReplayDecision *decisions = result->decisions;
     const uint64_t decision_capacity = result->decision_capacity;
-    ShadowSpillMemoryReuseDependency *dependencies = result->dependencies;
+    ShadowSpillAdmissionReuseDependency *dependencies = result->dependencies;
     const uint64_t dependency_capacity = result->dependency_capacity;
-    *result = (ShadowSpillMemoryReplayResult){
-        .status = SHADOWSPILL_MEMORY_REPLAY_INVALID_ARGUMENT,
-        .error_operation_index = SHADOWSPILL_MEMORY_REPLAY_NO_ID,
-        .error_lease_id = SHADOWSPILL_MEMORY_REPLAY_NO_ID,
+    *result = (ShadowSpillAdmissionReplayResult){
+        .status = SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT,
+        .error_operation_index = SHADOWSPILL_ADMISSION_REPLAY_NO_ID,
+        .error_lease_id = SHADOWSPILL_ADMISSION_REPLAY_NO_ID,
         .decisions = decisions,
         .decision_capacity = decision_capacity,
         .dependencies = dependencies,
@@ -42,7 +42,7 @@ static void initialize_result(ShadowSpillMemoryReplayResult *result) {
 }
 
 static int initialize_state(
-    const ShadowSpillMemoryReplayProgram *program,
+    const ShadowSpillAdmissionReplayProgram *program,
     ReplayState *state
 ) {
     state->leases = program->lease_count == 0U
@@ -90,7 +90,7 @@ static int initialize_state(
         state->leases[index].generation = index + 1U;
         atomic_init(&state->leases[index].references, 1U);
         state->expected_dependency_ids[index] =
-            SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+            SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     }
     for (uint64_t index = 0U; index < program->dependency_count; ++index) {
         state->events[index].generation = index + 1U;
@@ -111,11 +111,11 @@ static void destroy_state(ReplayState *state) {
 }
 
 static int valid_program(
-    const ShadowSpillMemoryReplayProgram *program,
-    const ShadowSpillMemoryReplayResult *result
+    const ShadowSpillAdmissionReplayProgram *program,
+    const ShadowSpillAdmissionReplayResult *result
 ) {
     return program != NULL && result != NULL &&
-        program->abi_version == SHADOWSPILL_MEMORY_REPLAY_ABI_VERSION &&
+        program->abi_version == SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION &&
         program->minimum_alignment != 0U &&
         (program->operation_count == 0U || program->operations != NULL) &&
         result->decision_capacity >= program->operation_count &&
@@ -124,11 +124,11 @@ static int valid_program(
 }
 
 static ShadowSpillEventLease *dependency_event(
-    const ShadowSpillMemoryReplayProgram *program,
+    const ShadowSpillAdmissionReplayProgram *program,
     ReplayState *state,
     uint64_t dependency_id
 ) {
-    return dependency_id == SHADOWSPILL_MEMORY_REPLAY_NO_ID
+    return dependency_id == SHADOWSPILL_ADMISSION_REPLAY_NO_ID
         ? NULL
         : dependency_id < program->dependency_count
             ? &state->events[dependency_id]
@@ -136,25 +136,25 @@ static ShadowSpillEventLease *dependency_event(
 }
 
 static uint64_t event_id(
-    const ShadowSpillMemoryReplayProgram *program,
+    const ShadowSpillAdmissionReplayProgram *program,
     const ReplayState *state,
     const ShadowSpillEventLease *event
 ) {
     if (event == NULL || state->events == NULL ||
         event < state->events || event >= state->events + program->dependency_count) {
-        return SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+        return SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     }
     return (uint64_t)(event - state->events);
 }
 
 static uint64_t lease_id(
-    const ShadowSpillMemoryReplayProgram *program,
+    const ShadowSpillAdmissionReplayProgram *program,
     const ReplayState *state,
     const ShadowSpillMemoryLease *lease
 ) {
     if (lease == NULL || state->leases == NULL || lease < state->leases ||
         lease >= state->leases + program->lease_count) {
-        return SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+        return SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     }
     return (uint64_t)(lease - state->leases);
 }
@@ -176,7 +176,7 @@ static void update_peaks(ReplayState *state) {
 }
 
 static int append_dependency(
-    ShadowSpillMemoryReplayResult *result,
+    ShadowSpillAdmissionReplayResult *result,
     uint64_t predecessor,
     uint64_t successor,
     uint64_t dependency,
@@ -186,7 +186,7 @@ static int append_dependency(
         return -1;
     }
     result->dependencies[result->dependency_result_count++] =
-        (ShadowSpillMemoryReuseDependency){
+        (ShadowSpillAdmissionReuseDependency){
             .predecessor_lease_id = predecessor,
             .successor_lease_id = successor,
             .dependency_id = dependency,
@@ -195,31 +195,31 @@ static int append_dependency(
     return 0;
 }
 
-static ShadowSpillMemoryReplayStatus apply_operation(
-    const ShadowSpillMemoryReplayProgram *program,
+static ShadowSpillAdmissionReplayStatus apply_operation(
+    const ShadowSpillAdmissionReplayProgram *program,
     ReplayState *state,
-    ShadowSpillMemoryReplayResult *result,
+    ShadowSpillAdmissionReplayResult *result,
     uint64_t operation_index
 ) {
-    const ShadowSpillMemoryReplayOperation *operation =
+    const ShadowSpillAdmissionReplayOperation *operation =
         &program->operations[operation_index];
     if (operation->lease_id >= program->lease_count ||
         (operation_index != 0U && operation->sequence <
             program->operations[operation_index - 1U].sequence)) {
-        return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
     }
     ShadowSpillMemoryLease *lease = &state->leases[operation->lease_id];
     const uint64_t allocated_before = state->pool.ranges.allocated;
     const uint64_t prior_offset = lease->offset;
     const uint64_t prior_requested_bytes = lease->requested_bytes;
     const uint64_t prior_charged_bytes = lease->charged_bytes;
-    uint64_t predecessor = SHADOWSPILL_MEMORY_REPLAY_NO_ID;
-    uint64_t dependency = SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+    uint64_t predecessor = SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
+    uint64_t dependency = SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     int status = -1;
-    switch ((ShadowSpillMemoryReplayOperationKind)operation->kind) {
-        case SHADOWSPILL_MEMORY_REPLAY_ACQUIRE:
+    switch ((ShadowSpillAdmissionReplayOperationKind)operation->kind) {
+        case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE:
             if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
             }
             status = shadowspill_memory_pool_reserve_lease_locked(
                 &state->pool,
@@ -229,12 +229,12 @@ static ShadowSpillMemoryReplayStatus apply_operation(
                 SHADOWSPILL_MEMORY_BEST_FIT_LOW
             );
             break;
-        case SHADOWSPILL_MEMORY_REPLAY_BEGIN_RETIREMENT: {
+        case SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT: {
             ShadowSpillEventLease *event = dependency_event(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
             }
             if (operation->dependency_expected != 0U) {
                 state->expected_dependency_ids[operation->lease_id] =
@@ -246,25 +246,25 @@ static ShadowSpillMemoryReplayStatus apply_operation(
             );
             break;
         }
-        case SHADOWSPILL_MEMORY_REPLAY_PUBLISH_DEPENDENCY: {
+        case SHADOWSPILL_ADMISSION_REPLAY_PUBLISH_DEPENDENCY: {
             ShadowSpillEventLease *event = dependency_event(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
             }
             status = shadowspill_memory_pool_publish_retirement_dependency_locked(
                 lease, event
             );
             if (status == 0) {
                 state->expected_dependency_ids[operation->lease_id] =
-                    SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+                    SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
             }
             break;
         }
-        case SHADOWSPILL_MEMORY_REPLAY_RESERVE:
+        case SHADOWSPILL_ADMISSION_REPLAY_RESERVE:
             if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
             }
             status = shadowspill_memory_pool_reserve_lease_locked(
                 &state->pool,
@@ -289,11 +289,11 @@ static ShadowSpillMemoryReplayStatus apply_operation(
                 program, state, lease->causal_predecessor
             );
             break;
-        case SHADOWSPILL_MEMORY_REPLAY_ACQUIRE_RESERVED: {
+        case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED: {
             ShadowSpillMemoryLease *predecessor_lease =
                 lease->causal_predecessor;
             predecessor = lease_id(program, state, predecessor_lease);
-            if (predecessor != SHADOWSPILL_MEMORY_REPLAY_NO_ID &&
+            if (predecessor != SHADOWSPILL_ADMISSION_REPLAY_NO_ID &&
                 predecessor_lease->causal_event == NULL &&
                 predecessor_lease->causal_dependency_expected != 0U) {
                 const uint64_t expected =
@@ -305,10 +305,10 @@ static ShadowSpillMemoryReplayStatus apply_operation(
                     shadowspill_memory_pool_publish_retirement_dependency_locked(
                         predecessor_lease, event
                     ) != 0) {
-                    return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                    return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
                 }
                 state->expected_dependency_ids[predecessor] =
-                    SHADOWSPILL_MEMORY_REPLAY_NO_ID;
+                    SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
             }
             ShadowSpillEventLease *event = NULL;
             status = shadowspill_memory_pool_acquire_reserved_lease_locked(
@@ -326,7 +326,7 @@ static ShadowSpillMemoryReplayStatus apply_operation(
                     (void)atomic_fetch_sub_explicit(
                         &event->references, 1U, memory_order_release
                     );
-                    return SHADOWSPILL_MEMORY_REPLAY_ALLOCATION_FAILURE;
+                    return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
                 }
                 (void)atomic_fetch_sub_explicit(
                     &event->references, 1U, memory_order_release
@@ -334,12 +334,12 @@ static ShadowSpillMemoryReplayStatus apply_operation(
             }
             break;
         }
-        case SHADOWSPILL_MEMORY_REPLAY_COMPLETE_RETIREMENT: {
+        case SHADOWSPILL_ADMISSION_REPLAY_COMPLETE_RETIREMENT: {
             ShadowSpillEventLease *event = dependency_event(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
             }
             atomic_store_explicit(
                 &event->backend_complete, 1U, memory_order_release
@@ -347,17 +347,17 @@ static ShadowSpillMemoryReplayStatus apply_operation(
             status = shadowspill_memory_pool_release_lease_locked(lease);
             break;
         }
-        case SHADOWSPILL_MEMORY_REPLAY_RELEASE:
+        case SHADOWSPILL_ADMISSION_REPLAY_RELEASE:
             status = shadowspill_memory_pool_release_lease_locked(lease);
             break;
         default:
-            return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+            return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
     }
     if (status == 1) {
-        return SHADOWSPILL_MEMORY_REPLAY_INFEASIBLE;
+        return SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE;
     }
     if (status != 0) {
-        return SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
     }
     const uint64_t allocated_after = state->pool.ranges.allocated;
     const int64_t delta = allocated_after >= allocated_before
@@ -365,9 +365,9 @@ static ShadowSpillMemoryReplayStatus apply_operation(
         : -(int64_t)(allocated_before - allocated_after);
     const int lease_still_described = lease->pool != NULL ||
         lease->state == SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED;
-    ShadowSpillMemoryReplayDecision *decision =
+    ShadowSpillAdmissionReplayDecision *decision =
         &result->decisions[result->decision_count++];
-    *decision = (ShadowSpillMemoryReplayDecision){
+    *decision = (ShadowSpillAdmissionReplayDecision){
         .operation_index = operation_index,
         .sequence = operation->sequence,
         .lease_id = operation->lease_id,
@@ -391,34 +391,34 @@ static ShadowSpillMemoryReplayStatus apply_operation(
     state->digest = digest_u64(state->digest, (uint64_t)delta);
     state->digest = digest_u64(state->digest, decision->resulting_state);
     update_peaks(state);
-    return SHADOWSPILL_MEMORY_REPLAY_OK;
+    return SHADOWSPILL_ADMISSION_REPLAY_OK;
 }
 
-uint32_t shadowspill_memory_replay_abi_version(void) {
-    return SHADOWSPILL_MEMORY_REPLAY_ABI_VERSION;
+uint32_t shadowspill_admission_replay_abi_version(void) {
+    return SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION;
 }
 
-ShadowSpillMemoryReplayStatus shadowspill_memory_replay_run(
-    const ShadowSpillMemoryReplayProgram *program,
-    ShadowSpillMemoryReplayResult *result
+ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ShadowSpillAdmissionReplayResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_MEMORY_REPLAY_INVALID_ARGUMENT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
     }
     initialize_result(result);
     if (!valid_program(program, result)) {
-        return SHADOWSPILL_MEMORY_REPLAY_INVALID_ARGUMENT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
     }
     ReplayState state = {0};
     if (initialize_state(program, &state) != 0) {
-        result->status = SHADOWSPILL_MEMORY_REPLAY_ALLOCATION_FAILURE;
-        return SHADOWSPILL_MEMORY_REPLAY_ALLOCATION_FAILURE;
+        result->status = SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
     }
-    ShadowSpillMemoryReplayStatus status = SHADOWSPILL_MEMORY_REPLAY_OK;
+    ShadowSpillAdmissionReplayStatus status = SHADOWSPILL_ADMISSION_REPLAY_OK;
     for (uint64_t index = 0U; index < program->operation_count; ++index) {
         status = apply_operation(program, &state, result, index);
-        if (status != SHADOWSPILL_MEMORY_REPLAY_OK) {
-            const ShadowSpillMemoryReplayOperation *operation =
+        if (status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+            const ShadowSpillAdmissionReplayOperation *operation =
                 &program->operations[index];
             result->error_operation_index = index;
             result->error_lease_id = operation->lease_id;
@@ -444,20 +444,20 @@ ShadowSpillMemoryReplayStatus shadowspill_memory_replay_run(
     return status;
 }
 
-const char *shadowspill_memory_replay_status_string(
-    ShadowSpillMemoryReplayStatus status
+const char *shadowspill_admission_replay_status_string(
+    ShadowSpillAdmissionReplayStatus status
 ) {
     switch (status) {
-        case SHADOWSPILL_MEMORY_REPLAY_OK:
+        case SHADOWSPILL_ADMISSION_REPLAY_OK:
             return "ok";
-        case SHADOWSPILL_MEMORY_REPLAY_INVALID_ARGUMENT:
+        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT:
             return "invalid argument";
-        case SHADOWSPILL_MEMORY_REPLAY_ALLOCATION_FAILURE:
+        case SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE:
             return "allocation failure";
-        case SHADOWSPILL_MEMORY_REPLAY_INFEASIBLE:
+        case SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE:
             return "infeasible";
-        case SHADOWSPILL_MEMORY_REPLAY_INVALID_SCRIPT:
+        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT:
             return "invalid replay script";
     }
-    return "unknown memory replay status";
+    return "unknown AdmissionReplay status";
 }

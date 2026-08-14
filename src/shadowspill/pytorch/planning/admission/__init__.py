@@ -1,19 +1,37 @@
 """Physical-budget reconciliation and exact slab replay."""
 
+from .admission_replay import (
+    AdmissionReplay,
+    AdmissionReplayPurpose,
+    AdmissionReplayStep,
+    CausalAdmissionDependency,
+    OwnershipTransition,
+    OwnershipTransitionKind,
+    replay_admission,
+)
+from .bindings import TaskOutputBinding
 from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
-from .spatial import (
-    SelectedSpatialLayout,
-    build_selected_spatial_layout,
+from .selection import (
+    SelectedAdmission,
+    admit_selected_schedule,
+    build_selected_admission,
     output_bindings_for_entrypoints,
-    replay_selected_schedule,
 )
 
 __all__ = [
-    "SelectedSpatialLayout",
-    "build_selected_spatial_layout",
+    "AdmissionReplay",
+    "AdmissionReplayPurpose",
+    "AdmissionReplayStep",
+    "CausalAdmissionDependency",
+    "OwnershipTransition",
+    "OwnershipTransitionKind",
+    "SelectedAdmission",
+    "TaskOutputBinding",
+    "admit_selected_schedule",
+    "build_selected_admission",
     "output_bindings_for_entrypoints",
     "physical_admission",
     "reconcile_spill_pool",
-    "replay_selected_schedule",
+    "replay_admission",
     "seal_physical_budget",
 ]

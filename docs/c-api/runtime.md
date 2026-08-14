@@ -3,7 +3,7 @@
 Public declarations live in:
 
 - `runtime/include/shadowspill/backend.h`;
-- `runtime/include/shadowspill/memory_replay.h`;
+- `runtime/include/shadowspill/admission_replay.h`;
 - `runtime/include/shadowspill/profiler.h`;
 - `runtime/include/shadowspill/runtime.h`;
 - `runtime/backends/mock/include/shadowspill/backend_mock.h`.
@@ -13,9 +13,9 @@ The runtime ABI is version 23. Public functions return
 operations. Call `shadowspill_runtime_abi_version()` before constructing a
 runtime and validate every supplied vtable ABI.
 
-`memory_replay.h` has its own versioned, timing-free batch ABI. Call
-`shadowspill_memory_replay_abi_version()` before passing a replay program to
-`shadowspill_memory_replay_run()`. Replay borrows every input/output buffer for
+`admission_replay.h` has its own versioned, timing-free batch ABI. Call
+`shadowspill_admission_replay_abi_version()` before passing a replay program to
+`shadowspill_admission_replay_run()`. Replay borrows every input/output buffer for
 the duration of the call and retains no caller storage.
 
 ## Backend boundaries
@@ -101,10 +101,10 @@ operations and route submission are forbidden under it. Pool state changes are
 constant-time except range-tree allocation/free and deterministic scans for a
 compatible causal predecessor; completion polling occurs outside the pool.
 
-## Memory replay boundary
+## AdmissionReplay boundary
 
-Memory replay is a separate runtime component implemented in
-`runtime/src/memory_replay.c`; it is not part of `memory_pool.c`. It translates
+AdmissionReplay is a separate runtime component implemented in
+`runtime/src/admission_replay.c`; it is not part of `memory_pool.c`. It translates
 an ordered, timing-free ownership script into calls to the exact production
 `MemoryPool` transitions. Its result contains allocator decisions, physical
 charge deltas, fragmentation, infeasibility geometry, and any causal
@@ -120,7 +120,7 @@ The simulator consumes replay's dependency edges and assigns timestamps using
 task profiles, route calibration, and lane backlog. In short:
 
 ```text
-Memory replay: can this ownership schedule fit safely?
+AdmissionReplay: can this ownership schedule fit safely?
 Simulator:     when will the admitted work run, and how long will it take?
 ```
 

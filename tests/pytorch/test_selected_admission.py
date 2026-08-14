@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import pytest
+
+from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.pytorch.planning.admission.selection import (
+    _task_memory_envelope,
+    admit_selected_schedule,
+    build_selected_admission,
+)
+from shadowspill.pytorch.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+    TaskMeasurement,
+)
+from tests.planner._examples import (
+    config,
+    exact_capacity_program,
+    exact_capacity_residency,
+)
+
+
+def _selected():  # type: ignore[no-untyped-def]
+    initial, final = exact_capacity_residency()
+    return pressurefit(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=PressureFitOptions(
+            residency_strategies=("relaxed-stall",),
+            prefetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        ),
+    )
+
+
+def test_selected_schedule_replays_only_task_boundary_state() -> None:
+    replay = admit_selected_schedule(
+        _selected(),
+        execution_pool_bytes=122,
+        alignment=1,
+    )
+
+    assert replay.pool.peak_allocated_bytes == 122
+    assert replay.pool.final_allocated_bytes == 61
+    assert replay.workspace_bytes_by_task == (
+        ("task0", 0),
+        ("task1", 0),
+        ("task2", 0),
+    )
+
+
+def test_selected_admission_requires_every_task_envelope_measurement() -> None:
+    with pytest.raises(ValueError, match="task-envelope admission lacks measurement"):
+        build_selected_admission(
+            _selected(),
+            {},
+            execution_pool_bytes=122,
+            alignment=1,
+        )
+
+
+def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
+    measurement = TaskMeasurement(
+        10,
+        96,
+        96,
+        (96,),
+        (10,),
+        "unit-test",
+        (
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 96, 96),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 96, 96),
+            TaskAllocationEvent(1, TaskAllocationOperation.ALLOCATE, 64, 64),
+            TaskAllocationEvent(1, TaskAllocationOperation.FREE, 64, 64),
+        ),
+    )
+
+    envelope = _task_memory_envelope(measurement)
+
+    assert envelope.maximum_requested_allocation_bytes == 96
+    assert envelope.maximum_charged_allocation_bytes == 96
+    assert envelope.live_requested_allocation_limit_bytes == 2 << 20
+    assert envelope.live_charged_allocation_limit_bytes == 2 << 20

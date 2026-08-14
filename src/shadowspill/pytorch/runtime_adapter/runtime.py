@@ -34,6 +34,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
     allocator_oom_error,
+    generic_runtime_error,
     read_allocator_failure,
 )
 

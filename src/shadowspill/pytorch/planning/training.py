@@ -89,8 +89,8 @@ from ..partition import (
 )
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
-    SelectedSpatialLayout,
-    build_selected_spatial_layout,
+    SelectedAdmission,
+    build_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
     reconcile_spill_pool,
@@ -744,11 +744,11 @@ def admit_training_plan(
                 materialized.optimizer,
                 initial_memory_envelopes=(
                     None
-                    if admitted.initial_layout is None
-                    else admitted.initial_layout.envelopes_by_task()
+                    if admitted.initial_admission is None
+                    else admitted.initial_admission.envelopes_by_task()
                 ),
                 recurrent_memory_envelopes=(
-                    admitted.recurrent_layout.envelopes_by_task()
+                    admitted.recurrent_admission.envelopes_by_task()
                 ),
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None
@@ -811,7 +811,7 @@ def _admit_training_execution_plans(
             ),
             budget=memory.spill_budget,
         )
-    layouts = _build_training_spatial_layouts(
+    admissions = _build_training_admissions(
         captured,
         profiled,
         programs,
@@ -823,8 +823,8 @@ def _admit_training_execution_plans(
         memory,
         captured.installed,
         workspace_reserve=programs.workspace_reserve,
-        slab_replay=max(
-            (item.replay for item in layouts),
+        admission_replay=max(
+            (item.replay for item in admissions),
             key=lambda item: item.peak_fragmentation_bytes,
         ),
     )
@@ -844,13 +844,13 @@ def _admit_training_execution_plans(
         if initial is not None
         else None
     )
-    recurrent_layout = layouts[0]
-    initial_layout = layouts[1] if len(layouts) == 2 else None
+    recurrent_admission = admissions[0]
+    initial_admission = admissions[1] if len(admissions) == 2 else None
     return TrainingAdmissionArtifacts(
         recurrent_plan,
         initial_plan,
-        recurrent_layout,
-        initial_layout,
+        recurrent_admission,
+        initial_admission,
     )
 
 
@@ -1123,21 +1123,21 @@ def _training_task_inventory(
     )
 
 
-def _build_training_spatial_layouts(
+def _build_training_admissions(
     captured: TrainingCaptureArtifacts,
     profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
     selections: TrainingSelections,
     memory: PlanMemory,
     timer: PlanningTimer,
-) -> tuple[SelectedSpatialLayout, ...]:
+) -> tuple[SelectedAdmission, ...]:
     pairs = [(programs.recurrent, selections.recurrent.result)]
     if selections.initial is not None:
         pairs.append((programs.initial, selections.initial.result))
     with timer.measure("slab_admission"):
         try:
             return tuple(
-                build_selected_spatial_layout(
+                build_selected_admission(
                     selected,
                     programs.measurements_by_profile,
                     execution_pool_bytes=(
@@ -1156,7 +1156,7 @@ def _build_training_spatial_layouts(
                 for lowered, selected in pairs
             )
         except RuntimeAdmissionError as exc:
-            raise AdmissionError(f"slab spatial admission failed: {exc}") from exc
+            raise AdmissionError(f"dynamic slab admission failed: {exc}") from exc
 
 
 def _selected_artifact_digests(

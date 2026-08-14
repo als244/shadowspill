@@ -132,11 +132,11 @@ Free ranges are coalesced with adjacent free neighbors. ShadowSpill does not
 move live leases to compact the arena; planning-time allocator replay validates
 the expected fragmentation and derives any required reserve.
 
-## Planning-time memory replay
+## Planning-time AdmissionReplay
 
 Replay and simulation have deliberately different responsibilities.
 
-`memory_replay.c` is a timing-free interpreter over the production
+`admission_replay.c` is a timing-free interpreter over the production
 `MemoryPool` policy. It receives only causal ownership boundaries—lease,
 retirement, reservation, acquisition, completion, and release—and answers:
 
@@ -150,9 +150,9 @@ retirement, reservation, acquisition, completion, and release—and answers:
 The replay source, public C ABI, and Python wrapper are isolated in:
 
 ```text
-runtime/src/memory_replay.c
-runtime/include/shadowspill/memory_replay.h
-src/shadowspill/runtime/memory_replay.py
+runtime/src/admission_replay.c
+runtime/include/shadowspill/admission_replay.h
+src/shadowspill/runtime/admission_replay.py
 ```
 
 `memory_pool.c` remains the small reusable allocator/state-machine component.

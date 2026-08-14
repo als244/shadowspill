@@ -7,7 +7,7 @@ import ctypes
 from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
-from shadowspill.runtime import SlabReplay
+from shadowspill.runtime import AdmissionReplayResult
 
 from ...contracts import AdmissionError
 from ...runtime_adapter import PlanMemory
@@ -33,7 +33,7 @@ def physical_admission(
     installed: InstalledAllocator,
     *,
     workspace_reserve: int,
-    slab_replay: SlabReplay,
+    admission_replay: AdmissionReplayResult,
 ) -> PhysicalAdmission:
     """Describe the physical resources admitted after spatial replay."""
 
@@ -47,7 +47,7 @@ def physical_admission(
         slab_bytes=memory.execution_budget,
         workspace_reserve_bytes=workspace_reserve,
         host_reservation_bytes=int(installed.admission.spill_pool_bytes),
-        predicted_fragmentation_bytes=slab_replay.peak_fragmentation_bytes,
+        predicted_fragmentation_bytes=admission_replay.peak_fragmentation_bytes,
     )
 
 

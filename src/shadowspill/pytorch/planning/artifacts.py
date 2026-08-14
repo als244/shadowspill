@@ -35,7 +35,7 @@ from ..lowering.training import (
     TrainingStorageLayout,
 )
 from ..partition import PartitionedExport
-from .admission import SelectedSpatialLayout
+from .admission import SelectedAdmission
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,8 +151,8 @@ class TrainingAdmissionArtifacts:
 
     recurrent: ExecutionPlan
     initial: ExecutionPlan | None
-    recurrent_layout: SelectedSpatialLayout
-    initial_layout: SelectedSpatialLayout | None
+    recurrent_admission: SelectedAdmission
+    initial_admission: SelectedAdmission | None
 
 
 __all__ = [

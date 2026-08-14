@@ -174,10 +174,12 @@ class RuntimeBridge:
         input_alias_ids: tuple[str, ...],
         actions: tuple[MemoryAction, ...],
         action_trace_labels: tuple[str, ...] | None = None,
-        memory_envelope: TaskMemoryEnvelope = TaskMemoryEnvelope(),
+        memory_envelope: TaskMemoryEnvelope | None = None,
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
+        if memory_envelope is None:
+            memory_envelope = TaskMemoryEnvelope()
         labels = _action_labels(actions, action_trace_labels)
         runtime_inputs = self._runtime_inputs(input_alias_ids)
         mutations = self._runtime_mutations(task.mutations)

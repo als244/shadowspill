@@ -62,8 +62,8 @@ from ..partition import (
 )
 from ..runtime_adapter import PlanMemory, Runtime
 from .admission import (
-    SelectedSpatialLayout,
-    build_selected_spatial_layout,
+    SelectedAdmission,
+    build_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
     reconcile_spill_pool,
@@ -372,14 +372,14 @@ def admit_forward_plan(
             predicted_peak=selected.simulation.host_peak_bytes,
             budget=memory.spill_budget,
         )
-    spatial_layout = _build_forward_spatial_layout(
+    selected_admission = _build_forward_admission(
         captured, profiled, program, selection, memory, timer
     )
     admission = physical_admission(
         memory,
         captured.installed,
         workspace_reserve=program.workspace_reserve,
-        slab_replay=spatial_layout.replay,
+        admission_replay=selected_admission.replay,
     )
     execution_plan = _forward_execution_plan(
         program.lowered,
@@ -411,7 +411,7 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
-                memory_envelopes=spatial_layout.envelopes_by_task(),
+                memory_envelopes=selected_admission.envelopes_by_task(),
             )
         report = _forward_plan_report(
             model,
@@ -582,17 +582,17 @@ def build_forward(
     )
 
 
-def _build_forward_spatial_layout(
+def _build_forward_admission(
     captured: ForwardCaptureArtifacts,
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
     selection: CachedPressureFitResult,
     memory: PlanMemory,
     timer: PlanningTimer,
-) -> SelectedSpatialLayout:
+) -> SelectedAdmission:
     with timer.measure("slab_admission"):
         try:
-            return build_selected_spatial_layout(
+            return build_selected_admission(
                 selection.result,
                 program.measurements_by_profile,
                 execution_pool_bytes=(
@@ -611,7 +611,7 @@ def _build_forward_spatial_layout(
                 ),
             )
         except RuntimeAdmissionError as exc:
-            raise AdmissionError(f"slab spatial admission failed: {exc}") from exc
+            raise AdmissionError(f"dynamic slab admission failed: {exc}") from exc
 
 
 def _verify_manifest_identity(

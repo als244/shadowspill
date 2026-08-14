@@ -1,4 +1,4 @@
-"""Declarative ctypes surface for the neutral MemoryPool replay ABI."""
+"""Declarative ctypes surface for the neutral AdmissionReplay ABI."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ ABI_VERSION = 1
 NO_ID = (1 << 64) - 1
 
 
-class CMemoryReplayOperation(ctypes.Structure):
+class CAdmissionReplayOperation(ctypes.Structure):
     _fields_ = [
         ("sequence", ctypes.c_uint64),
         ("lease_id", ctypes.c_uint64),
@@ -23,19 +23,19 @@ class CMemoryReplayOperation(ctypes.Structure):
     ]
 
 
-class CMemoryReplayProgram(ctypes.Structure):
+class CAdmissionReplayProgram(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("capacity_bytes", ctypes.c_uint64),
         ("minimum_alignment", ctypes.c_uint64),
         ("lease_count", ctypes.c_uint64),
         ("dependency_count", ctypes.c_uint64),
-        ("operations", ctypes.POINTER(CMemoryReplayOperation)),
+        ("operations", ctypes.POINTER(CAdmissionReplayOperation)),
         ("operation_count", ctypes.c_uint64),
     ]
 
 
-class CMemoryReplayDecision(ctypes.Structure):
+class CAdmissionReplayDecision(ctypes.Structure):
     _fields_ = [
         ("operation_index", ctypes.c_uint64),
         ("sequence", ctypes.c_uint64),
@@ -50,7 +50,7 @@ class CMemoryReplayDecision(ctypes.Structure):
     ]
 
 
-class CMemoryReuseDependency(ctypes.Structure):
+class CAdmissionReuseDependency(ctypes.Structure):
     _fields_ = [
         ("predecessor_lease_id", ctypes.c_uint64),
         ("successor_lease_id", ctypes.c_uint64),
@@ -59,7 +59,7 @@ class CMemoryReuseDependency(ctypes.Structure):
     ]
 
 
-class CMemoryReplayResult(ctypes.Structure):
+class CAdmissionReplayResult(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
         ("error_operation_index", ctypes.c_uint64),
@@ -74,17 +74,17 @@ class CMemoryReplayResult(ctypes.Structure):
         ("final_reserved_bytes", ctypes.c_uint64),
         ("final_largest_free_range_bytes", ctypes.c_uint64),
         ("decision_digest", ctypes.c_uint64),
-        ("decisions", ctypes.POINTER(CMemoryReplayDecision)),
+        ("decisions", ctypes.POINTER(CAdmissionReplayDecision)),
         ("decision_capacity", ctypes.c_uint64),
         ("decision_count", ctypes.c_uint64),
-        ("dependencies", ctypes.POINTER(CMemoryReuseDependency)),
+        ("dependencies", ctypes.POINTER(CAdmissionReuseDependency)),
         ("dependency_capacity", ctypes.c_uint64),
         ("dependency_result_count", ctypes.c_uint64),
     ]
 
 
 @cache
-def load_memory_replay_library() -> ctypes.CDLL:
+def load_admission_replay_library() -> ctypes.CDLL:
     path = resolve_library("libshadowspill_runtime.so")
     if path is None:
         raise RuntimeError(
@@ -92,31 +92,31 @@ def load_memory_replay_library() -> ctypes.CDLL:
             "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))
-    library.shadowspill_memory_replay_abi_version.argtypes = []
-    library.shadowspill_memory_replay_abi_version.restype = ctypes.c_uint32
-    actual_abi = int(library.shadowspill_memory_replay_abi_version())
+    library.shadowspill_admission_replay_abi_version.argtypes = []
+    library.shadowspill_admission_replay_abi_version.restype = ctypes.c_uint32
+    actual_abi = int(library.shadowspill_admission_replay_abi_version())
     if actual_abi != ABI_VERSION:
         raise RuntimeError(
-            "ShadowSpill memory replay ABI mismatch: "
+            "ShadowSpill AdmissionReplay ABI mismatch: "
             f"expected {ABI_VERSION}, found {actual_abi}"
         )
-    library.shadowspill_memory_replay_run.argtypes = [
-        ctypes.POINTER(CMemoryReplayProgram),
-        ctypes.POINTER(CMemoryReplayResult),
+    library.shadowspill_admission_replay_run.argtypes = [
+        ctypes.POINTER(CAdmissionReplayProgram),
+        ctypes.POINTER(CAdmissionReplayResult),
     ]
-    library.shadowspill_memory_replay_run.restype = ctypes.c_uint32
-    library.shadowspill_memory_replay_status_string.argtypes = [ctypes.c_uint32]
-    library.shadowspill_memory_replay_status_string.restype = ctypes.c_char_p
+    library.shadowspill_admission_replay_run.restype = ctypes.c_uint32
+    library.shadowspill_admission_replay_status_string.argtypes = [ctypes.c_uint32]
+    library.shadowspill_admission_replay_status_string.restype = ctypes.c_char_p
     return library
 
 
 __all__ = [
     "ABI_VERSION",
     "NO_ID",
-    "CMemoryReplayDecision",
-    "CMemoryReplayOperation",
-    "CMemoryReplayProgram",
-    "CMemoryReplayResult",
-    "CMemoryReuseDependency",
-    "load_memory_replay_library",
+    "CAdmissionReplayDecision",
+    "CAdmissionReplayOperation",
+    "CAdmissionReplayProgram",
+    "CAdmissionReplayResult",
+    "CAdmissionReuseDependency",
+    "load_admission_replay_library",
 ]
