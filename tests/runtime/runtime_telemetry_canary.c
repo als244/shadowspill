@@ -173,7 +173,14 @@ static int same_stream_retirement_is_task_batched(void) {
         ) != SHADOWSPILL_RUNTIME_OK;
     }
     shadowspill_mock_backend_statistics(mock, &during);
-    failed = failed || during.operation_count != before.operation_count ||
+    ShadowSpillRuntimeStatistics during_runtime = {0};
+    failed = failed || shadowspill_runtime_statistics(
+            runtime, &during_runtime
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        during.operation_count != before.operation_count ||
+        during_runtime.pending_retirements != 1U ||
+        during_runtime.allocated_bytes != 64U ||
+        during_runtime.live_allocations != 1U ||
         shadowspill_after_task(
             runtime, 77U, compute, NULL, 0U, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
@@ -190,10 +197,14 @@ static int same_stream_retirement_is_task_batched(void) {
         fprintf(
             stderr,
             "task retirement batching before=%llu during=%llu after=%llu "
+            "during_pending=%llu during_live=%llu during_allocated=%llu "
             "pending=%llu actions=%llu allocated=%llu\n",
             (unsigned long long)before.operation_count,
             (unsigned long long)during.operation_count,
             (unsigned long long)after.operation_count,
+            (unsigned long long)during_runtime.pending_retirements,
+            (unsigned long long)during_runtime.live_allocations,
+            (unsigned long long)during_runtime.allocated_bytes,
             (unsigned long long)runtime_statistics.pending_retirements,
             (unsigned long long)runtime_statistics.queued_actions,
             (unsigned long long)runtime_statistics.allocated_bytes

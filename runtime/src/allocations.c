@@ -562,20 +562,30 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     uint64_t alignment,
     ShadowSpillBackendStream stream,
     uint64_t origin_task_id,
+    int exact_task_local_only,
     ShadowSpillMemoryLease **record
 ) {
     const uint64_t required = bytes == 0U ? 1U : bytes;
     if (alignment < shadowspill_execution_pool(runtime)->minimum_alignment) {
         alignment = shadowspill_execution_pool(runtime)->minimum_alignment;
     }
+    const uint64_t reusable_bucket = mix_index(
+        required, runtime->reusable_index_bucket_count
+    );
     ShadowSpillMemoryLease *selected = NULL;
-    for (ShadowSpillMemoryLease *candidate = runtime->active_execution_leases;
+    for (ShadowSpillMemoryLease *candidate = exact_task_local_only
+             ? runtime->reusable_execution_leases_by_size[reusable_bucket]
+             : runtime->active_execution_leases;
          candidate != NULL;
-         candidate = candidate->active_next) {
+         candidate = exact_task_local_only
+             ? candidate->reusable_index_next
+             : candidate->active_next) {
         if (!candidate->logical_freed || candidate->pointer == NULL ||
             candidate->retirement_preparing || candidate->ever_plan_owned ||
             candidate->causal_successor != NULL ||
             candidate->charged_bytes < required ||
+            (exact_task_local_only &&
+             candidate->charged_bytes != required) ||
             candidate->offset % alignment != 0U) {
             continue;
         }
@@ -583,6 +593,9 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
             candidate->retirement_fence == NULL &&
             candidate->release_task_id == origin_task_id &&
             origin_task_id != SHADOWSPILL_RUNTIME_NO_ID;
+        if (exact_task_local_only && !task_local) {
+            continue;
+        }
         if (!task_local && candidate->retirement_events == NULL &&
             candidate->retirement_fence == NULL) {
             continue;
@@ -828,22 +841,36 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     status = shadowspill_current_status_locked(runtime);
     while (status == SHADOWSPILL_RUNTIME_OK) {
         ShadowSpillMemoryLease *record = NULL;
-        status = shadowspill_create_execution_lease_locked(
-            runtime,
-            bytes,
-            alignment,
-            0,
-            SHADOWSPILL_MEMORY_BEST_FIT_LOW,
-            shadowspill_current_task_id(runtime),
-            &record
+        const uint64_t task_id = shadowspill_current_task_id(runtime);
+        /*
+         * A logically freed exact-size lease from this task is immediately
+         * reusable on the same stream: stream order already places the new
+         * consumer after the prior use.  Recycle it before consuming another
+         * slab range so allocation-heavy compiled tasks retain caching-
+         * allocator behavior without fixed offsets or backend events.
+         */
+        status = reuse_pending_allocation_locked(
+            runtime, bytes, alignment, stream, task_id, 1, &record
         );
+        if (status == SHADOWSPILL_RUNTIME_OK && record == NULL) {
+            status = shadowspill_create_execution_lease_locked(
+                runtime,
+                bytes,
+                alignment,
+                0,
+                SHADOWSPILL_MEMORY_BEST_FIT_LOW,
+                task_id,
+                &record
+            );
+        }
         if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
             status = reuse_pending_allocation_locked(
                 runtime,
                 bytes,
                 alignment,
                 stream,
-                shadowspill_current_task_id(runtime),
+                task_id,
+                0,
                 &record
             );
             if (status == SHADOWSPILL_RUNTIME_OK && record == NULL) {
@@ -877,7 +904,6 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
             status = SHADOWSPILL_RUNTIME_NO_PROGRESS;
             break;
         }
-        const uint64_t task_id = shadowspill_current_task_id(runtime);
         if (task_id != SHADOWSPILL_RUNTIME_NO_ID) {
             status = shadowspill_fence_task_retirements_locked(
                 runtime, task_id, stream
