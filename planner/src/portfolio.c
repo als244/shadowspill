@@ -30,10 +30,12 @@ typedef struct HashIndex {
 
 typedef struct ResidencyCacheEntry {
     uint64_t hash;
-    uint8_t strategy;
+    uint64_t content_hash;
+    uint8_t minimize_transfer;
+    uint8_t prefetch_headroom;
     uint64_t *extra_pressure;
-    uint8_t *resident;
-    uint8_t *breaks;
+    uint8_t *resident_bits;
+    uint8_t *break_bits;
     ShadowSpillPlannerStatus status;
     uint32_t error_device;
     int32_t error_boundary;
@@ -46,17 +48,17 @@ typedef struct ResidencyCache {
     uint32_t count;
     uint32_t capacity;
     size_t cell_count;
+    size_t packed_cell_count;
     size_t pressure_count;
     HashIndex index;
 } ResidencyCache;
 
 typedef struct ScheduleCacheEntry {
     uint64_t hash;
+    uint32_t residency_key;
     uint8_t rule;
     uint8_t coalesced;
     uint8_t prefetch_headroom;
-    uint8_t *resident;
-    uint8_t *breaks;
     ShadowSpillDenseSchedule schedule;
 } ScheduleCacheEntry;
 
@@ -64,7 +66,6 @@ typedef struct ScheduleCache {
     ScheduleCacheEntry *entries;
     uint32_t count;
     uint32_t capacity;
-    size_t cell_count;
     HashIndex index;
 } ScheduleCache;
 
@@ -72,6 +73,8 @@ typedef struct SimulationCacheEntry {
     uint64_t hash;
     ShadowSpillDenseSchedule schedule;
     ShadowSpillSimulationResult result;
+    uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
+    uint8_t digest_valid;
 } SimulationCacheEntry;
 
 typedef struct SimulationCache {
@@ -94,6 +97,8 @@ typedef struct CandidateWorkspace {
     ScheduleCache schedule_cache;
     SimulationCache simulation_cache;
     ShadowSpillResidencyWorkspace *residency_workspace;
+    uint32_t current_residency_key;
+    uint32_t base_residency_key;
     uint64_t residency_cache_hits;
     uint64_t residency_cache_misses;
     uint64_t schedule_emissions;
@@ -126,6 +131,41 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size) {
 
 static uint64_t hash_value(uint64_t hash, uint64_t value) {
     return hash_bytes(hash, &value, sizeof(value));
+}
+
+static void pack_boolean_cells(
+    const uint8_t *source,
+    size_t count,
+    uint8_t *destination
+) {
+    size_t packed_count = count / 8U + (count % 8U != 0U);
+    memset(destination, 0, packed_count);
+    for (size_t index = 0U; index < count; ++index) {
+        if (source[index] != 0U) {
+            destination[index >> 3U] |= (uint8_t)(1U << (index & 7U));
+        }
+    }
+}
+
+static void unpack_boolean_cells(
+    const uint8_t *source,
+    size_t count,
+    uint8_t *destination
+) {
+    uint8_t expanded[256][8];
+    for (uint32_t value = 0U; value < 256U; ++value) {
+        for (uint32_t bit = 0U; bit < 8U; ++bit) {
+            expanded[value][bit] = (uint8_t)((value >> bit) & 1U);
+        }
+    }
+    size_t complete = count / 8U;
+    for (size_t index = 0U; index < complete; ++index) {
+        memcpy(destination + index * 8U, expanded[source[index]], 8U);
+    }
+    for (size_t index = complete * 8U; index < count; ++index) {
+        destination[index] =
+            (uint8_t)((source[index >> 3U] >> (index & 7U)) & 1U);
+    }
 }
 
 static uint32_t hash_slot(uint64_t hash, uint32_t capacity) {
@@ -194,10 +234,19 @@ static uint32_t hash_index_next(const HashIndex *index, uint32_t slot) {
 
 static uint64_t residency_cache_hash(
     const CandidateWorkspace *workspace,
-    uint8_t strategy
+    const ShadowSpillResidencyOptions *options
 ) {
     uint64_t hash = UINT64_C(1469598103934665603);
-    hash = hash_bytes(hash, &strategy, sizeof(strategy));
+    hash = hash_bytes(
+        hash,
+        &options->minimize_transfer,
+        sizeof(options->minimize_transfer)
+    );
+    hash = hash_bytes(
+        hash,
+        &options->prefetch_headroom,
+        sizeof(options->prefetch_headroom)
+    );
     return hash_bytes(
         hash,
         workspace->extra_pressure,
@@ -207,19 +256,20 @@ static uint64_t residency_cache_hash(
 }
 
 static uint64_t schedule_cache_hash(
-    const CandidateWorkspace *workspace,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    uint64_t residency_content_hash,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom
 ) {
     uint64_t hash = UINT64_C(1469598103934665603);
+    hash = hash_bytes(
+        hash,
+        &residency_content_hash,
+        sizeof(residency_content_hash)
+    );
     hash = hash_bytes(hash, &rule, sizeof(rule));
     hash = hash_bytes(hash, &coalesced, sizeof(coalesced));
-    hash = hash_bytes(hash, &prefetch_headroom, sizeof(prefetch_headroom));
-    hash = hash_bytes(hash, resident, workspace->schedule_cache.cell_count);
-    return hash_bytes(hash, breaks, workspace->schedule_cache.cell_count);
+    return hash_bytes(hash, &prefetch_headroom, sizeof(prefetch_headroom));
 }
 
 static uint64_t dense_schedule_hash(const ShadowSpillDenseSchedule *schedule) {
@@ -324,19 +374,17 @@ static int context_valid(
 
 static int simulation_workspace_create(
     const ShadowSpillPressureFitContext *context,
-    uint32_t action_capacity,
     SimulationWorkspace *workspace
 ) {
     memset(workspace, 0, sizeof(*workspace));
     workspace->task_capacity = context->simulation->task_count;
-    workspace->transfer_capacity = action_capacity;
     workspace->device_capacity = context->simulation->device_count;
     workspace->tasks = calloc(
         workspace->task_capacity == 0U ? 1U : workspace->task_capacity,
         sizeof(*workspace->tasks)
     );
     workspace->transfers = calloc(
-        workspace->transfer_capacity == 0U ? 1U : workspace->transfer_capacity,
+        1U,
         sizeof(*workspace->transfers)
     );
     workspace->peaks = calloc(
@@ -354,6 +402,35 @@ static int simulation_workspace_create(
     return 0;
 }
 
+static int simulation_workspace_reserve_transfers(
+    SimulationWorkspace *workspace,
+    uint32_t capacity
+) {
+    if (capacity <= workspace->transfer_capacity) {
+        return 0;
+    }
+    uint32_t selected = workspace->transfer_capacity == 0U
+        ? 64U
+        : workspace->transfer_capacity;
+    while (selected < capacity) {
+        if (selected > UINT32_MAX / 2U) {
+            selected = capacity;
+            break;
+        }
+        selected *= 2U;
+    }
+    ShadowSpillTransferInterval *replacement = realloc(
+        workspace->transfers,
+        (size_t)selected * sizeof(*replacement)
+    );
+    if (replacement == NULL) {
+        return -1;
+    }
+    workspace->transfers = replacement;
+    workspace->transfer_capacity = selected;
+    return 0;
+}
+
 static void simulation_workspace_destroy(SimulationWorkspace *workspace) {
     free(workspace->tasks);
     free(workspace->transfers);
@@ -367,6 +444,12 @@ static ShadowSpillSimulationStatus simulate_schedule(
     SimulationWorkspace *workspace,
     ShadowSpillSimulationResult *result
 ) {
+    if (simulation_workspace_reserve_transfers(
+            workspace,
+            schedule->action_count
+        ) != 0) {
+        return SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE;
+    }
     ShadowSpillSimulationProgram program;
     shadowspill_bind_dense_schedule(context->simulation, schedule, &program);
     *result = (ShadowSpillSimulationResult){
@@ -394,8 +477,9 @@ static int candidate_workspace_create(
     }
     size_t cells = (size_t)cell_count;
     workspace->residency_cache.cell_count = cells;
+    workspace->residency_cache.packed_cell_count =
+        cells / 8U + (cells % 8U != 0U);
     workspace->residency_cache.pressure_count = (size_t)pressure_count;
-    workspace->schedule_cache.cell_count = cells;
     workspace->resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->base_resident = calloc(cells == 0U ? 1U : cells, 1U);
@@ -409,17 +493,14 @@ static int candidate_workspace_create(
         workspace->extra_pressure == NULL ||
         shadowspill_schedule_storage_create(
             context->residency->alias_count,
-            context->simulation->task_count,
             &workspace->schedule
         ) != 0 ||
         shadowspill_schedule_storage_create(
             context->residency->alias_count,
-            context->simulation->task_count,
             &workspace->selected
         ) != 0 ||
         simulation_workspace_create(
             context,
-            workspace->schedule.action_capacity,
             &workspace->simulation
         ) != 0 ||
         shadowspill_residency_workspace_create(
@@ -446,15 +527,13 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
     for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
         free(workspace->residency_cache.entries[index].extra_pressure);
-        free(workspace->residency_cache.entries[index].resident);
-        free(workspace->residency_cache.entries[index].breaks);
+        free(workspace->residency_cache.entries[index].resident_bits);
+        free(workspace->residency_cache.entries[index].break_bits);
     }
     free(workspace->residency_cache.entries);
     free(workspace->residency_cache.index.slots);
     for (uint32_t index = 0U; index < workspace->schedule_cache.count; ++index) {
         ScheduleCacheEntry *entry = &workspace->schedule_cache.entries[index];
-        free(entry->resident);
-        free(entry->breaks);
         free(entry->schedule.action_trigger_tasks);
         free(entry->schedule.action_aliases);
         free(entry->schedule.action_kinds);
@@ -530,7 +609,7 @@ static ShadowSpillPlannerStatus reduce(
 
 static ResidencyCacheEntry *find_residency_cache(
     CandidateWorkspace *workspace,
-    uint8_t strategy,
+    const ShadowSpillResidencyOptions *options,
     uint64_t hash
 ) {
     ResidencyCache *cache = &workspace->residency_cache;
@@ -541,7 +620,9 @@ static ResidencyCacheEntry *find_residency_cache(
         HashSlot indexed = cache->index.slots[slot];
         ResidencyCacheEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
-        if (indexed.hash == hash && entry->strategy == strategy &&
+        if (indexed.hash == hash &&
+            entry->minimize_transfer == options->minimize_transfer &&
+            entry->prefetch_headroom == options->prefetch_headroom &&
             memcmp(entry->extra_pressure, workspace->extra_pressure, bytes) == 0) {
             return entry;
         }
@@ -552,7 +633,7 @@ static ResidencyCacheEntry *find_residency_cache(
 
 static ResidencyCacheEntry *append_residency_cache(
     CandidateWorkspace *workspace,
-    uint8_t strategy,
+    const ShadowSpillResidencyOptions *options,
     uint64_t hash,
     ShadowSpillPlannerStatus status,
     const ShadowSpillResidencyResult *result,
@@ -585,13 +666,17 @@ static ResidencyCacheEntry *append_residency_cache(
         (cache->pressure_count == 0U ? 1U : cache->pressure_count) *
         sizeof(*entry->extra_pressure)
     );
-    entry->resident = malloc(cache->cell_count == 0U ? 1U : cache->cell_count);
-    entry->breaks = malloc(cache->cell_count == 0U ? 1U : cache->cell_count);
-    if (entry->extra_pressure == NULL || entry->resident == NULL ||
-        entry->breaks == NULL) {
+    entry->resident_bits = malloc(
+        cache->packed_cell_count == 0U ? 1U : cache->packed_cell_count
+    );
+    entry->break_bits = malloc(
+        cache->packed_cell_count == 0U ? 1U : cache->packed_cell_count
+    );
+    if (entry->extra_pressure == NULL || entry->resident_bits == NULL ||
+        entry->break_bits == NULL) {
         free(entry->extra_pressure);
-        free(entry->resident);
-        free(entry->breaks);
+        free(entry->resident_bits);
+        free(entry->break_bits);
         memset(entry, 0, sizeof(*entry));
         return NULL;
     }
@@ -600,9 +685,19 @@ static ResidencyCacheEntry *append_residency_cache(
         workspace->extra_pressure,
         cache->pressure_count * sizeof(*entry->extra_pressure)
     );
-    memcpy(entry->resident, resident, cache->cell_count);
-    memcpy(entry->breaks, breaks, cache->cell_count);
-    entry->strategy = strategy;
+    pack_boolean_cells(resident, cache->cell_count, entry->resident_bits);
+    pack_boolean_cells(breaks, cache->cell_count, entry->break_bits);
+    entry->content_hash = hash_bytes(
+        hash_bytes(
+            UINT64_C(1469598103934665603),
+            entry->resident_bits,
+            cache->packed_cell_count
+        ),
+        entry->break_bits,
+        cache->packed_cell_count
+    );
+    entry->minimize_transfer = options->minimize_transfer;
+    entry->prefetch_headroom = options->prefetch_headroom;
     entry->hash = hash;
     entry->status = status;
     entry->error_device = result->error_device;
@@ -611,8 +706,8 @@ static ResidencyCacheEntry *append_residency_cache(
     entry->capacity_bytes = result->capacity_bytes;
     if (hash_index_insert(&cache->index, hash, cache->count) != 0) {
         free(entry->extra_pressure);
-        free(entry->resident);
-        free(entry->breaks);
+        free(entry->resident_bits);
+        free(entry->break_bits);
         memset(entry, 0, sizeof(*entry));
         return NULL;
     }
@@ -630,8 +725,10 @@ static ShadowSpillPlannerStatus reduce_cached(
     ShadowSpillResidencyResult *result
 ) {
     ResidencyCache *cache = &workspace->residency_cache;
-    uint64_t hash = residency_cache_hash(workspace, strategy);
-    ResidencyCacheEntry *entry = find_residency_cache(workspace, strategy, hash);
+    (void)strategy;
+    uint64_t hash = residency_cache_hash(workspace, options);
+    ResidencyCacheEntry *entry = find_residency_cache(workspace, options, hash);
+    int cache_hit = entry != NULL;
     if (entry == NULL) {
         ++workspace->residency_cache_misses;
         ShadowSpillResidencyResult computed;
@@ -645,7 +742,7 @@ static ShadowSpillPlannerStatus reduce_cached(
         );
         entry = append_residency_cache(
             workspace,
-            strategy,
+            options,
             hash,
             status,
             &computed,
@@ -658,8 +755,12 @@ static ShadowSpillPlannerStatus reduce_cached(
     } else {
         ++workspace->residency_cache_hits;
     }
-    memcpy(resident, entry->resident, cache->cell_count);
-    memcpy(breaks, entry->breaks, cache->cell_count);
+    workspace->current_residency_key =
+        (uint32_t)(entry - workspace->residency_cache.entries);
+    if (cache_hit != 0) {
+        unpack_boolean_cells(entry->resident_bits, cache->cell_count, resident);
+        unpack_boolean_cells(entry->break_bits, cache->cell_count, breaks);
+    }
     *result = (ShadowSpillResidencyResult){
         .status = (uint32_t)entry->status,
         .error_device = entry->error_device,
@@ -676,25 +777,31 @@ static ShadowSpillPlannerStatus reduce_cached(
 
 static ScheduleCacheEntry *find_schedule_cache(
     CandidateWorkspace *workspace,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    uint32_t residency_key,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom,
     uint64_t hash
 ) {
     ScheduleCache *cache = &workspace->schedule_cache;
+    const ResidencyCacheEntry *current =
+        &workspace->residency_cache.entries[residency_key];
     uint32_t slot = hash_index_start(&cache->index, hash);
     while (slot != UINT32_MAX &&
            cache->index.slots[slot].entry_plus_one != 0U) {
         HashSlot indexed = cache->index.slots[slot];
         ScheduleCacheEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
+        const ResidencyCacheEntry *cached =
+            &workspace->residency_cache.entries[entry->residency_key];
         if (indexed.hash == hash && entry->rule == rule &&
             entry->coalesced == coalesced &&
             entry->prefetch_headroom == prefetch_headroom &&
-            memcmp(entry->resident, resident, cache->cell_count) == 0 &&
-            memcmp(entry->breaks, breaks, cache->cell_count) == 0) {
+            cached->content_hash == current->content_hash &&
+            memcmp(cached->resident_bits, current->resident_bits,
+                   workspace->residency_cache.packed_cell_count) == 0 &&
+            memcmp(cached->break_bits, current->break_bits,
+                   workspace->residency_cache.packed_cell_count) == 0) {
             return entry;
         }
         slot = hash_index_next(&cache->index, slot);
@@ -832,7 +939,7 @@ static int dense_schedule_equal(
         ) == 0;
 }
 
-static int append_simulation_cache(
+static SimulationCacheEntry *append_simulation_cache(
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *result,
     uint64_t hash
@@ -841,14 +948,14 @@ static int append_simulation_cache(
     if (cache->count == cache->capacity) {
         uint32_t capacity = cache->capacity == 0U ? 16U : cache->capacity * 2U;
         if (capacity < cache->capacity) {
-            return -1;
+            return NULL;
         }
         SimulationCacheEntry *entries = realloc(
             cache->entries,
             (size_t)capacity * sizeof(*entries)
         );
         if (entries == NULL) {
-            return -1;
+            return NULL;
         }
         memset(
             entries + cache->capacity,
@@ -860,7 +967,7 @@ static int append_simulation_cache(
     }
     SimulationCacheEntry *entry = &cache->entries[cache->count];
     if (clone_dense_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
-        return -1;
+        return NULL;
     }
     entry->result = *result;
     entry->hash = hash;
@@ -879,16 +986,17 @@ static int append_simulation_cache(
         free(entry->schedule.final_aliases);
         free(entry->schedule.final_locations);
         memset(entry, 0, sizeof(*entry));
-        return -1;
+        return NULL;
     }
     ++cache->count;
-    return 0;
+    return entry;
 }
 
 static int simulate_cached(
     const ShadowSpillPressureFitContext *context,
     CandidateWorkspace *workspace,
-    ShadowSpillSimulationResult *result
+    ShadowSpillSimulationResult *result,
+    SimulationCacheEntry **selected_entry
 ) {
     SimulationCache *cache = &workspace->simulation_cache;
     uint64_t hash = dense_schedule_hash(&workspace->schedule.value);
@@ -903,25 +1011,28 @@ static int simulate_cached(
                 &workspace->schedule.value
             )) {
             *result = entry->result;
+            *selected_entry = entry;
             ++workspace->simulation_cache_hits;
             return 0;
         }
         slot = hash_index_next(&cache->index, slot);
     }
-    (void)simulate_schedule(
-        context,
-        &workspace->schedule.value,
-        &workspace->simulation,
-        result
-    );
+    if (simulate_schedule(
+            context,
+            &workspace->schedule.value,
+            &workspace->simulation,
+            result
+        ) == SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE) {
+        return -1;
+    }
     ++workspace->simulation_calls;
-    return append_simulation_cache(workspace, result, hash);
+    *selected_entry = append_simulation_cache(workspace, result, hash);
+    return *selected_entry == NULL ? -1 : 0;
 }
 
 static ScheduleCacheEntry *append_schedule_cache(
     CandidateWorkspace *workspace,
-    const uint8_t *resident,
-    const uint8_t *breaks,
+    uint32_t residency_key,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom,
@@ -949,24 +1060,16 @@ static ScheduleCacheEntry *append_schedule_cache(
         cache->capacity = capacity;
     }
     ScheduleCacheEntry *entry = &cache->entries[cache->count];
-    entry->resident = malloc(cache->cell_count == 0U ? 1U : cache->cell_count);
-    entry->breaks = malloc(cache->cell_count == 0U ? 1U : cache->cell_count);
-    if (entry->resident == NULL || entry->breaks == NULL ||
-        clone_dense_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
-        free(entry->resident);
-        free(entry->breaks);
+    if (clone_dense_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
         memset(entry, 0, sizeof(*entry));
         return NULL;
     }
-    memcpy(entry->resident, resident, cache->cell_count);
-    memcpy(entry->breaks, breaks, cache->cell_count);
+    entry->residency_key = residency_key;
     entry->rule = rule;
     entry->hash = hash;
     entry->coalesced = coalesced;
     entry->prefetch_headroom = prefetch_headroom;
     if (hash_index_insert(&cache->index, hash, cache->count) != 0) {
-        free(entry->resident);
-        free(entry->breaks);
         free(entry->schedule.action_trigger_tasks);
         free(entry->schedule.action_aliases);
         free(entry->schedule.action_kinds);
@@ -991,17 +1094,16 @@ static int emit_cached(
     uint8_t prefetch_headroom
 ) {
     uint64_t hash = schedule_cache_hash(
-        workspace,
-        resident,
-        breaks,
+        workspace->residency_cache.entries[
+            workspace->current_residency_key
+        ].content_hash,
         rule,
         coalesced,
         prefetch_headroom
     );
     ScheduleCacheEntry *entry = find_schedule_cache(
         workspace,
-        resident,
-        breaks,
+        workspace->current_residency_key,
         rule,
         coalesced,
         prefetch_headroom,
@@ -1031,8 +1133,7 @@ static int emit_cached(
     ++workspace->schedule_emissions;
     return append_schedule_cache(
         workspace,
-        resident,
-        breaks,
+        workspace->current_residency_key,
         rule,
         coalesced,
         prefetch_headroom,
@@ -1157,6 +1258,7 @@ static int evaluate_candidate(
     );
     memcpy(workspace->resident, workspace->base_resident, (size_t)cells);
     memcpy(workspace->breaks, workspace->base_breaks, (size_t)cells);
+    workspace->current_residency_key = workspace->base_residency_key;
 
     ShadowSpillResidencyOptions reduce_options;
     residency_options(context, workspace, strategy, &reduce_options);
@@ -1190,8 +1292,14 @@ static int evaluate_candidate(
         }
 
         ShadowSpillSimulationResult simulation;
+        SimulationCacheEntry *simulation_entry = NULL;
         uint64_t simulation_started = monotonic_time_ns();
-        if (simulate_cached(context, workspace, &simulation) != 0) {
+        if (simulate_cached(
+                context,
+                workspace,
+                &simulation,
+                &simulation_entry
+            ) != 0) {
             return -1;
         }
         workspace->simulation_time_ns +=
@@ -1201,13 +1309,22 @@ static int evaluate_candidate(
         if (simulation_status == SHADOWSPILL_SIMULATION_OK) {
             diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
             diagnostic->makespan_ns = simulation.makespan_ns;
-            uint64_t digest_started = monotonic_time_ns();
-            shadowspill_schedule_digest(
-                context,
-                &workspace->schedule.value,
-                diagnostic->schedule_digest
+            if (simulation_entry->digest_valid == 0U) {
+                uint64_t digest_started = monotonic_time_ns();
+                shadowspill_schedule_digest(
+                    context,
+                    &workspace->schedule.value,
+                    simulation_entry->digest
+                );
+                workspace->digest_time_ns +=
+                    monotonic_time_ns() - digest_started;
+                simulation_entry->digest_valid = 1U;
+            }
+            memcpy(
+                diagnostic->schedule_digest,
+                simulation_entry->digest,
+                sizeof(diagnostic->schedule_digest)
             );
-            workspace->digest_time_ns += monotonic_time_ns() - digest_started;
             return 1;
         }
 
@@ -1356,6 +1473,7 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
             workspace.base_breaks,
             &base_result
         );
+        workspace.base_residency_key = workspace.current_residency_key;
         workspace.residency_time_ns += monotonic_time_ns() - residency_started;
         for (uint32_t rule_index = 0U; rule_index < options->prefetch_rule_count;
              ++rule_index) {

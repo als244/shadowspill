@@ -32,7 +32,6 @@ void shadowspill_schedule_facts_destroy(ShadowSpillScheduleFacts *facts);
 
 int shadowspill_schedule_storage_create(
     uint32_t alias_count,
-    uint32_t task_count,
     ShadowSpillScheduleStorage *storage
 );
 

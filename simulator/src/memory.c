@@ -15,6 +15,20 @@ int shadowspill_allocate_work(
         program->task_count == 0U ? 1U : program->task_count,
         sizeof(*work->tasks)
     );
+    work->lane_successors = malloc(
+        (program->task_count == 0U ? 1U : program->task_count) *
+        sizeof(*work->lane_successors)
+    );
+    work->task_word_count =
+        program->task_count / 64U + (program->task_count % 64U != 0U);
+    work->lane_heads = calloc(
+        work->task_word_count == 0U ? 1U : work->task_word_count,
+        sizeof(*work->lane_heads)
+    );
+    work->active_tasks = calloc(
+        work->task_word_count == 0U ? 1U : work->task_word_count,
+        sizeof(*work->active_tasks)
+    );
     work->transfers = calloc(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
@@ -41,6 +55,8 @@ int shadowspill_allocate_work(
         program->device_count, sizeof(*work->device_total_peaks)
     );
     if (work->aliases == NULL || work->tasks == NULL ||
+        work->lane_successors == NULL || work->lane_heads == NULL ||
+        work->active_tasks == NULL ||
         work->transfers == NULL || work->active_fetch == NULL ||
         work->active_evict == NULL || work->fetch_cursor == NULL ||
         work->evict_cursor == NULL || work->fetch_sequence == NULL ||
@@ -55,12 +71,35 @@ int shadowspill_allocate_work(
         work->active_fetch[index] = -1;
         work->active_evict[index] = -1;
     }
+    for (uint32_t task = 0; task < program->task_count; ++task) {
+        work->lane_successors[task] = SHADOWSPILL_SIMULATOR_NO_INDEX;
+        uint32_t predecessor = SHADOWSPILL_SIMULATOR_NO_INDEX;
+        for (uint32_t previous = task; previous > 0U; --previous) {
+            uint32_t candidate = previous - 1U;
+            if (program->task_device[candidate] == program->task_device[task] &&
+                program->task_resource_kind[candidate] ==
+                    program->task_resource_kind[task] &&
+                program->task_resource_lane[candidate] ==
+                    program->task_resource_lane[task]) {
+                predecessor = candidate;
+                break;
+            }
+        }
+        if (predecessor == SHADOWSPILL_SIMULATOR_NO_INDEX) {
+            work->lane_heads[task >> 6U] |= UINT64_C(1) << (task & 63U);
+        } else {
+            work->lane_successors[predecessor] = task;
+        }
+    }
     return 1;
 }
 
 void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->aliases);
     free(work->tasks);
+    free(work->lane_successors);
+    free(work->lane_heads);
+    free(work->active_tasks);
     free(work->transfers);
     free(work->active_fetch);
     free(work->active_evict);

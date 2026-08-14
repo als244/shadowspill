@@ -24,36 +24,6 @@ int shadowspill_task_dependencies_complete(
     return 1;
 }
 
-static int lane_available(
-    const ShadowSpillSimulationProgram *program,
-    const ShadowSpillSimulationWork *work,
-    uint32_t task
-) {
-    for (uint32_t other = 0; other < program->task_count; ++other) {
-        if (other == task) {
-            continue;
-        }
-        if (work->tasks[other].state == SHADOWSPILL_TASK_ACTIVE &&
-            program->task_device[other] == program->task_device[task] &&
-            program->task_resource_kind[other] ==
-                program->task_resource_kind[task] &&
-            program->task_resource_lane[other] ==
-                program->task_resource_lane[task]) {
-            return 0;
-        }
-        if (other < task &&
-            work->tasks[other].state == SHADOWSPILL_TASK_UNLAUNCHED &&
-            program->task_device[other] == program->task_device[task] &&
-            program->task_resource_kind[other] ==
-                program->task_resource_kind[task] &&
-            program->task_resource_lane[other] ==
-                program->task_resource_lane[task]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
 int shadowspill_inputs_ready(
     const ShadowSpillSimulationProgram *program,
     const ShadowSpillSimulationWork *work,
@@ -77,84 +47,89 @@ int shadowspill_try_launch_tasks(
     ShadowSpillSimulationWork *work
 ) {
     int changed = 0;
-    for (uint32_t task = 0; task < program->task_count; ++task) {
-        ShadowSpillTaskState *state = &work->tasks[task];
-        if (state->state != SHADOWSPILL_TASK_UNLAUNCHED ||
-            !lane_available(program, work, task)) {
-            continue;
-        }
-        uint64_t dependency_ready = 0U;
-        if (!shadowspill_task_dependencies_complete(
-                program, work, task, &dependency_ready
-            )) {
-            continue;
-        }
-        if (state->ready_set == 0U) {
-            state->ready_set = 1U;
-            state->ready_ns = work->now_ns > dependency_ready
-                ? work->now_ns
-                : dependency_ready;
-        }
-        if (!shadowspill_inputs_ready(program, work, task)) {
-            state->stall_mask |= SHADOWSPILL_STALL_INPUT_RESIDENCY;
-            continue;
-        }
-        uint32_t device = program->task_device[task];
-        uint64_t output_bytes = 0U;
-        uint32_t output_begin = program->output_offsets[task];
-        uint32_t output_end = program->output_offsets[task + 1U];
-        int output_overflow = 0;
-        for (uint32_t index = output_begin; index < output_end; ++index) {
-            uint32_t alias = program->output_aliases[index];
-            if (work->aliases[alias].device_allocated == 0U &&
-                shadowspill_add_overflow_u64(
-                    output_bytes,
-                    program->alias_size_bytes[alias],
-                    &output_bytes
+    for (uint32_t word = 0U; word < work->task_word_count; ++word) {
+        uint64_t heads = work->lane_heads[word];
+        while (heads != 0U) {
+            uint32_t bit = (uint32_t)__builtin_ctzll(heads);
+            uint32_t task = word * 64U + bit;
+            heads &= heads - 1U;
+            ShadowSpillTaskState *state = &work->tasks[task];
+            uint64_t dependency_ready = 0U;
+            if (!shadowspill_task_dependencies_complete(
+                    program, work, task, &dependency_ready
                 )) {
-                output_overflow = 1;
-                break;
+                continue;
             }
-        }
-        if (output_overflow != 0) {
-            state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
-            continue;
-        }
-        uint64_t used = work->device_object_bytes[device] +
-            work->device_workspace_bytes[device];
-        uint64_t requested = output_bytes + program->task_workspace_bytes[task];
-        uint64_t total = 0U;
-        if (shadowspill_add_overflow_u64(used, requested, &total) ||
-            total > program->devices[device].capacity_bytes) {
-            state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
-            continue;
-        }
-        for (uint32_t index = output_begin; index < output_end; ++index) {
-            uint32_t alias = program->output_aliases[index];
-            ShadowSpillAliasState *alias_state = &work->aliases[alias];
-            if (alias_state->device_allocated == 0U) {
-                alias_state->device_allocated = 1U;
-                work->device_object_bytes[device] +=
-                    program->alias_size_bytes[alias];
+            if (state->ready_set == 0U) {
+                state->ready_set = 1U;
+                state->ready_ns = work->now_ns > dependency_ready
+                    ? work->now_ns
+                    : dependency_ready;
             }
-            alias_state->device_ready = 0U;
-            alias_state->fetch_pending = 0U;
-            alias_state->evict_pending = 0U;
-            alias_state->host_ready = 0U;
+            if (!shadowspill_inputs_ready(program, work, task)) {
+                state->stall_mask |= SHADOWSPILL_STALL_INPUT_RESIDENCY;
+                continue;
+            }
+            uint32_t device = program->task_device[task];
+            uint64_t output_bytes = 0U;
+            uint32_t output_begin = program->output_offsets[task];
+            uint32_t output_end = program->output_offsets[task + 1U];
+            int output_overflow = 0;
+            for (uint32_t index = output_begin; index < output_end; ++index) {
+                uint32_t alias = program->output_aliases[index];
+                if (work->aliases[alias].device_allocated == 0U &&
+                    shadowspill_add_overflow_u64(
+                        output_bytes,
+                        program->alias_size_bytes[alias],
+                        &output_bytes
+                    )) {
+                    output_overflow = 1;
+                    break;
+                }
+            }
+            if (output_overflow != 0) {
+                state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+                continue;
+            }
+            uint64_t used = work->device_object_bytes[device] +
+                work->device_workspace_bytes[device];
+            uint64_t requested =
+                output_bytes + program->task_workspace_bytes[task];
+            uint64_t total = 0U;
+            if (shadowspill_add_overflow_u64(used, requested, &total) ||
+                total > program->devices[device].capacity_bytes) {
+                state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+                continue;
+            }
+            for (uint32_t index = output_begin; index < output_end; ++index) {
+                uint32_t alias = program->output_aliases[index];
+                ShadowSpillAliasState *alias_state = &work->aliases[alias];
+                if (alias_state->device_allocated == 0U) {
+                    alias_state->device_allocated = 1U;
+                    work->device_object_bytes[device] +=
+                        program->alias_size_bytes[alias];
+                }
+                alias_state->device_ready = 0U;
+                alias_state->fetch_pending = 0U;
+                alias_state->evict_pending = 0U;
+                alias_state->host_ready = 0U;
+            }
+            work->device_workspace_bytes[device] +=
+                program->task_workspace_bytes[task];
+            state->state = SHADOWSPILL_TASK_ACTIVE;
+            work->lane_heads[word] &= ~(UINT64_C(1) << bit);
+            work->active_tasks[word] |= UINT64_C(1) << bit;
+            state->start_ns = work->now_ns;
+            if (shadowspill_add_overflow_u64(
+                    work->now_ns,
+                    program->task_runtime_ns[task],
+                    &state->end_ns
+                )) {
+                state->end_ns = UINT64_MAX;
+            }
+            shadowspill_update_peaks(program, work);
+            changed = 1;
         }
-        work->device_workspace_bytes[device] +=
-            program->task_workspace_bytes[task];
-        state->state = SHADOWSPILL_TASK_ACTIVE;
-        state->start_ns = work->now_ns;
-        if (shadowspill_add_overflow_u64(
-                work->now_ns,
-                program->task_runtime_ns[task],
-                &state->end_ns
-            )) {
-            state->end_ns = UINT64_MAX;
-        }
-        shadowspill_update_peaks(program, work);
-        changed = 1;
     }
     return changed;
 }
@@ -207,6 +182,14 @@ int shadowspill_complete_task(
         work->aliases[alias].host_ready = 0U;
     }
     task_state->state = SHADOWSPILL_TASK_COMPLETE;
+    uint32_t word = task >> 6U;
+    uint64_t mask = UINT64_C(1) << (task & 63U);
+    work->active_tasks[word] &= ~mask;
+    uint32_t successor = work->lane_successors[task];
+    if (successor != SHADOWSPILL_SIMULATOR_NO_INDEX) {
+        work->lane_heads[successor >> 6U] |=
+            UINT64_C(1) << (successor & 63U);
+    }
     work->completed_tasks += 1U;
     if (!append_task_interval(program, work, result, task)) {
         shadowspill_set_error(

@@ -31,6 +31,13 @@ typedef struct Action {
     uint8_t kind;
 } Action;
 
+typedef struct ReloadRank {
+    uint32_t index;
+    uint32_t entry_boundary;
+    uint64_t size_bytes;
+    uint32_t alias;
+} ReloadRank;
+
 static uint64_t cell(uint32_t alias, uint32_t count, uint32_t index) {
     return (uint64_t)alias * count + index;
 }
@@ -135,34 +142,25 @@ void shadowspill_schedule_facts_destroy(ShadowSpillScheduleFacts *facts) {
 
 int shadowspill_schedule_storage_create(
     uint32_t alias_count,
-    uint32_t task_count,
     ShadowSpillScheduleStorage *storage
 ) {
     if (storage == NULL) {
         return -1;
     }
     memset(storage, 0, sizeof(*storage));
-    uint64_t action_capacity = (uint64_t)alias_count * (task_count + 1U) * 2U;
-    if (action_capacity > UINT32_MAX) {
-        return -1;
-    }
-    storage->action_capacity = (uint32_t)action_capacity;
     storage->initial_capacity = alias_count;
     storage->final_capacity = alias_count;
-    uint32_t actions = storage->action_capacity == 0U
-        ? 1U
-        : storage->action_capacity;
     uint32_t aliases = alias_count == 0U ? 1U : alias_count;
     storage->value.action_trigger_tasks = calloc(
-        actions,
+        1U,
         sizeof(*storage->value.action_trigger_tasks)
     );
     storage->value.action_aliases = calloc(
-        actions,
+        1U,
         sizeof(*storage->value.action_aliases)
     );
     storage->value.action_kinds = calloc(
-        actions,
+        1U,
         sizeof(*storage->value.action_kinds)
     );
     storage->value.initial_aliases = calloc(
@@ -194,6 +192,63 @@ int shadowspill_schedule_storage_create(
     return 0;
 }
 
+static int reserve_schedule_actions(
+    ShadowSpillScheduleStorage *storage,
+    uint32_t capacity
+) {
+    if (capacity <= storage->action_capacity) {
+        return 0;
+    }
+    uint32_t selected = storage->action_capacity == 0U
+        ? 64U
+        : storage->action_capacity;
+    while (selected < capacity) {
+        if (selected > UINT32_MAX / 2U) {
+            selected = capacity;
+            break;
+        }
+        selected *= 2U;
+    }
+    uint32_t *triggers = malloc(
+        (size_t)selected * sizeof(*storage->value.action_trigger_tasks)
+    );
+    uint32_t *aliases = malloc(
+        (size_t)selected * sizeof(*storage->value.action_aliases)
+    );
+    uint8_t *kinds = malloc(
+        (size_t)selected * sizeof(*storage->value.action_kinds)
+    );
+    if (triggers == NULL || aliases == NULL || kinds == NULL) {
+        free(triggers);
+        free(aliases);
+        free(kinds);
+        return -1;
+    }
+    memcpy(
+        triggers,
+        storage->value.action_trigger_tasks,
+        (size_t)storage->value.action_count * sizeof(*triggers)
+    );
+    memcpy(
+        aliases,
+        storage->value.action_aliases,
+        (size_t)storage->value.action_count * sizeof(*aliases)
+    );
+    memcpy(
+        kinds,
+        storage->value.action_kinds,
+        (size_t)storage->value.action_count * sizeof(*kinds)
+    );
+    free(storage->value.action_trigger_tasks);
+    free(storage->value.action_aliases);
+    free(storage->value.action_kinds);
+    storage->value.action_trigger_tasks = triggers;
+    storage->value.action_aliases = aliases;
+    storage->value.action_kinds = kinds;
+    storage->action_capacity = selected;
+    return 0;
+}
+
 void shadowspill_schedule_storage_clear(ShadowSpillScheduleStorage *storage) {
     if (storage == NULL) {
         return;
@@ -222,9 +277,9 @@ int shadowspill_schedule_storage_copy(
     const ShadowSpillScheduleStorage *source
 ) {
     if (destination == NULL || source == NULL ||
-        destination->action_capacity < source->value.action_count ||
         destination->initial_capacity < source->value.initial_count ||
-        destination->final_capacity < source->value.final_count) {
+        destination->final_capacity < source->value.final_count ||
+        reserve_schedule_actions(destination, source->value.action_count) != 0) {
         return -1;
     }
     destination->value.action_count = source->value.action_count;
@@ -439,48 +494,44 @@ int shadowspill_extend_interval_entries(
     }
     const ShadowSpillResidencyProblem *problem = facts->context->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
-        uint32_t span_index = 1U;
-        while (1) {
-            uint32_t span_count = collect_spans(
-                resident,
-                breaks,
-                alias,
-                facts->boundary_count,
-                spans
-            );
-            if (span_index >= span_count) {
-                break;
-            }
-            Span current = spans[span_index];
-            Span previous = spans[span_index - 1U];
-            if (current.start == 0U) {
-                ++span_index;
-                continue;
-            }
-            int32_t candidate_boundary = (int32_t)current.start - 2;
-            int32_t previous_end = (int32_t)previous.end - 1;
-            if (candidate_boundary <= previous_end) {
-                ++span_index;
-                continue;
-            }
-            uint32_t candidate_cell = current.start - 1U;
-            uint32_t device = problem->alias_device[alias];
-            uint64_t position =
-                (uint64_t)device * facts->boundary_count + candidate_cell;
-            uint64_t added = problem->output_reservations[cell(
-                alias,
-                facts->boundary_count,
-                candidate_cell
-            )] != 0U
-                ? 0U
-                : problem->alias_size_bytes[alias];
-            if (pressure[position] + added <=
-                problem->device_capacity_bytes[device]) {
+        uint32_t span_count = collect_spans(
+            resident,
+            breaks,
+            alias,
+            facts->boundary_count,
+            spans
+        );
+        uint32_t device = problem->alias_device[alias];
+        for (uint32_t span_index = 1U; span_index < span_count; ++span_index) {
+            Span *current = &spans[span_index];
+            const Span *previous = &spans[span_index - 1U];
+
+            /*
+             * Residency canonicalization clears breaks on every absent cell.
+             * Extending a later span by one absent cell therefore only moves
+             * its start left; it cannot change any other span.  Keep that
+             * local start directly instead of rediscovering every span after
+             * each successful extension.
+             */
+            while (current->start > previous->end + 1U) {
+                uint32_t candidate_cell = current->start - 1U;
+                uint64_t position =
+                    (uint64_t)device * facts->boundary_count + candidate_cell;
+                uint64_t added = problem->output_reservations[cell(
+                    alias,
+                    facts->boundary_count,
+                    candidate_cell
+                )] != 0U
+                    ? 0U
+                    : problem->alias_size_bytes[alias];
+                if (pressure[position] + added >
+                    problem->device_capacity_bytes[device]) {
+                    break;
+                }
                 resident[cell(alias, facts->boundary_count, candidate_cell)] = 1U;
                 pressure[position] += added;
-                continue;
+                current->start = candidate_cell;
             }
-            ++span_index;
         }
     }
     free(pressure);
@@ -561,6 +612,55 @@ static int reload_compare_descending(const void *left_value, const void *right_v
     return 0;
 }
 
+static int reload_rank_compare(const void *left_value, const void *right_value) {
+    const ReloadRank *left = left_value;
+    const ReloadRank *right = right_value;
+    if (left->entry_boundary != right->entry_boundary) {
+        return left->entry_boundary > right->entry_boundary ? -1 : 1;
+    }
+    if (left->size_bytes != right->size_bytes) {
+        return left->size_bytes > right->size_bytes ? -1 : 1;
+    }
+    if (left->alias != right->alias) {
+        return left->alias > right->alias ? -1 : 1;
+    }
+    if (left->index != right->index) {
+        return left->index < right->index ? -1 : 1;
+    }
+    return 0;
+}
+
+static void clear_active_reload(
+    uint64_t *active,
+    uint32_t word_count,
+    uint32_t rank,
+    uint32_t start,
+    uint32_t end
+) {
+    uint64_t mask = ~(UINT64_C(1) << (rank & 63U));
+    uint32_t word = rank >> 6U;
+    for (uint32_t boundary = start; boundary < end; ++boundary) {
+        active[(uint64_t)boundary * word_count + word] &= mask;
+    }
+}
+
+static uint32_t first_active_reload(
+    const uint64_t *active,
+    uint32_t word_count,
+    uint32_t boundary,
+    const ReloadRank *ranked
+) {
+    uint64_t row = (uint64_t)boundary * word_count;
+    for (uint32_t word = 0U; word < word_count; ++word) {
+        uint64_t values = active[row + word];
+        if (values != 0U) {
+            uint32_t rank = word * 64U + (uint32_t)__builtin_ctzll(values);
+            return ranked[rank].index;
+        }
+    }
+    return UINT32_MAX;
+}
+
 static uint64_t ideal_trigger_time(
     const ShadowSpillResidencyProblem *problem,
     uint32_t trigger
@@ -636,10 +736,11 @@ static int clamp_triggers_to_fit(
 ) {
     const ShadowSpillResidencyProblem *problem = facts->context->residency;
     size_t pressure_cells = 0U;
-    size_t active_cells = 0U;
+    size_t active_words = 0U;
+    uint32_t word_count = reload_count / 64U + (reload_count % 64U != 0U);
     if (checked_cells(facts->device_count, facts->boundary_count, &pressure_cells) !=
             0 ||
-        checked_cells(reload_count, facts->task_count, &active_cells) != 0) {
+        checked_cells(word_count, facts->task_count, &active_words) != 0) {
         return -1;
     }
     uint64_t *used = calloc(
@@ -650,8 +751,19 @@ static int clamp_triggers_to_fit(
         (size_t)facts->alias_count * (facts->task_count == 0U ? 1U : facts->task_count),
         sizeof(*counts)
     );
-    uint8_t *active = calloc(active_cells == 0U ? 1U : active_cells, 1U);
-    if (used == NULL || counts == NULL || active == NULL ||
+    uint64_t *active = calloc(
+        active_words == 0U ? 1U : active_words,
+        sizeof(*active)
+    );
+    ReloadRank *ranked = malloc(
+        (reload_count == 0U ? 1U : (size_t)reload_count) * sizeof(*ranked)
+    );
+    uint32_t *rank_by_reload = malloc(
+        (reload_count == 0U ? 1U : (size_t)reload_count) *
+        sizeof(*rank_by_reload)
+    );
+    if (used == NULL || counts == NULL || active == NULL || ranked == NULL ||
+        rank_by_reload == NULL ||
         build_pressure(
             facts,
             resident,
@@ -662,11 +774,19 @@ static int clamp_triggers_to_fit(
         free(used);
         free(counts);
         free(active);
+        free(ranked);
+        free(rank_by_reload);
         return -1;
     }
 
     for (uint32_t reload_index = 0U; reload_index < reload_count; ++reload_index) {
         Reload *reload = &reloads[reload_index];
+        ranked[reload_index] = (ReloadRank){
+            .index = reload_index,
+            .entry_boundary = reload->entry_boundary,
+            .size_bytes = problem->alias_size_bytes[reload->alias],
+            .alias = reload->alias,
+        };
         for (uint32_t boundary = reload->trigger;
              boundary < reload->entry_boundary;
              ++boundary) {
@@ -677,7 +797,6 @@ static int clamp_triggers_to_fit(
                 )] != 0U) {
                 continue;
             }
-            active[(uint64_t)reload_index * facts->task_count + boundary] = 1U;
             uint64_t count_position =
                 (uint64_t)reload->alias * facts->task_count + boundary;
             if (counts[count_position]++ == 0U) {
@@ -687,81 +806,97 @@ static int clamp_triggers_to_fit(
             }
         }
     }
+    qsort(ranked, reload_count, sizeof(*ranked), reload_rank_compare);
+    for (uint32_t rank = 0U; rank < reload_count; ++rank) {
+        rank_by_reload[ranked[rank].index] = rank;
+    }
+    for (uint32_t reload_index = 0U; reload_index < reload_count; ++reload_index) {
+        Reload *reload = &reloads[reload_index];
+        if (reload->trigger >= reload->latest_trigger) {
+            continue;
+        }
+        uint32_t rank = rank_by_reload[reload_index];
+        uint64_t mask = UINT64_C(1) << (rank & 63U);
+        uint32_t word = rank >> 6U;
+        for (uint32_t boundary = reload->trigger;
+             boundary < reload->entry_boundary;
+             ++boundary) {
+            if (resident[cell(
+                    reload->alias,
+                    facts->boundary_count,
+                    boundary + 1U
+                )] == 0U) {
+                active[(uint64_t)boundary * word_count + word] |= mask;
+            }
+        }
+    }
 
-    while (1) {
-        uint32_t selected_reload = UINT32_MAX;
-        uint32_t selected_boundary = UINT32_MAX;
-        for (uint32_t device = 0U; device < facts->device_count; ++device) {
-            for (uint32_t boundary = 0U; boundary < facts->task_count;
-                 ++boundary) {
-                if (used[(uint64_t)device * facts->boundary_count + boundary + 1U] <=
-                    problem->device_capacity_bytes[device]) {
-                    continue;
-                }
-                for (uint32_t index = 0U; index < reload_count; ++index) {
-                    Reload *candidate = &reloads[index];
-                    if (active[(uint64_t)index * facts->task_count + boundary] ==
-                            0U ||
-                        candidate->trigger >= candidate->latest_trigger) {
-                        continue;
-                    }
-                    if (selected_reload == UINT32_MAX) {
-                        selected_reload = index;
-                        continue;
-                    }
-                    Reload *selected = &reloads[selected_reload];
-                    uint64_t candidate_size =
-                        problem->alias_size_bytes[candidate->alias];
-                    uint64_t selected_size =
-                        problem->alias_size_bytes[selected->alias];
-                    if (candidate->entry_boundary > selected->entry_boundary ||
-                        (candidate->entry_boundary == selected->entry_boundary &&
-                         candidate_size > selected_size) ||
-                        (candidate->entry_boundary == selected->entry_boundary &&
-                         candidate_size == selected_size &&
-                         candidate->alias > selected->alias)) {
-                        selected_reload = index;
-                    }
-                }
-                if (selected_reload != UINT32_MAX) {
-                    selected_boundary = boundary;
+    for (uint32_t device = 0U; device < facts->device_count; ++device) {
+        for (uint32_t boundary = 0U; boundary < facts->task_count; ++boundary) {
+            uint64_t used_position =
+                (uint64_t)device * facts->boundary_count + boundary + 1U;
+            while (used[used_position] > problem->device_capacity_bytes[device]) {
+                uint32_t selected_reload = first_active_reload(
+                    active,
+                    word_count,
+                    boundary,
+                    ranked
+                );
+                if (selected_reload == UINT32_MAX) {
                     break;
                 }
-            }
-            if (selected_reload != UINT32_MAX) {
-                break;
-            }
-        }
-        if (selected_reload == UINT32_MAX) {
-            break;
-        }
-        Reload *reload = &reloads[selected_reload];
-        uint32_t old_trigger = reload->trigger;
-        uint32_t new_trigger = selected_boundary + 1U;
-        if (new_trigger > reload->latest_trigger) {
-            new_trigger = reload->latest_trigger;
-        }
-        reload->trigger = new_trigger;
-        for (uint32_t boundary = old_trigger; boundary < new_trigger; ++boundary) {
-            uint64_t active_position =
-                (uint64_t)selected_reload * facts->task_count + boundary;
-            if (active[active_position] == 0U) {
-                continue;
-            }
-            active[active_position] = 0U;
-            uint64_t count_position =
-                (uint64_t)reload->alias * facts->task_count + boundary;
-            --counts[count_position];
-            if (counts[count_position] == 0U) {
-                uint32_t device = problem->alias_device[reload->alias];
-                used[(uint64_t)device * facts->boundary_count + boundary + 1U] -=
-                    problem->alias_size_bytes[reload->alias];
+                Reload *reload = &reloads[selected_reload];
+                uint32_t old_trigger = reload->trigger;
+                uint32_t new_trigger = boundary + 1U;
+                if (new_trigger > reload->latest_trigger) {
+                    new_trigger = reload->latest_trigger;
+                }
+                reload->trigger = new_trigger;
+                uint32_t rank = rank_by_reload[selected_reload];
+                clear_active_reload(
+                    active,
+                    word_count,
+                    rank,
+                    old_trigger,
+                    new_trigger
+                );
+                if (new_trigger == reload->latest_trigger) {
+                    clear_active_reload(
+                        active,
+                        word_count,
+                        rank,
+                        new_trigger,
+                        facts->task_count
+                    );
+                }
+                for (uint32_t retired = old_trigger; retired < new_trigger;
+                     ++retired) {
+                    if (resident[cell(
+                            reload->alias,
+                            facts->boundary_count,
+                            retired + 1U
+                        )] != 0U) {
+                        continue;
+                    }
+                    uint64_t count_position =
+                        (uint64_t)reload->alias * facts->task_count + retired;
+                    --counts[count_position];
+                    if (counts[count_position] == 0U) {
+                        uint32_t reload_device =
+                            problem->alias_device[reload->alias];
+                        used[(uint64_t)reload_device * facts->boundary_count +
+                             retired + 1U] -=
+                            problem->alias_size_bytes[reload->alias];
+                    }
+                }
             }
         }
     }
     free(used);
     free(counts);
     free(active);
+    free(ranked);
+    free(rank_by_reload);
     return 0;
 }
 
@@ -777,6 +912,83 @@ static int action_compare(const void *left_value, const void *right_value) {
     if (left->alias != right->alias) {
         return left->alias < right->alias ? -1 : 1;
     }
+    return 0;
+}
+
+static int copy_actions(
+    const ShadowSpillScheduleFacts *facts,
+    const Action *actions,
+    uint32_t action_count,
+    int coalesced,
+    ShadowSpillScheduleStorage *storage
+) {
+    if (reserve_schedule_actions(storage, action_count) != 0) {
+        return -1;
+    }
+    if (coalesced == 0) {
+        for (uint32_t index = 0U; index < action_count; ++index) {
+            storage->value.action_trigger_tasks[index] = actions[index].trigger;
+            storage->value.action_aliases[index] = actions[index].alias;
+            storage->value.action_kinds[index] = actions[index].kind;
+        }
+        storage->value.action_count = action_count;
+        return 0;
+    }
+
+    uint8_t *masks = calloc(
+        facts->alias_count == 0U ? 1U : facts->alias_count,
+        sizeof(*masks)
+    );
+    uint32_t *touched = malloc(
+        (facts->alias_count == 0U ? 1U : (size_t)facts->alias_count) *
+        sizeof(*touched)
+    );
+    if (masks == NULL || touched == NULL) {
+        free(masks);
+        free(touched);
+        return -1;
+    }
+
+    uint32_t output = 0U;
+    uint32_t begin = 0U;
+    while (begin < action_count) {
+        uint32_t end = begin + 1U;
+        while (end < action_count && actions[end].trigger == actions[begin].trigger) {
+            ++end;
+        }
+        uint32_t touched_count = 0U;
+        for (uint32_t index = begin; index < end; ++index) {
+            uint8_t kind = actions[index].kind;
+            if (kind != SHADOWSPILL_MEMORY_RELEASE &&
+                kind != SHADOWSPILL_MEMORY_PREFETCH) {
+                continue;
+            }
+            uint32_t alias = actions[index].alias;
+            if (masks[alias] == 0U) {
+                touched[touched_count++] = alias;
+            }
+            masks[alias] |= kind == SHADOWSPILL_MEMORY_RELEASE ? 1U : 2U;
+        }
+        for (uint32_t index = begin; index < end; ++index) {
+            uint8_t kind = actions[index].kind;
+            if ((kind == SHADOWSPILL_MEMORY_RELEASE ||
+                 kind == SHADOWSPILL_MEMORY_PREFETCH) &&
+                masks[actions[index].alias] == 3U) {
+                continue;
+            }
+            storage->value.action_trigger_tasks[output] = actions[index].trigger;
+            storage->value.action_aliases[output] = actions[index].alias;
+            storage->value.action_kinds[output] = kind;
+            ++output;
+        }
+        for (uint32_t index = 0U; index < touched_count; ++index) {
+            masks[touched[index]] = 0U;
+        }
+        begin = end;
+    }
+    storage->value.action_count = output;
+    free(masks);
+    free(touched);
     return 0;
 }
 
@@ -899,6 +1111,54 @@ static int append_action(
     return 0;
 }
 
+static int reserve_reloads(
+    Reload **values,
+    uint32_t *capacity,
+    uint32_t count
+) {
+    if (count < *capacity) {
+        return 0;
+    }
+    uint32_t selected = *capacity == 0U ? 64U : *capacity * 2U;
+    if (selected <= *capacity) {
+        return -1;
+    }
+    Reload *replacement = realloc(
+        *values,
+        (size_t)selected * sizeof(*replacement)
+    );
+    if (replacement == NULL) {
+        return -1;
+    }
+    *values = replacement;
+    *capacity = selected;
+    return 0;
+}
+
+static int reserve_departures(
+    Departure **values,
+    uint32_t *capacity,
+    uint32_t count
+) {
+    if (count < *capacity) {
+        return 0;
+    }
+    uint32_t selected = *capacity == 0U ? 64U : *capacity * 2U;
+    if (selected <= *capacity) {
+        return -1;
+    }
+    Departure *replacement = realloc(
+        *values,
+        (size_t)selected * sizeof(*replacement)
+    );
+    if (replacement == NULL) {
+        return -1;
+    }
+    *values = replacement;
+    *capacity = selected;
+    return 0;
+}
+
 int shadowspill_emit_dense_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
@@ -914,18 +1174,12 @@ int shadowspill_emit_dense_schedule(
     }
     shadowspill_schedule_storage_clear(storage);
     const ShadowSpillResidencyProblem *problem = facts->context->residency;
-    uint32_t transition_capacity = storage->action_capacity;
-    size_t transitions = transition_capacity == 0U
-        ? 1U
-        : (size_t)transition_capacity;
-    Reload *reloads = malloc(transitions * sizeof(*reloads));
-    Departure *departures = malloc(transitions * sizeof(*departures));
-    Action *actions = malloc(transitions * sizeof(*actions));
+    uint32_t reload_capacity = 0U;
+    uint32_t departure_capacity = 0U;
+    Reload *reloads = NULL;
+    Departure *departures = NULL;
     Span *spans = malloc((size_t)facts->boundary_count * sizeof(*spans));
-    if (reloads == NULL || departures == NULL || actions == NULL || spans == NULL) {
-        free(reloads);
-        free(departures);
-        free(actions);
+    if (spans == NULL) {
         free(spans);
         return -1;
     }
@@ -975,10 +1229,14 @@ int shadowspill_emit_dense_schedule(
                         earliest = previous_departure.trigger;
                     }
                 }
-                if (latest < earliest || reload_count >= transition_capacity) {
+                if (latest < earliest ||
+                    reserve_reloads(
+                        &reloads,
+                        &reload_capacity,
+                        reload_count
+                    ) != 0) {
                     free(reloads);
                     free(departures);
-                    free(actions);
                     free(spans);
                     return -2;
                 }
@@ -1025,10 +1283,13 @@ int shadowspill_emit_dense_schedule(
                     host_refreshed = end_boundary;
                 }
             }
-            if (departure_count >= transition_capacity) {
+            if (reserve_departures(
+                    &departures,
+                    &departure_capacity,
+                    departure_count
+                ) != 0) {
                 free(reloads);
                 free(departures);
-                free(actions);
                 free(spans);
                 return -1;
             }
@@ -1059,17 +1320,33 @@ int shadowspill_emit_dense_schedule(
             ) != 0) {
             free(reloads);
             free(departures);
-            free(actions);
             free(spans);
             return -1;
         }
     }
 
+    if (reload_count > UINT32_MAX - departure_count) {
+        free(reloads);
+        free(departures);
+        free(spans);
+        return -1;
+    }
+    uint32_t transition_count = reload_count + departure_count;
+    Action *actions = malloc(
+        (transition_count == 0U ? 1U : (size_t)transition_count) *
+        sizeof(*actions)
+    );
+    if (actions == NULL) {
+        free(reloads);
+        free(departures);
+        free(spans);
+        return -1;
+    }
     uint32_t action_count = 0U;
     for (uint32_t index = 0U; index < departure_count; ++index) {
         if (append_action(
                 actions,
-                transition_capacity,
+                transition_count,
                 &action_count,
                 departures[index].trigger,
                 departures[index].alias,
@@ -1085,7 +1362,7 @@ int shadowspill_emit_dense_schedule(
     for (uint32_t index = 0U; index < reload_count; ++index) {
         if (append_action(
                 actions,
-                transition_capacity,
+                transition_count,
                 &action_count,
                 reloads[index].trigger,
                 reloads[index].alias,
@@ -1100,33 +1377,13 @@ int shadowspill_emit_dense_schedule(
     }
     qsort(actions, action_count, sizeof(*actions), action_compare);
 
-    uint32_t output_action = 0U;
-    for (uint32_t index = 0U; index < action_count; ++index) {
-        int remove = 0;
-        if (coalesced != 0 &&
-            (actions[index].kind == SHADOWSPILL_MEMORY_RELEASE ||
-             actions[index].kind == SHADOWSPILL_MEMORY_PREFETCH)) {
-            uint8_t counterpart = actions[index].kind == SHADOWSPILL_MEMORY_RELEASE
-                ? SHADOWSPILL_MEMORY_PREFETCH
-                : SHADOWSPILL_MEMORY_RELEASE;
-            for (uint32_t other = 0U; other < action_count; ++other) {
-                if (actions[other].trigger == actions[index].trigger &&
-                    actions[other].alias == actions[index].alias &&
-                    actions[other].kind == counterpart) {
-                    remove = 1;
-                    break;
-                }
-            }
-        }
-        if (remove != 0) {
-            continue;
-        }
-        storage->value.action_trigger_tasks[output_action] = actions[index].trigger;
-        storage->value.action_aliases[output_action] = actions[index].alias;
-        storage->value.action_kinds[output_action] = actions[index].kind;
-        ++output_action;
+    if (copy_actions(facts, actions, action_count, coalesced, storage) != 0) {
+        free(reloads);
+        free(departures);
+        free(actions);
+        free(spans);
+        return -1;
     }
-    storage->value.action_count = output_action;
 
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         if (problem->alias_size_bytes[alias] == 0U) {

@@ -2713,3 +2713,39 @@ the ignored internal progress log before this tracked summary is updated.
   no-progress OOM for the 117,440,512-byte request with 39,845,512 bytes free
   and a 39,744,768-byte largest range; it must not surface a generic CUDA or
   admission error.
+
+## 2026-08-14 — Exact C PressureFit replay reduced from 1,768 s to 96 s
+
+- Preserved the original 16 GiB mlops Llama 3 8B profiling failure as a
+  negative fixture. Before step-zero optimizer-state initialization, the
+  117,440,512-byte representative allocation had 39,845,512 bytes free and a
+  39,744,768-byte largest range. Its required public result remains a
+  task-attributed `RuntimeExecutionError: ShadowSpill no-progress OOM`.
+- The positive post-optimizer fixture contains 1,056 Program tasks, 9,233
+  aliases, 256 recomputation groups, 1,020 selection contexts, and 40
+  candidates per context. The frozen C planner required 1,768.061 seconds.
+  A representative context required 27.083 seconds before this pass.
+- Profiling identified four mechanical costs rather than a change in planning
+  policy: simulation scanned every task after every event; residency reduction
+  repeatedly rediscovered the same spans and cut candidates; schedule creation
+  repeatedly searched whole action populations; and each candidate reserved
+  and copied arrays sized for the theoretical Cartesian action maximum rather
+  than its actual actions.
+- The implementation now maintains task-lane and active-task bit frontiers,
+  indexes residency cuts while preserving the original score and tie order,
+  carries a one-pass next-span frontier, uses trigger/rank masks for schedule
+  placement, grows schedule/transfer storage to actual populations, and caches
+  packed residency matrices. These are representation and lookup changes only;
+  no PressureFit directive, trigger, recomputation alternative, or feasibility
+  rule moved.
+- The selected context now takes 0.969 seconds and exactly reproduces all 40
+  candidate diagnostics plus the complete selected schedule. The complete
+  1,020-context replay takes 96.004 seconds. It reproduces all 40,800 candidate
+  diagnostics, the exact recomputation selection, all 23,648 actions, and the
+  31,656,981,184-ns makespan. The schedule digest remains
+  `dd1e52b8d82ac6006d262a7f3fa9b033f42d48a85a6f0a65551a86fc2b9ac8e8`.
+- Peak replay RSS fell from 10,346,120 KiB before packed caching to between
+  8,525,224 and 9,851,496 KiB in complete exact reruns. ASan passed. UBSan
+  exposed a zero-count null `memset` in the new cut-active bitmap; explicit
+  zero-count guards fixed it and the sanitized planner/simulator canaries now
+  pass.

@@ -7,10 +7,15 @@ uint64_t shadowspill_next_event_time(
     const ShadowSpillSimulationWork *work
 ) {
     uint64_t next = UINT64_MAX;
-    for (uint32_t task = 0; task < program->task_count; ++task) {
-        if (work->tasks[task].state == SHADOWSPILL_TASK_ACTIVE &&
-            work->tasks[task].end_ns < next) {
-            next = work->tasks[task].end_ns;
+    for (uint32_t word = 0U; word < work->task_word_count; ++word) {
+        uint64_t active = work->active_tasks[word];
+        while (active != 0U) {
+            uint32_t bit = (uint32_t)__builtin_ctzll(active);
+            uint32_t task = word * 64U + bit;
+            active &= active - 1U;
+            if (work->tasks[task].end_ns < next) {
+                next = work->tasks[task].end_ns;
+            }
         }
     }
     for (uint32_t device = 0; device < program->device_count; ++device) {
@@ -65,11 +70,16 @@ int shadowspill_complete_events(
             }
         }
     }
-    for (uint32_t task = 0; task < program->task_count; ++task) {
-        if (work->tasks[task].state == SHADOWSPILL_TASK_ACTIVE &&
-            work->tasks[task].end_ns == work->now_ns &&
-            !shadowspill_complete_task(program, work, result, task)) {
-            return 0;
+    for (uint32_t word = 0U; word < work->task_word_count; ++word) {
+        uint64_t active = work->active_tasks[word];
+        while (active != 0U) {
+            uint32_t bit = (uint32_t)__builtin_ctzll(active);
+            uint32_t task = word * 64U + bit;
+            active &= active - 1U;
+            if (work->tasks[task].end_ns == work->now_ns &&
+                !shadowspill_complete_task(program, work, result, task)) {
+                return 0;
+            }
         }
     }
     return 1;

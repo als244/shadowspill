@@ -17,6 +17,23 @@ typedef struct CutScore {
     int64_t values[7];
 } CutScore;
 
+typedef struct IndexedCut {
+    ResidencyCut cut;
+    CutScore score;
+    uint32_t first_boundary;
+    uint32_t last_boundary;
+} IndexedCut;
+
+typedef struct CutIndex {
+    IndexedCut *cuts;
+    uint32_t cut_count;
+    uint32_t cut_capacity;
+    uint32_t *alias_offsets;
+    uint64_t *offsets;
+    uint32_t *refs[2];
+    uint64_t ref_count;
+} CutIndex;
+
 struct ShadowSpillResidencyWorkspace {
     uint32_t alias_count;
     uint32_t boundary_count;
@@ -24,38 +41,42 @@ struct ShadowSpillResidencyWorkspace {
     uint64_t *pressure;
     uint8_t *before;
     uint8_t *after;
-    ResidencyCut *cuts;
     uint32_t *first_required;
     int32_t *gap_start;
     int32_t *gap_end;
+    uint8_t *seed_resident;
+    uint8_t *seed_breaks;
+    uint64_t *base_pressure[2];
+    uint64_t *cut_cursors;
+    uint8_t *cut_active;
+    uint32_t cut_active_capacity;
+    CutIndex cut_index;
+    uint8_t geometry_valid;
+    uint8_t pressure_valid[2];
 };
 
 static uint64_t cell(uint32_t alias, uint32_t boundary_count, uint32_t index) {
     return (uint64_t)alias * boundary_count + index;
 }
 
-static int find_span(
+static int next_span(
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t alias,
     uint32_t boundary_count,
-    uint32_t index,
+    uint32_t *cursor,
     uint32_t *start,
     uint32_t *end
 ) {
-    uint64_t position = cell(alias, boundary_count, index);
-    if (resident[position] == 0U) {
+    while (*cursor < boundary_count &&
+           resident[cell(alias, boundary_count, *cursor)] == 0U) {
+        ++*cursor;
+    }
+    if (*cursor == boundary_count) {
         return 0;
     }
-    uint32_t left = index;
-    while (left > 0U) {
-        uint64_t previous = cell(alias, boundary_count, left - 1U);
-        if (resident[previous] == 0U || breaks[previous] != 0U) {
-            break;
-        }
-        --left;
-    }
-    uint32_t right = index;
+    uint32_t left = *cursor;
+    uint32_t right = *cursor;
     while (right + 1U < boundary_count) {
         uint64_t current = cell(alias, boundary_count, right);
         uint64_t next = cell(alias, boundary_count, right + 1U);
@@ -66,6 +87,7 @@ static int find_span(
     }
     *start = left;
     *end = right;
+    *cursor = right + 1U;
     return 1;
 }
 
@@ -79,21 +101,20 @@ static void alias_contribution(
 ) {
     uint32_t count = problem->boundary_count;
     memset(contribution, 0, count);
-    uint32_t index = 0U;
-    while (index < count) {
+    uint32_t cursor = 0U;
+    while (cursor < count) {
         uint32_t start = 0U;
         uint32_t end = 0U;
-        if (!find_span(
+        if (!next_span(
                 resident,
                 breaks,
                 alias,
                 count,
-                index,
+                &cursor,
                 &start,
                 &end
             )) {
-            ++index;
-            continue;
+            break;
         }
         uint32_t charged_start = start;
         if (options->prefetch_headroom != 0U && start > 0U &&
@@ -123,7 +144,6 @@ static void alias_contribution(
                 contribution[boundary] = 1U;
             }
         }
-        index = end + 1U;
     }
     for (uint32_t boundary = 0U; boundary < count; ++boundary) {
         if (problem->output_reservations[cell(alias, count, boundary)] != 0U) {
@@ -198,79 +218,340 @@ static CutScore score_cut(
     return score;
 }
 
-static uint32_t collect_cuts(
+static int candidate_cut(
     const ShadowSpillResidencyProblem *problem,
     const uint8_t *resident,
     const uint8_t *breaks,
     const uint32_t *first_required,
     const int32_t *gap_start,
     const int32_t *gap_end,
-    uint32_t device,
+    uint32_t alias,
     int32_t boundary,
-    ResidencyCut *cuts
+    ResidencyCut *cut
 ) {
     uint32_t boundary_index = (uint32_t)(boundary + 1);
-    uint32_t count = 0U;
-    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
-        if (problem->alias_device[alias] != device) {
-            continue;
-        }
-        uint64_t position = cell(
-            alias,
-            problem->boundary_count,
-            boundary_index
-        );
-        if (resident[position] == 0U) {
-            continue;
-        }
-        if (resident[cell(alias, problem->boundary_count, 0U)] != 0U &&
-            problem->initial_location[alias] == 1 &&
-            problem->anchors[cell(alias, problem->boundary_count, 0U)] == 0U) {
-            if (first_required[alias] != UINT32_MAX &&
-                boundary_index < first_required[alias]) {
-                cuts[count++] = (ResidencyCut){
-                    .alias = alias,
-                    .start = -1,
-                    .end = (int32_t)first_required[alias] - 2,
-                };
-                continue;
-            }
-        }
-
-        int32_t start = boundary;
-        int32_t end = boundary;
-        if (problem->anchors[position] == 0U) {
-            start = gap_start[position];
-            end = gap_end[position];
-            if (start == INT32_MIN) {
-                continue;
-            }
-        } else {
-            uint32_t latest = problem->latest_access_task[position];
-            int connected_after = boundary_index + 1U < problem->boundary_count &&
-                resident[cell(
-                    alias,
-                    problem->boundary_count,
-                    boundary_index + 1U
-                )] != 0U && breaks[position] == 0U;
-            int can_split = connected_after &&
-                (latest == UINT32_MAX || (int32_t)latest <= boundary);
-            if (!can_split) {
-                continue;
-            }
-            start = boundary + 1;
-            end = boundary;
-        }
-        if (start <= -1) {
-            continue;
-        }
-        cuts[count++] = (ResidencyCut){
-            .alias = alias,
-            .start = start,
-            .end = end,
-        };
+    uint64_t position = cell(alias, problem->boundary_count, boundary_index);
+    if (resident[position] == 0U) {
+        return 0;
     }
-    return count;
+    if (resident[cell(alias, problem->boundary_count, 0U)] != 0U &&
+        problem->initial_location[alias] == 1 &&
+        problem->anchors[cell(alias, problem->boundary_count, 0U)] == 0U &&
+        first_required[alias] != UINT32_MAX &&
+        boundary_index < first_required[alias]) {
+        *cut = (ResidencyCut){
+            .alias = alias,
+            .start = -1,
+            .end = (int32_t)first_required[alias] - 2,
+        };
+        return 1;
+    }
+
+    int32_t start = boundary;
+    int32_t end = boundary;
+    if (problem->anchors[position] == 0U) {
+        start = gap_start[position];
+        end = gap_end[position];
+        if (start == INT32_MIN) {
+            return 0;
+        }
+    } else {
+        uint32_t latest = problem->latest_access_task[position];
+        int connected_after = boundary_index + 1U < problem->boundary_count &&
+            resident[cell(
+                alias,
+                problem->boundary_count,
+                boundary_index + 1U
+            )] != 0U && breaks[position] == 0U;
+        int can_split = connected_after &&
+            (latest == UINT32_MAX || (int32_t)latest <= boundary);
+        if (!can_split) {
+            return 0;
+        }
+        start = boundary + 1;
+        end = boundary;
+    }
+    if (start <= -1) {
+        return 0;
+    }
+    *cut = (ResidencyCut){
+        .alias = alias,
+        .start = start,
+        .end = end,
+    };
+    return 1;
+}
+
+static int same_cut(const ResidencyCut *left, const ResidencyCut *right) {
+    return left->alias == right->alias && left->start == right->start &&
+        left->end == right->end;
+}
+
+static void destroy_cut_index(CutIndex *index) {
+    free(index->cuts);
+    free(index->alias_offsets);
+    free(index->offsets);
+    free(index->refs[0]);
+    free(index->refs[1]);
+    memset(index, 0, sizeof(*index));
+}
+
+static int append_indexed_cut(
+    const ShadowSpillResidencyProblem *problem,
+    CutIndex *index,
+    ResidencyCut cut,
+    uint32_t first_boundary,
+    uint32_t last_boundary
+) {
+    if (index->cut_count == index->cut_capacity) {
+        uint32_t next = index->cut_capacity == 0U
+            ? 256U
+            : index->cut_capacity * 2U;
+        if (next < index->cut_capacity) {
+            return -1;
+        }
+        void *storage = realloc(index->cuts, (size_t)next * sizeof(*index->cuts));
+        if (storage == NULL) {
+            return -1;
+        }
+        index->cuts = storage;
+        index->cut_capacity = next;
+    }
+    index->cuts[index->cut_count++] = (IndexedCut){
+        .cut = cut,
+        .score = score_cut(problem, &cut, 0),
+        .first_boundary = first_boundary,
+        .last_boundary = last_boundary,
+    };
+    return 0;
+}
+
+static _Thread_local const IndexedCut *sort_cuts;
+static _Thread_local int sort_minimize_transfer;
+
+static int cut_ref_compare(const void *left_value, const void *right_value) {
+    uint32_t left = *(const uint32_t *)left_value;
+    uint32_t right = *(const uint32_t *)right_value;
+    int comparison = compare_score(
+        &sort_cuts[left].score,
+        &sort_cuts[right].score,
+        sort_minimize_transfer
+    );
+    if (comparison != 0) {
+        return comparison;
+    }
+    return left < right ? -1 : left != right;
+}
+
+static int build_cut_index(
+    const ShadowSpillResidencyProblem *problem,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    CutIndex *index = &workspace->cut_index;
+    destroy_cut_index(index);
+
+    const uint8_t *resident = workspace->seed_resident;
+    const uint8_t *breaks = workspace->seed_breaks;
+    uint32_t boundaries = problem->boundary_count;
+    index->alias_offsets = malloc(
+        ((size_t)problem->alias_count + 1U) * sizeof(*index->alias_offsets)
+    );
+    if (index->alias_offsets == NULL) {
+        destroy_cut_index(index);
+        return -1;
+    }
+    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
+        index->alias_offsets[alias] = index->cut_count;
+        int active = 0;
+        ResidencyCut current = {0};
+        uint32_t first = 0U;
+        uint32_t last = 0U;
+        for (uint32_t boundary = 0U; boundary < boundaries; ++boundary) {
+            ResidencyCut candidate;
+            int valid = candidate_cut(
+                problem,
+                resident,
+                breaks,
+                workspace->first_required,
+                workspace->gap_start,
+                workspace->gap_end,
+                alias,
+                (int32_t)boundary - 1,
+                &candidate
+            );
+            if (valid != 0 && active != 0 && same_cut(&candidate, &current) &&
+                boundary == last + 1U) {
+                last = boundary;
+                continue;
+            }
+            if (active != 0 && append_indexed_cut(
+                    problem,
+                    index,
+                    current,
+                    first,
+                    last
+                ) != 0) {
+                destroy_cut_index(index);
+                return -1;
+            }
+            active = valid;
+            if (valid != 0) {
+                current = candidate;
+                first = boundary;
+                last = boundary;
+            }
+        }
+        if (active != 0 && append_indexed_cut(
+                problem,
+                index,
+                current,
+                first,
+                last
+            ) != 0) {
+            destroy_cut_index(index);
+            return -1;
+        }
+        index->alias_offsets[alias + 1U] = index->cut_count;
+    }
+
+    uint64_t index_cells =
+        (uint64_t)problem->device_count * problem->boundary_count;
+    if (index_cells > SIZE_MAX / sizeof(*index->offsets)) {
+        destroy_cut_index(index);
+        return -1;
+    }
+    index->offsets = calloc(
+        (size_t)index_cells + 1U,
+        sizeof(*index->offsets)
+    );
+    if (index->offsets == NULL) {
+        destroy_cut_index(index);
+        return -1;
+    }
+    for (uint32_t cut_id = 0U; cut_id < index->cut_count; ++cut_id) {
+        const IndexedCut *item = &index->cuts[cut_id];
+        uint32_t device = problem->alias_device[item->cut.alias];
+        for (uint32_t boundary = item->first_boundary;
+             boundary <= item->last_boundary;
+             ++boundary) {
+            uint64_t position = (uint64_t)device * boundaries + boundary;
+            ++index->offsets[position + 1U];
+        }
+    }
+    for (uint64_t position = 0U; position < index_cells; ++position) {
+        index->offsets[position + 1U] += index->offsets[position];
+    }
+    index->ref_count = index->offsets[index_cells];
+    if (index->ref_count > SIZE_MAX / sizeof(*index->refs[0])) {
+        destroy_cut_index(index);
+        return -1;
+    }
+    index->refs[0] = malloc(
+        (index->ref_count == 0U ? 1U : (size_t)index->ref_count) *
+        sizeof(*index->refs[0])
+    );
+    index->refs[1] = malloc(
+        (index->ref_count == 0U ? 1U : (size_t)index->ref_count) *
+        sizeof(*index->refs[1])
+    );
+    uint64_t *cursor = malloc(
+        (index_cells == 0U ? 1U : (size_t)index_cells) * sizeof(*cursor)
+    );
+    uint32_t *ranked = malloc(
+        (index->cut_count == 0U ? 1U : (size_t)index->cut_count) *
+        sizeof(*ranked)
+    );
+    if (index->refs[0] == NULL || index->refs[1] == NULL || cursor == NULL ||
+        ranked == NULL) {
+        free(cursor);
+        free(ranked);
+        destroy_cut_index(index);
+        return -1;
+    }
+    for (uint32_t mode = 0U; mode < 2U; ++mode) {
+        for (uint32_t cut_id = 0U; cut_id < index->cut_count; ++cut_id) {
+            ranked[cut_id] = cut_id;
+        }
+        sort_cuts = index->cuts;
+        sort_minimize_transfer = mode != 0U;
+        qsort(ranked, index->cut_count, sizeof(*ranked), cut_ref_compare);
+        sort_cuts = NULL;
+        memcpy(cursor, index->offsets, (size_t)index_cells * sizeof(*cursor));
+        for (uint32_t rank = 0U; rank < index->cut_count; ++rank) {
+            uint32_t cut_id = ranked[rank];
+            const IndexedCut *item = &index->cuts[cut_id];
+            uint32_t device = problem->alias_device[item->cut.alias];
+            for (uint32_t boundary = item->first_boundary;
+                 boundary <= item->last_boundary;
+                 ++boundary) {
+                uint64_t position = (uint64_t)device * boundaries + boundary;
+                index->refs[mode][cursor[position]++] = cut_id;
+            }
+        }
+    }
+    free(cursor);
+    free(ranked);
+    return 0;
+}
+
+static int select_cut(
+    const ShadowSpillResidencyProblem *problem,
+    uint32_t device,
+    int32_t boundary,
+    int minimize_transfer,
+    const CutIndex *index,
+    const uint8_t *active,
+    uint64_t *cursors,
+    ResidencyCut *selected
+) {
+    uint32_t boundary_index = (uint32_t)(boundary + 1);
+    uint64_t position = (uint64_t)device * problem->boundary_count + boundary_index;
+    uint64_t begin = index->offsets[position];
+    uint64_t end = index->offsets[position + 1U];
+    const uint32_t *refs = index->refs[minimize_transfer != 0];
+    uint64_t ref = begin + cursors[position];
+    for (; ref < end; ++ref) {
+        uint32_t cut_id = refs[ref];
+        if (active[cut_id] == 0U) {
+            continue;
+        }
+        cursors[position] = ref - begin + 1U;
+        *selected = index->cuts[cut_id].cut;
+        return 1;
+    }
+    cursors[position] = end - begin;
+    return 0;
+}
+
+static void refresh_alias_candidates(
+    const ShadowSpillResidencyProblem *problem,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    const uint32_t *first_required,
+    const int32_t *gap_start,
+    const int32_t *gap_end,
+    const CutIndex *index,
+    uint8_t *active,
+    uint32_t alias
+) {
+    uint32_t begin = index->alias_offsets[alias];
+    uint32_t end = index->alias_offsets[alias + 1U];
+    for (uint32_t cut_id = begin; cut_id < end; ++cut_id) {
+        const IndexedCut *indexed = &index->cuts[cut_id];
+        ResidencyCut current;
+        int valid = candidate_cut(
+            problem,
+            resident,
+            breaks,
+            first_required,
+            gap_start,
+            gap_end,
+            alias,
+            (int32_t)indexed->first_boundary - 1,
+            &current
+        );
+        active[cut_id] = valid != 0 && same_cut(&current, &indexed->cut);
+    }
 }
 
 static void build_cut_geometry(
@@ -296,21 +577,20 @@ static void build_cut_geometry(
             }
         }
 
-        uint32_t index = 0U;
-        while (index < count) {
+        uint32_t span_cursor = 0U;
+        while (span_cursor < count) {
             uint32_t span_start = 0U;
             uint32_t span_end = 0U;
-            if (!find_span(
+            if (!next_span(
                     resident,
                     breaks,
                     alias,
                     count,
-                    index,
+                    &span_cursor,
                     &span_start,
                     &span_end
                 )) {
-                ++index;
-                continue;
+                break;
             }
             uint32_t cursor = span_start;
             while (cursor <= span_end) {
@@ -331,9 +611,74 @@ static void build_cut_geometry(
                 }
                 ++cursor;
             }
-            index = span_end + 1U;
         }
     }
+}
+
+static int prepare_seed_geometry(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    size_t cells = (size_t)problem->alias_count * problem->boundary_count;
+    if (workspace->geometry_valid != 0U &&
+        memcmp(workspace->seed_resident, options->seed_resident, cells) == 0 &&
+        memcmp(workspace->seed_breaks, options->seed_breaks, cells) == 0) {
+        return 0;
+    }
+    memcpy(workspace->seed_resident, options->seed_resident, cells);
+    memcpy(workspace->seed_breaks, options->seed_breaks, cells);
+    build_cut_geometry(
+        problem,
+        workspace->seed_resident,
+        workspace->seed_breaks,
+        workspace->first_required,
+        workspace->gap_start,
+        workspace->gap_end
+    );
+    if (build_cut_index(problem, workspace) != 0) {
+        workspace->geometry_valid = 0U;
+        return -1;
+    }
+    workspace->geometry_valid = 1U;
+    workspace->pressure_valid[0] = 0U;
+    workspace->pressure_valid[1] = 0U;
+    return 0;
+}
+
+static int prepare_base_pressure(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    uint32_t variant = options->prefetch_headroom != 0U ? 1U : 0U;
+    if (workspace->pressure_valid[variant] != 0U) {
+        return 0;
+    }
+    size_t pressure_cells =
+        (size_t)problem->device_count * problem->boundary_count;
+    uint64_t *pressure = workspace->base_pressure[variant];
+    memset(pressure, 0, pressure_cells * sizeof(*pressure));
+    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
+        alias_contribution(
+            problem,
+            options,
+            workspace->seed_resident,
+            workspace->seed_breaks,
+            alias,
+            workspace->before
+        );
+        uint32_t device = problem->alias_device[alias];
+        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
+             ++boundary) {
+            if (workspace->before[boundary] != 0U) {
+                pressure[(uint64_t)device * problem->boundary_count + boundary] +=
+                    problem->alias_size_bytes[alias];
+            }
+        }
+    }
+    workspace->pressure_valid[variant] = 1U;
+    return 0;
 }
 
 static void apply_cut(
@@ -439,18 +784,28 @@ int shadowspill_residency_workspace_create(
     workspace->after = malloc(
         (size_t)problem->boundary_count * sizeof(*workspace->after)
     );
-    workspace->cuts = malloc(
-        (size_t)problem->alias_count * sizeof(*workspace->cuts)
-    );
     workspace->first_required = malloc(
         (size_t)problem->alias_count * sizeof(*workspace->first_required)
     );
     workspace->gap_start = malloc((size_t)cells * sizeof(*workspace->gap_start));
     workspace->gap_end = malloc((size_t)cells * sizeof(*workspace->gap_end));
+    workspace->seed_resident = malloc((size_t)cells);
+    workspace->seed_breaks = malloc((size_t)cells);
+    workspace->base_pressure[0] = malloc(
+        (size_t)pressure_cells * sizeof(*workspace->base_pressure[0])
+    );
+    workspace->base_pressure[1] = malloc(
+        (size_t)pressure_cells * sizeof(*workspace->base_pressure[1])
+    );
+    workspace->cut_cursors = malloc(
+        (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
+    );
     if (workspace->pressure == NULL || workspace->before == NULL ||
-        workspace->after == NULL || workspace->cuts == NULL ||
+        workspace->after == NULL ||
         workspace->first_required == NULL || workspace->gap_start == NULL ||
-        workspace->gap_end == NULL) {
+        workspace->gap_end == NULL || workspace->seed_resident == NULL ||
+        workspace->seed_breaks == NULL || workspace->base_pressure[0] == NULL ||
+        workspace->base_pressure[1] == NULL || workspace->cut_cursors == NULL) {
         shadowspill_residency_workspace_destroy(workspace);
         return -1;
     }
@@ -467,10 +822,16 @@ void shadowspill_residency_workspace_destroy(
     free(workspace->pressure);
     free(workspace->before);
     free(workspace->after);
-    free(workspace->cuts);
     free(workspace->first_required);
     free(workspace->gap_start);
     free(workspace->gap_end);
+    free(workspace->seed_resident);
+    free(workspace->seed_breaks);
+    free(workspace->base_pressure[0]);
+    free(workspace->base_pressure[1]);
+    free(workspace->cut_cursors);
+    free(workspace->cut_active);
+    destroy_cut_index(&workspace->cut_index);
     free(workspace);
 }
 
@@ -499,46 +860,55 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
     result->error_boundary = INT32_MIN;
 
     uint64_t cells = (uint64_t)problem->alias_count * problem->boundary_count;
-    memcpy(result->resident, options->seed_resident, cells);
-    memcpy(result->breaks, options->seed_breaks, cells);
+    if (cells != 0U) {
+        memcpy(result->resident, options->seed_resident, cells);
+        memcpy(result->breaks, options->seed_breaks, cells);
+    }
 
     uint64_t pressure_cells =
         (uint64_t)problem->device_count * problem->boundary_count;
     uint64_t *pressure = workspace->pressure;
     uint8_t *before = workspace->before;
     uint8_t *after = workspace->after;
-    ResidencyCut *cuts = workspace->cuts;
     uint32_t *first_required = workspace->first_required;
     int32_t *gap_start = workspace->gap_start;
     int32_t *gap_end = workspace->gap_end;
-    memset(pressure, 0, (size_t)pressure_cells * sizeof(*pressure));
-
-    build_cut_geometry(
-        problem,
-        result->resident,
-        result->breaks,
-        first_required,
-        gap_start,
-        gap_end
-    );
-
-    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
-        alias_contribution(
-            problem,
-            options,
-            result->resident,
-            result->breaks,
-            alias,
-            before
+    if (prepare_seed_geometry(problem, options, workspace) != 0 ||
+        prepare_base_pressure(problem, options, workspace) != 0) {
+        return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+    }
+    if (workspace->cut_active_capacity < workspace->cut_index.cut_count) {
+        uint8_t *active = realloc(
+            workspace->cut_active,
+            workspace->cut_index.cut_count == 0U
+                ? 1U
+                : (size_t)workspace->cut_index.cut_count
         );
-        uint32_t device = problem->alias_device[alias];
-        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
-             ++boundary) {
-            if (before[boundary] != 0U) {
-                pressure[(uint64_t)device * problem->boundary_count + boundary] +=
-                    problem->alias_size_bytes[alias];
-            }
+        if (active == NULL) {
+            return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
         }
+        workspace->cut_active = active;
+        workspace->cut_active_capacity = workspace->cut_index.cut_count;
+    }
+    if (workspace->cut_index.cut_count != 0U) {
+        memset(
+            workspace->cut_active,
+            1,
+            (size_t)workspace->cut_index.cut_count
+        );
+    }
+    uint32_t pressure_variant = options->prefetch_headroom != 0U ? 1U : 0U;
+    if (pressure_cells != 0U) {
+        memcpy(
+            pressure,
+            workspace->base_pressure[pressure_variant],
+            (size_t)pressure_cells * sizeof(*pressure)
+        );
+        memset(
+            workspace->cut_cursors,
+            0,
+            (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
+        );
     }
 
     while (1) {
@@ -584,18 +954,17 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
         }
 
         int32_t boundary_value = (int32_t)selected_boundary - 1;
-        uint32_t cut_count = collect_cuts(
+        ResidencyCut chosen;
+        if (!select_cut(
             problem,
-            result->resident,
-            result->breaks,
-            first_required,
-            gap_start,
-            gap_end,
             selected_device,
             boundary_value,
-            cuts
-        );
-        if (cut_count == 0U) {
+            options->minimize_transfer != 0U,
+            &workspace->cut_index,
+            workspace->cut_active,
+            workspace->cut_cursors,
+            &chosen
+        )) {
             result->status = SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
             result->error_device = selected_device;
             result->error_boundary = boundary_value;
@@ -604,30 +973,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 problem->device_capacity_bytes[selected_device];
             return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
         }
-
-        uint32_t chosen = 0U;
-        CutScore chosen_score = score_cut(
-            problem,
-            &cuts[0],
-            options->minimize_transfer != 0U
-        );
-        for (uint32_t index = 1U; index < cut_count; ++index) {
-            CutScore candidate = score_cut(
-                problem,
-                &cuts[index],
-                options->minimize_transfer != 0U
-            );
-            if (compare_score(
-                    &candidate,
-                    &chosen_score,
-                    options->minimize_transfer != 0U
-                ) < 0) {
-                chosen = index;
-                chosen_score = candidate;
-            }
-        }
-
-        uint32_t alias = cuts[chosen].alias;
+        uint32_t alias = chosen.alias;
         alias_contribution(
             problem,
             options,
@@ -636,7 +982,18 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
             alias,
             before
         );
-        apply_cut(problem, result->resident, result->breaks, &cuts[chosen]);
+        apply_cut(problem, result->resident, result->breaks, &chosen);
+        refresh_alias_candidates(
+            problem,
+            result->resident,
+            result->breaks,
+            first_required,
+            gap_start,
+            gap_end,
+            &workspace->cut_index,
+            workspace->cut_active,
+            alias
+        );
         alias_contribution(
             problem,
             options,

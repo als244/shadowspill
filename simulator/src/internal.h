@@ -49,6 +49,10 @@ typedef struct ShadowSpillTransferState {
 typedef struct ShadowSpillSimulationWork {
     ShadowSpillAliasState *aliases;
     ShadowSpillTaskState *tasks;
+    uint32_t *lane_successors;
+    uint64_t *lane_heads;
+    uint64_t *active_tasks;
+    uint32_t task_word_count;
     ShadowSpillTransferState *transfers;
     int32_t *active_fetch;
     int32_t *active_evict;
