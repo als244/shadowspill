@@ -156,7 +156,7 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.prediction.device_peak_bytes == 122
 
 
-def test_physical_admission_refinement_starts_at_128_mib_and_doubles(
+def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     program = exact_capacity_program()
@@ -169,10 +169,11 @@ def test_physical_admission_refinement_starts_at_128_mib_and_doubles(
         options=SMALL_PORTFOLIO,
     )
     one_gib = 1 << 30
+    eight_gib = 8 << 30
     topology = AdmissionTopology(
         "cuda_0",
-        2 * one_gib,
-        one_gib,
+        9 * one_gib,
+        eight_gib,
         1,
         tuple(TaskAdmissionSpec(task.task_id, 0) for task in program.tasks),
     )
@@ -182,7 +183,7 @@ def test_physical_admission_refinement_starts_at_128_mib_and_doubles(
         admission = kwargs["admission"]
         assert isinstance(admission, AdmissionTopology)
         capacities.append(admission.object_capacity_bytes)
-        if len(capacities) <= 2:
+        if len(capacities) <= 6:
             raise PressureFitInfeasibleError(
                 "synthetic physical admission failure",
                 kind="physical_admission",
@@ -196,14 +197,27 @@ def test_physical_admission_refinement_starts_at_128_mib_and_doubles(
         program,
         initial_residency=initial,
         final_residency=final,
-        config=config(one_gib),
+        config=config(eight_gib),
         options=SMALL_PORTFOLIO,
         admission=topology,
     )
 
-    assert capacities == [one_gib, one_gib - (128 << 20), one_gib - (384 << 20)]
+    increments = (
+        128 << 20,
+        256 << 20,
+        512 << 20,
+        1 << 30,
+        1536 << 20,
+        2 << 30,
+    )
+    cumulative = 0
+    expected_capacities = [eight_gib]
+    for increment in increments:
+        cumulative += increment
+        expected_capacities.append(eight_gib - cumulative)
+    assert capacities == expected_capacities
     assert tuple(
         item.reserve_increment_bytes
         for item in result.diagnostics.admission_refinements
-    ) == (128 << 20, 256 << 20)
-    assert result.diagnostics.effective_object_capacity_bytes == one_gib - (384 << 20)
+    ) == increments
+    assert result.diagnostics.effective_object_capacity_bytes == eight_gib - cumulative

@@ -73,6 +73,27 @@ from .model import (
 
 _ADMISSION_RESERVE_GRANULARITY_BYTES = 2 << 20
 _ADMISSION_INITIAL_REFINEMENT_BYTES = 128 << 20
+_ADMISSION_DOUBLING_LIMIT_BYTES = 1 << 30
+_ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
+
+
+def _scheduled_admission_refinement(attempt: int) -> int:
+    """Return the deterministic reserve increment for one failed admission.
+
+    Early attempts double from 128 MiB through 1 GiB so obviously dense plans
+    converge quickly.  Later attempts grow linearly by 512 MiB, avoiding the
+    multi-GiB jumps that would discard too much otherwise usable capacity.
+    ``attempt`` is zero-based.
+    """
+
+    doubled = _ADMISSION_INITIAL_REFINEMENT_BYTES << attempt
+    if doubled <= _ADMISSION_DOUBLING_LIMIT_BYTES:
+        return doubled
+    attempts_after_limit = attempt - 3
+    return (
+        _ADMISSION_DOUBLING_LIMIT_BYTES
+        + attempts_after_limit * _ADMISSION_LINEAR_REFINEMENT_BYTES
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1175,7 +1196,8 @@ def pressurefit(
     logically valid schedules fail exact dynamic ``MemoryPool`` admission,
     object capacity is reduced by at least 128 MiB.  The increment doubles on
     every subsequent failure and is never smaller than the measured contiguous
-    deficit rounded to allocator granularity.  Selection then repeats without
+    deficit rounded to allocator granularity.  Increments double through 1 GiB
+    and then grow by 512 MiB per attempt. Selection then repeats without
     changing physical pool capacity, task semantics, or action rules.
     """
 
@@ -1220,12 +1242,12 @@ def pressurefit(
             ):
                 raise
             previous = current_admission.object_capacity_bytes
-            geometric_increment = _ADMISSION_INITIAL_REFINEMENT_BYTES << len(
-                refinements
+            scheduled_increment = _scheduled_admission_refinement(
+                len(refinements)
             )
             increment = max(
                 _round_up_admission_reserve(error.required_bytes),
-                geometric_increment,
+                scheduled_increment,
             )
             capacity = previous - increment
             if capacity <= 0:
