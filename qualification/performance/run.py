@@ -11,12 +11,14 @@ import statistics
 import time
 import traceback
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 
 from qualification.model_state import externalize_case_model, relocate_case_model
+from qualification.model_providers import ModelImplementation
 from qualification.numerical.fixtures import write_pressurefit_fixtures
 from qualification.runtime_evidence import (
     adapter_statistics,
@@ -29,7 +31,7 @@ from shadowspill.pytorch import (
     plan_step,
 )
 
-from .cases import build_case, manifest_for
+from .cases import FullModelManifest, build_case, manifest_for
 
 _MINIMUM_HISTORICAL_RATIO = 0.95
 _MAXIMUM_SIMULATOR_ERROR = 0.05
@@ -99,8 +101,28 @@ def _artifact_identity(path: Path) -> dict[str, object]:
     }
 
 
+def _manifest_with_overrides(
+    family: str,
+    implementation: str,
+    *,
+    spill_budget_gib: int | None,
+) -> FullModelManifest:
+    """Resolve one immutable qualification manifest and CLI overrides."""
+
+    manifest = manifest_for(family, cast(ModelImplementation, implementation))
+    if spill_budget_gib is None:
+        return manifest
+    if spill_budget_gib <= 0:
+        raise ValueError("spill-budget-gib must be positive")
+    return replace(manifest, spill_budget_bytes=spill_budget_gib << 30)
+
+
 def _run(arguments: argparse.Namespace) -> dict[str, object]:
-    manifest = manifest_for(arguments.family, arguments.implementation)
+    manifest = _manifest_with_overrides(
+        arguments.family,
+        arguments.implementation,
+        spill_budget_gib=arguments.spill_budget_gib,
+    )
     case = build_case(manifest, seed=arguments.seed)
     output = arguments.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -361,9 +383,16 @@ def main() -> int:
     parser.add_argument("--force-fresh", action="store_true")
     parser.add_argument("--planning-cachedir", type=Path)
     parser.add_argument("--implementation-revision")
+    parser.add_argument(
+        "--spill-budget-gib",
+        type=int,
+        help="override the manifest's pinned spill-pool capacity",
+    )
     arguments = parser.parse_args()
     if arguments.groups <= 0 or arguments.steps_per_group <= 0:
         parser.error("groups and steps-per-group must be positive")
+    if arguments.spill_budget_gib is not None and arguments.spill_budget_gib <= 0:
+        parser.error("--spill-budget-gib must be positive")
     try:
         result = _run(arguments)
     except BaseException as error:
