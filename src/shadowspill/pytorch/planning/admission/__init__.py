@@ -10,6 +10,14 @@ from .admission_replay import (
     replay_admission,
 )
 from .bindings import TaskOutputBinding, build_admission_topology
+from .layout import (
+    FixedLayoutAdmission,
+    FixedLayoutInfeasibleError,
+    FixedLayoutPlacement,
+    FixedLayoutReuse,
+    FixedPhysicalLayout,
+    build_fixed_layout_admission,
+)
 from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
 from .selection import (
     SelectedAdmission,
@@ -24,12 +32,18 @@ __all__ = [
     "AdmissionReplayPurpose",
     "AdmissionReplayStep",
     "CausalAdmissionDependency",
+    "FixedLayoutAdmission",
+    "FixedLayoutInfeasibleError",
+    "FixedLayoutPlacement",
+    "FixedLayoutReuse",
+    "FixedPhysicalLayout",
     "OwnershipTransition",
     "OwnershipTransitionKind",
     "SelectedAdmission",
     "TaskOutputBinding",
     "admit_selected_schedule",
     "build_admission_topology",
+    "build_fixed_layout_admission",
     "build_selected_admission",
     "output_bindings_for_entrypoints",
     "physical_admission",

@@ -154,6 +154,9 @@ class _AdmissionScriptBuilder:
         self.operations: list[AdmissionReplayStep] = []
         self.ownership_transitions: list[OwnershipTransition] = []
         self.active_aliases: dict[str, int] = {}
+        self.initial_alias_leases: dict[str, int] = {}
+        self.task_allocation_leases: dict[tuple[str, int], int] = {}
+        self.action_destination_leases: dict[int, int] = {}
         self.lease_provenance: dict[int, _LeaseProvenance] = {}
         self.pending_retirements: list[_PendingRetirement] = []
         self.task_completion_dependencies: dict[str, int] = {}
@@ -202,13 +205,15 @@ class _AdmissionScriptBuilder:
                 or self.alias_size[alias_id] == 0
             ):
                 continue
-            self.active_aliases[alias_id] = self._acquire(
+            lease_id = self._acquire(
                 self.alias_size[alias_id],
                 _LeaseProvenance(
                     AdmissionReplayPurpose.INITIAL_OBJECT,
                     alias_group_id=alias_id,
                 ),
             )
+            self.active_aliases[alias_id] = lease_id
+            self.initial_alias_leases[alias_id] = lease_id
 
     def _apply_task(self, task: TaskSpec) -> None:
         self._validate_task_inputs(task)
@@ -284,6 +289,7 @@ class _AdmissionScriptBuilder:
                     lease_id = reusable_leases.pop(step.reuses_allocation_ordinal)
                     self.lease_provenance[lease_id] = provenance
                 leases_by_ordinal[ordinal] = lease_id
+                self.task_allocation_leases[(task_id, ordinal)] = lease_id
                 if alias_id is not None:
                     output_leases[alias_id] = lease_id
                 continue
@@ -478,7 +484,7 @@ class _AdmissionScriptBuilder:
                     )
                 if self.alias_size[alias_id] == 0:
                     continue
-                self.active_aliases[alias_id] = self._acquire(
+                lease_id = self._acquire(
                     self.alias_size[alias_id],
                     _LeaseProvenance(
                         AdmissionReplayPurpose.FETCH_DESTINATION,
@@ -487,6 +493,8 @@ class _AdmissionScriptBuilder:
                         action_index=action_index,
                     ),
                 )
+                self.active_aliases[alias_id] = lease_id
+                self.action_destination_leases[action_index] = lease_id
 
     def _remove_active_alias(
         self,
