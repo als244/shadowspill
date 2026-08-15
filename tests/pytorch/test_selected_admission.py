@@ -20,6 +20,7 @@ from shadowspill.pytorch.planning.admission.selection import (
     build_selected_admission,
 )
 from shadowspill.pytorch.profiling import (
+    TaskAllocationABI,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
@@ -185,3 +186,42 @@ def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
     assert envelope.maximum_charged_allocation_bytes == 96
     assert envelope.live_requested_allocation_limit_bytes == 2 << 20
     assert envelope.live_charged_allocation_limit_bytes == 2 << 20
+
+
+def test_task_envelope_specializes_persistent_output_ownership() -> None:
+    output = TaskAllocationEvent(
+        0,
+        TaskAllocationOperation.ALLOCATE,
+        64,
+        64,
+        output_leaf_indices=(3,),
+        output_view_offsets=(0,),
+    )
+    terminal_free = TaskAllocationEvent(
+        0,
+        TaskAllocationOperation.FREE,
+        64,
+        64,
+    )
+    measurement = TaskMeasurement(
+        10,
+        0,
+        0,
+        (),
+        (10,),
+        "unit-test",
+        allocation_trace=(output,),
+        allocation_abi=TaskAllocationABI.capture((output, terminal_free)),
+    )
+
+    discarded = _task_memory_envelope(measurement)
+    retained = _task_memory_envelope(
+        measurement,
+        retained_output_leaves=(3,),
+    )
+
+    assert discarded.allocation_abi is not None
+    assert retained.allocation_abi is not None
+    assert len(discarded.allocation_abi.steps) == 2
+    assert len(retained.allocation_abi.steps) == 1
+    assert retained.allocation_abi.steps[0].persistent_after_task

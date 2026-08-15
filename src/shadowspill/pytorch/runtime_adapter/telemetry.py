@@ -49,6 +49,7 @@ class CapturedAllocationEvent:
     generation: int
     requested_bytes: int
     charged_bytes: int
+    alignment_bytes: int
     slab_offset: int
     kind: AllocationEventKind
     category: AllocationCategory
@@ -66,6 +67,7 @@ class TaskWorkspaceProfile:
     output_allocation_ids: tuple[int, ...]
     events: tuple[CapturedAllocationEvent, ...]
     allocation_trace: tuple[TaskAllocationEvent, ...]
+    allocation_abi_trace: tuple[TaskAllocationEvent, ...]
     output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_allocation_ids: tuple[int, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
@@ -121,15 +123,20 @@ class _TraceNormalizer:
         self.output_views = output_views
         self.retained_allocation_ids = retained_allocation_ids
         self.ordinal_by_id: dict[int, int] = {}
-        self.sizes_by_id: dict[int, tuple[int, int]] = {}
+        self.geometry_by_id: dict[int, tuple[int, int, int]] = {}
         self.pending_by_span: dict[tuple[int, int], tuple[int, int]] = {}
         self.pending_span_by_id: dict[int, tuple[int, int]] = {}
         self.trace: list[TaskAllocationEvent] = []
+        self.abi_trace: list[TaskAllocationEvent] = []
 
     def normalize(
         self,
         events: tuple[CapturedAllocationEvent, ...],
-    ) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
+    ) -> tuple[
+        tuple[TaskAllocationEvent, ...],
+        tuple[TaskAllocationEvent, ...],
+        tuple[int, ...],
+    ]:
         for event in events:
             if event.kind is AllocationEventKind.CREATED:
                 self._create(event)
@@ -146,7 +153,12 @@ class _TraceNormalizer:
             for event in self.trace
             if event.allocation_ordinal not in persistent_ordinals
         )
-        return filtered, persistent_ids
+        abi_filtered = tuple(
+            event
+            for event in self.abi_trace
+            if event.allocation_ordinal not in persistent_ordinals
+        )
+        return filtered, abi_filtered, persistent_ids
 
     def _create(self, event: CapturedAllocationEvent) -> None:
         if event.allocation_id in self.ordinal_by_id:
@@ -159,36 +171,40 @@ class _TraceNormalizer:
         if pending is not None:
             self.pending_span_by_id.pop(pending[0], None)
         self.ordinal_by_id[event.allocation_id] = ordinal
-        self.sizes_by_id[event.allocation_id] = (
+        self.geometry_by_id[event.allocation_id] = (
             event.requested_bytes,
             event.charged_bytes,
+            event.alignment_bytes,
         )
         views = self.output_views.get(event.allocation_id, ())
-        self.trace.append(
-            TaskAllocationEvent(
-                ordinal,
-                TaskAllocationOperation.ALLOCATE,
-                event.requested_bytes,
-                event.charged_bytes,
-                tuple(leaf_index for leaf_index, _offset in views),
-                tuple(offset for _leaf_index, offset in views),
-                None if pending is None else pending[1],
-            )
+        normalized = TaskAllocationEvent(
+            ordinal,
+            TaskAllocationOperation.ALLOCATE,
+            event.requested_bytes,
+            event.charged_bytes,
+            tuple(leaf_index for leaf_index, _offset in views),
+            tuple(offset for _leaf_index, offset in views),
+            None if pending is None else pending[1],
+            event.alignment_bytes,
         )
+        self.trace.append(normalized)
+        self.abi_trace.append(normalized)
 
     def _free(self, event: CapturedAllocationEvent) -> None:
         ordinal = self.ordinal_by_id.get(event.allocation_id)
-        if ordinal is None or event.allocation_id in self.output_views:
+        if ordinal is None:
             return
-        requested, charged = self.sizes_by_id[event.allocation_id]
-        self.trace.append(
-            TaskAllocationEvent(
-                ordinal,
-                TaskAllocationOperation.FREE,
-                requested,
-                charged,
-            )
+        requested, charged, alignment = self.geometry_by_id[event.allocation_id]
+        normalized = TaskAllocationEvent(
+            ordinal,
+            TaskAllocationOperation.FREE,
+            requested,
+            charged,
+            alignment_bytes=alignment,
         )
+        self.abi_trace.append(normalized)
+        if event.allocation_id not in self.output_views:
+            self.trace.append(normalized)
         span = event.slab_offset, event.charged_bytes
         self.pending_by_span[span] = event.allocation_id, ordinal
         self.pending_span_by_id[event.allocation_id] = span
@@ -309,6 +325,7 @@ def decode_allocation_events(
                 generation=event.generation,
                 requested_bytes=event.requested_bytes,
                 charged_bytes=event.charged_bytes,
+                alignment_bytes=event.alignment_bytes,
                 slab_offset=event.slab_offset,
                 kind=kind,
                 category=category,
@@ -336,10 +353,12 @@ def summarize_task_workspace(
     }
     output_views = dict(output_allocation_views or {})
     outputs = set(output_views)
-    allocation_trace, persistent_ids = _normalize_task_allocation_trace(
-        selected,
-        output_views=output_views,
-        retained_allocation_ids=promoted,
+    allocation_trace, allocation_abi_trace, persistent_ids = (
+        _normalize_task_allocation_trace(
+            selected,
+            output_views=output_views,
+            retained_allocation_ids=promoted,
+        )
     )
     persistent = set(persistent_ids)
     persistent_extents = tuple(
@@ -361,6 +380,7 @@ def summarize_task_workspace(
         output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
         allocation_trace=allocation_trace,
+        allocation_abi_trace=allocation_abi_trace,
         output_input_bindings=output_input_bindings,
         persistent_allocation_ids=persistent_ids,
         persistent_extent_bytes=persistent_extents,
@@ -372,7 +392,11 @@ def _normalize_task_allocation_trace(
     *,
     output_views: Mapping[int, tuple[tuple[int, int], ...]],
     retained_allocation_ids: set[int],
-) -> tuple[tuple[TaskAllocationEvent, ...], tuple[int, ...]]:
+) -> tuple[
+    tuple[TaskAllocationEvent, ...],
+    tuple[TaskAllocationEvent, ...],
+    tuple[int, ...],
+]:
     """Replace process allocation IDs with stable task-local ordinals."""
     normalizer = _TraceNormalizer(output_views, retained_allocation_ids)
     return normalizer.normalize(events)

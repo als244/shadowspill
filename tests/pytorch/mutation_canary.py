@@ -70,6 +70,7 @@ def main() -> int:
         profile = diagnostics.unique_stages[0].graph_pairs[0].forward
         if (
             len(profile.semantic_mutations) != 1
+            or not profile.allocation_abi_digest
             or profile.semantic_mutations[0].replacement_output_leaf is None
             or profile.replacement_transition_bytes
             != model.running.untyped_storage().nbytes()

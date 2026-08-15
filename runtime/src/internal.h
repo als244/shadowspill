@@ -133,8 +133,10 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t generation;
     uint64_t requested_bytes;
     uint64_t charged_bytes;
+    uint64_t alignment_bytes;
     uint64_t offset;
     uint64_t origin_task_id;
+    uint64_t origin_task_allocation_ordinal;
     uint64_t release_task_id;
     uint64_t request_sequence;
     uint64_t release_sequence;
@@ -349,6 +351,9 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillExecutionAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
+    ShadowSpillTaskAllocationABIStep *allocation_abi_steps;
+    uint32_t allocation_abi_step_count;
+    uint8_t enforce_allocation_abi;
     uint64_t maximum_requested_allocation_bytes;
     uint64_t maximum_charged_allocation_bytes;
     uint64_t live_requested_allocation_limit_bytes;
@@ -603,6 +608,7 @@ int shadowspill_memory_pool_adopt_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,
     uint64_t bytes,
+    uint64_t alignment,
     uint64_t offset
 );
 void shadowspill_memory_pool_rebase_locked(
@@ -779,18 +785,24 @@ int shadowspill_enter_execution_scope(
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
-    uint64_t charged_bytes
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
 );
-void shadowspill_commit_task_allocation(
+uint64_t shadowspill_commit_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
     uint64_t charged_bytes
 );
-void shadowspill_release_task_allocation(
+ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
+    uint64_t allocation_ordinal,
     uint64_t requested_bytes,
-    uint64_t charged_bytes
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
+);
+ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
+    ShadowSpillRuntime *runtime
 );
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime);
 void shadowspill_append_allocation_event_locked(

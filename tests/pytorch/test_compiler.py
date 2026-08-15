@@ -308,6 +308,7 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
         peak_charged_bytes=256,
         peak_extent_bytes=(256,),
         allocation_trace=(),
+        allocation_abi_trace=(),
         output_input_bindings=(),
         persistent_allocation_ids=(),
         persistent_extent_bytes=(),

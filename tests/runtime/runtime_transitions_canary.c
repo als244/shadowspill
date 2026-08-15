@@ -1096,6 +1096,182 @@ static int admitted_task_rejects_envelope_excess(void) {
     return failed ? -1 : 0;
 }
 
+static int admitted_task_accepts_exact_allocation_abi(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationABIStep steps[] = {
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 1U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        },
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 1U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
+        },
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 55U,
+        .allocation_abi_steps = steps,
+        .allocation_abi_step_count = 2U,
+        .enforce_allocation_abi = 1U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 32U,
+        .live_charged_allocation_limit_bytes = 32U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    const ShadowSpillRuntimeStatus admit_status = shadowspill_admit_execution(
+        fixture.runtime, &execution
+    );
+    const ShadowSpillRuntimeStatus before_status = shadowspill_before_execution(
+        fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+    );
+    const ShadowSpillRuntimeStatus allocate_status = shadowspill_allocate(
+        fixture.runtime, 32U, 1U, fixture.compute, &allocation
+    );
+    const ShadowSpillRuntimeStatus free_status = shadowspill_free(
+        fixture.runtime, allocation.allocation_id, fixture.compute
+    );
+    const ShadowSpillRuntimeStatus after_status = shadowspill_after_execution(
+        fixture.runtime, execution.task_id, fixture.compute
+    );
+    const ShadowSpillRuntimeStatus idle_status = shadowspill_runtime_wait_idle(
+        fixture.runtime
+    );
+    const int failed = admit_status != SHADOWSPILL_RUNTIME_OK ||
+        before_status != SHADOWSPILL_RUNTIME_OK ||
+        allocate_status != SHADOWSPILL_RUNTIME_OK ||
+        free_status != SHADOWSPILL_RUNTIME_OK ||
+        after_status != SHADOWSPILL_RUNTIME_OK ||
+        idle_status != SHADOWSPILL_RUNTIME_OK;
+    if (failed) {
+        fprintf(
+            stderr,
+            "allocation ABI exact mismatch: admit=%u before=%u allocate=%u free=%u after=%u idle=%u\n",
+            (unsigned)admit_status,
+            (unsigned)before_status,
+            (unsigned)allocate_status,
+            (unsigned)free_status,
+            (unsigned)after_status,
+            (unsigned)idle_status
+        );
+    }
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationABIStep step = {
+        .allocation_ordinal = 0U,
+        .requested_bytes = 32U,
+        .charged_bytes = 32U,
+        .alignment_bytes = 1U,
+        .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 56U,
+        .allocation_abi_steps = &step,
+        .allocation_abi_step_count = 1U,
+        .enforce_allocation_abi = 1U,
+        .maximum_requested_allocation_bytes = 64U,
+        .maximum_charged_allocation_bytes = 64U,
+        .live_requested_allocation_limit_bytes = 64U,
+        .live_charged_allocation_limit_bytes = 64U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillRuntimeFailure failure = {0};
+    const int failed = shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            fixture.runtime, 16U, 1U, fixture.compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        shadowspill_runtime_failure(
+            fixture.runtime, &failure
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        failure.task_id != execution.task_id ||
+        failure.task_allocation_operation_index != 0U ||
+        failure.task_allocation_expected_ordinal != 0U ||
+        failure.task_allocation_actual_ordinal != 0U ||
+        failure.task_allocation_expected_requested_bytes != 32U ||
+        failure.task_allocation_actual_requested_bytes != 16U ||
+        failure.task_allocation_expected_operation !=
+            SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
+        failure.task_allocation_actual_operation !=
+            SHADOWSPILL_TASK_ALLOCATION_ALLOCATE;
+    shadowspill_abort_task(fixture.runtime);
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int admitted_task_rejects_incomplete_allocation_abi(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationABIStep steps[] = {
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 1U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        },
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 1U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
+        },
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 57U,
+        .allocation_abi_steps = steps,
+        .allocation_abi_step_count = 2U,
+        .enforce_allocation_abi = 1U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 32U,
+        .live_charged_allocation_limit_bytes = 32U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillRuntimeFailure failure = {0};
+    const int failed = shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+            fixture.runtime, 32U, 1U, fixture.compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        shadowspill_runtime_failure(
+            fixture.runtime, &failure
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        failure.task_allocation_operation_index != 1U ||
+        failure.task_allocation_expected_operation !=
+            SHADOWSPILL_TASK_ALLOCATION_FREE ||
+        failure.task_allocation_actual_operation != UINT8_MAX;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 static int admitted_prefetch_reserves_dynamic_capacity(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -1697,6 +1873,9 @@ int main(void) {
     REQUIRE_CANARY(admitted_allocation_without_progress_reports_no_progress());
     REQUIRE_CANARY(admitted_dynamic_allocations_use_deterministic_low_ranges());
     REQUIRE_CANARY(admitted_task_rejects_envelope_excess());
+    REQUIRE_CANARY(admitted_task_accepts_exact_allocation_abi());
+    REQUIRE_CANARY(admitted_task_rejects_allocation_abi_geometry_mismatch());
+    REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_abi());
     REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());

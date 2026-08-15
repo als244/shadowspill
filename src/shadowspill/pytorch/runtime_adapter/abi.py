@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 33
-RUNTIME_ABI_VERSION: Final = 24
+ADAPTER_ABI_VERSION: Final = 34
+RUNTIME_ABI_VERSION: Final = 25
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -117,6 +117,7 @@ class AllocationEvent(ctypes.Structure):
         ("generation", ctypes.c_uint64),
         ("requested_bytes", ctypes.c_uint64),
         ("charged_bytes", ctypes.c_uint64),
+        ("alignment_bytes", ctypes.c_uint64),
         ("slab_offset", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
         ("category", ctypes.c_uint8),
@@ -250,6 +251,17 @@ class RuntimeFailure(ctypes.Structure):
         ("task_live_charged_limit_bytes", ctypes.c_uint64),
         ("task_maximum_requested_allocation_bytes", ctypes.c_uint64),
         ("task_maximum_charged_allocation_bytes", ctypes.c_uint64),
+        ("task_allocation_operation_index", ctypes.c_uint64),
+        ("task_allocation_expected_ordinal", ctypes.c_uint64),
+        ("task_allocation_actual_ordinal", ctypes.c_uint64),
+        ("task_allocation_expected_requested_bytes", ctypes.c_uint64),
+        ("task_allocation_actual_requested_bytes", ctypes.c_uint64),
+        ("task_allocation_expected_charged_bytes", ctypes.c_uint64),
+        ("task_allocation_actual_charged_bytes", ctypes.c_uint64),
+        ("task_allocation_expected_alignment_bytes", ctypes.c_uint64),
+        ("task_allocation_actual_alignment_bytes", ctypes.c_uint64),
+        ("task_allocation_expected_operation", ctypes.c_uint8),
+        ("task_allocation_actual_operation", ctypes.c_uint8),
     ]
 
 
@@ -305,6 +317,16 @@ class RuntimeAction(ctypes.Structure):
     ]
 
 
+class TaskAllocationABIStep(ctypes.Structure):
+    _fields_ = [
+        ("allocation_ordinal", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("charged_bytes", ctypes.c_uint64),
+        ("alignment_bytes", ctypes.c_uint64),
+        ("operation", ctypes.c_uint8),
+    ]
+
+
 class ExecutionDescription(ctypes.Structure):
     _fields_ = [
         ("task_id", ctypes.c_uint64),
@@ -314,6 +336,9 @@ class ExecutionDescription(ctypes.Structure):
         ("update_count", ctypes.c_uint32),
         ("actions", ctypes.POINTER(RuntimeAction)),
         ("action_count", ctypes.c_uint32),
+        ("allocation_abi_steps", ctypes.POINTER(TaskAllocationABIStep)),
+        ("allocation_abi_step_count", ctypes.c_uint32),
+        ("enforce_allocation_abi", ctypes.c_uint8),
         ("maximum_requested_allocation_bytes", ctypes.c_uint64),
         ("maximum_charged_allocation_bytes", ctypes.c_uint64),
         ("live_requested_allocation_limit_bytes", ctypes.c_uint64),

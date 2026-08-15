@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 24U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 25U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -42,6 +42,7 @@ typedef enum ShadowSpillRuntimeStatus {
     SHADOWSPILL_RUNTIME_WORKER_FAILURE = 8,
     SHADOWSPILL_RUNTIME_CLOSED = 9,
     SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10,
+    SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH = 11,
 } ShadowSpillRuntimeStatus;
 
 typedef enum ShadowSpillObjectResidency {
@@ -137,6 +138,24 @@ typedef struct ShadowSpillRuntimeAction {
     const char *trace_label;
 } ShadowSpillRuntimeAction;
 
+typedef enum ShadowSpillTaskAllocationOperation {
+    SHADOWSPILL_TASK_ALLOCATION_ALLOCATE = 0,
+    SHADOWSPILL_TASK_ALLOCATION_FREE = 1,
+} ShadowSpillTaskAllocationOperation;
+
+/*
+ * Pointer-free runtime projection of one compiled-task allocator operation.
+ * Output and mutation ownership remains in the framework storage contract;
+ * the neutral runtime validates only callback order and geometry.
+ */
+typedef struct ShadowSpillTaskAllocationABIStep {
+    uint64_t allocation_ordinal;
+    uint64_t requested_bytes;
+    uint64_t charged_bytes;
+    uint64_t alignment_bytes;
+    uint8_t operation;
+} ShadowSpillTaskAllocationABIStep;
+
 typedef struct ShadowSpillExecutionDescription {
     uint64_t task_id;
     const uint64_t *input_object_ids;
@@ -145,6 +164,9 @@ typedef struct ShadowSpillExecutionDescription {
     uint32_t update_count;
     const ShadowSpillRuntimeAction *actions;
     uint32_t action_count;
+    const ShadowSpillTaskAllocationABIStep *allocation_abi_steps;
+    uint32_t allocation_abi_step_count;
+    uint8_t enforce_allocation_abi;
     /*
      * Conservative task-local allocator envelope. Zero selects an unbounded
      * field for legacy/non-profiled callers. These bounds constrain behavior,
@@ -163,6 +185,7 @@ typedef struct ShadowSpillAllocationEvent {
     uint64_t generation;
     uint64_t requested_bytes;
     uint64_t charged_bytes;
+    uint64_t alignment_bytes;
     uint64_t slab_offset;
     uint8_t kind;
     uint8_t category;
@@ -293,6 +316,17 @@ typedef struct ShadowSpillRuntimeFailure {
     uint64_t task_live_charged_limit_bytes;
     uint64_t task_maximum_requested_allocation_bytes;
     uint64_t task_maximum_charged_allocation_bytes;
+    uint64_t task_allocation_operation_index;
+    uint64_t task_allocation_expected_ordinal;
+    uint64_t task_allocation_actual_ordinal;
+    uint64_t task_allocation_expected_requested_bytes;
+    uint64_t task_allocation_actual_requested_bytes;
+    uint64_t task_allocation_expected_charged_bytes;
+    uint64_t task_allocation_actual_charged_bytes;
+    uint64_t task_allocation_expected_alignment_bytes;
+    uint64_t task_allocation_actual_alignment_bytes;
+    uint8_t task_allocation_expected_operation;
+    uint8_t task_allocation_actual_operation;
 } ShadowSpillRuntimeFailure;
 
 typedef struct ShadowSpillObjectSnapshot {

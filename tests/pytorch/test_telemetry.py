@@ -25,6 +25,7 @@ def _event(
     category: AllocationCategory = AllocationCategory.ANONYMOUS,
     slab_offset: int = 0,
     charged_bytes: int | None = None,
+    alignment_bytes: int = 256,
 ) -> CapturedAllocationEvent:
     return CapturedAllocationEvent(
         sequence=sequence,
@@ -33,6 +34,7 @@ def _event(
         generation=allocation_id,
         requested_bytes=bytes_,
         charged_bytes=max(bytes_, 1) if charged_bytes is None else charged_bytes,
+        alignment_bytes=alignment_bytes,
         slab_offset=slab_offset,
         kind=kind,
         category=category,
@@ -61,6 +63,7 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
         _event(0, 10, AllocationEventKind.CREATED, 128),
         _event(1, 11, AllocationEventKind.CREATED, 64),
         _event(2, 11, AllocationEventKind.LOGICAL_FREED, 64),
+        _event(3, 10, AllocationEventKind.LOGICAL_FREED, 128),
     )
     profile = summarize_task_workspace(
         events, task_id=7, output_allocation_views={10: ((0, 0),)}
@@ -68,6 +71,17 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
     assert profile.peak_charged_bytes == 64
     assert profile.output_allocation_ids == (10,)
     assert profile.allocation_trace[0].output_leaf_indices == (0,)
+    assert tuple(item.allocation_ordinal for item in profile.allocation_trace) == (
+        0,
+        1,
+        1,
+    )
+    assert tuple(item.allocation_ordinal for item in profile.allocation_abi_trace) == (
+        0,
+        1,
+        1,
+        0,
+    )
 
 
 def test_workspace_classifies_unbound_live_allocation_as_persistent() -> None:
@@ -166,6 +180,7 @@ def test_read_decodes_no_task_and_validates_sequence() -> None:
         generation=4,
         requested_bytes=0,
         charged_bytes=1,
+        alignment_bytes=256,
         slab_offset=8,
         kind=AllocationEventKind.CREATED,
         category=AllocationCategory.ANONYMOUS,

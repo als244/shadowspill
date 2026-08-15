@@ -8,6 +8,7 @@ typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
     uint64_t task_id;
     const ShadowSpillExecutionRecord *execution;
+    uint64_t operation_index;
     uint64_t allocation_ordinal;
     uint64_t live_requested_bytes;
     uint64_t live_charged_bytes;
@@ -39,6 +40,7 @@ int shadowspill_enter_task_scope(
     task_scope.runtime = runtime;
     task_scope.task_id = task_id;
     task_scope.execution = NULL;
+    task_scope.operation_index = 0U;
     task_scope.allocation_ordinal = 0U;
     task_scope.live_requested_bytes = 0U;
     task_scope.live_charged_bytes = 0U;
@@ -47,6 +49,50 @@ int shadowspill_enter_task_scope(
     task_scope.allocation_count = 0U;
     task_scope.free_count = 0U;
     return 0;
+}
+
+static const ShadowSpillTaskAllocationABIStep *expected_allocation_step(void) {
+    if (task_scope.execution == NULL ||
+        !task_scope.execution->enforce_allocation_abi ||
+        task_scope.operation_index >=
+            task_scope.execution->allocation_abi_step_count) {
+        return NULL;
+    }
+    return &task_scope.execution->allocation_abi_steps[
+        task_scope.operation_index
+    ];
+}
+
+static ShadowSpillRuntimeStatus latch_allocation_abi_mismatch(
+    ShadowSpillRuntime *runtime,
+    uint8_t actual_operation,
+    uint64_t actual_ordinal,
+    uint64_t requested_bytes,
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
+) {
+    const ShadowSpillTaskAllocationABIStep *expected =
+        expected_allocation_step();
+    const ShadowSpillTaskAllocationMismatch mismatch = {
+        .operation_index = task_scope.operation_index,
+        .expected_ordinal = expected == NULL
+            ? SHADOWSPILL_RUNTIME_NO_ID : expected->allocation_ordinal,
+        .actual_ordinal = actual_ordinal,
+        .expected_requested_bytes = expected == NULL
+            ? 0U : expected->requested_bytes,
+        .actual_requested_bytes = requested_bytes,
+        .expected_charged_bytes = expected == NULL
+            ? 0U : expected->charged_bytes,
+        .actual_charged_bytes = charged_bytes,
+        .expected_alignment_bytes = expected == NULL
+            ? 0U : expected->alignment_bytes,
+        .actual_alignment_bytes = alignment_bytes,
+        .expected_operation = expected == NULL
+            ? UINT8_MAX : expected->operation,
+        .actual_operation = actual_operation,
+    };
+    shadowspill_latch_task_allocation_abi_failure(runtime, &mismatch);
+    return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH;
 }
 
 int shadowspill_enter_execution_scope(
@@ -64,9 +110,11 @@ int shadowspill_enter_execution_scope(
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
-    uint64_t charged_bytes
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
 ) {
-    if (runtime == NULL || requested_bytes == 0U || charged_bytes == 0U) {
+    if (runtime == NULL || requested_bytes == 0U || charged_bytes == 0U ||
+        alignment_bytes == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     if (task_scope.runtime != runtime || task_scope.execution == NULL) {
@@ -87,31 +135,52 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
          projected_requested > record->live_requested_allocation_limit_bytes) ||
         (record->live_charged_allocation_limit_bytes != 0U &&
          projected_charged > record->live_charged_allocation_limit_bytes);
-    if (!request_exceeded && !live_exceeded) {
+    if (request_exceeded || live_exceeded) {
+        shadowspill_latch_task_envelope_failure(
+            runtime,
+            requested_bytes,
+            charged_bytes,
+            projected_requested,
+            projected_charged,
+            record->live_requested_allocation_limit_bytes,
+            record->live_charged_allocation_limit_bytes,
+            record->maximum_requested_allocation_bytes,
+            record->maximum_charged_allocation_bytes
+        );
+        return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED;
+    }
+    if (!record->enforce_allocation_abi) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    shadowspill_latch_task_envelope_failure(
-        runtime,
-        requested_bytes,
-        charged_bytes,
-        projected_requested,
-        projected_charged,
-        record->live_requested_allocation_limit_bytes,
-        record->live_charged_allocation_limit_bytes,
-        record->maximum_requested_allocation_bytes,
-        record->maximum_charged_allocation_bytes
-    );
-    return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED;
+    const ShadowSpillTaskAllocationABIStep *expected =
+        expected_allocation_step();
+    if (expected == NULL ||
+        expected->operation != SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
+        expected->allocation_ordinal != task_scope.allocation_ordinal ||
+        expected->requested_bytes != requested_bytes ||
+        expected->charged_bytes != charged_bytes ||
+        expected->alignment_bytes != alignment_bytes) {
+        return latch_allocation_abi_mismatch(
+            runtime,
+            SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+            task_scope.allocation_ordinal,
+            requested_bytes,
+            charged_bytes,
+            alignment_bytes
+        );
+    }
+    return SHADOWSPILL_RUNTIME_OK;
 }
 
-void shadowspill_commit_task_allocation(
+uint64_t shadowspill_commit_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
     uint64_t charged_bytes
 ) {
     if (task_scope.runtime != runtime || task_scope.execution == NULL) {
-        return;
+        return SHADOWSPILL_RUNTIME_NO_ID;
     }
+    const uint64_t allocation_ordinal = task_scope.allocation_ordinal++;
     task_scope.live_requested_bytes += requested_bytes;
     task_scope.live_charged_bytes += charged_bytes;
     if (task_scope.live_requested_bytes > task_scope.peak_requested_bytes) {
@@ -121,18 +190,43 @@ void shadowspill_commit_task_allocation(
         task_scope.peak_charged_bytes = task_scope.live_charged_bytes;
     }
     ++task_scope.allocation_count;
-    ++task_scope.allocation_ordinal;
+    if (task_scope.execution->enforce_allocation_abi) {
+        ++task_scope.operation_index;
+    }
+    return allocation_ordinal;
 }
 
-void shadowspill_release_task_allocation(
+ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
+    uint64_t allocation_ordinal,
     uint64_t requested_bytes,
-    uint64_t charged_bytes
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
 ) {
     if (task_scope.runtime != runtime || task_scope.execution == NULL ||
         task_scope.task_id != origin_task_id) {
-        return;
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    if (task_scope.execution->enforce_allocation_abi) {
+        const ShadowSpillTaskAllocationABIStep *expected =
+            expected_allocation_step();
+        if (expected == NULL ||
+            expected->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
+            expected->allocation_ordinal != allocation_ordinal ||
+            expected->requested_bytes != requested_bytes ||
+            expected->charged_bytes != charged_bytes ||
+            expected->alignment_bytes != alignment_bytes) {
+            return latch_allocation_abi_mismatch(
+                runtime,
+                SHADOWSPILL_TASK_ALLOCATION_FREE,
+                allocation_ordinal,
+                requested_bytes,
+                charged_bytes,
+                alignment_bytes
+            );
+        }
+        ++task_scope.operation_index;
     }
     if (requested_bytes <= task_scope.live_requested_bytes) {
         task_scope.live_requested_bytes -= requested_bytes;
@@ -145,6 +239,28 @@ void shadowspill_release_task_allocation(
         task_scope.live_charged_bytes = 0U;
     }
     ++task_scope.free_count;
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
+    ShadowSpillRuntime *runtime
+) {
+    if (task_scope.runtime != runtime || task_scope.execution == NULL ||
+        !task_scope.execution->enforce_allocation_abi) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    if (task_scope.operation_index ==
+        task_scope.execution->allocation_abi_step_count) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    return latch_allocation_abi_mismatch(
+        runtime,
+        UINT8_MAX,
+        SHADOWSPILL_RUNTIME_NO_ID,
+        0U,
+        0U,
+        0U
+    );
 }
 
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
@@ -152,6 +268,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.runtime = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.execution = NULL;
+        task_scope.operation_index = 0U;
         task_scope.allocation_ordinal = 0U;
         task_scope.live_requested_bytes = 0U;
         task_scope.live_charged_bytes = 0U;
@@ -220,6 +337,7 @@ void shadowspill_append_allocation_event_locked(
             .generation = allocation->generation,
             .requested_bytes = allocation->requested_bytes,
             .charged_bytes = allocation->charged_bytes,
+            .alignment_bytes = allocation->alignment_bytes,
             .slab_offset = allocation->offset,
             .kind = (uint8_t)kind,
             .category = (uint8_t)category,

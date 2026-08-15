@@ -29,6 +29,7 @@ from shadowspill.pytorch.compilation.layout import (
     replacement_transition_bytes,
 )
 from shadowspill.pytorch.diagnostics.plan import (
+    PlanAllocationABIStep,
     PlanAllocationEvent,
     PlanCompiledOutputView,
     PlanCompiledRoot,
@@ -694,6 +695,12 @@ def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
         task_workspace_bytes=context.profile.workspace_bytes,
         workspace_extent_bytes=measurement.workspace_extent_bytes,
         persistent_extent_bytes=measurement.persistent_extent_bytes,
+        allocation_abi_digest=(
+            None
+            if measurement.allocation_abi is None
+            else measurement.allocation_abi.compatibility_digest
+        ),
+        allocation_abi=_plan_allocation_abi(measurement),
         allocation_timeline=_plan_allocation_timeline(measurement),
     )
 
@@ -843,6 +850,27 @@ def _plan_allocation_timeline(
             reuses_ordinal=event.reuses_ordinal,
         )
         for event in measurement.allocation_trace
+    )
+
+
+def _plan_allocation_abi(
+    measurement: TaskMeasurement,
+) -> tuple[PlanAllocationABIStep, ...]:
+    if measurement.allocation_abi is None:
+        return ()
+    return tuple(
+        PlanAllocationABIStep(
+            operation_index=step.operation_index,
+            allocation_ordinal=step.allocation_ordinal,
+            operation=step.operation.value,
+            requested_bytes=step.requested_bytes,
+            charged_bytes=step.charged_bytes,
+            alignment_bytes=step.alignment_bytes,
+            output_leaf_indices=step.output_leaf_indices,
+            mutation_input_positions=step.mutation_input_positions,
+            persistent_after_task=step.persistent_after_task,
+        )
+        for step in measurement.allocation_abi.steps
     )
 
 

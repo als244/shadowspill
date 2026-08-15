@@ -141,6 +141,34 @@ class PlanAllocationEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanAllocationABIStep:
+    """One pointer-free allocator operation required by a compiled task."""
+
+    operation_index: int
+    allocation_ordinal: int
+    operation: str
+    requested_bytes: int
+    charged_bytes: int
+    alignment_bytes: int
+    output_leaf_indices: tuple[int, ...]
+    mutation_input_positions: tuple[int, ...]
+    persistent_after_task: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "operation_index": self.operation_index,
+            "allocation_ordinal": self.allocation_ordinal,
+            "operation": self.operation,
+            "requested_bytes": self.requested_bytes,
+            "charged_bytes": self.charged_bytes,
+            "alignment_bytes": self.alignment_bytes,
+            "output_leaf_indices": list(self.output_leaf_indices),
+            "mutation_input_positions": list(self.mutation_input_positions),
+            "persistent_after_task": self.persistent_after_task,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PlanStorageRoot:
     """Offline semantic root exposed in planning diagnostics."""
 
@@ -320,6 +348,8 @@ class PlanGraphProfile:
     task_workspace_bytes: int
     workspace_extent_bytes: tuple[int, ...]
     persistent_extent_bytes: tuple[int, ...]
+    allocation_abi_digest: str | None
+    allocation_abi: tuple[PlanAllocationABIStep, ...]
     allocation_timeline: tuple[PlanAllocationEvent, ...]
 
     def as_dict(self) -> dict[str, object]:
@@ -376,6 +406,8 @@ class PlanGraphProfile:
             "task_workspace_bytes": self.task_workspace_bytes,
             "workspace_extent_bytes": list(self.workspace_extent_bytes),
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
+            "allocation_abi_digest": self.allocation_abi_digest,
+            "allocation_abi": [item.as_dict() for item in self.allocation_abi],
             "allocation_timeline": [
                 item.as_dict() for item in self.allocation_timeline
             ],

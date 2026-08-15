@@ -279,6 +279,9 @@ int shadowspill_memory_pool_reserve_lease_locked(
         return -1;
     }
     const uint64_t charged = bytes == 0U ? 1U : bytes;
+    if (alignment < pool->minimum_alignment) {
+        alignment = pool->minimum_alignment;
+    }
     uint64_t offset = 0U;
     const int status = shadowspill_memory_pool_reserve_locked(
         pool, charged, alignment, placement, &offset
@@ -287,7 +290,7 @@ int shadowspill_memory_pool_reserve_lease_locked(
         return status;
     }
     const int adopt_status = shadowspill_memory_pool_adopt_lease_locked(
-        pool, lease, bytes, offset
+        pool, lease, bytes, alignment, offset
     );
     if (adopt_status != 0) {
         (void)shadowspill_memory_pool_release_locked(pool, offset, charged);
@@ -299,10 +302,12 @@ int shadowspill_memory_pool_adopt_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,
     uint64_t bytes,
+    uint64_t alignment,
     uint64_t offset
 ) {
     const uint64_t charged = bytes == 0U ? 1U : bytes;
-    if (pool == NULL || lease == NULL || lease->pool != NULL ||
+    if (pool == NULL || lease == NULL || alignment == 0U ||
+        lease->pool != NULL ||
         lease->pool_next != NULL || lease->pool_previous_link != NULL ||
         offset > pool->ranges.capacity ||
         charged > pool->ranges.capacity - offset) {
@@ -312,6 +317,7 @@ int shadowspill_memory_pool_adopt_lease_locked(
     lease->state = SHADOWSPILL_LEASE_IN_USE;
     lease->requested_bytes = bytes;
     lease->charged_bytes = charged;
+    lease->alignment_bytes = alignment;
     lease->offset = offset;
     lease->request_sequence = pool->next_request_sequence++;
     lease->pointer = shadowspill_memory_pool_pointer(pool, offset);
@@ -492,6 +498,7 @@ int shadowspill_memory_pool_reserve_causal_successor_locked(
     successor->state = SHADOWSPILL_LEASE_SUCCESSOR_RESERVED;
     successor->requested_bytes = bytes;
     successor->charged_bytes = selected->charged_bytes;
+    successor->alignment_bytes = alignment;
     successor->offset = selected->offset;
     successor->request_sequence = pool->next_request_sequence++;
     successor->pointer = selected->pointer;
@@ -708,6 +715,7 @@ int shadowspill_memory_pool_cancel_reservation_locked(
     lease->state = SHADOWSPILL_LEASE_FREE;
     lease->requested_bytes = 0U;
     lease->charged_bytes = 0U;
+    lease->alignment_bytes = 0U;
     lease->offset = 0U;
     lease->pointer = NULL;
     lease->causal_event = NULL;
@@ -725,6 +733,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->pointer = NULL;
         lease->requested_bytes = 0U;
         lease->charged_bytes = 0U;
+        lease->alignment_bytes = 0U;
         lease->offset = 0U;
         lease->causal_event = NULL;
         lease->causal_dependency_expected = 0U;
@@ -751,6 +760,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->pointer = NULL;
         lease->requested_bytes = 0U;
         lease->charged_bytes = 0U;
+        lease->alignment_bytes = 0U;
         lease->offset = 0U;
         lease->causal_event = NULL;
         lease->causal_dependency_expected = 0U;
@@ -782,6 +792,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->state = SHADOWSPILL_LEASE_FREE;
         lease->requested_bytes = 0U;
         lease->charged_bytes = 0U;
+        lease->alignment_bytes = 0U;
         lease->offset = 0U;
         lease->pointer = NULL;
         lease->causal_event = NULL;

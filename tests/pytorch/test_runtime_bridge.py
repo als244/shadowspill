@@ -8,9 +8,15 @@ import pytest
 import torch
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
+from shadowspill.pytorch.profiling import (
+    TaskAllocationABI,
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     RuntimeExecutionError,
+    TaskMemoryEnvelope,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 from tests.ir._examples import representative_program
@@ -150,6 +156,73 @@ def test_failed_task_surfaces_allocation_envelope_contract() -> None:
     assert "task_live_requested_limit: 16777216" in message
     assert "task_live_charged: 18874368" in message
     assert "task_live_charged_limit: 16777216" in message
+
+
+class _AllocationABIFailureLibrary(_FailureLibrary):
+    def shadowspill_pytorch_allocator_failure(self, output: Any) -> int:
+        from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+
+        result = ctypes.cast(output, ctypes.POINTER(AdapterFailure))[0]
+        result.status = 11
+        result.device_ordinal = 0
+        result.runtime.status = 11
+        result.runtime.task_id = 28
+        result.runtime.object_id = (1 << 64) - 1
+        result.runtime.allocation_id = (1 << 64) - 1
+        result.runtime.task_allocation_operation_index = 7
+        result.runtime.task_allocation_expected_ordinal = 4
+        result.runtime.task_allocation_actual_ordinal = 4
+        result.runtime.task_allocation_expected_requested_bytes = 4096
+        result.runtime.task_allocation_actual_requested_bytes = 8192
+        result.runtime.task_allocation_expected_charged_bytes = 4096
+        result.runtime.task_allocation_actual_charged_bytes = 8192
+        result.runtime.task_allocation_expected_alignment_bytes = 256
+        result.runtime.task_allocation_actual_alignment_bytes = 256
+        result.runtime.task_allocation_expected_operation = 0
+        result.runtime.task_allocation_actual_operation = 0
+        return 11
+
+
+def test_failed_task_surfaces_allocation_abi_contract() -> None:
+    library = _AllocationABIFailureLibrary()
+    bridge = RuntimeBridge(library, representative_program())
+    original = RuntimeError("tensor data is not allocated")
+
+    with pytest.raises(RuntimeExecutionError) as caught:
+        bridge.abort_task_after_failure("execute task task_000028", original)
+
+    message = str(caught.value)
+    assert "status 11 (task_allocation_abi_mismatch)" in message
+    assert "reason: TASK_ALLOCATION_ABI_MISMATCH" in message
+    assert "task_allocation_operation_index: 7" in message
+    assert "expected_operation: allocate" in message
+    assert "expected_requested: 4096" in message
+    assert "actual_requested: 8192" in message
+
+
+def test_execution_buffers_project_pointer_free_allocation_abi() -> None:
+    program = representative_program()
+    bridge = RuntimeBridge(object(), program)
+    trace = (
+        TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 64, 64),
+        TaskAllocationEvent(0, TaskAllocationOperation.FREE, 64, 64),
+    )
+    allocation_abi = TaskAllocationABI.capture(trace)
+
+    buffers = bridge._execution_buffers(
+        replace(program.tasks[0], task_id="task_000000"),
+        (),
+        (),
+        (),
+        TaskMemoryEnvelope(allocation_abi=allocation_abi),
+    )
+
+    assert buffers.description.enforce_allocation_abi == 1
+    assert buffers.description.allocation_abi_step_count == 2
+    assert buffers.allocation_abi_steps[0].operation == 0
+    assert buffers.allocation_abi_steps[0].allocation_ordinal == 0
+    assert buffers.allocation_abi_steps[0].requested_bytes == 64
+    assert buffers.allocation_abi_steps[1].operation == 1
 
 
 class _LabelLibrary:

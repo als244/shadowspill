@@ -600,6 +600,9 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
 
     if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_validate_task_allocation_complete(runtime);
+    }
+    if (status == SHADOWSPILL_RUNTIME_OK) {
         status = publish_mutations_locked(
             runtime, record, &failure_object_id, &failure_allocation_id
         );

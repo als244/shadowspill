@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -26,6 +26,9 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskHostTiming,
 )
+from shadowspill.pytorch.runtime_adapter.abi import (
+    TaskAllocationABIStep as CTaskAllocationABIStep,
+)
 from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     RuntimeExecutionError,
@@ -34,6 +37,9 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     raise_if_allocator_failed,
     read_allocator_failure,
 )
+
+if TYPE_CHECKING:
+    from shadowspill.pytorch.profiling.allocation_abi import TaskAllocationABI
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
     begin_runtime_trace,
@@ -57,6 +63,7 @@ class TaskMemoryEnvelope:
     maximum_charged_allocation_bytes: int = 0
     live_requested_allocation_limit_bytes: int = 0
     live_charged_allocation_limit_bytes: int = 0
+    allocation_abi: TaskAllocationABI | None = None
 
     def __post_init__(self) -> None:
         values = (
@@ -95,6 +102,7 @@ class _ExecutionBuffers:
     input_ids: Any
     updates: Any
     actions: Any
+    allocation_abi_steps: Any
     encoded_labels: tuple[bytes | None, ...]
 
 
@@ -279,6 +287,20 @@ class RuntimeBridge:
                 for (action, _text), label in zip(actions, labels, strict=True)
             )
         )
+        allocation_abi = memory_envelope.allocation_abi
+        abi_steps = () if allocation_abi is None else allocation_abi.steps
+        abi_values = (CTaskAllocationABIStep * len(abi_steps))(
+            *(
+                CTaskAllocationABIStep(
+                    allocation_ordinal=step.allocation_ordinal,
+                    requested_bytes=step.requested_bytes,
+                    charged_bytes=step.charged_bytes,
+                    alignment_bytes=step.alignment_bytes,
+                    operation=0 if step.operation.value == "allocate" else 1,
+                )
+                for step in abi_steps
+            )
+        )
         description = ExecutionDescription(
             task_id=_dense_id(task.task_id, "task_"),
             input_object_ids=input_ids if inputs else None,
@@ -287,6 +309,9 @@ class RuntimeBridge:
             update_count=len(mutations),
             actions=action_values if actions else None,
             action_count=len(actions),
+            allocation_abi_steps=abi_values if abi_steps else None,
+            allocation_abi_step_count=len(abi_steps),
+            enforce_allocation_abi=allocation_abi is not None,
             maximum_requested_allocation_bytes=(
                 memory_envelope.maximum_requested_allocation_bytes
             ),
@@ -305,6 +330,7 @@ class RuntimeBridge:
             input_ids,
             updates,
             action_values,
+            abi_values,
             labels,
         )
 

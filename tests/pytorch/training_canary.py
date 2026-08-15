@@ -186,6 +186,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         raise AssertionError(
                             "graph pair omitted semantic/physical layout"
                         )
+                    if not profile.allocation_abi_digest:
+                        raise AssertionError("graph pair omitted its allocation ABI")
                     if profile.semantic_contract_capture_ns <= 0:
                         raise AssertionError("graph pair omitted contract timing")
                     if profile.physical_profile_wall_time_ns <= 0:

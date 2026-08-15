@@ -34,6 +34,25 @@ void shadowspill_latch_task_envelope_failure(
     uint64_t maximum_charged_allocation_bytes
 );
 
+typedef struct ShadowSpillTaskAllocationMismatch {
+    uint64_t operation_index;
+    uint64_t expected_ordinal;
+    uint64_t actual_ordinal;
+    uint64_t expected_requested_bytes;
+    uint64_t actual_requested_bytes;
+    uint64_t expected_charged_bytes;
+    uint64_t actual_charged_bytes;
+    uint64_t expected_alignment_bytes;
+    uint64_t actual_alignment_bytes;
+    uint8_t expected_operation;
+    uint8_t actual_operation;
+} ShadowSpillTaskAllocationMismatch;
+
+void shadowspill_latch_task_allocation_abi_failure(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskAllocationMismatch *mismatch
+);
+
 ShadowSpillRuntimeStatus shadowspill_current_status_locked(
     ShadowSpillRuntime *runtime
 );

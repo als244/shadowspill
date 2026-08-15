@@ -12,6 +12,7 @@ _NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = 3
 _NO_PROGRESS = 4
 _TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10
+_TASK_ALLOCATION_ABI_MISMATCH = 11
 _STATUS_NAMES = {
     0: "ok",
     1: "invalid_argument",
@@ -24,7 +25,10 @@ _STATUS_NAMES = {
     8: "worker_failure",
     9: "closed",
     _TASK_ALLOCATION_ENVELOPE_EXCEEDED: "task_allocation_envelope_exceeded",
+    _TASK_ALLOCATION_ABI_MISMATCH: "task_allocation_abi_mismatch",
 }
+
+_ALLOCATION_OPERATIONS = {0: "allocate", 1: "free", 255: "end_of_task"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +60,17 @@ class RuntimeFailureDiagnostics:
     task_live_charged_limit_bytes: int = 0
     task_maximum_requested_allocation_bytes: int = 0
     task_maximum_charged_allocation_bytes: int = 0
+    task_allocation_operation_index: int = 0
+    task_allocation_expected_ordinal: int | None = None
+    task_allocation_actual_ordinal: int | None = None
+    task_allocation_expected_requested_bytes: int = 0
+    task_allocation_actual_requested_bytes: int = 0
+    task_allocation_expected_charged_bytes: int = 0
+    task_allocation_actual_charged_bytes: int = 0
+    task_allocation_expected_alignment_bytes: int = 0
+    task_allocation_actual_alignment_bytes: int = 0
+    task_allocation_expected_operation: int = 255
+    task_allocation_actual_operation: int = 255
     task: ExecutionTaskIdentity | None = None
 
     @property
@@ -79,6 +94,7 @@ class RuntimeFailureDiagnostics:
         return self.status in {
             6,  # plan_violation
             _TASK_ALLOCATION_ENVELOPE_EXCEEDED,
+            _TASK_ALLOCATION_ABI_MISMATCH,
         }
 
     def as_dict(self) -> dict[str, object]:
@@ -105,6 +121,37 @@ class RuntimeFailureDiagnostics:
             ),
             "task_maximum_charged_allocation_bytes": (
                 self.task_maximum_charged_allocation_bytes
+            ),
+            "task_allocation_operation_index": (
+                self.task_allocation_operation_index
+            ),
+            "task_allocation_expected_ordinal": (
+                self.task_allocation_expected_ordinal
+            ),
+            "task_allocation_actual_ordinal": self.task_allocation_actual_ordinal,
+            "task_allocation_expected_requested_bytes": (
+                self.task_allocation_expected_requested_bytes
+            ),
+            "task_allocation_actual_requested_bytes": (
+                self.task_allocation_actual_requested_bytes
+            ),
+            "task_allocation_expected_charged_bytes": (
+                self.task_allocation_expected_charged_bytes
+            ),
+            "task_allocation_actual_charged_bytes": (
+                self.task_allocation_actual_charged_bytes
+            ),
+            "task_allocation_expected_alignment_bytes": (
+                self.task_allocation_expected_alignment_bytes
+            ),
+            "task_allocation_actual_alignment_bytes": (
+                self.task_allocation_actual_alignment_bytes
+            ),
+            "task_allocation_expected_operation": (
+                self.task_allocation_expected_operation
+            ),
+            "task_allocation_actual_operation": (
+                self.task_allocation_actual_operation
             ),
             "execution_task_id": None if task is None else task.execution_task_id,
             "semantic_name": None if task is None else task.semantic_name,
@@ -171,6 +218,39 @@ def read_allocator_failure(
         ),
         task_maximum_charged_allocation_bytes=int(
             failure.runtime.task_maximum_charged_allocation_bytes
+        ),
+        task_allocation_operation_index=int(
+            failure.runtime.task_allocation_operation_index
+        ),
+        task_allocation_expected_ordinal=_optional_id(
+            int(failure.runtime.task_allocation_expected_ordinal)
+        ),
+        task_allocation_actual_ordinal=_optional_id(
+            int(failure.runtime.task_allocation_actual_ordinal)
+        ),
+        task_allocation_expected_requested_bytes=int(
+            failure.runtime.task_allocation_expected_requested_bytes
+        ),
+        task_allocation_actual_requested_bytes=int(
+            failure.runtime.task_allocation_actual_requested_bytes
+        ),
+        task_allocation_expected_charged_bytes=int(
+            failure.runtime.task_allocation_expected_charged_bytes
+        ),
+        task_allocation_actual_charged_bytes=int(
+            failure.runtime.task_allocation_actual_charged_bytes
+        ),
+        task_allocation_expected_alignment_bytes=int(
+            failure.runtime.task_allocation_expected_alignment_bytes
+        ),
+        task_allocation_actual_alignment_bytes=int(
+            failure.runtime.task_allocation_actual_alignment_bytes
+        ),
+        task_allocation_expected_operation=int(
+            failure.runtime.task_allocation_expected_operation
+        ),
+        task_allocation_actual_operation=int(
+            failure.runtime.task_allocation_actual_operation
         ),
         task=task,
     )
@@ -260,6 +340,33 @@ def generic_runtime_error(
                 f"{diagnostics.task_maximum_charged_allocation_bytes}",
             )
         )
+    if diagnostics.status == _TASK_ALLOCATION_ABI_MISMATCH:
+        lines.extend(
+            (
+                "reason: TASK_ALLOCATION_ABI_MISMATCH",
+                "task_allocation_operation_index: "
+                f"{diagnostics.task_allocation_operation_index}",
+                "expected_operation: "
+                f"{_allocation_operation_name(diagnostics.task_allocation_expected_operation)}",
+                "actual_operation: "
+                f"{_allocation_operation_name(diagnostics.task_allocation_actual_operation)}",
+                "expected_ordinal: "
+                f"{diagnostics.task_allocation_expected_ordinal}",
+                f"actual_ordinal: {diagnostics.task_allocation_actual_ordinal}",
+                "expected_requested: "
+                f"{diagnostics.task_allocation_expected_requested_bytes}",
+                "actual_requested: "
+                f"{diagnostics.task_allocation_actual_requested_bytes}",
+                "expected_charged: "
+                f"{diagnostics.task_allocation_expected_charged_bytes}",
+                "actual_charged: "
+                f"{diagnostics.task_allocation_actual_charged_bytes}",
+                "expected_alignment: "
+                f"{diagnostics.task_allocation_expected_alignment_bytes}",
+                "actual_alignment: "
+                f"{diagnostics.task_allocation_actual_alignment_bytes}",
+            )
+        )
     return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)
 
 
@@ -276,6 +383,10 @@ def raise_if_allocator_failed(library: Any, operation: str) -> None:
 
 def _optional_id(value: int) -> int | None:
     return None if value == _NO_ID else value
+
+
+def _allocation_operation_name(value: int) -> str:
+    return _ALLOCATION_OPERATIONS.get(value, f"unknown_{value}")
 
 
 __all__ = [

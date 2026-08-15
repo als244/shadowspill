@@ -346,6 +346,7 @@ static ShadowSpillMemoryLease *create_execution_record(
     atomic_init(&created->references, 1U);
     created->generation = runtime->next_generation++;
     created->origin_task_id = origin_task_id;
+    created->origin_task_allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -641,6 +642,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
                 shadowspill_execution_pool(runtime),
                 split,
                 bytes,
+                alignment,
                 selected->offset
             ) != 0) {
             free(split);
@@ -737,6 +739,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     index_allocation_id_locked(runtime, selected);
     selected->generation = runtime->next_generation++;
     selected->requested_bytes = bytes;
+    selected->alignment_bytes = alignment;
     selected->origin_task_id = origin_task_id;
     selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -830,10 +833,15 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     if (runtime == NULL || allocation == NULL || alignment == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    if (alignment < shadowspill_execution_pool(runtime)->minimum_alignment) {
+        alignment = shadowspill_execution_pool(runtime)->minimum_alignment;
+    }
     const uint64_t charged_bytes = bytes == 0U ? 0U : bytes;
     ShadowSpillRuntimeStatus status = bytes == 0U
         ? SHADOWSPILL_RUNTIME_OK
-        : shadowspill_validate_task_allocation(runtime, bytes, charged_bytes);
+        : shadowspill_validate_task_allocation(
+            runtime, bytes, charged_bytes, alignment
+        );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
@@ -885,7 +893,8 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 .charged_bytes = record->charged_bytes,
                 .pointer = record->pointer,
             };
-            shadowspill_commit_task_allocation(
+            record->origin_task_allocation_ordinal =
+                shadowspill_commit_task_allocation(
                 runtime, record->requested_bytes, record->charged_bytes
             );
             break;
@@ -1156,12 +1165,17 @@ ShadowSpillRuntimeStatus shadowspill_free(
         allocation->streams->next == NULL &&
         stream_equal(allocation->streams->stream, stream);
     if (task_local_same_stream) {
-        shadowspill_release_task_allocation(
+        status = shadowspill_release_task_allocation(
             runtime,
             allocation->origin_task_id,
+            allocation->origin_task_allocation_ordinal,
             allocation->requested_bytes,
-            allocation->charged_bytes
+            allocation->charged_bytes,
+            allocation->alignment_bytes
         );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            goto done;
+        }
         allocation->release_task_id = task_id;
         allocation->logical_freed = 1;
         if (shadowspill_memory_pool_begin_retirement_locked(
@@ -1189,12 +1203,18 @@ ShadowSpillRuntimeStatus shadowspill_free(
         goto done;
     }
     const uint64_t generation = allocation->generation;
-    shadowspill_release_task_allocation(
+    status = shadowspill_release_task_allocation(
         runtime,
         allocation->origin_task_id,
+        allocation->origin_task_allocation_ordinal,
         allocation->requested_bytes,
-        allocation->charged_bytes
+        allocation->charged_bytes,
+        allocation->alignment_bytes
     );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        free(snapshot.streams);
+        goto done;
+    }
     allocation->release_task_id = task_id;
     allocation->logical_freed = 1;
     if (shadowspill_memory_pool_begin_retirement_locked(

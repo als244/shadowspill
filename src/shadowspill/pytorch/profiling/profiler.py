@@ -31,6 +31,7 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
     summarize_task_workspace,
 )
 
+from .allocation_abi import TaskAllocationABI
 from .executables import ProfileExecutable, ProfileExecutableStore
 from .records import TaskMeasurement, TaskOutputInputBinding
 from .runner import ProfilableArtifact
@@ -227,7 +228,7 @@ class CudaTaskProfiler:
         persistent_high_water = max(
             persistent_high_water, self._requested_allocated_bytes()
         )
-        workspace, persistent_high_water = self._profile_workspace(
+        workspace, persistent_high_water, allocation_abi = self._profile_workspace(
             executable,
             stream,
             persistent_high_water=persistent_high_water,
@@ -245,6 +246,7 @@ class CudaTaskProfiler:
             timing,
             fixed_extents,
             phase_timings,
+            allocation_abi,
         )
 
     def _condition_profile_device(
@@ -331,7 +333,7 @@ class CudaTaskProfiler:
         *,
         persistent_high_water: int,
         phase_timings: list[tuple[str, int]],
-    ) -> tuple[TaskWorkspaceProfile, int]:
+    ) -> tuple[TaskWorkspaceProfile, int, TaskAllocationABI]:
         started = time.perf_counter_ns()
         workspace, high_water = self._audit_workspace_retention(
             executable,
@@ -344,7 +346,51 @@ class CudaTaskProfiler:
         phase_timings.append(
             ("retention_audit", max(0, time.perf_counter_ns() - started - accounted))
         )
-        return workspace, high_water
+        abi_started = time.perf_counter_ns()
+        allocation_abi = self._validate_allocation_abi(
+            executable,
+            stream,
+            workspace,
+        )
+        phase_timings.append(
+            ("allocation_abi_validation", time.perf_counter_ns() - abi_started)
+        )
+        return workspace, high_water, allocation_abi
+
+    def _validate_allocation_abi(
+        self,
+        executable: Callable[[], object],
+        stream: torch.cuda.Stream,
+        baseline: TaskWorkspaceProfile,
+    ) -> TaskAllocationABI:
+        """Require three independent pointer-free allocation traces to agree."""
+
+        contract = (
+            executable.artifact.storage_contract
+            if isinstance(executable, ProfileExecutable)
+            else None
+        )
+        expected = TaskAllocationABI.capture(
+            baseline.allocation_abi_trace, contract
+        )
+        for repetition in range(2):
+            observed = self._measure_workspace(executable, stream)
+            candidate = TaskAllocationABI.capture(
+                observed.allocation_abi_trace, contract
+            )
+            if candidate.compatibility_digest != expected.compatibility_digest:
+                raise AllocationTelemetryError(
+                    "compiled task allocation ABI changed across independent "
+                    f"profiling traces (repetition={repetition + 2}, "
+                    f"expected={expected.compatibility_digest}, "
+                    f"observed={candidate.compatibility_digest})"
+                )
+            if observed.output_input_bindings != baseline.output_input_bindings:
+                raise AllocationTelemetryError(
+                    "compiled task output/input storage bindings changed across "
+                    f"independent profiling traces (repetition={repetition + 2})"
+                )
+        return expected
 
     def _invoke_profile_task(
         self,
@@ -789,6 +835,7 @@ def _task_measurement(
     timing: _TimingObservation,
     fixed_extents: tuple[int, ...],
     phase_timings: list[tuple[str, int]],
+    allocation_abi: TaskAllocationABI,
 ) -> TaskMeasurement:
     variability = max(timing.relative_mad, timing.half_drift)
     return TaskMeasurement(
@@ -813,4 +860,5 @@ def _task_measurement(
         timing_relative_mad=timing.relative_mad,
         timing_half_drift=timing.half_drift,
         timing_unstable=variability > 0.03,
+        allocation_abi=allocation_abi,
     )

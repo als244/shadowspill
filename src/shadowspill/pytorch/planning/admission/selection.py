@@ -107,7 +107,11 @@ def build_selected_admission(
     )
     return SelectedAdmission(
         admission=admission,
-        task_envelopes=_selected_task_envelopes(selected, measurements),
+        task_envelopes=_selected_task_envelopes(
+            selected,
+            measurements,
+            output_bindings=output_bindings,
+        ),
         simulation_admission=simulation_admission,
         simulation=simulate(
             selected.program,
@@ -122,8 +126,11 @@ def build_selected_admission(
 def _selected_task_envelopes(
     selected: PressureFitResult,
     measurements: Mapping[str, TaskMeasurement],
+    *,
+    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
 ) -> tuple[tuple[str, TaskMemoryEnvelope], ...]:
     profiles = {item.profile_id: item for item in selected.program.profiles}
+    bindings_by_task = dict(output_bindings or {})
     return tuple(
         (
             task.task_id,
@@ -131,7 +138,11 @@ def _selected_task_envelopes(
                 _measurement_for_digest(
                     measurements,
                     profiles[task.profile_id].compatibility_digest,
-                )
+                ),
+                retained_output_leaves=tuple(
+                    item.leaf_index
+                    for item in bindings_by_task.get(task.task_id, ())
+                ),
             ),
         )
         for task in selected.program.selected_tasks(selected.selections)
@@ -151,7 +162,11 @@ def _measurement_for_digest(
         ) from error
 
 
-def _task_memory_envelope(measurement: TaskMeasurement) -> TaskMemoryEnvelope:
+def _task_memory_envelope(
+    measurement: TaskMeasurement,
+    *,
+    retained_output_leaves: tuple[int, ...] = (),
+) -> TaskMemoryEnvelope:
     live: dict[int, tuple[int, int]] = {}
     live_requested = 0
     live_charged = 0
@@ -173,11 +188,17 @@ def _task_memory_envelope(measurement: TaskMeasurement) -> TaskMemoryEnvelope:
             prior = live.pop(event.allocation_ordinal)
             live_requested -= prior[0]
             live_charged -= prior[1]
+    allocation_abi = measurement.allocation_abi
+    if allocation_abi is not None:
+        allocation_abi = allocation_abi.for_retained_output_leaves(
+            retained_output_leaves
+        )
     return TaskMemoryEnvelope(
         maximum_requested_allocation_bytes=maximum_requested,
         maximum_charged_allocation_bytes=maximum_charged,
         live_requested_allocation_limit_bytes=_envelope_limit(peak_requested),
         live_charged_allocation_limit_bytes=_envelope_limit(peak_charged),
+        allocation_abi=allocation_abi,
     )
 
 

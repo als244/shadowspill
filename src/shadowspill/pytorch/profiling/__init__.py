@@ -1,5 +1,6 @@
 """Task-local profiling, representative values, metadata, and cache APIs."""
 
+from .allocation_abi import TaskAllocationABI, TaskAllocationABIStep
 from .environment import profile_environment
 from .inputs import (
     REPRESENTATIVE_VALUE_POLICY,
@@ -43,6 +44,8 @@ __all__ = [
     "RepresentativeInputSet",
     "RepresentativeInputSummary",
     "ResolvedTaskManifests",
+    "TaskAllocationABI",
+    "TaskAllocationABIStep",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
     "TaskMeasurement",

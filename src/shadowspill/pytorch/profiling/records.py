@@ -6,8 +6,12 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from enum import StrEnum
 
+from shadowspill.pytorch.profiling.allocation_abi import (
+    TaskAllocationABI,
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 from shadowspill.pytorch.profiling.inputs import (
     REPRESENTATIVE_VALUE_POLICY,
     RepresentativeInputSummary,
@@ -16,86 +20,7 @@ from shadowspill.pytorch.profiling.inputs import (
 # The opaque-optimizer artifact versions its own representative-gradient
 # construction contract.  That targeted identity change avoids invalidating
 # unrelated compiled-graph measurements.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v12"
-
-
-class TaskAllocationOperation(StrEnum):
-    """One physical transition in a profiled task's allocator trace."""
-
-    ALLOCATE = "allocate"
-    FREE = "free"
-
-
-@dataclass(frozen=True, slots=True)
-class TaskAllocationEvent:
-    """Task-local allocation event with stable identities and output leaves."""
-
-    allocation_ordinal: int
-    operation: TaskAllocationOperation
-    requested_bytes: int
-    charged_bytes: int
-    output_leaf_indices: tuple[int, ...] = ()
-    output_view_offsets: tuple[int, ...] = ()
-    reuses_ordinal: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.allocation_ordinal < 0:
-            raise ValueError("task allocation ordinal must be non-negative")
-        if not isinstance(self.operation, TaskAllocationOperation):
-            raise TypeError("task allocation operation has an invalid type")
-        if self.requested_bytes < 0 or self.charged_bytes <= 0:
-            raise ValueError("task allocation sizes are invalid")
-        if any(index < 0 for index in self.output_leaf_indices):
-            raise ValueError("task output leaf indices must be non-negative")
-        if len(set(self.output_leaf_indices)) != len(self.output_leaf_indices):
-            raise ValueError("task output leaf indices must be unique")
-        if len(self.output_view_offsets) != len(self.output_leaf_indices):
-            raise ValueError("task output leaves and view offsets must align")
-        if any(offset < 0 for offset in self.output_view_offsets):
-            raise ValueError("task output view offsets must be non-negative")
-        if self.reuses_ordinal is not None:
-            if self.operation is not TaskAllocationOperation.ALLOCATE:
-                raise ValueError("only an allocation may reuse a retired extent")
-            if self.reuses_ordinal < 0:
-                raise ValueError("reused task allocation ordinal must be non-negative")
-            if self.reuses_ordinal == self.allocation_ordinal:
-                raise ValueError("task allocation cannot reuse itself")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "allocation_ordinal": self.allocation_ordinal,
-            "operation": self.operation.value,
-            "requested_bytes": self.requested_bytes,
-            "charged_bytes": self.charged_bytes,
-            "output_leaf_indices": list(self.output_leaf_indices),
-            "output_view_offsets": list(self.output_view_offsets),
-            "reuses_ordinal": self.reuses_ordinal,
-        }
-
-    @classmethod
-    def from_dict(cls, value: object) -> TaskAllocationEvent:
-        if not isinstance(value, dict):
-            raise ValueError("cached allocation event must be an object")
-        try:
-            return cls(
-                allocation_ordinal=int(value["allocation_ordinal"]),
-                operation=TaskAllocationOperation(str(value["operation"])),
-                requested_bytes=int(value["requested_bytes"]),
-                charged_bytes=int(value["charged_bytes"]),
-                output_leaf_indices=tuple(
-                    int(item) for item in value["output_leaf_indices"]
-                ),
-                output_view_offsets=tuple(
-                    int(item) for item in value["output_view_offsets"]
-                ),
-                reuses_ordinal=(
-                    None
-                    if value["reuses_ordinal"] is None
-                    else int(value["reuses_ordinal"])
-                ),
-            )
-        except (KeyError, TypeError) as exc:
-            raise ValueError("cached allocation event has an invalid schema") from exc
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v13"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +113,7 @@ class TaskMeasurement:
     timing_relative_mad: float = 0.0
     timing_half_drift: float = 0.0
     timing_unstable: bool = False
+    allocation_abi: TaskAllocationABI | None = None
 
     def __post_init__(self) -> None:
         values = (
@@ -213,6 +139,56 @@ class TaskMeasurement:
         if not math.isfinite(self.timing_half_drift) or self.timing_half_drift < 0:
             raise ValueError("profile half drift must be finite and non-negative")
         self._validate_allocation_trace()
+        if self.allocation_abi is not None:
+            trace_geometry = tuple(
+                (
+                    event.allocation_ordinal,
+                    event.operation,
+                    event.requested_bytes,
+                    event.charged_bytes,
+                    event.alignment_bytes,
+                    event.output_leaf_indices,
+                )
+                for event in self.allocation_trace
+                if event.operation is TaskAllocationOperation.ALLOCATE
+            )
+            abi_geometry = tuple(
+                (
+                    step.allocation_ordinal,
+                    step.operation,
+                    step.requested_bytes,
+                    step.charged_bytes,
+                    step.alignment_bytes,
+                    step.output_leaf_indices,
+                )
+                for step in self.allocation_abi.steps
+                if step.operation is TaskAllocationOperation.ALLOCATE
+            )
+            if trace_geometry != abi_geometry:
+                raise ValueError(
+                    "task allocation ABI allocations disagree with its trace"
+                )
+            output_ordinals = {
+                event.allocation_ordinal
+                for event in self.allocation_trace
+                if event.operation is TaskAllocationOperation.ALLOCATE
+                and event.output_leaf_indices
+            }
+            trace_frees = tuple(
+                event.allocation_ordinal
+                for event in self.allocation_trace
+                if event.operation is TaskAllocationOperation.FREE
+            )
+            abi_frees = tuple(
+                step.allocation_ordinal
+                for step in self.allocation_abi.steps
+                if step.operation is TaskAllocationOperation.FREE
+                and step.allocation_ordinal not in output_ordinals
+            )
+            if trace_frees != abi_frees:
+                raise ValueError(
+                    "task allocation ABI temporary frees disagree with its trace"
+                )
 
     def _validate_allocation_trace(self) -> None:
         live: dict[int, tuple[int, int]] = {}
@@ -279,6 +255,9 @@ class TaskMeasurement:
             "timing_relative_mad": self.timing_relative_mad,
             "timing_half_drift": self.timing_half_drift,
             "timing_unstable": self.timing_unstable,
+            "allocation_abi": (
+                None if self.allocation_abi is None else self.allocation_abi.to_dict()
+            ),
         }
 
     @classmethod
@@ -317,6 +296,11 @@ class TaskMeasurement:
                 timing_relative_mad=float(value["timing_relative_mad"]),
                 timing_half_drift=float(value["timing_half_drift"]),
                 timing_unstable=bool(value["timing_unstable"]),
+                allocation_abi=(
+                    None
+                    if value.get("allocation_abi") is None
+                    else TaskAllocationABI.from_dict(value["allocation_abi"])
+                ),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task measurement has an invalid schema") from exc
@@ -359,6 +343,7 @@ __all__ = [
     "ProfileEnvironment",
     "ProfileKey",
     "ProfilingResult",
+    "TaskAllocationABI",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
     "TaskMeasurement",

@@ -1,6 +1,7 @@
 """Immutable planning and step-execution diagnostics."""
 
 from .plan import (
+    PlanAllocationABIStep,
     PlanAllocationEvent,
     PlanCacheArtifact,
     PlanCompiledOutputView,
@@ -25,6 +26,7 @@ from .step import DiagnosticsHandle, ExecutionTiming, StepDiagnostics, StepResul
 __all__ = [
     "DiagnosticsHandle",
     "ExecutionTiming",
+    "PlanAllocationABIStep",
     "PlanAllocationEvent",
     "PlanCacheArtifact",
     "PlanCompiledOutputView",

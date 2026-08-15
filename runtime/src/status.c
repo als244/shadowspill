@@ -28,6 +28,8 @@ const char *shadowspill_runtime_status_string(ShadowSpillRuntimeStatus status) {
             return "runtime is closed";
         case SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED:
             return "task allocation envelope exceeded";
+        case SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH:
+            return "task allocation ABI mismatch";
     }
     return "unknown runtime status";
 }
