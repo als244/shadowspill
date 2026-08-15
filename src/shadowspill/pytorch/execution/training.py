@@ -350,8 +350,20 @@ class TrainingExecutor:
             self._active_run = run
         if run is not self._trace_label_run:
             self._configure_task_trace_labels(run)
+        if timing is not None:
+            self._begin_armed_runtime_trace(timing)
         self._state.refresh_inputs(inputs)
         return run
+
+    def _begin_armed_runtime_trace(self, timing: _ArmedExecutionTiming) -> None:
+        """Open the current invocation's native trace after prior work is idle."""
+
+        timing.statistics_before = self._bridge.statistics()
+        try:
+            self._bridge.begin_runtime_trace(step_id=self._invocations + 1)
+        except BaseException:
+            self._bridge.disable_debug_task_timing()
+            raise
 
     def _submit_initial_placement(
         self,
@@ -465,7 +477,6 @@ class TrainingExecutor:
             end_event,
             tasks,
             tuple(record.task.task_id for record in run.execution),
-            statistics_before=self._bridge.statistics(),
             actions=(
                 tuple(
                     MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
@@ -477,11 +488,6 @@ class TrainingExecutor:
             trace_setup_ns=trace_setup_ns,
         )
         self._bridge.enable_debug_task_timing(armed.task_order)
-        try:
-            self._bridge.begin_runtime_trace(step_id=self._invocations + 1)
-        except BaseException:
-            self._bridge.disable_debug_task_timing()
-            raise
         self._armed_execution_timing = armed
 
     def arm_selected_span_timing(self) -> None:
