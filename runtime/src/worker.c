@@ -933,7 +933,9 @@ static int handle_action(
                         &runtime->actions.count, memory_order_acquire
                     )
                 );
-                object->prefetch_pending = 0U;
+                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                    object->prefetch_pending = 0U;
+                }
                 pthread_cond_broadcast(&object->state_changed);
                 pthread_mutex_unlock(&object->lock);
                 if (readiness_to_release != NULL &&

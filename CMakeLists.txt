@@ -397,6 +397,10 @@ if(BUILD_TESTING)
       COMMAND shadowspill_runtime_${runtime_test}_canary
     )
   endforeach()
+  target_include_directories(
+    shadowspill_runtime_transitions_canary
+    PRIVATE runtime/src
+  )
   add_executable(
     shadowspill_transfer_lane_canary
     tests/runtime/transfer_lane_canary.c

@@ -9,6 +9,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "internal.h"
+
 typedef struct Fixture {
     ShadowSpillMockBackend *mock;
     ShadowSpillRuntime *runtime;
@@ -1562,6 +1564,110 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     return failed ? -1 : 0;
 }
 
+static int completed_offload_preserves_later_queued_fetch(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .evict_delay_nanoseconds = 1000000U,
+        .event_delay_nanoseconds = 10000000U,
+    };
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig configured = runtime_config;
+    configured.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&configured, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription target = {
+        .object_id = 106U,
+        .size_bytes = 32U,
+        .initial_version = 1U,
+        .retain_spill_copy = 1U,
+    };
+    const ShadowSpillRuntimeAction target_offload = {
+        .object_id = target.object_id,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillRuntimeAction target_fetch = {
+        .object_id = target.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    ShadowSpillAllocation target_allocation = {0};
+    int failed = shadowspill_register_object(runtime, &target) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            runtime, target.size_bytes, 1U, compute, &target_allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_bind_object(
+            runtime, target.object_id, target_allocation.allocation_id
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, &target_offload, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 2U, compute, NULL, 0U, &target_fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK;
+
+    ShadowSpillQueuedAction *queued_fetch = NULL;
+    pthread_mutex_lock(&runtime->actions.lock);
+    for (ShadowSpillQueuedAction *action = runtime->actions.head;
+         action != NULL; action = action->next) {
+        if (action->task_id == 2U &&
+            action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            queued_fetch = action;
+            action->processing = 1U;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&runtime->actions.lock);
+    failed = failed || queued_fetch == NULL;
+
+    sleep_milliseconds(50U);
+    uint8_t prefetch_pending = 0U;
+    if (queued_fetch != NULL) {
+        pthread_mutex_lock(&queued_fetch->object->lock);
+        prefetch_pending = queued_fetch->object->prefetch_pending;
+        pthread_mutex_unlock(&queued_fetch->object->lock);
+        pthread_mutex_lock(&runtime->actions.lock);
+        queued_fetch->processing = 0U;
+        pthread_mutex_unlock(&runtime->actions.lock);
+        pthread_mutex_lock(&runtime->mutex);
+        pthread_cond_broadcast(&runtime->condition);
+        pthread_mutex_unlock(&runtime->mutex);
+    }
+    failed = failed || prefetch_pending == 0U ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    if (failed) {
+        fprintf(
+            stderr,
+            "queued fetch marker mismatch: pending=%u\n",
+            (unsigned)prefetch_pending
+        );
+    }
+
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 #define REQUIRE_CANARY(expression)                                           \
     do {                                                                     \
         if ((expression) != 0) {                                             \
@@ -1597,5 +1703,6 @@ int main(void) {
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
     REQUIRE_CANARY(nonretained_fetch_then_offload_reserves_fresh_spill());
+    REQUIRE_CANARY(completed_offload_preserves_later_queued_fetch());
     return EXIT_SUCCESS;
 }
