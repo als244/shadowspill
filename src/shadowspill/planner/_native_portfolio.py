@@ -45,6 +45,7 @@ _RULE_CODE = {
     "packed-fit": 1,
     "interval-entry": 2,
     "latest-safe": 3,
+    "demand": 4,
 }
 _ACTION_KIND = {
     0: MemoryActionKind.RELEASE,

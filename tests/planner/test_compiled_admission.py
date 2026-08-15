@@ -21,6 +21,8 @@ from shadowspill.planner import (
     AdmissionTopology,
     PressureFitOptions,
     TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
     pressurefit,
 )
 from shadowspill.planner._admission import (
@@ -198,3 +200,224 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     assert admitted.peak_allocated_bytes == 128
     with pytest.raises(ValueError, match="dynamic MemoryPool admission"):
         evaluate((64,))
+
+
+def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
+    """A peak multiset alone can invent fragmentation that execution avoids."""
+
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    sizes = {"hole_6": 6, "separator": 2, "hole_10": 10, "tail": 2, "out": 6}
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=tuple(
+            AliasGroupSpec(alias, "cuda_0", size) for alias, size in sizes.items()
+        ),
+        objects=tuple(
+            ObjectSpec(alias, alias, 0, size) for alias, size in sizes.items()
+        ),
+        profiles=(TaskProfile("profile", 1, 10, "abi"),),
+        tasks=(
+            TaskSpec(
+                "release_holes",
+                compute,
+                "profile",
+                inputs=("hole_6", "hole_10"),
+            ),
+            TaskSpec(
+                "ordered_task",
+                compute,
+                "profile",
+                dependencies=("release_holes",),
+                outputs=("out",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=tuple(
+            ResidencySpec(alias, MemoryLocation.DEVICE)
+            for alias in ("hole_6", "separator", "hole_10", "tail")
+        ),
+        actions=(
+            MemoryAction("release_holes", "hole_6", MemoryActionKind.RELEASE),
+            MemoryAction("release_holes", "hole_10", MemoryActionKind.RELEASE),
+        ),
+        final_residency=tuple(
+            ResidencySpec(alias, MemoryLocation.DEVICE)
+            for alias in ("separator", "tail", "out")
+        ),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=20,
+        host_capacity_bytes=1,
+        fetch_bandwidth_bytes_per_second=1,
+        evict_bandwidth_bytes_per_second=1,
+    )
+    template = compile_simulation_template(program, (), config)
+    ordered = TaskAdmissionSpec(
+        "ordered_task",
+        workspace_extents=(4, 6),
+        fresh_output_aliases=("out",),
+        allocation_steps=(
+            TaskAllocationStep(
+                0,
+                TaskAllocationStepKind.ALLOCATE,
+                6,
+                "out",
+            ),
+            TaskAllocationStep(1, TaskAllocationStepKind.ALLOCATE, 4),
+            TaskAllocationStep(2, TaskAllocationStepKind.ALLOCATE, 6),
+            TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),
+            TaskAllocationStep(2, TaskAllocationStepKind.RELEASE),
+        ),
+    )
+
+    def evaluate(task: TaskAdmissionSpec):
+        topology = AdmissionTopology(
+            "cuda_0",
+            20,
+            20,
+            1,
+            (TaskAdmissionSpec("release_holes"), task),
+        )
+        return evaluate_schedule_admission(
+            template,
+            compile_admission_topology(topology, template),
+            encode_schedule(schedule, template),
+        )
+
+    admitted = evaluate(ordered)
+    ordered_topology = AdmissionTopology(
+        "cuda_0",
+        20,
+        20,
+        1,
+        (TaskAdmissionSpec("release_holes"), ordered),
+    )
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=20,
+        topology=ordered_topology,
+        alignment=1,
+    )
+    reference = simulation_admission_from_replay(
+        replay,
+        program,
+        schedule,
+        device_capacity_bytes=20,
+    )
+
+    assert admitted.peak_allocated_bytes == 20
+    assert admitted.decision_digest == replay.pool.decision_digest
+    assert admitted.simulation_admission == reference
+    task_deltas = {
+        item.task_id: (item.start_bytes, item.completion_bytes)
+        for item in admitted.simulation_admission.task_deltas
+    }
+    assert task_deltas["ordered_task"] == (16, -10)
+    with pytest.raises(ValueError, match="dynamic MemoryPool admission"):
+        evaluate(
+            TaskAdmissionSpec(
+                "ordered_task",
+                workspace_extents=(4, 6),
+                fresh_output_aliases=("out",),
+            )
+        )
+
+
+def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
+    """Physical admission repairs one candidate without shrinking globally.
+
+    The first repair delays ``d`` until ``before_d`` because releasing ``b``
+    exposes only 32 bytes.  The second releases the adjacent 32-byte ``c``
+    range at that boundary, producing the 64-byte destination and restoring
+    ``c`` before its later consumer.
+    """
+
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    sizes = {"a": 64, "b": 32, "c": 32, "d": 64}
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=tuple(
+            AliasGroupSpec(
+                alias,
+                "cuda_0",
+                size,
+                retain_spill_copy=alias in {"a", "c", "d"},
+            )
+            for alias, size in sizes.items()
+        ),
+        objects=tuple(
+            ObjectSpec(alias, alias, 0, size) for alias, size in sizes.items()
+        ),
+        profiles=(TaskProfile("profile", 1_000, 0, "abi"),),
+        tasks=(
+            TaskSpec("release_b", compute, "profile", inputs=("b",)),
+            TaskSpec(
+                "before_d",
+                compute,
+                "profile",
+                dependencies=("release_b",),
+                inputs=("a", "c"),
+            ),
+            TaskSpec(
+                "use_d",
+                compute,
+                "profile",
+                dependencies=("before_d",),
+                inputs=("d",),
+            ),
+            TaskSpec(
+                "reuse_a_c",
+                compute,
+                "profile",
+                dependencies=("use_d",),
+                inputs=("a", "c"),
+            ),
+        ),
+    )
+    initial = (
+        ResidencySpec("a", MemoryLocation.DEVICE),
+        ResidencySpec("b", MemoryLocation.DEVICE),
+        ResidencySpec("c", MemoryLocation.DEVICE),
+        ResidencySpec("d", MemoryLocation.HOST),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=160,
+        host_capacity_bytes=1_000,
+        fetch_bandwidth_bytes_per_second=1_000_000,
+        evict_bandwidth_bytes_per_second=1_000_000,
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        160,
+        160,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+    )
+
+    result = pressurefit(
+        program,
+        initial_residency=initial,
+        config=config,
+        admission=topology,
+        options=PressureFitOptions(
+            residency_strategies=("tight-stall",),
+            prefetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+            workers=1,
+        ),
+    )
+
+    assert result.diagnostics.admission_refinements == ()
+    assert result.diagnostics.candidates[0].repair_attempts == 2
+    assert tuple(
+        (action.trigger_task_id, action.alias_group_id, action.kind)
+        for action in result.schedule.actions
+        if action.trigger_task_id == "before_d"
+    ) == (
+        ("before_d", "c", MemoryActionKind.RELEASE),
+        ("before_d", "d", MemoryActionKind.PREFETCH),
+    )

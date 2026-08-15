@@ -92,6 +92,9 @@ typedef struct CandidateWorkspace {
     uint8_t *breaks;
     uint8_t *base_resident;
     uint8_t *base_breaks;
+    uint8_t *repair_resident;
+    uint8_t *repair_breaks;
+    uint8_t *removable_aliases;
     uint64_t *extra_pressure;
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
@@ -101,6 +104,12 @@ typedef struct CandidateWorkspace {
     ScheduleCache schedule_cache;
     SimulationCache simulation_cache;
     ShadowSpillResidencyWorkspace *residency_workspace;
+    ShadowSpillPrefetchTriggerConstraint *prefetch_constraints;
+    uint32_t prefetch_constraint_count;
+    uint32_t prefetch_constraint_capacity;
+    ShadowSpillForcedAbsenceConstraint *absence_constraints;
+    uint32_t absence_constraint_count;
+    uint32_t absence_constraint_capacity;
     uint32_t current_residency_key;
     uint32_t base_residency_key;
     uint64_t residency_cache_hits;
@@ -332,7 +341,7 @@ static int strategy_valid(uint8_t strategy) {
 }
 
 static int rule_valid(uint8_t rule) {
-    return rule <= SHADOWSPILL_PREFETCH_LATEST_SAFE;
+    return rule <= SHADOWSPILL_PREFETCH_DEMAND;
 }
 
 static int context_valid(
@@ -511,12 +520,20 @@ static int candidate_workspace_create(
     workspace->breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->base_resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->base_breaks = calloc(cells == 0U ? 1U : cells, 1U);
+    workspace->repair_resident = calloc(cells == 0U ? 1U : cells, 1U);
+    workspace->repair_breaks = calloc(cells == 0U ? 1U : cells, 1U);
+    workspace->removable_aliases = calloc(
+        context->residency->alias_count, 1U
+    );
     workspace->extra_pressure = calloc(
         pressure_count == 0U ? 1U : (size_t)pressure_count,
         sizeof(*workspace->extra_pressure)
     );
     if (workspace->resident == NULL || workspace->breaks == NULL ||
         workspace->base_resident == NULL || workspace->base_breaks == NULL ||
+        workspace->repair_resident == NULL ||
+        workspace->repair_breaks == NULL ||
+        workspace->removable_aliases == NULL ||
         workspace->extra_pressure == NULL ||
         shadowspill_schedule_storage_create(
             context->residency->alias_count,
@@ -551,7 +568,12 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     free(workspace->breaks);
     free(workspace->base_resident);
     free(workspace->base_breaks);
+    free(workspace->repair_resident);
+    free(workspace->repair_breaks);
+    free(workspace->removable_aliases);
     free(workspace->extra_pressure);
+    free(workspace->prefetch_constraints);
+    free(workspace->absence_constraints);
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
     simulation_workspace_destroy(&workspace->simulation);
@@ -590,6 +612,118 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     free(workspace->simulation_cache.entries);
     free(workspace->simulation_cache.index.slots);
     memset(workspace, 0, sizeof(*workspace));
+}
+
+static int record_prefetch_constraint(
+    CandidateWorkspace *workspace,
+    ShadowSpillPrefetchTriggerConstraint incoming
+) {
+    for (uint32_t index = 0U; index < workspace->prefetch_constraint_count;
+         ++index) {
+        ShadowSpillPrefetchTriggerConstraint *current =
+            &workspace->prefetch_constraints[index];
+        if (current->alias != incoming.alias ||
+            current->consumer_task != incoming.consumer_task) {
+            continue;
+        }
+        uint32_t minimum = current->minimum_trigger > incoming.minimum_trigger
+            ? current->minimum_trigger
+            : incoming.minimum_trigger;
+        uint32_t maximum = current->maximum_trigger < incoming.maximum_trigger
+            ? current->maximum_trigger
+            : incoming.maximum_trigger;
+        if (minimum > maximum) {
+            return 1;
+        }
+        current->minimum_trigger = minimum;
+        current->maximum_trigger = maximum;
+        return 0;
+    }
+    if (workspace->prefetch_constraint_count ==
+        workspace->prefetch_constraint_capacity) {
+        uint32_t capacity = workspace->prefetch_constraint_capacity == 0U
+            ? 8U
+            : workspace->prefetch_constraint_capacity * 2U;
+        if (capacity < workspace->prefetch_constraint_capacity) {
+            return -1;
+        }
+        ShadowSpillPrefetchTriggerConstraint *constraints = realloc(
+            workspace->prefetch_constraints,
+            (size_t)capacity * sizeof(*constraints)
+        );
+        if (constraints == NULL) {
+            return -1;
+        }
+        workspace->prefetch_constraints = constraints;
+        workspace->prefetch_constraint_capacity = capacity;
+    }
+    workspace->prefetch_constraints[workspace->prefetch_constraint_count++] =
+        incoming;
+    return 0;
+}
+
+#if 0
+static int record_absence_constraint(
+    CandidateWorkspace *workspace,
+    ShadowSpillForcedAbsenceConstraint incoming
+) {
+    for (uint32_t index = 0U; index < workspace->absence_constraint_count;
+         ++index) {
+        const ShadowSpillForcedAbsenceConstraint current =
+            workspace->absence_constraints[index];
+        if (current.alias == incoming.alias &&
+            current.boundary == incoming.boundary) {
+            return 0;
+        }
+    }
+    if (workspace->absence_constraint_count ==
+        workspace->absence_constraint_capacity) {
+        const uint32_t capacity = workspace->absence_constraint_capacity == 0U
+            ? 8U
+            : workspace->absence_constraint_capacity * 2U;
+        if (capacity < workspace->absence_constraint_capacity) {
+            return -1;
+        }
+        ShadowSpillForcedAbsenceConstraint *constraints = realloc(
+            workspace->absence_constraints,
+            (size_t)capacity * sizeof(*constraints)
+        );
+        if (constraints == NULL) {
+            return -1;
+        }
+        workspace->absence_constraints = constraints;
+        workspace->absence_constraint_capacity = capacity;
+    }
+    workspace->absence_constraints[workspace->absence_constraint_count++] =
+        incoming;
+    return 0;
+}
+#endif
+
+static int apply_absence_constraints(
+    const ShadowSpillPressureFitContext *context,
+    CandidateWorkspace *workspace
+) {
+    for (uint32_t index = 0U; index < workspace->absence_constraint_count;
+         ++index) {
+        const ShadowSpillForcedAbsenceConstraint constraint =
+            workspace->absence_constraints[index];
+        const int status = shadowspill_residency_force_absent(
+            context->residency,
+            workspace->resident,
+            workspace->breaks,
+            constraint.alias,
+            constraint.boundary,
+            workspace->residency_workspace
+        );
+        if (status < 0) {
+            return -1;
+        }
+        if (status == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void residency_options(
@@ -1008,8 +1142,11 @@ static SimulationCacheEntry *append_simulation_cache(
     entry->admission = *admission;
     entry->admission.decisions = NULL;
     entry->admission.dependencies = NULL;
+    entry->admission.live_leases = NULL;
     entry->admission.decision_capacity = 0U;
     entry->admission.dependency_capacity = 0U;
+    entry->admission.live_lease_capacity = 0U;
+    entry->admission.live_lease_count = 0U;
     entry->hash = hash;
     entry->result.task_intervals = NULL;
     entry->result.transfer_intervals = NULL;
@@ -1038,6 +1175,7 @@ static int simulate_cached(
     ShadowSpillSimulationResult *result,
     ShadowSpillAdmissionReplayStatus *admission_status,
     ShadowSpillAdmissionReplayResult *admission_result,
+    ShadowSpillAdmissionAnnotation *admission_error_annotation,
     SimulationCacheEntry **selected_entry
 ) {
     SimulationCache *cache = &workspace->simulation_cache;
@@ -1056,6 +1194,7 @@ static int simulate_cached(
             *admission_status =
                 (ShadowSpillAdmissionReplayStatus)entry->admission_status;
             *admission_result = entry->admission;
+            *admission_error_annotation = (ShadowSpillAdmissionAnnotation){0};
             *selected_entry = entry;
             ++workspace->simulation_cache_hits;
             return 0;
@@ -1073,11 +1212,27 @@ static int simulate_cached(
         ) != 0) {
         return -1;
     }
-    if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_OK) {
-        ++workspace->simulation_calls;
+    *admission_error_annotation = (ShadowSpillAdmissionAnnotation){0};
+    if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+        const uint64_t operation = admission_result->error_operation_index;
+        if (operation >= workspace->admission.operation_capacity) {
+            return -1;
+        }
+        *admission_error_annotation =
+            workspace->admission.annotations[operation];
+        *selected_entry = NULL;
+        return 0;
     }
+    if (*admission_status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+        return -1;
+    }
+    ++workspace->simulation_calls;
     *selected_entry = append_simulation_cache(
-        workspace, result, *admission_status, admission_result, hash
+        workspace,
+        result,
+        *admission_status,
+        admission_result,
+        hash
     );
     return *selected_entry == NULL ? -1 : 0;
 }
@@ -1270,6 +1425,461 @@ static int add_repair_pressure(
     return 1;
 }
 
+static int admission_failure_boundary(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillDenseSchedule *schedule,
+    ShadowSpillAdmissionAnnotation annotation,
+    uint32_t *task,
+    uint32_t *pressure_index,
+    uint32_t *alias
+) {
+    const uint32_t no_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    *task = no_index;
+    *pressure_index = no_index;
+    *alias = no_index;
+    switch ((ShadowSpillAdmissionBoundaryKind)annotation.boundary) {
+        case SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL:
+            *pressure_index = 0U;
+            return 1;
+        case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START:
+            if (annotation.index >= context->simulation->task_count) {
+                return -1;
+            }
+            *task = annotation.index;
+            *pressure_index = annotation.index;
+            return 1;
+        case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION:
+            if (annotation.index >= context->simulation->task_count) {
+                return -1;
+            }
+            *task = annotation.index;
+            *pressure_index = annotation.index + 1U;
+            return 1;
+        case SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER:
+        case SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_COMPLETION:
+            if (annotation.index >= schedule->action_count) {
+                return -1;
+            }
+            *task = schedule->action_trigger_tasks[annotation.index];
+            *alias = schedule->action_aliases[annotation.index];
+            if (*task >= context->simulation->task_count) {
+                return -1;
+            }
+            *pressure_index = *task + 1U;
+            return 1;
+        default:
+            return -1;
+    }
+}
+
+static int delay_admission_prefetch(
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillAdmissionReplayResult *failure,
+    ShadowSpillAdmissionAnnotation annotation,
+    ShadowSpillScheduleStorage *schedule,
+    ShadowSpillPrefetchTriggerConstraint *constraint
+) {
+    ShadowSpillSimulationResult projected = {
+        .error_alias = SHADOWSPILL_SIMULATOR_NO_INDEX,
+        .error_device = 0U,
+        .error_capacity_bytes = facts->context->admission->pool_capacity_bytes,
+        .error_used_bytes =
+            facts->context->admission->pool_capacity_bytes -
+            failure->error_free_bytes,
+        .error_requested_bytes = failure->error_requested_bytes,
+    };
+    if (annotation.boundary == SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START) {
+        if (annotation.index >= facts->task_count) {
+            return -1;
+        }
+        projected.status = SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY;
+        projected.error_task = annotation.index;
+    } else if (
+        annotation.boundary == SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER &&
+        annotation.index < schedule->value.action_count &&
+        schedule->value.action_kinds[annotation.index] ==
+            SHADOWSPILL_MEMORY_PREFETCH
+    ) {
+        projected.status = SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY;
+        projected.error_task =
+            schedule->value.action_trigger_tasks[annotation.index];
+        projected.error_alias =
+            schedule->value.action_aliases[annotation.index];
+    } else {
+        return 0;
+    }
+    return shadowspill_delay_dense_prefetch(
+        facts, &projected, schedule, constraint
+    );
+}
+
+static int advance_admission_prefetch(
+    const ShadowSpillScheduleFacts *facts,
+    ShadowSpillAdmissionAnnotation annotation,
+    ShadowSpillScheduleStorage *schedule,
+    ShadowSpillPrefetchTriggerConstraint *constraint
+) {
+    if (annotation.boundary !=
+            SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER ||
+        annotation.index >= schedule->value.action_count ||
+        schedule->value.action_kinds[annotation.index] !=
+            SHADOWSPILL_MEMORY_PREFETCH) {
+        return 0;
+    }
+    return shadowspill_advance_dense_prefetch_to_release(
+        facts, annotation.index, schedule, constraint
+    );
+}
+
+static int add_admission_repair_pressure(
+    const ShadowSpillPressureFitContext *context,
+    CandidateWorkspace *workspace,
+    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillAdmissionReplayResult *failure,
+    ShadowSpillAdmissionAnnotation annotation,
+    const ShadowSpillDenseSchedule *schedule
+) {
+    uint32_t task = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t pressure_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    const int boundary = admission_failure_boundary(
+        context,
+        schedule,
+        annotation,
+        &task,
+        &pressure_index,
+        &alias
+    );
+    (void)task;
+    (void)alias;
+    if (boundary <= 0 ||
+        pressure_index >= context->residency->boundary_count) {
+        return boundary;
+    }
+    uint64_t required_reduction = failure->error_requested_bytes >
+            failure->error_largest_free_range_bytes
+        ? failure->error_requested_bytes -
+            failure->error_largest_free_range_bytes
+        : 1U;
+    const uint64_t position = pressure_index;
+    uint64_t resident_pressure = 0U;
+    if (shadowspill_residency_pressure_at(
+            context->residency,
+            options,
+            workspace->resident,
+            workspace->breaks,
+            0U,
+            pressure_index,
+            workspace->residency_workspace,
+            &resident_pressure
+        ) != 0) {
+        return -1;
+    }
+    uint64_t current_pressure = resident_pressure;
+    if (current_pressure >
+        UINT64_MAX - workspace->extra_pressure[position]) {
+        current_pressure = UINT64_MAX;
+    } else {
+        current_pressure += workspace->extra_pressure[position];
+    }
+    const uint64_t capacity =
+        context->residency->device_capacity_bytes[0U];
+    const uint64_t unused_capacity = current_pressure < capacity
+        ? capacity - current_pressure
+        : 0U;
+    uint64_t pressure_increment = required_reduction;
+    if (pressure_increment > UINT64_MAX - unused_capacity) {
+        pressure_increment = UINT64_MAX;
+    } else {
+        pressure_increment += unused_capacity;
+    }
+    if (workspace->extra_pressure[position] >
+        UINT64_MAX - pressure_increment) {
+        workspace->extra_pressure[position] = UINT64_MAX;
+    } else {
+        workspace->extra_pressure[position] += pressure_increment;
+    }
+    return 1;
+}
+
+#if 0
+static int repair_u64_compare(const void *left_value, const void *right_value) {
+    const uint64_t left = *(const uint64_t *)left_value;
+    const uint64_t right = *(const uint64_t *)right_value;
+    return left < right ? -1 : left != right;
+}
+
+static uint64_t repair_align_up(uint64_t value, uint64_t alignment) {
+    const uint64_t remainder = value % alignment;
+    const uint64_t addition = remainder == 0U ? 0U : alignment - remainder;
+    return addition > UINT64_MAX - value ? UINT64_MAX : value + addition;
+}
+
+static uint64_t repair_align_down(uint64_t value, uint64_t alignment) {
+    return value - value % alignment;
+}
+
+/* Choose the least-cost request-sized window with only spillable blockers. */
+static int force_admission_blockers_absent(
+    const ShadowSpillPressureFitContext *context,
+    CandidateWorkspace *workspace,
+    const ShadowSpillAdmissionReplayResult *failure,
+    ShadowSpillAdmissionAnnotation annotation,
+    const ShadowSpillDenseSchedule *schedule
+) {
+    const uint64_t lease_count = failure->live_lease_count;
+    const uint64_t capacity = context->admission->pool_capacity_bytes;
+    const uint64_t bytes = failure->error_requested_bytes;
+    const uint64_t alignment = context->admission->minimum_alignment;
+    if (lease_count == 0U ||
+        lease_count > workspace->admission.lease_capacity || bytes == 0U ||
+        bytes > capacity || alignment == 0U) {
+        return 0;
+    }
+    uint32_t task = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t boundary = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t failure_alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    const int located = admission_failure_boundary(
+        context,
+        schedule,
+        annotation,
+        &task,
+        &boundary,
+        &failure_alias
+    );
+    (void)task;
+    (void)failure_alias;
+    if (located <= 0 || boundary >= context->residency->boundary_count) {
+        return located;
+    }
+
+    if (shadowspill_residency_mark_removable(
+            context->residency,
+            workspace->resident,
+            workspace->breaks,
+            boundary,
+            workspace->residency_workspace,
+            workspace->removable_aliases,
+            context->residency->alias_count
+        ) != 0) {
+        return -1;
+    }
+
+    uint64_t *starts = workspace->admission.repair_candidate_starts;
+    uint64_t *blocked_prefix = workspace->admission.repair_blocked_prefix;
+    uint32_t *unremovable_prefix =
+        workspace->admission.repair_unremovable_prefix;
+    uint64_t candidate_count = 0U;
+    starts[candidate_count++] = 0U;
+    blocked_prefix[0U] = 0U;
+    unremovable_prefix[0U] = 0U;
+    for (uint64_t index = 0U; index < lease_count; ++index) {
+        const ShadowSpillAdmissionReplayLiveLease live =
+            failure->live_leases[index];
+        if (live.lease_id >= workspace->admission.lease_capacity ||
+            live.offset > capacity || live.charged_bytes > capacity - live.offset ||
+            live.charged_bytes > UINT64_MAX - blocked_prefix[index]) {
+            return -1;
+        }
+        blocked_prefix[index + 1U] =
+            blocked_prefix[index] + live.charged_bytes;
+        const uint32_t alias =
+            workspace->admission.lease_aliases[live.lease_id];
+        const uint32_t unavailable =
+            alias >= context->residency->alias_count ||
+            workspace->removable_aliases[alias] == 0U;
+        unremovable_prefix[index + 1U] =
+            unremovable_prefix[index] + unavailable;
+
+        const uint64_t lease_end = live.offset + live.charged_bytes;
+        const uint64_t after = repair_align_up(lease_end, alignment);
+        if (after <= capacity - bytes) {
+            starts[candidate_count++] = after;
+        }
+        if (live.offset >= bytes) {
+            starts[candidate_count++] = repair_align_down(
+                live.offset - bytes, alignment
+            );
+        }
+    }
+    starts[candidate_count++] = repair_align_down(
+        capacity - bytes, alignment
+    );
+    qsort(starts, (size_t)candidate_count, sizeof(*starts), repair_u64_compare);
+
+    uint64_t left = 0U;
+    uint64_t right = 0U;
+    uint64_t best_left = 0U;
+    uint64_t best_right = 0U;
+    uint64_t best_start = 0U;
+    uint64_t best_bytes = UINT64_MAX;
+    uint64_t best_count = UINT64_MAX;
+    uint64_t prior_start = UINT64_MAX;
+    for (uint64_t candidate = 0U; candidate < candidate_count; ++candidate) {
+        const uint64_t start = starts[candidate];
+        if (start == prior_start || start > capacity - bytes) {
+            continue;
+        }
+        prior_start = start;
+        const uint64_t end = start + bytes;
+        while (left < lease_count) {
+            const ShadowSpillAdmissionReplayLiveLease live =
+                failure->live_leases[left];
+            if (live.offset + live.charged_bytes > start) {
+                break;
+            }
+            ++left;
+        }
+        if (right < left) {
+            right = left;
+        }
+        while (right < lease_count &&
+               failure->live_leases[right].offset < end) {
+            ++right;
+        }
+        if (unremovable_prefix[right] != unremovable_prefix[left]) {
+            continue;
+        }
+        const uint64_t blocked = blocked_prefix[right] - blocked_prefix[left];
+        const uint64_t count = right - left;
+        if (blocked < best_bytes ||
+            (blocked == best_bytes && count < best_count) ||
+            (blocked == best_bytes && count == best_count &&
+             start < best_start)) {
+            best_left = left;
+            best_right = right;
+            best_start = start;
+            best_bytes = blocked;
+            best_count = count;
+        }
+    }
+    if (best_bytes == UINT64_MAX || best_count == 0U) {
+        return 0;
+    }
+
+    const uint64_t cells = (uint64_t)context->residency->alias_count *
+        context->residency->boundary_count;
+    memcpy(workspace->repair_resident, workspace->resident, (size_t)cells);
+    memcpy(workspace->repair_breaks, workspace->breaks, (size_t)cells);
+    for (uint64_t blocker = best_left; blocker < best_right; ++blocker) {
+        const uint64_t lease = failure->live_leases[blocker].lease_id;
+        const uint32_t alias = workspace->admission.lease_aliases[lease];
+        int duplicate = 0;
+        for (uint64_t prior = best_left; prior < blocker; ++prior) {
+            const uint64_t prior_lease = failure->live_leases[prior].lease_id;
+            if (
+                workspace->admission.lease_aliases[prior_lease] == alias) {
+                duplicate = 1;
+                break;
+            }
+        }
+        if (duplicate != 0) {
+            continue;
+        }
+        const int forced = shadowspill_residency_force_absent(
+            context->residency,
+            workspace->repair_resident,
+            workspace->repair_breaks,
+            alias,
+            boundary,
+            workspace->residency_workspace
+        );
+        if (forced != 1) {
+            return -1;
+        }
+    }
+
+    memcpy(workspace->resident, workspace->repair_resident, (size_t)cells);
+    memcpy(workspace->breaks, workspace->repair_breaks, (size_t)cells);
+    for (uint64_t blocker = best_left; blocker < best_right; ++blocker) {
+        const uint64_t lease = failure->live_leases[blocker].lease_id;
+        const uint32_t alias = workspace->admission.lease_aliases[lease];
+        int duplicate = 0;
+        for (uint64_t prior = best_left; prior < blocker; ++prior) {
+            const uint64_t prior_lease = failure->live_leases[prior].lease_id;
+            if (workspace->admission.lease_aliases[prior_lease] == alias) {
+                duplicate = 1;
+                break;
+            }
+        }
+        if (duplicate == 0 && record_absence_constraint(
+                workspace,
+                (ShadowSpillForcedAbsenceConstraint){
+                    .alias = alias,
+                    .boundary = boundary,
+                }
+            ) != 0) {
+            return -1;
+        }
+    }
+    (void)best_start;
+    return 1;
+}
+#endif
+
+static void copy_admission_error(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillAdmissionReplayResult *failure,
+    ShadowSpillAdmissionAnnotation annotation,
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic
+) {
+    uint32_t task = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t pressure_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    uint32_t alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    (void)admission_failure_boundary(
+        context,
+        schedule,
+        annotation,
+        &task,
+        &pressure_index,
+        &alias
+    );
+    diagnostic->status = SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+    diagnostic->error_task = task;
+    diagnostic->error_alias = alias;
+    diagnostic->error_device = 0U;
+    diagnostic->error_boundary = pressure_index ==
+            SHADOWSPILL_SIMULATOR_NO_INDEX
+        ? INT32_MIN
+        : (int32_t)pressure_index - 1;
+    diagnostic->error_capacity_bytes = context->admission->pool_capacity_bytes;
+    diagnostic->error_used_bytes =
+        context->admission->pool_capacity_bytes - failure->error_free_bytes;
+    diagnostic->error_requested_bytes = failure->error_requested_bytes;
+    diagnostic->error_required_bytes = failure->error_requested_bytes >
+            failure->error_largest_free_range_bytes
+        ? failure->error_requested_bytes -
+            failure->error_largest_free_range_bytes
+        : 0U;
+}
+
+static int reduce_repaired_candidate(
+    const ShadowSpillPressureFitContext *context,
+    CandidateWorkspace *workspace,
+    const ShadowSpillResidencyOptions *options,
+    uint8_t strategy,
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic
+) {
+    ShadowSpillResidencyResult residency;
+    const uint64_t started = monotonic_time_ns();
+    const ShadowSpillPlannerStatus status = reduce_cached(
+        context,
+        workspace,
+        options,
+        strategy,
+        workspace->resident,
+        workspace->breaks,
+        &residency
+    );
+    workspace->residency_time_ns += monotonic_time_ns() - started;
+    if (status == SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE) {
+        copy_analytic_error(diagnostic, &residency);
+        return 0;
+    }
+    return status == SHADOWSPILL_PLANNER_OK ? 1 : -1;
+}
+
 static void initialize_diagnostic(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
     uint8_t strategy,
@@ -1310,6 +1920,8 @@ static int evaluate_candidate(
     );
     memcpy(workspace->resident, workspace->base_resident, (size_t)cells);
     memcpy(workspace->breaks, workspace->base_breaks, (size_t)cells);
+    workspace->prefetch_constraint_count = 0U;
+    workspace->absence_constraint_count = 0U;
     workspace->current_residency_key = workspace->base_residency_key;
 
     ShadowSpillResidencyOptions reduce_options;
@@ -1326,20 +1938,62 @@ static int evaluate_candidate(
                 ) != 0) {
                 return -1;
             }
-            int emitted = emit_cached(
-                facts,
-                workspace,
-                workspace->resident,
-                workspace->breaks,
-                rule,
-                coalesced,
-                reduce_options.prefetch_headroom
+            const int absences = apply_absence_constraints(
+                context, workspace
             );
+            if (absences < 0) {
+                return -1;
+            }
+            if (absences > 0) {
+                diagnostic->status =
+                    SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+                return 0;
+            }
+            int emitted = 0;
+            if (workspace->absence_constraint_count == 0U) {
+                emitted = emit_cached(
+                    facts,
+                    workspace,
+                    workspace->resident,
+                    workspace->breaks,
+                    rule,
+                    coalesced,
+                    reduce_options.prefetch_headroom
+                );
+            } else {
+                emitted = shadowspill_emit_dense_schedule(
+                    facts,
+                    workspace->resident,
+                    workspace->breaks,
+                    rule,
+                    coalesced,
+                    reduce_options.prefetch_headroom,
+                    &workspace->schedule
+                );
+                if (emitted == 0) {
+                    ++workspace->schedule_emissions;
+                }
+            }
             if (emitted != 0) {
                 return -1;
             }
             workspace->schedule_time_ns +=
                 monotonic_time_ns() - schedule_started;
+            const int constrained =
+                shadowspill_apply_prefetch_trigger_constraints(
+                    facts,
+                    workspace->prefetch_constraints,
+                    workspace->prefetch_constraint_count,
+                    &workspace->schedule
+                );
+            if (constrained < 0) {
+                return -1;
+            }
+            if (constrained > 0) {
+                diagnostic->status =
+                    SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+                return 0;
+            }
             need_emit = 0;
         }
 
@@ -1347,6 +2001,7 @@ static int evaluate_candidate(
         ShadowSpillAdmissionReplayStatus admission_status =
             SHADOWSPILL_ADMISSION_REPLAY_OK;
         ShadowSpillAdmissionReplayResult admission_result = {0};
+        ShadowSpillAdmissionAnnotation admission_error_annotation = {0};
         SimulationCacheEntry *simulation_entry = NULL;
         uint64_t simulation_started = monotonic_time_ns();
         if (simulate_cached(
@@ -1355,6 +2010,7 @@ static int evaluate_candidate(
                 &simulation,
                 &admission_status,
                 &admission_result,
+                &admission_error_annotation,
                 &simulation_entry
             ) != 0) {
             return -1;
@@ -1364,21 +2020,105 @@ static int evaluate_candidate(
         ShadowSpillSimulationStatus simulation_status =
             (ShadowSpillSimulationStatus)simulation.status;
         if (admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
-            diagnostic->status = SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
-            diagnostic->error_device = 0U;
-            diagnostic->error_capacity_bytes =
-                context->admission->pool_capacity_bytes;
-            diagnostic->error_used_bytes =
-                context->admission->pool_capacity_bytes -
-                admission_result.error_free_bytes;
-            diagnostic->error_requested_bytes =
-                admission_result.error_requested_bytes;
-            diagnostic->error_required_bytes =
-                admission_result.error_requested_bytes >
-                    admission_result.error_largest_free_range_bytes
-                ? admission_result.error_requested_bytes -
-                    admission_result.error_largest_free_range_bytes
-                : 0U;
+            if (diagnostic->repair_attempts <
+                portfolio_options->max_repair_attempts) {
+                ShadowSpillPrefetchTriggerConstraint constraint = {0};
+                int advanced = advance_admission_prefetch(
+                    facts,
+                    admission_error_annotation,
+                    &workspace->schedule,
+                    &constraint
+                );
+                if (advanced < 0) {
+                    return -1;
+                }
+                if (advanced > 0) {
+                    const int recorded = record_prefetch_constraint(
+                        workspace, constraint
+                    );
+                    if (recorded < 0) {
+                        return -1;
+                    }
+                    if (recorded > 0) {
+                        copy_admission_error(
+                            context,
+                            &workspace->schedule.value,
+                            &admission_result,
+                            admission_error_annotation,
+                            diagnostic
+                        );
+                        return 0;
+                    }
+                    ++diagnostic->repair_attempts;
+                    continue;
+                }
+                int delayed = delay_admission_prefetch(
+                    facts,
+                    &admission_result,
+                    admission_error_annotation,
+                    &workspace->schedule,
+                    &constraint
+                );
+                if (delayed < 0) {
+                    return -1;
+                }
+                if (delayed > 0) {
+                    const int recorded = record_prefetch_constraint(
+                        workspace, constraint
+                    );
+                    if (recorded < 0) {
+                        return -1;
+                    }
+                    if (recorded > 0) {
+                        copy_admission_error(
+                            context,
+                            &workspace->schedule.value,
+                            &admission_result,
+                            admission_error_annotation,
+                            diagnostic
+                        );
+                        return 0;
+                    }
+                    ++diagnostic->repair_attempts;
+                    continue;
+                }
+                int pressure_added = add_admission_repair_pressure(
+                    context,
+                    workspace,
+                    &reduce_options,
+                    &admission_result,
+                    admission_error_annotation,
+                    &workspace->schedule.value
+                );
+                if (pressure_added < 0) {
+                    return -1;
+                }
+                if (pressure_added > 0) {
+                    ++diagnostic->repair_attempts;
+                    int reduced = reduce_repaired_candidate(
+                        context,
+                        workspace,
+                        &reduce_options,
+                        strategy,
+                        diagnostic
+                    );
+                    if (reduced < 0) {
+                        return -1;
+                    }
+                    if (reduced == 0) {
+                        return 0;
+                    }
+                    need_emit = 1;
+                    continue;
+                }
+            }
+            copy_admission_error(
+                context,
+                &workspace->schedule.value,
+                &admission_result,
+                admission_error_annotation,
+                diagnostic
+            );
             return 0;
         }
         if (simulation_status == SHADOWSPILL_SIMULATION_OK) {
@@ -1405,39 +2145,46 @@ static int evaluate_candidate(
 
         if (diagnostic->repair_attempts <
             portfolio_options->max_repair_attempts) {
+            ShadowSpillPrefetchTriggerConstraint constraint = {0};
             int delayed = shadowspill_delay_dense_prefetch(
                 facts,
                 &simulation,
-                &workspace->schedule
+                &workspace->schedule,
+                &constraint
             );
             if (delayed < 0) {
                 return -1;
             }
             if (delayed > 0) {
+                const int recorded = record_prefetch_constraint(
+                    workspace, constraint
+                );
+                if (recorded < 0) {
+                    return -1;
+                }
+                if (recorded > 0) {
+                    diagnostic->status =
+                        SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+                    copy_simulation_error(diagnostic, &simulation);
+                    return 0;
+                }
                 ++diagnostic->repair_attempts;
                 continue;
             }
             if (add_repair_pressure(context, workspace, &simulation) != 0) {
                 ++diagnostic->repair_attempts;
-                ShadowSpillResidencyResult residency;
-                uint64_t residency_started = monotonic_time_ns();
-                ShadowSpillPlannerStatus status = reduce_cached(
+                int reduced = reduce_repaired_candidate(
                     context,
                     workspace,
                     &reduce_options,
                     strategy,
-                    workspace->resident,
-                    workspace->breaks,
-                    &residency
+                    diagnostic
                 );
-                workspace->residency_time_ns +=
-                    monotonic_time_ns() - residency_started;
-                if (status == SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE) {
-                    copy_analytic_error(diagnostic, &residency);
-                    return 0;
-                }
-                if (status != SHADOWSPILL_PLANNER_OK) {
+                if (reduced < 0) {
                     return -1;
+                }
+                if (reduced == 0) {
+                    return 0;
                 }
                 need_emit = 1;
                 continue;

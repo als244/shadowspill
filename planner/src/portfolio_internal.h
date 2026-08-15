@@ -23,6 +23,24 @@ typedef struct ShadowSpillScheduleFacts {
     uint8_t *write_events;
 } ShadowSpillScheduleFacts;
 
+/*
+ * A physical-admission repair constrains one logical fetch interval, identified
+ * by the object and its next consumer.  The bounds survive residency
+ * re-emission; addresses remain entirely dynamic.
+ */
+typedef struct ShadowSpillPrefetchTriggerConstraint {
+    uint32_t alias;
+    uint32_t consumer_task;
+    uint32_t minimum_trigger;
+    uint32_t maximum_trigger;
+} ShadowSpillPrefetchTriggerConstraint;
+
+/* Keep one logical object absent at one residency boundary. */
+typedef struct ShadowSpillForcedAbsenceConstraint {
+    uint32_t alias;
+    uint32_t boundary;
+} ShadowSpillForcedAbsenceConstraint;
+
 int shadowspill_schedule_facts_create(
     const ShadowSpillPressureFitContext *context,
     ShadowSpillScheduleFacts *facts
@@ -63,6 +81,21 @@ int shadowspill_emit_dense_schedule(
 int shadowspill_delay_dense_prefetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
+    ShadowSpillScheduleStorage *storage,
+    ShadowSpillPrefetchTriggerConstraint *constraint
+);
+
+int shadowspill_advance_dense_prefetch_to_release(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t action_index,
+    ShadowSpillScheduleStorage *storage,
+    ShadowSpillPrefetchTriggerConstraint *constraint
+);
+
+int shadowspill_apply_prefetch_trigger_constraints(
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillPrefetchTriggerConstraint *constraints,
+    uint32_t constraint_count,
     ShadowSpillScheduleStorage *storage
 );
 

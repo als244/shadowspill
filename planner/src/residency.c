@@ -152,6 +152,49 @@ static void alias_contribution(
     }
 }
 
+int shadowspill_residency_pressure_at(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    uint32_t device,
+    uint32_t boundary,
+    ShadowSpillResidencyWorkspace *workspace,
+    uint64_t *pressure_bytes
+) {
+    if (problem == NULL || options == NULL || resident == NULL ||
+        breaks == NULL || workspace == NULL || pressure_bytes == NULL ||
+        device >= problem->device_count || boundary >= problem->boundary_count ||
+        workspace->alias_count != problem->alias_count ||
+        workspace->boundary_count != problem->boundary_count ||
+        workspace->device_count != problem->device_count) {
+        return -1;
+    }
+    uint64_t pressure = 0U;
+    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
+        if (problem->alias_device[alias] != device) {
+            continue;
+        }
+        alias_contribution(
+            problem,
+            options,
+            resident,
+            breaks,
+            alias,
+            workspace->before
+        );
+        if (workspace->before[boundary] == 0U) {
+            continue;
+        }
+        if (pressure > UINT64_MAX - problem->alias_size_bytes[alias]) {
+            return -1;
+        }
+        pressure += problem->alias_size_bytes[alias];
+    }
+    *pressure_bytes = pressure;
+    return 0;
+}
+
 static int compare_score(
     const CutScore *left,
     const CutScore *right,
@@ -721,6 +764,112 @@ static void canonicalize_breaks(
             has_later_residency = 1;
         }
     }
+}
+
+int shadowspill_residency_force_absent(
+    const ShadowSpillResidencyProblem *problem,
+    uint8_t *resident,
+    uint8_t *breaks,
+    uint32_t alias,
+    uint32_t boundary,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    if (problem == NULL || resident == NULL || breaks == NULL ||
+        workspace == NULL || alias >= problem->alias_count ||
+        boundary >= problem->boundary_count ||
+        workspace->alias_count != problem->alias_count ||
+        workspace->boundary_count != problem->boundary_count ||
+        workspace->device_count != problem->device_count) {
+        return -1;
+    }
+    const uint64_t position = cell(alias, problem->boundary_count, boundary);
+    if (resident[position] == 0U) {
+        return 2;
+    }
+    if (problem->anchors[position] != 0U ||
+        problem->output_reservations[position] != 0U) {
+        return 0;
+    }
+    build_cut_geometry(
+        problem,
+        resident,
+        breaks,
+        workspace->first_required,
+        workspace->gap_start,
+        workspace->gap_end
+    );
+    ResidencyCut cut;
+    if (candidate_cut(
+            problem,
+            resident,
+            breaks,
+            workspace->first_required,
+            workspace->gap_start,
+            workspace->gap_end,
+            alias,
+            (int32_t)boundary - 1,
+            &cut
+        ) == 0 || cut.start > cut.end) {
+        return 0;
+    }
+    apply_cut(problem, resident, breaks, &cut);
+    canonicalize_breaks(
+        breaks, resident, problem->alias_count, problem->boundary_count
+    );
+    return resident[position] == 0U ? 1 : -1;
+}
+
+int shadowspill_residency_mark_removable(
+    const ShadowSpillResidencyProblem *problem,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    uint32_t boundary,
+    ShadowSpillResidencyWorkspace *workspace,
+    uint8_t *removable,
+    uint32_t removable_capacity
+) {
+    if (problem == NULL || resident == NULL || breaks == NULL ||
+        workspace == NULL || removable == NULL ||
+        boundary >= problem->boundary_count ||
+        removable_capacity < problem->alias_count ||
+        workspace->alias_count != problem->alias_count ||
+        workspace->boundary_count != problem->boundary_count ||
+        workspace->device_count != problem->device_count) {
+        return -1;
+    }
+    memset(removable, 0, problem->alias_count);
+    build_cut_geometry(
+        problem,
+        resident,
+        breaks,
+        workspace->first_required,
+        workspace->gap_start,
+        workspace->gap_end
+    );
+    for (uint32_t alias = 0U; alias < problem->alias_count; ++alias) {
+        const uint64_t position = cell(
+            alias, problem->boundary_count, boundary
+        );
+        if (resident[position] == 0U || problem->anchors[position] != 0U ||
+            problem->output_reservations[position] != 0U) {
+            continue;
+        }
+        ResidencyCut cut;
+        if (candidate_cut(
+                problem,
+                resident,
+                breaks,
+                workspace->first_required,
+                workspace->gap_start,
+                workspace->gap_end,
+                alias,
+                (int32_t)boundary - 1,
+                &cut
+            ) != 0 && cut.start <= cut.end) {
+            removable[alias] = 1U;
+        }
+    }
+    return 0;
 }
 
 static int valid_problem(

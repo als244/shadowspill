@@ -47,6 +47,7 @@ class PressureFitOptions:
         "packed-fit",
         "interval-entry",
         "latest-safe",
+        "demand",
     )
     evaluate_coalesced: bool = True
     max_repair_attempts: int = 16
@@ -75,6 +76,7 @@ class PressureFitOptions:
             "packed-fit",
             "interval-entry",
             "latest-safe",
+            "demand",
         }
         unknown_strategies = set(self.residency_strategies) - known_strategies
         unknown_prefetch = set(self.prefetch_rules) - known_prefetch

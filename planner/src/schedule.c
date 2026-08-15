@@ -682,6 +682,29 @@ static uint32_t latest_trigger_at_or_before(
     return insertion == earliest ? earliest : insertion - 1U;
 }
 
+static void choose_latest_safe_triggers(
+    const ShadowSpillScheduleFacts *facts,
+    Reload *reloads,
+    uint32_t reload_count
+) {
+    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    for (uint32_t index = 0U; index < reload_count; ++index) {
+        Reload *reload = &reloads[index];
+        const uint64_t deadline = ideal_trigger_time(
+            problem,
+            reload->latest_trigger
+        );
+        const uint64_t runtime = problem->fetch_runtime_ns[reload->alias];
+        const uint64_t desired = deadline > runtime ? deadline - runtime : 0U;
+        reload->trigger = latest_trigger_at_or_before(
+            problem,
+            reload->earliest_trigger,
+            reload->latest_trigger,
+            desired
+        );
+    }
+}
+
 static void choose_packed_triggers(
     const ShadowSpillScheduleFacts *facts,
     Reload *reloads,
@@ -915,6 +938,49 @@ static int action_compare(const void *left_value, const void *right_value) {
     return 0;
 }
 
+static int sort_storage_actions(ShadowSpillScheduleStorage *storage) {
+    Action *actions = malloc(
+        (storage->value.action_count == 0U ? 1U :
+            (size_t)storage->value.action_count) * sizeof(*actions)
+    );
+    if (actions == NULL) {
+        return -1;
+    }
+    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
+        actions[index] = (Action){
+            .trigger = storage->value.action_trigger_tasks[index],
+            .alias = storage->value.action_aliases[index],
+            .kind = storage->value.action_kinds[index],
+        };
+    }
+    qsort(actions, storage->value.action_count, sizeof(*actions), action_compare);
+    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
+        storage->value.action_trigger_tasks[index] = actions[index].trigger;
+        storage->value.action_aliases[index] = actions[index].alias;
+        storage->value.action_kinds[index] = actions[index].kind;
+    }
+    free(actions);
+    return 0;
+}
+
+static uint32_t next_input_consumer(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t alias,
+    uint32_t trigger
+) {
+    const ShadowSpillSimulationProgram *program = facts->context->simulation;
+    for (uint32_t task = trigger + 1U; task < facts->task_count; ++task) {
+        for (uint32_t offset = program->input_offsets[task];
+             offset < program->input_offsets[task + 1U];
+             ++offset) {
+            if (program->input_aliases[offset] == alias) {
+                return task;
+            }
+        }
+    }
+    return UINT32_MAX;
+}
+
 static int copy_actions(
     const ShadowSpillScheduleFacts *facts,
     const Action *actions,
@@ -995,7 +1061,8 @@ static int copy_actions(
 int shadowspill_delay_dense_prefetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
-    ShadowSpillScheduleStorage *storage
+    ShadowSpillScheduleStorage *storage,
+    ShadowSpillPrefetchTriggerConstraint *constraint
 ) {
     if (facts == NULL || failure == NULL || storage == NULL ||
         (failure->status != SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY &&
@@ -1027,20 +1094,7 @@ int shadowspill_delay_dense_prefetch(
             trigger >= failure->error_task) {
             continue;
         }
-        uint32_t next_consumer = UINT32_MAX;
-        for (uint32_t task = trigger + 1U; task < facts->task_count; ++task) {
-            for (uint32_t offset = program->input_offsets[task];
-                 offset < program->input_offsets[task + 1U];
-                 ++offset) {
-                if (program->input_aliases[offset] == alias) {
-                    next_consumer = task;
-                    break;
-                }
-            }
-            if (next_consumer != UINT32_MAX) {
-                break;
-            }
-        }
+        uint32_t next_consumer = next_input_consumer(facts, alias, trigger);
         uint32_t latest = next_consumer == UINT32_MAX
             ? facts->task_count - 1U
             : next_consumer - 1U;
@@ -1067,29 +1121,195 @@ int shadowspill_delay_dense_prefetch(
     if (selected == UINT32_MAX) {
         return 0;
     }
-    storage->value.action_trigger_tasks[selected] = selected_target;
-    Action *actions = malloc(
-        (storage->value.action_count == 0U ? 1U :
-            (size_t)storage->value.action_count) * sizeof(*actions)
+    const uint32_t alias = storage->value.action_aliases[selected];
+    const uint32_t consumer = next_input_consumer(
+        facts, alias, storage->value.action_trigger_tasks[selected]
     );
-    if (actions == NULL) {
-        return -1;
+    if (consumer == UINT32_MAX) {
+        return 0;
     }
-    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
-        actions[index] = (Action){
-            .trigger = storage->value.action_trigger_tasks[index],
-            .alias = storage->value.action_aliases[index],
-            .kind = storage->value.action_kinds[index],
+    storage->value.action_trigger_tasks[selected] = selected_target;
+    if (constraint != NULL) {
+        *constraint = (ShadowSpillPrefetchTriggerConstraint){
+            .alias = alias,
+            .consumer_task = consumer,
+            .minimum_trigger = selected_target,
+            .maximum_trigger = UINT32_MAX,
         };
     }
-    qsort(actions, storage->value.action_count, sizeof(*actions), action_compare);
-    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
-        storage->value.action_trigger_tasks[index] = actions[index].trigger;
-        storage->value.action_aliases[index] = actions[index].alias;
-        storage->value.action_kinds[index] = actions[index].kind;
+    return sort_storage_actions(storage) == 0 ? 1 : -1;
+}
+
+int shadowspill_advance_dense_prefetch_to_release(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t action_index,
+    ShadowSpillScheduleStorage *storage,
+    ShadowSpillPrefetchTriggerConstraint *constraint
+) {
+    if (facts == NULL || storage == NULL ||
+        action_index >= storage->value.action_count ||
+        storage->value.action_kinds[action_index] !=
+            SHADOWSPILL_MEMORY_PREFETCH) {
+        return 0;
     }
-    free(actions);
-    return 1;
+    const ShadowSpillSimulationProgram *program = facts->context->simulation;
+    const uint32_t alias = storage->value.action_aliases[action_index];
+    const uint32_t current_trigger =
+        storage->value.action_trigger_tasks[action_index];
+    if (alias >= facts->alias_count || current_trigger == 0U) {
+        return 0;
+    }
+
+    const uint32_t consumer = next_input_consumer(
+        facts, alias, current_trigger
+    );
+    if (consumer == UINT32_MAX) {
+        return 0;
+    }
+    uint32_t minimum_trigger = 0U;
+    int initial_spill_copy = 0;
+    for (uint32_t index = 0U; index < storage->value.initial_count; ++index) {
+        if (storage->value.initial_aliases[index] == alias &&
+            storage->value.initial_locations[index] ==
+                SHADOWSPILL_MEMORY_HOST) {
+            initial_spill_copy = 1;
+            break;
+        }
+    }
+    uint32_t latest_write = UINT32_MAX;
+    for (uint32_t task = 0U; task < current_trigger; ++task) {
+        if (facts->write_events[cell(
+                alias, facts->boundary_count, task + 1U
+            )] != 0U) {
+            latest_write = task;
+        }
+    }
+    int authoritative_spill_copy = initial_spill_copy;
+    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
+        if (storage->value.action_aliases[index] != alias ||
+            storage->value.action_trigger_tasks[index] >= current_trigger) {
+            continue;
+        }
+        const uint8_t kind = storage->value.action_kinds[index];
+        if (kind != SHADOWSPILL_MEMORY_OFFLOAD &&
+            kind != SHADOWSPILL_MEMORY_RELEASE) {
+            continue;
+        }
+        const uint32_t trigger = storage->value.action_trigger_tasks[index];
+        if (kind == SHADOWSPILL_MEMORY_OFFLOAD &&
+            (latest_write == UINT32_MAX || trigger >= latest_write)) {
+            authoritative_spill_copy = 1;
+        }
+        if (trigger > minimum_trigger) {
+            minimum_trigger = trigger;
+        }
+    }
+    if (!authoritative_spill_copy ||
+        (latest_write != UINT32_MAX && minimum_trigger < latest_write)) {
+        return 0;
+    }
+
+    uint32_t selected_trigger = UINT32_MAX;
+    uint32_t selected_alias = UINT32_MAX;
+    uint64_t selected_size = UINT64_MAX;
+    const uint64_t required = program->alias_size_bytes[alias];
+    for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
+        const uint8_t kind = storage->value.action_kinds[index];
+        if (kind != SHADOWSPILL_MEMORY_RELEASE &&
+            kind != SHADOWSPILL_MEMORY_OFFLOAD) {
+            continue;
+        }
+        const uint32_t trigger = storage->value.action_trigger_tasks[index];
+        const uint32_t candidate_alias = storage->value.action_aliases[index];
+        if (trigger < minimum_trigger || trigger >= current_trigger ||
+            candidate_alias == alias || candidate_alias >= facts->alias_count) {
+            continue;
+        }
+        const uint64_t candidate_size =
+            program->alias_size_bytes[candidate_alias];
+        if (candidate_size < required) {
+            continue;
+        }
+        if (selected_trigger == UINT32_MAX || trigger > selected_trigger ||
+            (trigger == selected_trigger && candidate_size < selected_size) ||
+            (trigger == selected_trigger && candidate_size == selected_size &&
+             candidate_alias < selected_alias)) {
+            selected_trigger = trigger;
+            selected_alias = candidate_alias;
+            selected_size = candidate_size;
+        }
+    }
+    if (selected_trigger == UINT32_MAX) {
+        return 0;
+    }
+    storage->value.action_trigger_tasks[action_index] = selected_trigger;
+    if (constraint != NULL) {
+        *constraint = (ShadowSpillPrefetchTriggerConstraint){
+            .alias = alias,
+            .consumer_task = consumer,
+            .minimum_trigger = 0U,
+            .maximum_trigger = selected_trigger,
+        };
+    }
+    return sort_storage_actions(storage) == 0 ? 1 : -1;
+}
+
+int shadowspill_apply_prefetch_trigger_constraints(
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillPrefetchTriggerConstraint *constraints,
+    uint32_t constraint_count,
+    ShadowSpillScheduleStorage *storage
+) {
+    if (facts == NULL || storage == NULL ||
+        (constraint_count != 0U && constraints == NULL)) {
+        return -1;
+    }
+    if (constraint_count == 0U) {
+        return 0;
+    }
+    int changed = 0;
+    for (uint32_t action = 0U; action < storage->value.action_count; ++action) {
+        if (storage->value.action_kinds[action] !=
+            SHADOWSPILL_MEMORY_PREFETCH) {
+            continue;
+        }
+        const uint32_t alias = storage->value.action_aliases[action];
+        uint32_t trigger = storage->value.action_trigger_tasks[action];
+        const uint32_t consumer = next_input_consumer(facts, alias, trigger);
+        if (consumer == UINT32_MAX) {
+            continue;
+        }
+        for (uint32_t index = 0U; index < constraint_count; ++index) {
+            const ShadowSpillPrefetchTriggerConstraint *constraint =
+                &constraints[index];
+            if (constraint->alias != alias ||
+                constraint->consumer_task != consumer) {
+                continue;
+            }
+            if (constraint->minimum_trigger > constraint->maximum_trigger ||
+                (constraint->maximum_trigger != UINT32_MAX &&
+                 constraint->maximum_trigger >= consumer)) {
+                return 1;
+            }
+            if (trigger < constraint->minimum_trigger) {
+                trigger = constraint->minimum_trigger;
+            }
+            if (trigger > constraint->maximum_trigger) {
+                trigger = constraint->maximum_trigger;
+            }
+            if (trigger >= consumer) {
+                return 1;
+            }
+        }
+        if (trigger != storage->value.action_trigger_tasks[action]) {
+            storage->value.action_trigger_tasks[action] = trigger;
+            changed = 1;
+        }
+    }
+    if (changed != 0 && sort_storage_actions(storage) != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 static int append_action(
@@ -1169,7 +1389,7 @@ int shadowspill_emit_dense_schedule(
     ShadowSpillScheduleStorage *storage
 ) {
     if (facts == NULL || resident == NULL || breaks == NULL || storage == NULL ||
-        prefetch_rule > SHADOWSPILL_PREFETCH_LATEST_SAFE) {
+        prefetch_rule > SHADOWSPILL_PREFETCH_DEMAND) {
         return -1;
     }
     shadowspill_schedule_storage_clear(storage);
@@ -1303,10 +1523,12 @@ int shadowspill_emit_dense_schedule(
         }
     }
 
-    if (prefetch_rule == SHADOWSPILL_PREFETCH_LATEST_SAFE) {
+    if (prefetch_rule == SHADOWSPILL_PREFETCH_DEMAND) {
         for (uint32_t index = 0U; index < reload_count; ++index) {
             reloads[index].trigger = reloads[index].latest_trigger;
         }
+    } else if (prefetch_rule == SHADOWSPILL_PREFETCH_LATEST_SAFE) {
+        choose_latest_safe_triggers(facts, reloads, reload_count);
     } else {
         choose_packed_triggers(facts, reloads, reload_count);
         if (prefetch_rule == SHADOWSPILL_PREFETCH_PACKED_FIT &&

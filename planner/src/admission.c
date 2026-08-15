@@ -11,6 +11,8 @@
 #include <time.h>
 
 #define NO_LEASE UINT64_MAX
+#define TASK_ALLOCATION_ALLOCATE 0U
+#define TASK_ALLOCATION_RELEASE 1U
 
 static uint64_t monotonic_time_ns(void) {
     struct timespec value;
@@ -46,7 +48,8 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
         topology->task_workspace_offsets == NULL ||
         topology->fresh_output_offsets == NULL ||
         topology->replacement_offsets == NULL ||
-        topology->handoff_offsets == NULL) {
+        topology->handoff_offsets == NULL ||
+        topology->task_allocation_offsets == NULL) {
         return 0;
     }
     const uint32_t workspace_count =
@@ -57,13 +60,20 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
         topology->replacement_offsets[topology->task_count];
     const uint32_t handoff_count =
         topology->handoff_offsets[topology->task_count];
+    const uint32_t allocation_count =
+        topology->task_allocation_offsets[topology->task_count];
     if ((workspace_count != 0U &&
          topology->task_workspace_extent_bytes == NULL) ||
         (fresh_count != 0U && topology->fresh_output_aliases == NULL) ||
         (replacement_count != 0U && topology->replacement_aliases == NULL) ||
         (handoff_count != 0U &&
          (topology->handoff_source_aliases == NULL ||
-          topology->handoff_destination_aliases == NULL))) {
+          topology->handoff_destination_aliases == NULL)) ||
+        (allocation_count != 0U &&
+         (topology->task_allocation_slots == NULL ||
+          topology->task_allocation_bytes == NULL ||
+          topology->task_allocation_aliases == NULL ||
+          topology->task_allocation_kinds == NULL))) {
         return 0;
     }
     for (uint32_t task = 0U; task < topology->task_count; ++task) {
@@ -74,7 +84,9 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
             topology->replacement_offsets[task] >
                 topology->replacement_offsets[task + 1U] ||
             topology->handoff_offsets[task] >
-                topology->handoff_offsets[task + 1U]) {
+                topology->handoff_offsets[task + 1U] ||
+            topology->task_allocation_offsets[task] >
+                topology->task_allocation_offsets[task + 1U]) {
             return 0;
         }
     }
@@ -102,6 +114,22 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
             return 0;
         }
     }
+    for (uint32_t index = 0U; index < allocation_count; ++index) {
+        const uint8_t kind = topology->task_allocation_kinds[index];
+        const uint32_t alias = topology->task_allocation_aliases[index];
+        if (topology->task_allocation_slots[index] >=
+                topology->allocation_slot_count ||
+            kind > TASK_ALLOCATION_RELEASE ||
+            (kind == TASK_ALLOCATION_ALLOCATE &&
+             topology->task_allocation_bytes[index] == 0U) ||
+            (kind == TASK_ALLOCATION_RELEASE &&
+             (topology->task_allocation_bytes[index] != 0U ||
+              alias != SHADOWSPILL_SIMULATOR_NO_INDEX)) ||
+            (alias != SHADOWSPILL_SIMULATOR_NO_INDEX &&
+             alias >= topology->alias_count)) {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -111,9 +139,7 @@ static uint64_t invariant_lease_count(
     const ShadowSpillAdmissionTopology *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = program->alias_count;
-    count += topology->task_workspace_offsets[topology->task_count];
-    count += topology->fresh_output_offsets[topology->task_count];
-    count += topology->replacement_offsets[topology->task_count];
+    count += topology->allocation_slot_count;
     return count;
 }
 
@@ -123,11 +149,13 @@ static uint64_t invariant_operation_count(
     const ShadowSpillAdmissionTopology *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = (uint64_t)program->alias_count * 2U;
-    count +=
-        (uint64_t)topology->task_workspace_offsets[topology->task_count] * 3U;
-    count += (uint64_t)topology->fresh_output_offsets[topology->task_count] * 2U;
-    count +=
-        (uint64_t)topology->replacement_offsets[topology->task_count] * 3U;
+    const uint32_t allocation_count =
+        topology->task_allocation_offsets[topology->task_count];
+    for (uint32_t index = 0U; index < allocation_count; ++index) {
+        count += topology->task_allocation_kinds[index] ==
+            TASK_ALLOCATION_ALLOCATE ? 2U : 1U;
+    }
+    count += topology->replacement_offsets[topology->task_count];
     return count;
 }
 
@@ -176,7 +204,7 @@ static int reserve_candidate_buffers(
         }
     }
     if (lease_count > SIZE_MAX || operation_count > SIZE_MAX ||
-        dependency_count > SIZE_MAX) {
+        dependency_count > SIZE_MAX || lease_count > (SIZE_MAX - 2U) / 2U) {
         return -1;
     }
     if (operation_count > workspace->operation_capacity ||
@@ -208,6 +236,24 @@ static int reserve_candidate_buffers(
             dependency_count == 0U ? 1U : (size_t)dependency_count,
             sizeof(*dependencies)
         );
+        ShadowSpillAdmissionReplayLiveLease *live_leases = calloc(
+            lease_count == 0U ? 1U : (size_t)lease_count,
+            sizeof(*live_leases)
+        );
+        uint32_t *lease_aliases = malloc(
+            (lease_count == 0U ? 1U : (size_t)lease_count) *
+                sizeof(*lease_aliases)
+        );
+        uint64_t *repair_candidate_starts = malloc(
+            ((size_t)lease_count * 2U + 2U) *
+                sizeof(*repair_candidate_starts)
+        );
+        uint64_t *repair_blocked_prefix = malloc(
+            ((size_t)lease_count + 1U) * sizeof(*repair_blocked_prefix)
+        );
+        uint32_t *repair_unremovable_prefix = malloc(
+            ((size_t)lease_count + 1U) * sizeof(*repair_unremovable_prefix)
+        );
         ShadowSpillPendingEviction *pending = calloc(
             dependency_count == 0U ? 1U : (size_t)dependency_count,
             sizeof(*pending)
@@ -218,7 +264,11 @@ static int reserve_candidate_buffers(
         );
         ShadowSpillAdmissionReplayWorkspace *replay = NULL;
         if (operations == NULL || decisions == NULL || annotations == NULL ||
-            dependencies == NULL || pending == NULL || predecessors == NULL ||
+            dependencies == NULL || live_leases == NULL ||
+            lease_aliases == NULL || repair_candidate_starts == NULL ||
+            repair_blocked_prefix == NULL ||
+            repair_unremovable_prefix == NULL || pending == NULL ||
+            predecessors == NULL ||
             shadowspill_admission_replay_workspace_create(
                 lease_count, dependency_count, &replay
             ) != SHADOWSPILL_ADMISSION_REPLAY_OK) {
@@ -226,6 +276,11 @@ static int reserve_candidate_buffers(
             free(decisions);
             free(annotations);
             free(dependencies);
+            free(live_leases);
+            free(lease_aliases);
+            free(repair_candidate_starts);
+            free(repair_blocked_prefix);
+            free(repair_unremovable_prefix);
             free(pending);
             free(predecessors);
             shadowspill_admission_replay_workspace_destroy(replay);
@@ -235,6 +290,11 @@ static int reserve_candidate_buffers(
         free(workspace->decisions);
         free(workspace->annotations);
         free(workspace->dependencies);
+        free(workspace->live_leases);
+        free(workspace->lease_aliases);
+        free(workspace->repair_candidate_starts);
+        free(workspace->repair_blocked_prefix);
+        free(workspace->repair_unremovable_prefix);
         free(workspace->pending_evictions);
         free(workspace->predecessor_actions);
         shadowspill_admission_replay_workspace_destroy(workspace->replay);
@@ -242,6 +302,11 @@ static int reserve_candidate_buffers(
         workspace->decisions = decisions;
         workspace->annotations = annotations;
         workspace->dependencies = dependencies;
+        workspace->live_leases = live_leases;
+        workspace->lease_aliases = lease_aliases;
+        workspace->repair_candidate_starts = repair_candidate_starts;
+        workspace->repair_blocked_prefix = repair_blocked_prefix;
+        workspace->repair_unremovable_prefix = repair_unremovable_prefix;
         workspace->pending_evictions = pending;
         workspace->predecessor_actions = predecessors;
         workspace->replay = replay;
@@ -293,6 +358,11 @@ int shadowspill_candidate_admission_workspace_create(
     workspace->new_alias_leases = malloc(
         (aliases == 0U ? 1U : aliases) * sizeof(*workspace->new_alias_leases)
     );
+    const uint32_t allocation_slots = context->admission->allocation_slot_count;
+    workspace->task_allocation_leases = malloc(
+        (allocation_slots == 0U ? 1U : allocation_slots) *
+            sizeof(*workspace->task_allocation_leases)
+    );
     workspace->handoff_sources = calloc(
         aliases == 0U ? 1U : aliases,
         sizeof(*workspace->handoff_sources)
@@ -307,6 +377,7 @@ int shadowspill_candidate_admission_workspace_create(
     );
     if (workspace->active_alias_leases == NULL ||
         workspace->new_alias_leases == NULL ||
+        workspace->task_allocation_leases == NULL ||
         workspace->handoff_sources == NULL ||
         workspace->task_start_deltas == NULL ||
         workspace->task_completion_deltas == NULL) {
@@ -325,9 +396,15 @@ void shadowspill_candidate_admission_workspace_destroy(
     free(workspace->operations);
     free(workspace->decisions);
     free(workspace->dependencies);
+    free(workspace->live_leases);
     free(workspace->annotations);
     free(workspace->active_alias_leases);
     free(workspace->new_alias_leases);
+    free(workspace->task_allocation_leases);
+    free(workspace->lease_aliases);
+    free(workspace->repair_candidate_starts);
+    free(workspace->repair_blocked_prefix);
+    free(workspace->repair_unremovable_prefix);
     free(workspace->predecessor_actions);
     free(workspace->handoff_sources);
     free(workspace->pending_evictions);
@@ -382,12 +459,14 @@ static int acquire_lease(
     uint64_t alignment,
     uint8_t boundary,
     uint32_t index,
+    uint32_t owner_alias,
     uint64_t *lease_id
 ) {
     if (bytes == 0U || state->lease_count >= state->workspace->lease_capacity) {
         return -1;
     }
     const uint64_t lease = state->lease_count++;
+    state->workspace->lease_aliases[lease] = owner_alias;
     if (append_operation(
             state, lease, SHADOWSPILL_ADMISSION_REPLAY_RESERVE,
             bytes, alignment, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
@@ -414,6 +493,20 @@ static int require_alias(
          workspace->active_alias_leases[alias] != NO_LEASE);
 }
 
+static int task_replaces_alias(
+    const ShadowSpillAdmissionTopology *topology,
+    uint32_t task,
+    uint32_t alias
+) {
+    for (uint32_t offset = topology->replacement_offsets[task];
+         offset < topology->replacement_offsets[task + 1U]; ++offset) {
+        if (topology->replacement_aliases[offset] == alias) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int build_script(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillDenseSchedule *schedule,
@@ -428,6 +521,9 @@ static int build_script(
         workspace->active_alias_leases[alias] = NO_LEASE;
         workspace->new_alias_leases[alias] = NO_LEASE;
         workspace->handoff_sources[alias] = 0U;
+    }
+    for (uint32_t slot = 0U; slot < topology->allocation_slot_count; ++slot) {
+        workspace->task_allocation_leases[slot] = NO_LEASE;
     }
 
     for (uint32_t index = 0U; index < schedule->initial_count; ++index) {
@@ -444,7 +540,7 @@ static int build_script(
             acquire_lease(
                 state, program->alias_size_bytes[alias],
                 topology->minimum_alignment,
-                SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL, 0U,
+                SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL, 0U, alias,
                 &workspace->active_alias_leases[alias]
             ) != 0) {
             return -1;
@@ -468,64 +564,48 @@ static int build_script(
             }
         }
 
-        const uint64_t workspace_lease_begin = state->lease_count;
-        for (uint32_t offset = topology->task_workspace_offsets[task];
-             offset < topology->task_workspace_offsets[task + 1U]; ++offset) {
-            uint64_t workspace_lease = NO_LEASE;
-            if (acquire_lease(
-                    state, topology->task_workspace_extent_bytes[offset],
-                    topology->minimum_alignment,
-                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task,
-                    &workspace_lease
-                ) != 0) {
-                return -1;
-            }
-        }
-        const uint64_t workspace_lease_end = state->lease_count;
-        for (uint32_t offset = topology->fresh_output_offsets[task];
-             offset < topology->fresh_output_offsets[task + 1U]; ++offset) {
-            const uint32_t alias = topology->fresh_output_aliases[offset];
-            if (program->alias_size_bytes[alias] == 0U) {
-                continue;
-            }
-            if (workspace->active_alias_leases[alias] != NO_LEASE ||
-                workspace->new_alias_leases[alias] != NO_LEASE ||
-                acquire_lease(
-                    state, program->alias_size_bytes[alias],
-                    topology->minimum_alignment,
-                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task,
-                    &workspace->new_alias_leases[alias]
-                ) != 0) {
-                return -1;
-            }
-        }
-        for (uint32_t offset = topology->replacement_offsets[task];
-             offset < topology->replacement_offsets[task + 1U]; ++offset) {
-            const uint32_t alias = topology->replacement_aliases[offset];
-            if (program->alias_size_bytes[alias] == 0U) {
-                continue;
-            }
-            if (workspace->active_alias_leases[alias] == NO_LEASE ||
-                workspace->new_alias_leases[alias] != NO_LEASE ||
-                acquire_lease(
-                    state, program->alias_size_bytes[alias],
-                    topology->minimum_alignment,
-                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task,
-                    &workspace->new_alias_leases[alias]
-                ) != 0) {
-                return -1;
-            }
-        }
-
-        for (uint64_t workspace_lease = workspace_lease_begin;
-             workspace_lease < workspace_lease_end; ++workspace_lease) {
-            if (append_operation(
-                    state, workspace_lease,
-                    SHADOWSPILL_ADMISSION_REPLAY_RELEASE,
-                    0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
-                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION, task
-                ) != 0) {
-                return -1;
+        for (uint32_t offset = topology->task_allocation_offsets[task];
+             offset < topology->task_allocation_offsets[task + 1U]; ++offset) {
+            const uint32_t slot = topology->task_allocation_slots[offset];
+            const uint8_t kind = topology->task_allocation_kinds[offset];
+            const uint32_t alias = topology->task_allocation_aliases[offset];
+            if (kind == TASK_ALLOCATION_ALLOCATE) {
+                if (workspace->task_allocation_leases[slot] != NO_LEASE ||
+                    (alias != SHADOWSPILL_SIMULATOR_NO_INDEX &&
+                     (workspace->new_alias_leases[alias] != NO_LEASE ||
+                      ((workspace->active_alias_leases[alias] != NO_LEASE) !=
+                       task_replaces_alias(topology, task, alias)))) ||
+                    acquire_lease(
+                        state,
+                        topology->task_allocation_bytes[offset],
+                        topology->minimum_alignment,
+                        SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START,
+                        task,
+                        alias,
+                        &workspace->task_allocation_leases[slot]
+                    ) != 0) {
+                    return -1;
+                }
+                if (alias != SHADOWSPILL_SIMULATOR_NO_INDEX) {
+                    workspace->new_alias_leases[alias] =
+                        workspace->task_allocation_leases[slot];
+                }
+            } else {
+                const uint64_t lease = workspace->task_allocation_leases[slot];
+                if (lease == NO_LEASE || append_operation(
+                        state,
+                        lease,
+                        SHADOWSPILL_ADMISSION_REPLAY_RELEASE,
+                        0U,
+                        0U,
+                        SHADOWSPILL_ADMISSION_REPLAY_NO_ID,
+                        0U,
+                        SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START,
+                        task
+                    ) != 0) {
+                    return -1;
+                }
+                workspace->task_allocation_leases[slot] = NO_LEASE;
             }
         }
         for (uint32_t offset = topology->handoff_offsets[task];
@@ -542,6 +622,9 @@ static int build_script(
             }
             workspace->active_alias_leases[destination] =
                 workspace->active_alias_leases[source];
+            workspace->lease_aliases[
+                workspace->active_alias_leases[destination]
+            ] = destination;
             workspace->active_alias_leases[source] = NO_LEASE;
             workspace->handoff_sources[source] = 1U;
         }
@@ -551,7 +634,9 @@ static int build_script(
             if (program->alias_size_bytes[alias] == 0U) {
                 continue;
             }
-            if (append_operation(
+            if (workspace->active_alias_leases[alias] == NO_LEASE ||
+                workspace->new_alias_leases[alias] == NO_LEASE ||
+                append_operation(
                     state, workspace->active_alias_leases[alias],
                     SHADOWSPILL_ADMISSION_REPLAY_RELEASE,
                     0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
@@ -568,6 +653,10 @@ static int build_script(
             const uint32_t alias = topology->fresh_output_aliases[offset];
             if (program->alias_size_bytes[alias] == 0U) {
                 continue;
+            }
+            if (workspace->active_alias_leases[alias] != NO_LEASE ||
+                workspace->new_alias_leases[alias] == NO_LEASE) {
+                return -1;
             }
             workspace->active_alias_leases[alias] =
                 workspace->new_alias_leases[alias];
@@ -628,6 +717,7 @@ static int build_script(
                         state, program->alias_size_bytes[alias],
                         topology->minimum_alignment,
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER, action,
+                        alias,
                         &workspace->active_alias_leases[alias]
                     ) != 0) {
                     return -1;
@@ -712,17 +802,16 @@ static int project_result(
                 workspace->initial_physical_bytes += (uint64_t)delta;
                 break;
             case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START:
+            case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION:
                 if (annotation.index >= tasks || add_delta(
                         &workspace->task_start_deltas[annotation.index], delta
                     ) != 0) {
                     return -1;
                 }
-                break;
-            case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION:
-                if (annotation.index >= tasks || add_delta(
-                        &workspace->task_completion_deltas[annotation.index], delta
-                    ) != 0) {
-                    return -1;
+                if (workspace->task_start_deltas[annotation.index] >
+                    workspace->task_completion_deltas[annotation.index]) {
+                    workspace->task_completion_deltas[annotation.index] =
+                        workspace->task_start_deltas[annotation.index];
                 }
                 break;
             case SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER:
@@ -742,6 +831,12 @@ static int project_result(
             default:
                 return -1;
         }
+    }
+    for (uint32_t task = 0U; task < tasks; ++task) {
+        const int64_t total = workspace->task_start_deltas[task];
+        const int64_t peak = workspace->task_completion_deltas[task];
+        workspace->task_start_deltas[task] = peak;
+        workspace->task_completion_deltas[task] = total - peak;
     }
     for (uint64_t index = 0U; index < result->dependency_result_count; ++index) {
         const ShadowSpillAdmissionReuseDependency dependency =
@@ -805,6 +900,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
         .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
         .capacity_bytes = context->admission->pool_capacity_bytes,
         .minimum_alignment = context->admission->minimum_alignment,
+        .large_request_threshold_bytes = 0U,
         .lease_count = script.lease_count,
         .dependency_count = script.dependency_count,
         .operations = workspace->operations,
@@ -815,6 +911,8 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
         .decision_capacity = workspace->operation_capacity,
         .dependencies = workspace->dependencies,
         .dependency_capacity = workspace->dependency_capacity,
+        .live_leases = workspace->live_leases,
+        .live_lease_capacity = workspace->lease_capacity,
     };
     const ShadowSpillAdmissionReplayStatus status =
         shadowspill_admission_replay_run_reusing(

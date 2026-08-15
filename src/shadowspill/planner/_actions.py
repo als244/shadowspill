@@ -147,6 +147,37 @@ def _packed_triggers(
     return selected
 
 
+def _latest_safe_triggers(
+    facts: PlanningFacts,
+    config: SimulationConfig,
+    reloads: tuple[Reload, ...],
+) -> dict[Reload, int]:
+    """Place each reload late enough to overlap its own transfer duration.
+
+    ``Reload.latest_trigger`` is the final *legal enqueue boundary*, normally
+    the task immediately before the first consumer.  Enqueuing there is a
+    demand fetch, not a latest-safe prefetch.  A latest-safe trigger instead
+    backs the transfer duration out of the consumer's ideal start time and
+    chooses the latest available task boundary at or before that time.
+
+    Unlike packed placement, reloads are treated independently here.  The
+    simulator remains responsible for serializing them on the fetch lane.
+    """
+
+    selected: dict[Reload, int] = {}
+    for reload in reloads:
+        deadline = _ideal_trigger_time(facts, reload.latest_trigger)
+        runtime = _transfer_runtime_ns(facts, config, reload.alias)
+        desired_start = max(deadline - runtime, 0)
+        selected[reload] = _latest_trigger_at_or_before(
+            facts,
+            reload.earliest_trigger,
+            reload.latest_trigger,
+            desired_start,
+        )
+    return selected
+
+
 def _fit_clamped_triggers(
     facts: PlanningFacts,
     plan: ResidencyPlan,
@@ -241,8 +272,10 @@ def choose_prefetch_triggers(
     *,
     prefetch_headroom: bool,
 ) -> dict[Reload, int]:
-    if rule == "latest-safe":
+    if rule == "demand":
         return {item: item.latest_trigger for item in reloads}
+    if rule == "latest-safe":
+        return _latest_safe_triggers(facts, config, reloads)
     selected = _packed_triggers(facts, config, reloads)
     if rule == "packed-fit":
         return _fit_clamped_triggers(

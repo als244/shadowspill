@@ -29,6 +29,7 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     ShadowSpillAdmissionReplayOperation *operations;
     ShadowSpillAdmissionReplayDecision *decisions;
     ShadowSpillAdmissionReuseDependency *dependencies;
+    ShadowSpillAdmissionReplayLiveLease *live_leases;
     ShadowSpillAdmissionAnnotation *annotations;
     uint64_t operation_capacity;
     uint64_t lease_capacity;
@@ -36,6 +37,11 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
 
     uint64_t *active_alias_leases;
     uint64_t *new_alias_leases;
+    uint64_t *task_allocation_leases;
+    uint32_t *lease_aliases;
+    uint64_t *repair_candidate_starts;
+    uint64_t *repair_blocked_prefix;
+    uint32_t *repair_unremovable_prefix;
     uint32_t *predecessor_actions;
     uint8_t *handoff_sources;
     ShadowSpillPendingEviction *pending_evictions;

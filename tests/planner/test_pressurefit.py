@@ -6,13 +6,22 @@ from dataclasses import replace
 import pytest
 
 from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
     EntrypointSpec,
     MemoryActionKind,
     MemoryLocation,
+    ObjectSpec,
+    Program,
     ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    TaskProfile,
+    TaskSpec,
 )
 from shadowspill.planner import (
     AdmissionTopology,
+    InitialPlacement,
     PressureFitInfeasibleError,
     PressureFitOptions,
     TaskAdmissionSpec,
@@ -32,6 +41,9 @@ SMALL_PORTFOLIO = PressureFitOptions(
     prefetch_rules=("latest-safe",),
     evaluate_coalesced=False,
 )
+
+DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
+COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
 def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
@@ -56,6 +68,96 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     assert result.simulation.makespan_ns == 5_000
     assert result.simulation.device_peak("cuda_0").total_bytes == 122
     assert result.simulation.host_peak_bytes == 61
+
+
+def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec("retained", "cuda_0", 61),
+            AliasGroupSpec("later", "cuda_0", 61),
+        ),
+        objects=(
+            ObjectSpec("retained_object", "retained", 0, 61),
+            ObjectSpec("later_object", "later", 0, 61),
+        ),
+        profiles=(TaskProfile("profile", 1_000, 0, "task_abi"),),
+        tasks=(
+            TaskSpec("task0", COMPUTE, "profile", inputs=("retained_object",)),
+            TaskSpec("task1", COMPUTE, "profile"),
+            TaskSpec("task2", COMPUTE, "profile"),
+            TaskSpec("task3", COMPUTE, "profile", inputs=("later_object",)),
+        ),
+    )
+    result = pressurefit(
+        program,
+        initial_residency=(
+            ResidencySpec("retained", MemoryLocation.DEVICE),
+            ResidencySpec("later", MemoryLocation.HOST),
+        ),
+        config=config(61),
+        options=PressureFitOptions(
+            initial_placement=InitialPlacement.REQUIRED,
+            residency_strategies=("relaxed-stall",),
+            prefetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        ),
+    )
+
+    assert tuple(
+        (action.trigger_task_id, action.alias_group_id, action.kind)
+        for action in result.schedule.actions
+    ) == (
+        ("task0", "retained", MemoryActionKind.RELEASE),
+        ("task1", "later", MemoryActionKind.PREFETCH),
+        ("task3", "later", MemoryActionKind.RELEASE),
+    )
+    assert result.simulation.makespan_ns == 4_000
+
+
+def test_demand_prefetch_uses_final_legal_boundary() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec("retained", "cuda_0", 61),
+            AliasGroupSpec("later", "cuda_0", 61),
+        ),
+        objects=(
+            ObjectSpec("retained_object", "retained", 0, 61),
+            ObjectSpec("later_object", "later", 0, 61),
+        ),
+        profiles=(TaskProfile("profile", 1_000, 0, "task_abi"),),
+        tasks=(
+            TaskSpec("task0", COMPUTE, "profile", inputs=("retained_object",)),
+            TaskSpec("task1", COMPUTE, "profile"),
+            TaskSpec("task2", COMPUTE, "profile"),
+            TaskSpec("task3", COMPUTE, "profile", inputs=("later_object",)),
+        ),
+    )
+    result = pressurefit(
+        program,
+        initial_residency=(
+            ResidencySpec("retained", MemoryLocation.DEVICE),
+            ResidencySpec("later", MemoryLocation.HOST),
+        ),
+        config=config(61),
+        options=PressureFitOptions(
+            initial_placement=InitialPlacement.REQUIRED,
+            residency_strategies=("relaxed-stall",),
+            prefetch_rules=("demand",),
+            evaluate_coalesced=False,
+        ),
+    )
+
+    assert tuple(
+        (action.trigger_task_id, action.alias_group_id, action.kind)
+        for action in result.schedule.actions
+    ) == (
+        ("task0", "retained", MemoryActionKind.RELEASE),
+        ("task2", "later", MemoryActionKind.PREFETCH),
+        ("task3", "later", MemoryActionKind.RELEASE),
+    )
+    assert result.simulation.makespan_ns == 5_000
 
 
 def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:

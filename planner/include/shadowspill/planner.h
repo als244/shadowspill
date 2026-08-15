@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 7U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 8U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -85,6 +85,7 @@ typedef enum ShadowSpillPrefetchRule {
     SHADOWSPILL_PREFETCH_PACKED_FIT = 1,
     SHADOWSPILL_PREFETCH_INTERVAL_ENTRY = 2,
     SHADOWSPILL_PREFETCH_LATEST_SAFE = 3,
+    SHADOWSPILL_PREFETCH_DEMAND = 4,
 } ShadowSpillPrefetchRule;
 
 typedef enum ShadowSpillInitialPlacement {
@@ -135,6 +136,12 @@ typedef struct ShadowSpillAdmissionTopology {
     const uint32_t *handoff_offsets;
     const uint32_t *handoff_source_aliases;
     const uint32_t *handoff_destination_aliases;
+    uint32_t allocation_slot_count;
+    const uint32_t *task_allocation_offsets;
+    const uint32_t *task_allocation_slots;
+    const uint64_t *task_allocation_bytes;
+    const uint32_t *task_allocation_aliases;
+    const uint8_t *task_allocation_kinds;
 } ShadowSpillAdmissionTopology;
 
 typedef struct ShadowSpillPressureFitContext {

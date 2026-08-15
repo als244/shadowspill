@@ -1,6 +1,12 @@
 """Framework-neutral PressureFit memory and recomputation planning."""
 
-from .admission import AdmissionTopology, StorageHandoff, TaskAdmissionSpec
+from .admission import (
+    AdmissionTopology,
+    StorageHandoff,
+    TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+)
 from .model import (
     AdmissionRefinement,
     CandidateDiagnostic,
@@ -23,6 +29,8 @@ __all__ = [
     "PressureFitResult",
     "StorageHandoff",
     "TaskAdmissionSpec",
+    "TaskAllocationStep",
+    "TaskAllocationStepKind",
     "pressurefit",
     "validate_schedule_feasibility",
 ]

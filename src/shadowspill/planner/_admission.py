@@ -24,7 +24,12 @@ from ._capi import (
     CScheduleAdmissionResult,
     load_planner_library,
 )
-from .admission import AdmissionTopology
+from .admission import (
+    AdmissionTopology,
+    TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+)
 
 
 def _u32(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
@@ -117,6 +122,11 @@ _ACTION_KIND = {
     MemoryActionKind.PREFETCH: 2,
 }
 _LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.HOST: 1}
+_ALLOCATION_KIND = {
+    TaskAllocationStepKind.ALLOCATE: 0,
+    TaskAllocationStepKind.RELEASE: 1,
+}
+_CompiledAllocationRow = tuple[tuple[int, int, int, int], ...]
 
 
 def encode_schedule(
@@ -196,6 +206,26 @@ def compile_admission_topology(
     workspace_offsets, workspace_extents = _flatten_rows(
         tuple(task.workspace_extents for task in tasks)
     )
+    allocation_rows, allocation_slot_count = _compile_allocation_rows(
+        tasks,
+        alias_index=alias_index,
+        alias_sizes=tuple(
+            int(simulation.program.alias_size_bytes[index])
+            for index in range(len(simulation.alias_ids))
+        ),
+    )
+    allocation_offsets, allocation_kinds = _flatten_rows(
+        tuple(tuple(item[0] for item in row) for row in allocation_rows)
+    )
+    _, allocation_slots = _flatten_rows(
+        tuple(tuple(item[1] for item in row) for row in allocation_rows)
+    )
+    _, allocation_bytes = _flatten_rows(
+        tuple(tuple(item[2] for item in row) for row in allocation_rows)
+    )
+    _, allocation_aliases = _flatten_rows(
+        tuple(tuple(item[3] for item in row) for row in allocation_rows)
+    )
     buffers = (
         _u32(workspace_offsets),
         _u64(workspace_extents),
@@ -206,6 +236,11 @@ def compile_admission_topology(
         _u32(handoff_offsets),
         _u32(handoff_sources),
         _u32(handoff_destinations),
+        _u32(allocation_offsets),
+        _u32(allocation_slots),
+        _u64(allocation_bytes),
+        _u32(allocation_aliases),
+        _u8(allocation_kinds),
     )
     value = CAdmissionTopology(
         abi_version=ABI_VERSION,
@@ -223,8 +258,94 @@ def compile_admission_topology(
         handoff_offsets=buffers[6],
         handoff_source_aliases=buffers[7],
         handoff_destination_aliases=buffers[8],
+        allocation_slot_count=allocation_slot_count,
+        task_allocation_offsets=buffers[9],
+        task_allocation_slots=buffers[10],
+        task_allocation_bytes=buffers[11],
+        task_allocation_aliases=buffers[12],
+        task_allocation_kinds=buffers[13],
     )
     return CompiledAdmissionTopology(value, buffers, topology.digest)
+
+
+def _compile_allocation_rows(
+    tasks: tuple[TaskAdmissionSpec, ...],
+    *,
+    alias_index: dict[str, int],
+    alias_sizes: tuple[int, ...],
+) -> tuple[tuple[_CompiledAllocationRow, ...], int]:
+    """Assign dense lease slots while preserving each profiled task order."""
+
+    rows: list[tuple[tuple[int, int, int, int], ...]] = []
+    next_slot = 0
+    for task in tasks:
+        if task.allocation_steps:
+            steps = task.allocation_steps
+        else:
+            steps = _synthetic_allocation_steps(task, alias_index, alias_sizes)
+        slot_by_ordinal: dict[int, int] = {}
+        row: list[tuple[int, int, int, int]] = []
+        for step in steps:
+            if step.kind is TaskAllocationStepKind.ALLOCATE:
+                slot = next_slot
+                next_slot += 1
+                slot_by_ordinal[step.allocation_ordinal] = slot
+            else:
+                slot = slot_by_ordinal[step.allocation_ordinal]
+            row.append(
+                (
+                    _ALLOCATION_KIND[step.kind],
+                    slot,
+                    step.charged_bytes,
+                    (
+                        NO_INDEX
+                        if step.output_alias_group_id is None
+                        else alias_index[step.output_alias_group_id]
+                    ),
+                )
+            )
+        rows.append(tuple(row))
+    return tuple(rows), next_slot
+
+
+def _synthetic_allocation_steps(
+    task: TaskAdmissionSpec,
+    alias_index: dict[str, int],
+    alias_sizes: tuple[int, ...],
+) -> tuple[TaskAllocationStep, ...]:
+    """Construct the legacy task-boundary envelope for hand-authored IR."""
+
+    steps: list[TaskAllocationStep] = []
+    ordinal = 0
+    workspace_ordinals: list[int] = []
+    for extent in task.workspace_extents:
+        steps.append(
+            TaskAllocationStep(
+                ordinal,
+                TaskAllocationStepKind.ALLOCATE,
+                extent,
+            )
+        )
+        workspace_ordinals.append(ordinal)
+        ordinal += 1
+    for alias_id in (*task.fresh_output_aliases, *task.replacement_aliases):
+        alias_bytes = alias_sizes[alias_index[alias_id]]
+        if alias_bytes == 0:
+            continue
+        steps.append(
+            TaskAllocationStep(
+                ordinal,
+                TaskAllocationStepKind.ALLOCATE,
+                alias_bytes,
+                alias_id,
+            )
+        )
+        ordinal += 1
+    steps.extend(
+        TaskAllocationStep(item, TaskAllocationStepKind.RELEASE)
+        for item in workspace_ordinals
+    )
+    return tuple(steps)
 
 
 def evaluate_schedule_admission(
