@@ -18,8 +18,12 @@ from shadowspill.ir import (
 )
 from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.runtime_adapter.abi import (
+    FIXED_LAYOUT_ABI_VERSION,
     AdapterStatistics,
     ExecutionDescription,
+    FixedDependencyDescription,
+    FixedLayoutDescription,
+    FixedPlacementDescription,
     ObjectBinding,
     ObjectSnapshot,
     ObjectUpdate,
@@ -37,6 +41,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     raise_if_allocator_failed,
     read_allocator_failure,
 )
+from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.profiling.allocation_abi import TaskAllocationABI
@@ -155,6 +160,7 @@ class RuntimeBridge:
         self._registered: set[str] = set()
         self._debug_task_timing_capacity = 0
         self._admitted_tasks: dict[str, tuple[str, ...]] = {}
+        self._fixed_layout_installed = False
 
     def profile_range_begin(self, name: str) -> int:
         """Open one optional provider-backed profiling range."""
@@ -213,6 +219,67 @@ class RuntimeBridge:
         )
         self._admitted_tasks[task.task_id] = runtime_inputs
         return self._resolve_execution_handle(task.task_id)
+
+    def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
+        """Copy one dense physical-layout certificate into the C runtime."""
+
+        if self._admitted_tasks:
+            raise RuntimeExecutionError(
+                "fixed layout must be admitted before execution tasks"
+            )
+        placements = (FixedPlacementDescription * len(layout.placements))(
+            *(
+                FixedPlacementDescription(
+                    task_id=item.task_id,
+                    ordinal=item.ordinal,
+                    object_id=item.object_id,
+                    offset=item.offset,
+                    bytes=item.bytes,
+                    alignment_bytes=item.alignment,
+                    kind=int(item.kind),
+                )
+                for item in layout.placements
+            )
+        )
+        dependencies = (FixedDependencyDescription * len(layout.dependencies))(
+            *(
+                FixedDependencyDescription(
+                    predecessor_task_id=item.predecessor_task_id,
+                    predecessor_action_ordinal=(
+                        item.predecessor_action_ordinal
+                    ),
+                    successor_task_id=item.successor_task_id,
+                    successor_ordinal=item.successor_ordinal,
+                    successor_kind=int(item.successor_kind),
+                )
+                for item in layout.dependencies
+            )
+        )
+        description = FixedLayoutDescription(
+            abi_version=FIXED_LAYOUT_ABI_VERSION,
+            slice_bytes=layout.slice_bytes,
+            placements=placements if layout.placements else None,
+            placement_count=len(layout.placements),
+            dependencies=dependencies if layout.dependencies else None,
+            dependency_count=len(layout.dependencies),
+        )
+        self._require(
+            self.library.shadowspill_pytorch_admit_fixed_layout(
+                ctypes.byref(description)
+            ),
+            "admit fixed physical layout",
+        )
+        self._fixed_layout_installed = True
+
+    def seal_fixed_layout(self) -> None:
+        """Resolve the installed certificate after execution admission."""
+
+        if not self._fixed_layout_installed:
+            raise RuntimeExecutionError("no fixed physical layout was admitted")
+        self._require(
+            self.library.shadowspill_pytorch_seal_fixed_layout(),
+            "seal fixed physical layout",
+        )
 
     def _runtime_inputs(self, input_alias_ids: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(

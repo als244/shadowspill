@@ -267,6 +267,94 @@ static int duplicate_placement_is_rejected(void) {
     return failed ? -1 : 0;
 }
 
+static int empty_fixed_slice_allows_dynamic_task(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 64U,
+        .minimum_alignment = 16U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    const ShadowSpillFixedPlacementDescription placement = {
+        .task_id = 15U,
+        .ordinal = 0U,
+        .object_id = SHADOWSPILL_RUNTIME_NO_ID,
+        .offset = SHADOWSPILL_RUNTIME_NO_ID,
+        .bytes = 32U,
+        .alignment_bytes = 16U,
+        .kind = SHADOWSPILL_DYNAMIC_TASK_ALLOCATION,
+    };
+    const ShadowSpillFixedLayoutDescription layout = {
+        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .placements = &placement,
+        .placement_count = 1U,
+    };
+    const ShadowSpillTaskAllocationABIStep steps[2] = {
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 16U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        },
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 32U,
+            .charged_bytes = 32U,
+            .alignment_bytes = 16U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
+        },
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 15U,
+        .allocation_abi_steps = steps,
+        .allocation_abi_step_count = 2U,
+        .enforce_allocation_abi = 1U,
+    };
+    failed = failed || shadowspill_admit_fixed_layout(runtime, &layout) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &execution) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_seal_fixed_layout(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, execution.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillAllocation allocation = {0};
+    failed = failed || shadowspill_allocate(
+            runtime, 32U, 16U, compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(runtime, allocation.allocation_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(runtime, execution.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_clear_execution_plan(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.allocated_bytes != 0U ||
+        statistics.largest_free_range_bytes != 64U;
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        failed = failed ||
+            shadowspill_mock_destroy_compute_stream(mock, compute) != 0;
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int eviction_completion_orders_fixed_reuse(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -623,6 +711,10 @@ int main(void) {
     }
     if (duplicate_placement_is_rejected() != 0) {
         fprintf(stderr, "duplicate fixed placement was accepted\n");
+        return EXIT_FAILURE;
+    }
+    if (empty_fixed_slice_allows_dynamic_task() != 0) {
+        fprintf(stderr, "empty fixed slice rejected a dynamic task\n");
         return EXIT_FAILURE;
     }
     if (eviction_completion_orders_fixed_reuse() != 0) {

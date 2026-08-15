@@ -1119,6 +1119,26 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_admit_execution(
         : shadowspill_admit_execution(runtime, description);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_admit_fixed_layout(
+    const ShadowSpillFixedLayoutDescription *description
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_admit_fixed_layout(runtime, description);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_seal_fixed_layout(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_seal_fixed_layout(runtime);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_clear_execution_plan(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);

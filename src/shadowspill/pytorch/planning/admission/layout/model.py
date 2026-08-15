@@ -27,6 +27,21 @@ class LeaseLifetime:
     alias_group_id: str | None = None
     action_index: int | None = None
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "action_index": self.action_index,
+            "alias_group_id": self.alias_group_id,
+            "alignment": self.alignment,
+            "bytes": self.bytes,
+            "causal_end": self.causal_end,
+            "causal_start": self.causal_start,
+            "lease_id": self.lease_id,
+            "predicted_end_ns": self.predicted_end_ns,
+            "predicted_start_ns": self.predicted_start_ns,
+            "purpose": self.purpose.value,
+            "task_id": self.task_id,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class FixedLayoutPlacement:
@@ -104,7 +119,11 @@ class FixedPhysicalLayout:
     initial_alias_leases: tuple[tuple[str, int], ...]
     task_allocation_leases: tuple[tuple[str, int, int], ...]
     action_destination_leases: tuple[tuple[int, int], ...]
-    dynamic_lease_ids: tuple[int, ...] = ()
+    dynamic_lifetimes: tuple[LeaseLifetime, ...] = ()
+
+    @property
+    def dynamic_lease_ids(self) -> tuple[int, ...]:
+        return tuple(item.lease_id for item in self.dynamic_lifetimes)
 
     @property
     def slack_bytes(self) -> int:
@@ -129,12 +148,14 @@ class FixedPhysicalLayout:
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "fixed_slice_bytes": self.fixed_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
-            "dynamic_lease_ids": list(self.dynamic_lease_ids),
+            "dynamic_lifetimes": [
+                item.to_dict() for item in self.dynamic_lifetimes
+            ],
             "program_digest": self.program_digest,
             "required_bytes": self.required_bytes,
             "reuse_dependencies": [item.to_dict() for item in self.reuse_dependencies],
             "schedule_digest": self.schedule_digest,
-            "schema": "shadowspill.fixed_physical_layout/v1",
+            "schema": "shadowspill.fixed_physical_layout/v2",
             "task_allocation_leases": [
                 {
                     "allocation_ordinal": ordinal,

@@ -21,7 +21,11 @@ from shadowspill.planner import (
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.pytorch.planning.admission import build_fixed_layout_admission
+from shadowspill.pytorch.planning.admission import (
+    build_fixed_layout_admission,
+    project_runtime_fixed_layout,
+)
+from shadowspill.pytorch.runtime_adapter import RuntimePlacementKind
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.planner._examples import COMPUTE, DEVICE
 
@@ -171,15 +175,22 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
 def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None:
     program = Program(
         devices=(DEVICE,),
-        alias_groups=(AliasGroupSpec("result", "cuda_0", 8),),
-        objects=(ObjectSpec("result_object", "result", 0, 8),),
+        alias_groups=(AliasGroupSpec("alias_000000", "cuda_0", 8),),
+        objects=(ObjectSpec("object_000000", "alias_000000", 0, 8),),
         profiles=(TaskProfile("profile", 10, 0, "abi"),),
-        tasks=(TaskSpec("task", COMPUTE, "profile", outputs=("result_object",)),),
+        tasks=(
+            TaskSpec(
+                "task_000000",
+                COMPUTE,
+                "profile",
+                outputs=("object_000000",),
+            ),
+        ),
     )
     schedule = MemorySchedule(
         (),
         (),
-        (ResidencySpec("result", MemoryLocation.DEVICE),),
+        (ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
     )
     config = SimulationConfig.single_device(
         "cuda_0",
@@ -195,14 +206,14 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         1,
         (
             TaskAdmissionSpec(
-                "task",
-                fresh_output_aliases=("result",),
+                "task_000000",
+                fresh_output_aliases=("alias_000000",),
                 allocation_steps=(
                     TaskAllocationStep(
                         0,
                         TaskAllocationStepKind.ALLOCATE,
                         8,
-                        output_alias_group_id="result",
+                        output_alias_group_id="alias_000000",
                     ),
                 ),
             ),
@@ -212,11 +223,123 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
     admitted = build_fixed_layout_admission(
         _selected(program, schedule, config),
         topology,
-        dynamic_alias_group_ids=frozenset({"result"}),
+        dynamic_alias_group_ids=frozenset({"alias_000000"}),
     )
 
     assert admitted.layout.fixed_slice_bytes == 0
     assert admitted.layout.dynamic_reserve_bytes == 8
     assert admitted.layout.required_bytes == 8
     assert admitted.layout.dynamic_lease_ids == (0,)
+    assert admitted.layout.dynamic_lifetimes[0].bytes == 8
+    assert admitted.layout.dynamic_lifetimes[0].task_id == "task_000000"
     assert admitted.layout.placements == ()
+    runtime = project_runtime_fixed_layout(
+        admitted.layout,
+        program,
+        schedule,
+        initial_task_id=1 << 60,
+    )
+    assert runtime.slice_bytes == 0
+    assert runtime.dependencies == ()
+    assert len(runtime.placements) == 1
+    assert runtime.placements[0].kind is RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION
+    assert runtime.placements[0].task_id == 0
+    assert runtime.placements[0].ordinal == 0
+    assert runtime.placements[0].bytes == 8
+
+
+def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec(
+                "alias_000000",
+                "cuda_0",
+                64,
+                retain_spill_copy=True,
+            ),
+        ),
+        objects=(ObjectSpec("object_000000", "alias_000000", 0, 64),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "task_000000",
+                COMPUTE,
+                "profile",
+                inputs=("object_000000",),
+            ),
+            TaskSpec(
+                "task_000001",
+                COMPUTE,
+                "profile",
+                dependencies=("task_000000",),
+            ),
+            TaskSpec(
+                "task_000002",
+                COMPUTE,
+                "profile",
+                dependencies=("task_000001",),
+                inputs=("object_000000",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(
+            ResidencySpec("alias_000000", MemoryLocation.DEVICE),
+        ),
+        actions=(
+            MemoryAction(
+                "task_000000",
+                "alias_000000",
+                MemoryActionKind.OFFLOAD,
+            ),
+            MemoryAction(
+                "task_000001",
+                "alias_000000",
+                MemoryActionKind.PREFETCH,
+            ),
+        ),
+        final_residency=(
+            ResidencySpec("alias_000000", MemoryLocation.DEVICE),
+        ),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=64,
+        host_capacity_bytes=128,
+        fetch_bandwidth_bytes_per_second=64_000_000_000,
+        evict_bandwidth_bytes_per_second=64_000_000_000,
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        64,
+        64,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+    )
+    admitted = build_fixed_layout_admission(
+        _selected(program, schedule, config), topology
+    )
+
+    runtime = project_runtime_fixed_layout(
+        admitted.layout,
+        program,
+        schedule,
+        initial_task_id=1 << 60,
+    )
+
+    assert len(runtime.placements) == 2
+    initial = next(
+        item for item in runtime.placements if item.task_id == 1 << 60
+    )
+    scheduled = next(item for item in runtime.placements if item.task_id == 1)
+    assert initial.ordinal == 0
+    assert initial.kind is RuntimePlacementKind.ACTION_DESTINATION
+    assert scheduled.ordinal == 0
+    assert len(runtime.dependencies) == 1
+    dependency = runtime.dependencies[0]
+    assert dependency.predecessor_task_id == 0
+    assert dependency.predecessor_action_ordinal == 0
+    assert dependency.successor_task_id == 1
+    assert dependency.successor_ordinal == 0
+    assert dependency.successor_kind is RuntimePlacementKind.ACTION_DESTINATION

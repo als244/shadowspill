@@ -6,6 +6,12 @@ from .failures import (
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
 )
+from .fixed_layout import (
+    RuntimeFixedDependency,
+    RuntimeFixedLayout,
+    RuntimeFixedPlacement,
+    RuntimePlacementKind,
+)
 from .runtime import (
     MemoryPool,
     PlanMemory,
@@ -23,7 +29,11 @@ __all__ = [
     "RuntimeBridge",
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
+    "RuntimeFixedDependency",
+    "RuntimeFixedLayout",
+    "RuntimeFixedPlacement",
     "RuntimeFailureDiagnostics",
+    "RuntimePlacementKind",
     "TransferCapabilities",
     "TransferProfile",
     "actions_by_task",

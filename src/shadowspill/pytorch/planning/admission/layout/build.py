@@ -93,7 +93,9 @@ def build_fixed_layout_admission(
         action_destination_leases=tuple(
             sorted(builder.action_destination_leases.items())
         ),
-        dynamic_lease_ids=tuple(sorted(dynamic_lease_ids)),
+        dynamic_lifetimes=tuple(
+            sorted(dynamic_lifetimes, key=lambda item: item.lease_id)
+        ),
     )
     simulator_input = _simulation_input(selected, layout)
     return FixedLayoutAdmission(

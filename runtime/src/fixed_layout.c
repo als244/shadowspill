@@ -122,7 +122,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
     ShadowSpillRuntime *runtime,
     uint64_t bytes
 ) {
-    if (runtime == NULL || bytes == 0U) {
+    if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
@@ -130,6 +130,8 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     if (runtime->fixed_layout.active) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    } else if (bytes == 0U) {
+        runtime->fixed_layout.active = 1U;
     } else {
         uint64_t offset = 0U;
         const int reserve_status = shadowspill_memory_pool_reserve_locked(
@@ -178,6 +180,8 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
         /* Clearing an absent layout is intentionally idempotent. */
     } else if (has_borrowed_layout_lease(pool)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    } else if (runtime->fixed_layout.slice_bytes == 0U) {
+        clear_metadata(&runtime->fixed_layout);
     } else if (shadowspill_memory_pool_release_locked(
                    pool,
                    runtime->fixed_layout.slice_offset,
@@ -510,7 +514,6 @@ static int descriptions_are_valid(
 ) {
     if (description == NULL ||
         description->abi_version != SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION ||
-        description->slice_bytes == 0U ||
         (description->placement_count != 0U &&
          description->placements == NULL) ||
         (description->dependency_count != 0U &&

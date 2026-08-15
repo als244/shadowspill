@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 34U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 35U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -151,6 +151,16 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_admit_execution(
     const ShadowSpillExecutionDescription *description
 );
+
+/* Install one copied physical-layout certificate before execution admission. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_admit_fixed_layout(
+    const ShadowSpillFixedLayoutDescription *description
+);
+
+/* Resolve every certificate endpoint after all execution tasks are admitted. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_seal_fixed_layout(void);
 
 /* Clear the completed plan's immutable execution records. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus

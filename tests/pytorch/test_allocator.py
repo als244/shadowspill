@@ -13,6 +13,9 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     Allocation,
     AllocationEvent,
     CudaStatistics,
+    FixedDependencyDescription,
+    FixedLayoutDescription,
+    FixedPlacementDescription,
     ObjectBinding,
     ObjectSnapshot,
     ObjectUpdate,
@@ -84,6 +87,8 @@ class _Library:
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_admit_execution = _Function()
+    shadowspill_pytorch_admit_fixed_layout = _Function()
+    shadowspill_pytorch_seal_fixed_layout = _Function()
     shadowspill_pytorch_clear_execution_plan = _Function()
     shadowspill_pytorch_resolve_execution = _Function()
     shadowspill_pytorch_before_execution = _Function()
@@ -108,6 +113,9 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24
+    assert ctypes.sizeof(FixedPlacementDescription) == 56
+    assert ctypes.sizeof(FixedDependencyDescription) == 40
+    assert ctypes.sizeof(FixedLayoutDescription) == 48
     assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32
@@ -135,6 +143,10 @@ def test_adapter_signatures_are_configured_together() -> None:
     ]
     assert library.shadowspill_pytorch_check_physical_budget.argtypes == []
     assert library.shadowspill_pytorch_clear_execution_plan.argtypes == []
+    assert library.shadowspill_pytorch_admit_fixed_layout.argtypes == [
+        ctypes.POINTER(FixedLayoutDescription)
+    ]
+    assert library.shadowspill_pytorch_seal_fixed_layout.argtypes == []
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [
         ctypes.POINTER(AdapterConfig)
     ]

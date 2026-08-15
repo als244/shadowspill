@@ -17,6 +17,7 @@ from .layout import (
     FixedLayoutReuse,
     FixedPhysicalLayout,
     build_fixed_layout_admission,
+    project_runtime_fixed_layout,
 )
 from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
 from .selection import (
@@ -47,6 +48,7 @@ __all__ = [
     "build_selected_admission",
     "output_bindings_for_entrypoints",
     "physical_admission",
+    "project_runtime_fixed_layout",
     "reconcile_spill_pool",
     "replay_admission",
     "seal_physical_budget",

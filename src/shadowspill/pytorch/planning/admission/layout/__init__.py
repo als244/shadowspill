@@ -8,6 +8,7 @@ from .model import (
     FixedLayoutReuse,
     FixedPhysicalLayout,
 )
+from .runtime import project_runtime_fixed_layout
 
 __all__ = [
     "FixedLayoutAdmission",
@@ -16,4 +17,5 @@ __all__ = [
     "FixedLayoutReuse",
     "FixedPhysicalLayout",
     "build_fixed_layout_admission",
+    "project_runtime_fixed_layout",
 ]

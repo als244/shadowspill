@@ -5,8 +5,9 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 34
+ADAPTER_ABI_VERSION: Final = 35
 RUNTIME_ABI_VERSION: Final = 27
+FIXED_LAYOUT_ABI_VERSION: Final = 1
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
@@ -343,6 +344,39 @@ class ExecutionDescription(ctypes.Structure):
         ("maximum_charged_allocation_bytes", ctypes.c_uint64),
         ("live_requested_allocation_limit_bytes", ctypes.c_uint64),
         ("live_charged_allocation_limit_bytes", ctypes.c_uint64),
+    ]
+
+
+class FixedPlacementDescription(ctypes.Structure):
+    _fields_ = [
+        ("task_id", ctypes.c_uint64),
+        ("ordinal", ctypes.c_uint64),
+        ("object_id", ctypes.c_uint64),
+        ("offset", ctypes.c_uint64),
+        ("bytes", ctypes.c_uint64),
+        ("alignment_bytes", ctypes.c_uint64),
+        ("kind", ctypes.c_uint8),
+    ]
+
+
+class FixedDependencyDescription(ctypes.Structure):
+    _fields_ = [
+        ("predecessor_task_id", ctypes.c_uint64),
+        ("predecessor_action_ordinal", ctypes.c_uint64),
+        ("successor_task_id", ctypes.c_uint64),
+        ("successor_ordinal", ctypes.c_uint64),
+        ("successor_kind", ctypes.c_uint8),
+    ]
+
+
+class FixedLayoutDescription(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("slice_bytes", ctypes.c_uint64),
+        ("placements", ctypes.POINTER(FixedPlacementDescription)),
+        ("placement_count", ctypes.c_uint64),
+        ("dependencies", ctypes.POINTER(FixedDependencyDescription)),
+        ("dependency_count", ctypes.c_uint64),
     ]
 
 
@@ -695,6 +729,18 @@ def _configure_execution(library: Any) -> None:
         library,
         "shadowspill_pytorch_admit_execution",
         [ctypes.POINTER(ExecutionDescription)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_admit_fixed_layout",
+        [ctypes.POINTER(FixedLayoutDescription)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_seal_fixed_layout",
+        [],
         ctypes.c_uint32,
     )
     _signature(library, "shadowspill_pytorch_clear_execution_plan", [], ctypes.c_uint32)
