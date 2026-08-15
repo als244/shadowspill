@@ -106,24 +106,45 @@ int shadowspill_object_action_is_head_locked(
     return object != NULL && action != NULL && object->action_head == action;
 }
 
-int shadowspill_object_fetch_event_unpublished_locked(
+void shadowspill_object_note_fetch_queued_locked(ShadowSpillObject *object) {
+    if (object == NULL) {
+        return;
+    }
+    (void)atomic_fetch_add_explicit(
+        &object->unpublished_fetch_count, 1U, memory_order_release
+    );
+}
+
+static int remove_unpublished_fetch_locked(ShadowSpillObject *object) {
+    if (object == NULL || atomic_load_explicit(
+            &object->unpublished_fetch_count, memory_order_acquire
+        ) == 0U) {
+        return -1;
+    }
+    (void)atomic_fetch_sub_explicit(
+        &object->unpublished_fetch_count, 1U, memory_order_release
+    );
+    return 0;
+}
+
+int shadowspill_object_note_fetch_published_locked(
+    ShadowSpillObject *object
+) {
+    return remove_unpublished_fetch_locked(object);
+}
+
+int shadowspill_object_note_fetch_discarded_locked(
+    ShadowSpillObject *object
+) {
+    return remove_unpublished_fetch_locked(object);
+}
+
+int shadowspill_object_has_unpublished_fetch_locked(
     const ShadowSpillObject *object
 ) {
-    if (object == NULL || !object->prefetch_pending ||
-        object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
-        return 0;
-    }
-    /*
-     * A functional output may replace an in-flight fetch generation. In that
-     * case the current execution lease is already authoritative and the old
-     * fetch head must not stall its consumer.
-     */
-    if (object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY &&
-        (object->action_head == NULL ||
-         object->action_head->kind == SHADOWSPILL_RUNTIME_PREFETCH)) {
-        return 0;
-    }
-    return 1;
+    return object != NULL && atomic_load_explicit(
+        &object->unpublished_fetch_count, memory_order_acquire
+    ) != 0U;
 }
 
 int shadowspill_object_remove_action_locked(

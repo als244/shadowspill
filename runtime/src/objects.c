@@ -44,7 +44,7 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->location_count = runtime->pool_count;
     atomic_init(&created->references, 1U);
     atomic_init(&created->detached, 0U);
-    atomic_init(&created->prefetch_pending, 0U);
+    atomic_init(&created->unpublished_fetch_count, 0U);
     if (pthread_mutex_init(&created->lock, NULL) != 0) {
         free(created->locations);
         free(created);
@@ -738,7 +738,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             }
             pthread_mutex_lock(&object->lock);
             const int waits_for_fetch =
-                shadowspill_object_fetch_event_unpublished_locked(object);
+                shadowspill_object_has_unpublished_fetch_locked(object);
             pthread_mutex_unlock(&object->lock);
             if (!waits_for_fetch) {
                 break;
@@ -842,8 +842,8 @@ static void discard_actions_locked(
         ShadowSpillQueuedAction *next = head->next;
         if (head->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
             pthread_mutex_lock(&head->object->lock);
-            atomic_store_explicit(
-                &head->object->prefetch_pending, 0U, memory_order_release
+            (void)shadowspill_object_note_fetch_discarded_locked(
+                head->object
             );
             pthread_cond_broadcast(&head->object->state_changed);
             pthread_mutex_unlock(&head->object->lock);
@@ -1052,9 +1052,9 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         created->fence = fence;
         shadowspill_retain_task_fence(fence);
         if (created->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            atomic_store_explicit(
-                &object->prefetch_pending, 1U, memory_order_release
-            );
+            pthread_mutex_lock(&object->lock);
+            shadowspill_object_note_fetch_queued_locked(object);
+            pthread_mutex_unlock(&object->lock);
         }
         if (tail == NULL) {
             head = created;

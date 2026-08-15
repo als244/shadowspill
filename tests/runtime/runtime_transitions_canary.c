@@ -1749,6 +1749,25 @@ static int queued_release_causally_precedes_fetch(void) {
         completed.authoritative_version != description.initial_version ||
         statistics.fetch_transfers != 1U;
 
+    if (failed) {
+        ShadowSpillRuntimeFailure failure = {0};
+        (void)shadowspill_runtime_failure(runtime, &failure);
+        fprintf(
+            stderr,
+            "queued release/fetch mismatch: status=%u object=%llu "
+            "allocation=%llu binding=%llu residency=%u execution=%p "
+            "version=%llu fetches=%llu\n",
+            failure.status,
+            (unsigned long long)failure.object_id,
+            (unsigned long long)failure.allocation_id,
+            (unsigned long long)binding.allocation_id,
+            (unsigned)completed.residency,
+            completed.execution_pointer,
+            (unsigned long long)completed.authoritative_version,
+            (unsigned long long)statistics.fetch_transfers
+        );
+    }
+
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
@@ -1945,10 +1964,13 @@ static int completed_offload_preserves_later_queued_fetch(void) {
     failed = failed || queued_fetch == NULL;
 
     sleep_milliseconds(50U);
-    uint8_t prefetch_pending = 0U;
+    uint32_t unpublished_fetches = 0U;
     if (queued_fetch != NULL) {
         pthread_mutex_lock(&queued_fetch->object->lock);
-        prefetch_pending = queued_fetch->object->prefetch_pending;
+        unpublished_fetches = atomic_load_explicit(
+            &queued_fetch->object->unpublished_fetch_count,
+            memory_order_acquire
+        );
         pthread_mutex_unlock(&queued_fetch->object->lock);
         pthread_mutex_lock(&runtime->actions.lock);
         queued_fetch->processing = 0U;
@@ -1957,16 +1979,132 @@ static int completed_offload_preserves_later_queued_fetch(void) {
         pthread_cond_broadcast(&runtime->condition);
         pthread_mutex_unlock(&runtime->mutex);
     }
-    failed = failed || prefetch_pending == 0U ||
+    failed = failed || unpublished_fetches == 0U ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
     if (failed) {
         fprintf(
             stderr,
-            "queued fetch marker mismatch: pending=%u\n",
-            (unsigned)prefetch_pending
+            "queued fetch marker mismatch: unpublished=%u\n",
+            (unsigned)unpublished_fetches
         );
     }
 
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
+static int consumer_waits_for_latest_queued_fetch_generation(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = 50000000U,
+        .event_delay_nanoseconds = 1000000U,
+    };
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig configured = runtime_config;
+    configured.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&configured, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription object = {
+        .object_id = 107U,
+        .size_bytes = 32U,
+        .initial_version = 1U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillRuntimeAction release = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const uint64_t input = object.object_id;
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 73U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    ShadowSpillObjectSnapshot first_fetch = {0};
+    ShadowSpillObjectSnapshot completed = {0};
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &consumer) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 70U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK;
+
+    for (uint32_t attempt = 0U; !failed && attempt < 500U; ++attempt) {
+        failed = shadowspill_object_snapshot(
+            runtime, object.object_id, &first_fetch
+        ) != SHADOWSPILL_RUNTIME_OK;
+        if (!failed &&
+            first_fetch.residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+            break;
+        }
+        sleep_milliseconds(1U);
+    }
+    failed = failed ||
+        first_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+        shadowspill_after_task(
+            runtime, 71U, compute, NULL, 0U, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 72U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, consumer.task_id, compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        binding.allocation_id == first_fetch.allocation_id ||
+        shadowspill_after_execution(runtime, consumer.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            runtime, object.object_id, &completed
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        completed.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        completed.allocation_id != binding.allocation_id ||
+        statistics.fetch_transfers != 2U;
+
+    if (failed) {
+        fprintf(
+            stderr,
+            "latest fetch generation mismatch: first=%llu binding=%llu "
+            "completed=%llu residency=%u fetches=%llu\n",
+            (unsigned long long)first_fetch.allocation_id,
+            (unsigned long long)binding.allocation_id,
+            (unsigned long long)completed.allocation_id,
+            (unsigned)completed.residency,
+            (unsigned long long)statistics.fetch_transfers
+        );
+    }
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
@@ -2016,5 +2154,6 @@ int main(void) {
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
     REQUIRE_CANARY(nonretained_fetch_then_offload_reserves_fresh_spill());
     REQUIRE_CANARY(completed_offload_preserves_later_queued_fetch());
+    REQUIRE_CANARY(consumer_waits_for_latest_queued_fetch_generation());
     return EXIT_SUCCESS;
 }

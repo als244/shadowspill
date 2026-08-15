@@ -573,6 +573,17 @@ static int dispatch_prefetch_locked(
     shadowspill_event_lease_retain(object->readiness_event);
     object->has_readiness_event = 1U;
     object->residency = SHADOWSPILL_OBJECT_PREFETCHING;
+    if (shadowspill_object_note_fetch_published_locked(object) != 0) {
+        latch_action_failure(
+            runtime,
+            action,
+            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            object_id,
+            allocation->allocation_id,
+            bytes
+        );
+        return -1;
+    }
     (void)atomic_fetch_add_explicit(
         &runtime->fetch_transfers, 1U, memory_order_acq_rel
     );
@@ -744,10 +755,6 @@ static int handle_action(
                         object->allocation_id,
                         object->size_bytes
                     );
-                    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-                        object->prefetch_pending = 0U;
-                        pthread_cond_broadcast(&object->state_changed);
-                    }
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
@@ -822,7 +829,6 @@ static int handle_action(
                             object->allocation_id,
                             object->size_bytes
                         );
-                        object->prefetch_pending = 0U;
                         pthread_cond_broadcast(&object->state_changed);
                         pthread_mutex_unlock(&object->lock);
                         return -1;
@@ -838,10 +844,6 @@ static int handle_action(
                     ? dispatch_offload_locked(runtime, action)
                     : dispatch_prefetch_locked(runtime, action);
                 if (dispatched < 0) {
-                    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-                        object->prefetch_pending = 0U;
-                        pthread_cond_broadcast(&object->state_changed);
-                    }
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
@@ -982,9 +984,6 @@ static int handle_action(
                         &runtime->actions.count, memory_order_acquire
                     )
                 );
-                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-                    object->prefetch_pending = 0U;
-                }
                 pthread_cond_broadcast(&object->state_changed);
                 pthread_mutex_unlock(&object->lock);
                 if (readiness_to_release != NULL &&

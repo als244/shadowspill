@@ -388,7 +388,9 @@ static void discard_action_batch_locked(
             action->object, action
         );
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            action->object->prefetch_pending = 0U;
+            (void)shadowspill_object_note_fetch_discarded_locked(
+                action->object
+            );
         } else {
             ShadowSpillMemoryLease *source = shadowspill_execution_location(
                 runtime, action->object
@@ -484,7 +486,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         }
         batch->tail = queued;
         if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            object->prefetch_pending = 1U;
+            shadowspill_object_note_fetch_queued_locked(object);
         } else {
             ShadowSpillMemoryLease *source =
                 shadowspill_execution_location(runtime, object)->lease;

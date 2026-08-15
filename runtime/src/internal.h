@@ -255,7 +255,13 @@ typedef struct ShadowSpillObject {
     uint64_t allocation_id;
     uint8_t retain_spill_copy;
     uint8_t residency;
-    _Atomic uint8_t prefetch_pending;
+    /*
+     * Number of queued fetch generations that have not yet published a
+     * readiness event.  This must be a count rather than a Boolean: host
+     * dispatch can enqueue a later release/fetch cycle while an earlier fetch
+     * for the same object is still in flight.
+     */
+    _Atomic uint32_t unpublished_fetch_count;
     ShadowSpillEventLease *readiness_event;
     uint8_t has_readiness_event;
     uint64_t retired_generation;
@@ -785,7 +791,10 @@ int shadowspill_object_action_is_head_locked(
     const ShadowSpillObject *object,
     const ShadowSpillQueuedAction *action
 );
-int shadowspill_object_fetch_event_unpublished_locked(
+void shadowspill_object_note_fetch_queued_locked(ShadowSpillObject *object);
+int shadowspill_object_note_fetch_published_locked(ShadowSpillObject *object);
+int shadowspill_object_note_fetch_discarded_locked(ShadowSpillObject *object);
+int shadowspill_object_has_unpublished_fetch_locked(
     const ShadowSpillObject *object
 );
 int shadowspill_object_remove_action_locked(
