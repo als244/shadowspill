@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections import Counter
 from dataclasses import replace
 
 import torch.nn as nn
@@ -18,13 +19,17 @@ from ..diagnostics import (
     PlanCacheArtifact,
     PlanCompilerProfile,
     PlanDiagnostics,
+    PlanFixedLayoutAttempt,
     PlanPhaseTiming,
+    PlanPhysicalLayout,
     PlanProfilingMetadata,
     PlanReport,
+    PlanTaskMemoryEnvelope,
     PlanTaskStage,
     PlanUniqueStage,
 )
 from ..runtime_adapter import PlanMemory
+from .admission import FixedLayoutSelection, SelectedAdmission
 from .common import fixed_execution_bytes
 
 
@@ -67,6 +72,7 @@ def build_forward_report(
     cache_directories: tuple[tuple[str, str], ...] = (),
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...] = (),
     profiling_metadata: tuple[ProfilingMetadata, ...] = (),
+    physical_layouts: tuple[PlanPhysicalLayout, ...] = (),
     memory: PlanMemory,
 ) -> PlanReport:
     """Build complete forward planning evidence without writing it."""
@@ -90,6 +96,7 @@ def build_forward_report(
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
         pressurefit_results=pressurefit_results,
+        physical_layouts=physical_layouts,
     )
     return _forward_report(
         _forward_capture_identity(
@@ -130,6 +137,7 @@ def _forward_diagnostics(
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
     pressurefit_results: tuple[PressureFitResult, ...],
+    physical_layouts: tuple[PlanPhysicalLayout, ...],
 ) -> PlanDiagnostics:
     return PlanDiagnostics(
         phases=phases,
@@ -161,6 +169,7 @@ def _forward_diagnostics(
             for index, item in enumerate(profiling_metadata)
         ),
         pressurefit_runs=tuple(item.diagnostics for item in pressurefit_results),
+        physical_layouts=physical_layouts,
     )
 
 
@@ -296,6 +305,7 @@ def build_training_report(
     cache_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
+    physical_layouts: tuple[PlanPhysicalLayout, ...],
     optimizer_ordering: str,
     memory: PlanMemory,
 ) -> PlanReport:
@@ -326,6 +336,7 @@ def build_training_report(
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
         pressurefit_results=pressurefit_results,
+        physical_layouts=physical_layouts,
         memory=memory,
     )
     base = report.diagnostics
@@ -419,9 +430,74 @@ def publish_plan_report(
     )
 
 
+def fixed_layout_diagnostic(
+    plan_role: str,
+    selection: FixedLayoutSelection,
+    admitted: SelectedAdmission,
+) -> PlanPhysicalLayout:
+    """Build public immutable evidence for one certified physical layout."""
+
+    layout = admitted.fixed_layout
+    if layout is None:
+        raise ValueError("fixed-layout diagnostics require a fixed admission")
+    purposes = Counter(item.purpose.value for item in layout.placements)
+    envelopes = tuple(
+        PlanTaskMemoryEnvelope(
+            task_id,
+            envelope.maximum_requested_allocation_bytes,
+            envelope.maximum_charged_allocation_bytes,
+            envelope.live_requested_allocation_limit_bytes,
+            envelope.live_charged_allocation_limit_bytes,
+            (
+                None
+                if envelope.allocation_abi is None
+                else envelope.allocation_abi.compatibility_digest
+            ),
+            (
+                0
+                if envelope.allocation_abi is None
+                else len(envelope.allocation_abi.steps)
+            ),
+        )
+        for task_id, envelope in admitted.task_envelopes
+    )
+    return PlanPhysicalLayout(
+        plan_role=plan_role,
+        strategy="fixed",
+        layout_digest=layout.digest,
+        program_digest=layout.program_digest,
+        schedule_digest=layout.schedule_digest,
+        topology_digest=layout.topology_digest,
+        pool_capacity_bytes=layout.pool_capacity_bytes,
+        original_object_capacity_bytes=selection.original_object_capacity_bytes,
+        effective_object_capacity_bytes=selection.topology.object_capacity_bytes,
+        object_capacity_reduction_bytes=selection.capacity_reduction_bytes,
+        fixed_slice_bytes=layout.fixed_slice_bytes,
+        dynamic_reserve_bytes=layout.dynamic_reserve_bytes,
+        required_bytes=layout.required_bytes,
+        slack_bytes=layout.slack_bytes,
+        placement_count=len(layout.placements),
+        dynamic_lifetime_count=len(layout.dynamic_lifetimes),
+        reuse_dependency_count=len(layout.reuse_dependencies),
+        placements_by_purpose=tuple(sorted(purposes.items())),
+        attempts=tuple(
+            PlanFixedLayoutAttempt(
+                item.requested_object_capacity_bytes,
+                item.effective_object_capacity_bytes,
+                item.required_bytes,
+                item.pool_capacity_bytes,
+                item.accepted,
+            )
+            for item in selection.attempts
+        ),
+        task_memory_envelopes=envelopes,
+    )
+
+
 __all__ = [
     "build_forward_report",
     "build_training_report",
     "cache_artifacts",
+    "fixed_layout_diagnostic",
     "publish_plan_report",
 ]

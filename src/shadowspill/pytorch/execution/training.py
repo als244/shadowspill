@@ -37,11 +37,13 @@ from shadowspill.pytorch.materialization.training import TrainingMaterializedSta
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     current_optimizer_bindings,
+    opaque_optimizer_outputs,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
 )
+from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
 
@@ -94,6 +96,7 @@ class _ProcessedTaskOutputs:
     outputs: tuple[torch.Tensor, ...]
     adopted: tuple[tuple[torch.Tensor, str], ...]
     replacement_aliases: frozenset[str]
+    optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
 
 
 class TrainingExecutor:
@@ -108,6 +111,8 @@ class TrainingExecutor:
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
         *,
+        initial_fixed_layout: RuntimeFixedLayout | None = None,
+        recurrent_fixed_layout: RuntimeFixedLayout,
         initial_memory_envelopes: Mapping[str, TaskMemoryEnvelope] | None = None,
         recurrent_memory_envelopes: Mapping[str, TaskMemoryEnvelope],
         optimizer_state_preinitialized: bool = False,
@@ -133,22 +138,36 @@ class TrainingExecutor:
             functions=functions,
             memory_envelopes=recurrent_memory_envelopes,
         )
-        if self._initial is None:
-            self._recurrent = self._admit_run(self._recurrent)
-        self._trace_label_run: _PlanRun | None = None
-        self._configure_task_trace_labels(
-            self._initial if self._initial is not None else self._recurrent
+        if (self._initial is None) != (initial_fixed_layout is None):
+            raise ValueError(
+                "initial execution plan and fixed layout must be provided together"
+            )
+        self._initial_fixed_layout = initial_fixed_layout
+        self._recurrent_fixed_layout = recurrent_fixed_layout
+        self._optimizer_state_initialized = not optimizer_state_was_lazy
+        self._optimizer_state_available = (
+            optimizer_state_preinitialized or not optimizer_state_was_lazy
         )
+        # Materialization uses short-lived legacy action records.  Replace
+        # them with exactly one immutable initial or recurrent plan.
+        self._bridge.clear_execution_plan()
+        if self._initial is not None and not self._optimizer_state_initialized:
+            assert self._initial_fixed_layout is not None
+            self._initial = self._admit_run(self._initial, self._initial_fixed_layout)
+            self._active_run = self._initial
+        else:
+            self._recurrent = self._admit_run(
+                self._recurrent, self._recurrent_fixed_layout
+            )
+            self._active_run = self._recurrent
+        self._trace_label_run: _PlanRun | None = None
+        self._configure_task_trace_labels(self._active_run)
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
             for item in recurrent[0].gradients
             for model_parameter in (state.model.get_parameter(item.parameter_name),)
         }
         self._invocations = 0
-        self._optimizer_state_initialized = not optimizer_state_was_lazy
-        self._optimizer_state_available = (
-            optimizer_state_preinitialized or not optimizer_state_was_lazy
-        )
         self._optimizer_size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in self._recurrent.plan.program.alias_groups
@@ -174,7 +193,24 @@ class TrainingExecutor:
         self._span_start_event: torch.cuda.Event | None = None
         self._span_end_event: torch.cuda.Event | None = None
 
-    def _admit_run(self, run: _PlanRun) -> _PlanRun:
+    def _admit_run(
+        self,
+        run: _PlanRun,
+        fixed_layout: RuntimeFixedLayout,
+    ) -> _PlanRun:
+        self._bridge.admit_fixed_layout(fixed_layout)
+        initial_actions = tuple(
+            MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
+            for alias_id in run.initial_prefetches
+        )
+        self._bridge.admit_initial_actions(
+            initial_actions,
+            task_number=fixed_layout.initial_task_id,
+            action_trace_labels=tuple(
+                f"shadowspill.fetch.initial.{alias_id}"
+                for alias_id in run.initial_prefetches
+            ),
+        )
         labels = TransferLabelIndex(
             run.plan.program,
             {record.task.task_id: record.trace_label for record in run.execution},
@@ -193,7 +229,12 @@ class TrainingExecutor:
                     ),
                 )
             )
-        return replace(run, execution=tuple(admitted))
+        self._bridge.seal_fixed_layout()
+        return replace(
+            run,
+            execution=tuple(admitted),
+            initial_task_id=fixed_layout.initial_task_id,
+        )
 
     def prepare_execution_tracing(self) -> None:
         """Lazily allocate reusable trace buffers and timing events."""
@@ -287,6 +328,18 @@ class TrainingExecutor:
         )
         if run is None:
             raise AssertionError("initial optimizer plan is unavailable")
+        if run is not self._active_run:
+            self._bridge.clear_execution_plan()
+            if run is self._initial:
+                layout = self._initial_fixed_layout
+                if layout is None:
+                    raise AssertionError("initial fixed layout is unavailable")
+                self._initial = self._admit_run(run, layout)
+                run = self._initial
+            else:
+                self._recurrent = self._admit_run(run, self._recurrent_fixed_layout)
+                run = self._recurrent
+            self._active_run = run
         if run is not self._trace_label_run:
             self._configure_task_trace_labels(run)
         self._state.refresh_inputs(inputs)
@@ -299,12 +352,14 @@ class TrainingExecutor:
     ) -> None:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         with self._profile_range("shadowspill.training.initial_actions"):
+            if run.initial_task_id is None:
+                raise AssertionError("run has no admitted initial-placement task")
             self._bridge.submit_initial_actions(
                 tuple(
                     MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
                     for alias_id in run.initial_prefetches
                 ),
-                task_number=(1 << 60) + self._invocations,
+                task_number=run.initial_task_id,
             )
         if timing is not None:
             timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
@@ -967,7 +1022,10 @@ class TrainingExecutor:
             f"shadowspill.output_processing.{prepared.record.trace_label}"
         ):
             processed = self._process_task_outputs(prepared, raw_outputs)
-            dematerialized = self._dematerialization_tensors(prepared.record)
+            dematerialized = self._dematerialization_tensors(
+                prepared.record,
+                processed.adopted,
+            )
         if prepared.timing is not None:
             prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
         return processed, dematerialized
@@ -1031,7 +1089,12 @@ class TrainingExecutor:
             processed.adopted,
             replacement_aliases=processed.replacement_aliases,
         )
-        pending = self._legacy_dematerialization_bindings(record, dematerialized)
+        pending = self._legacy_dematerialization_bindings(
+            record,
+            dematerialized,
+            processed.adopted,
+            generations,
+        )
         self._bridge.dematerialize_many(pending)
         self._bridge.after_task(
             record.task.task_id,
@@ -1047,10 +1110,22 @@ class TrainingExecutor:
         self,
         record: _ExecutionTaskRecord,
         tensors: tuple[torch.Tensor, ...],
+        adopted: tuple[tuple[torch.Tensor, str], ...],
+        adopted_generations: tuple[int, ...],
     ) -> tuple[tuple[torch.Tensor, str, int], ...]:
+        new_generations = {
+            alias_id: generation
+            for (_tensor, alias_id), generation in zip(
+                adopted,
+                adopted_generations,
+                strict=True,
+            )
+        }
         pending: list[tuple[torch.Tensor, str, int]] = []
         for tensor, alias_id in zip(tensors, record.dematerialize_aliases, strict=True):
-            generation = self._state.generations.get(alias_id)
+            generation = new_generations.get(alias_id)
+            if generation is None:
+                generation = self._state.generations.get(alias_id)
             if generation is None:
                 raise RuntimeError(f"action references unbound generation {alias_id!r}")
             pending.append((tensor, alias_id, generation))
@@ -1070,6 +1145,19 @@ class TrainingExecutor:
                 self._state.replace_alias_generation(alias_id, tensor, generation)
             else:
                 self._state.generations[alias_id] = generation
+        if processed.optimizer_bindings:
+            generation_by_alias = dict(
+                zip(
+                    (alias_id for _tensor, alias_id in processed.adopted),
+                    generations,
+                    strict=True,
+                )
+            )
+            for object_id, tensor, alias_id in processed.optimizer_bindings:
+                self._state.object_store.setdefault(alias_id, tensor)
+                self._state.object_tensors[object_id] = tensor
+                self._state.generations[alias_id] = generation_by_alias[alias_id]
+            self._optimizer_state_available = True
         if prepared.timing is not None:
             prepared.timing.host_output_state_publish_ns = (
                 time.perf_counter_ns() - started_ns
@@ -1090,13 +1178,17 @@ class TrainingExecutor:
         outputs: tuple[torch.Tensor, ...] = ()
         adopted: tuple[tuple[torch.Tensor, str], ...] = ()
         replacement_aliases: frozenset[str] = frozenset()
+        optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
         entrypoint = prepared.record.entrypoint
         timing = prepared.timing
         if entrypoint.phase == "optimizer":
             started_ns = time.perf_counter_ns() if timing is not None else 0
             if prepared.eager_optimizer and not self._optimizer_state_available:
-                self._bind_created_optimizer_state(prepared.run.lowered)
-                self._optimizer_state_available = True
+                adopted, optimizer_bindings = self._created_optimizer_state(
+                    prepared.record
+                )
+            else:
+                optimizer_bindings = ()
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
         else:
@@ -1124,7 +1216,12 @@ class TrainingExecutor:
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
-        return _ProcessedTaskOutputs(outputs, adopted, replacement_aliases)
+        return _ProcessedTaskOutputs(
+            outputs,
+            adopted,
+            replacement_aliases,
+            optimizer_bindings,
+        )
 
     def _cleanup_after_task(self, prepared: _PreparedTask) -> None:
         self._forget_released_objects(prepared.run, prepared.record)
@@ -1228,54 +1325,38 @@ class TrainingExecutor:
                 )
         return tuple(adopted)
 
-    def _bind_created_optimizer_state(self, lowered: LoweredTrainingProgram) -> None:
-        current = self._current_optimizer_bindings()
+    def _created_optimizer_state(
+        self,
+        record: _ExecutionTaskRecord,
+    ) -> tuple[
+        tuple[tuple[torch.Tensor, str], ...],
+        tuple[tuple[str, torch.Tensor, str], ...],
+    ]:
+        artifact = record.entrypoint.artifact
+        if not isinstance(artifact, OpaqueOptimizerArtifact):
+            raise RuntimeError("initial optimizer state requires an opaque artifact")
+        outputs = {
+            binding.name: binding.tensor
+            for binding in opaque_optimizer_outputs(
+                artifact,
+                self.optimizer,
+                device_ordinal=self._state.device.index or 0,
+            )
+        }
         produced: set[str] = set()
         adopted: list[tuple[torch.Tensor, str]] = []
         bound: list[tuple[str, torch.Tensor, str]] = []
-        for item in lowered.optimizer_objects:
-            if not item.created_on_first_step:
-                continue
-            actual = current.get(item.name)
-            if actual is None:
+        for item in record.optimizer_outputs:
+            tensor = outputs.get(item.name)
+            if tensor is None:
                 raise RuntimeError(
                     f"optimizer did not create planned state {item.name!r}"
                 )
-            tensor = actual.tensor
-            if not tensor.is_cuda:
-                if tensor.device.type != "cpu":
-                    raise RuntimeError(
-                        f"spillable optimizer state {item.name!r} was created on "
-                        f"unsupported device {tensor.device.type}"
-                    )
-                layout = _TensorLayout(
-                    tuple(tensor.shape),
-                    tuple(tensor.stride()),
-                    int(tensor.storage_offset()),
-                    tensor.dtype,
-                )
-                owner = torch.empty(
-                    tensor.untyped_storage().nbytes(),
-                    dtype=torch.uint8,
-                    device=self._state.device,
-                )
-                destination = self._view(owner, layout)
-                destination.copy_(tensor)
-                tensor.data = destination
-            alias_id = self._bridge.alias_for_object(item.object_id)
-            if alias_id not in produced:
-                adopted.append((tensor, alias_id))
-                bound.append((item.object_id, tensor, alias_id))
-                produced.add(alias_id)
-            else:
-                self._state.object_tensors[item.object_id] = tensor
-        generations = self._bridge.adopt_many(adopted)
-        for (object_id, tensor, alias_id), generation in zip(
-            bound, generations, strict=True
-        ):
-            self._state.object_store[alias_id] = tensor
-            self._state.object_tensors[object_id] = tensor
-            self._state.generations[alias_id] = generation
+            if item.alias_id not in produced:
+                adopted.append((tensor, item.alias_id))
+                produced.add(item.alias_id)
+            bound.append((item.object_id, tensor, item.alias_id))
+        return tuple(adopted), tuple(bound)
 
     def _current_optimizer_bindings(self) -> dict[str, Any]:
         return {
@@ -1339,11 +1420,16 @@ class TrainingExecutor:
         )
 
     def _dematerialization_tensors(
-        self, record: _ExecutionTaskRecord
+        self,
+        record: _ExecutionTaskRecord,
+        adopted: tuple[tuple[torch.Tensor, str], ...],
     ) -> tuple[torch.Tensor, ...]:
+        newly_produced = {alias_id: tensor for tensor, alias_id in adopted}
         pending: list[torch.Tensor] = []
         for alias_id in record.dematerialize_aliases:
-            tensor = self._state.object_store.get(alias_id)
+            tensor = newly_produced.get(alias_id)
+            if tensor is None:
+                tensor = self._state.object_store.get(alias_id)
             if tensor is None:
                 raise RuntimeError(f"action references unbound object {alias_id!r}")
             pending.append(tensor)

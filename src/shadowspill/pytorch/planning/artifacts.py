@@ -10,7 +10,6 @@ from torch.utils._pytree import TreeSpec
 
 from shadowspill.ir import ExecutionPlan
 from shadowspill.planner import AdmissionTopology, PressureFitResult
-from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
@@ -35,7 +34,7 @@ from ..lowering.training import (
     TrainingStorageLayout,
 )
 from ..partition import PartitionedExport
-from .admission import SelectedAdmission
+from .admission import FixedLayoutSelection, SelectedAdmission
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,8 +130,8 @@ class TrainingProgramArtifacts:
 class TrainingSelections:
     """Cached or freshly selected recurrent and optional first-step plans."""
 
-    recurrent: CachedPressureFitResult
-    initial: CachedPressureFitResult | None
+    recurrent: FixedLayoutSelection
+    initial: FixedLayoutSelection | None
 
     @property
     def results(self) -> tuple[PressureFitResult, ...]:

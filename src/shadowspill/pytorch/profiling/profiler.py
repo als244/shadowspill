@@ -19,6 +19,7 @@ from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     materialize_opaque_optimizer,
+    opaque_optimizer_outputs,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, Allocation
 from shadowspill.pytorch.runtime_adapter.failures import raise_if_allocator_failed
@@ -585,6 +586,8 @@ class CudaTaskProfiler:
     def _measure_opaque_optimizer(
         self, artifact: OpaqueOptimizerArtifact
     ) -> TaskMeasurement:
+        if artifact.profile_output_names:
+            return self._measure_initial_opaque_optimizer(artifact)
         optimizer = materialize_opaque_optimizer(
             artifact, device_ordinal=self._device_ordinal
         )
@@ -601,6 +604,178 @@ class CudaTaskProfiler:
         del update
         del optimizer
         return measurement
+
+    def _measure_initial_opaque_optimizer(
+        self,
+        artifact: OpaqueOptimizerArtifact,
+    ) -> TaskMeasurement:
+        """Profile a state-creating first step from an independent baseline.
+
+        Reusing one optimizer would turn every invocation after the first into
+        the recurrent update and silently omit lazy-state allocations.  Each
+        sample therefore materializes the same storage-free optimizer before
+        opening the measured task boundary, then destroys it after all output
+        allocations have been classified.
+        """
+
+        torch.cuda.set_device(self._device_ordinal)
+        stream = torch.cuda.current_stream(self._device_ordinal)
+        phase_timings: list[tuple[str, int]] = []
+        self._condition_profile_device(stream, phase_timings)
+        persistent_baseline = self._requested_allocated_bytes()
+
+        warmup_started = time.perf_counter_ns()
+        persistent_high_water = persistent_baseline
+        previous = persistent_baseline
+        for iteration in range(self._warmups + 16):
+            self._with_initial_opaque_callable(
+                artifact,
+                stream,
+                lambda executable: self._invoke_profile_task(executable, stream),
+            )
+            current = self._requested_allocated_bytes()
+            persistent_high_water = max(persistent_high_water, current)
+            if iteration + 1 >= self._warmups and current == previous:
+                break
+            previous = current
+        else:
+            raise AllocationTelemetryError(
+                "opaque optimizer provider allocations did not stabilize "
+                "during first-step warmup"
+            )
+        phase_timings.append(
+            ("provider_warmup", time.perf_counter_ns() - warmup_started)
+        )
+
+        timing_started = time.perf_counter_ns()
+        samples: list[int] = []
+        while True:
+            target = self._samples if not samples else min(15, len(samples) + 2)
+            samples.extend(
+                self._with_initial_opaque_callable(
+                    artifact,
+                    stream,
+                    lambda executable: self._measure_task_once(executable, stream),
+                )
+                for _ in range(target - len(samples))
+            )
+            relative_mad, half_drift = _timing_stability(samples)
+            if (
+                self._samples < 5
+                or max(relative_mad, half_drift) <= 0.03
+                or len(samples) >= 15
+            ):
+                break
+        timing = _TimingObservation(tuple(samples), relative_mad, half_drift)
+        phase_timings.append(
+            ("timing_samples", time.perf_counter_ns() - timing_started)
+        )
+
+        workspace_started = time.perf_counter_ns()
+        workspace = self._with_initial_opaque_callable(
+            artifact,
+            stream,
+            lambda executable: self._measure_workspace(executable, stream),
+        )
+        observation = self._last_workspace_observation
+        if observation is not None:
+            phase_timings.extend(
+                (
+                    ("workspace_execution", observation.execution_wall_time_ns),
+                    ("telemetry_copy_decode", observation.telemetry_copy_decode_ns),
+                    ("workspace_replay", observation.replay_wall_time_ns),
+                )
+            )
+            accounted = (
+                observation.execution_wall_time_ns
+                + observation.telemetry_copy_decode_ns
+                + observation.replay_wall_time_ns
+            )
+        else:
+            accounted = 0
+        phase_timings.append(
+            (
+                "retention_audit",
+                max(0, time.perf_counter_ns() - workspace_started - accounted),
+            )
+        )
+
+        abi_started = time.perf_counter_ns()
+        allocation_abi = TaskAllocationABI.capture(workspace.allocation_abi_trace)
+        for repetition in range(2):
+            observed = self._with_initial_opaque_callable(
+                artifact,
+                stream,
+                lambda executable: self._measure_workspace(executable, stream),
+            )
+            candidate = TaskAllocationABI.capture(observed.allocation_abi_trace)
+            if candidate.compatibility_digest != allocation_abi.compatibility_digest:
+                raise AllocationTelemetryError(
+                    "opaque optimizer first-step allocation ABI changed across "
+                    f"independent profiles (repetition={repetition + 2}, "
+                    f"expected={allocation_abi.compatibility_digest}, "
+                    f"observed={candidate.compatibility_digest})"
+                )
+            if observed.output_input_bindings != workspace.output_input_bindings:
+                raise AllocationTelemetryError(
+                    "opaque optimizer first-step output bindings changed across "
+                    f"independent profiles (repetition={repetition + 2})"
+                )
+        phase_timings.append(
+            ("allocation_abi_validation", time.perf_counter_ns() - abi_started)
+        )
+        persistent_high_water = max(
+            persistent_high_water,
+            self._requested_allocated_bytes(),
+        )
+        fixed_extents = _persistent_profile_extents(
+            workspace,
+            baseline=persistent_baseline,
+            high_water=persistent_high_water,
+        )
+
+        def measured_callable() -> object:
+            raise AssertionError("first-step profile callable is not retained")
+
+        return _task_measurement(
+            measured_callable,
+            "opaque-optimizer-initial",
+            workspace,
+            timing,
+            fixed_extents,
+            phase_timings,
+            allocation_abi,
+        )
+
+    def _with_initial_opaque_callable(
+        self,
+        artifact: OpaqueOptimizerArtifact,
+        stream: torch.cuda.Stream,
+        operation: Callable[[Callable[[], object]], Any],
+    ) -> Any:
+        optimizer = materialize_opaque_optimizer(
+            artifact,
+            device_ordinal=self._device_ordinal,
+        )
+
+        def update() -> object:
+            with torch.no_grad():
+                optimizer.step()
+            return tuple(
+                binding.tensor
+                for binding in opaque_optimizer_outputs(
+                    artifact,
+                    optimizer,
+                    device_ordinal=self._device_ordinal,
+                )
+            )
+
+        try:
+            return operation(update)
+        finally:
+            del update
+            stream.synchronize()
+            self._diagnose_allocator_idle(context="opaque optimizer first step")
 
     def take_compiled_tasks(
         self,

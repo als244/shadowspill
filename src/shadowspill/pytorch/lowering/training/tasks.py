@@ -13,9 +13,14 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskSpec,
 )
-from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTask
+from shadowspill.pytorch.optimizer import (
+    OpaqueOptimizerArtifact,
+    OptimizerCapture,
+    OptimizerTask,
+)
 
 from ...contracts import CaptureError
+from ..catalog import TensorSlot
 from ..profiles import TaskProfileCatalog
 from .artifacts import (
     GradientBinding,
@@ -542,10 +547,13 @@ class _OptimizerTaskAppender:
             item.created_on_first_step for item in self.optimizer_objects
         )
         if self.optimizer_phase == "initial" and lazy_outputs:
-            assert self.optimizer.recurrent is not None
+            if self.optimizer.initial is None:
+                raise CaptureError(
+                    "lazy optimizer state has no profiled first-step artifact"
+                )
             return (
                 OptimizerTask(
-                    self.optimizer.recurrent,
+                    self.optimizer.initial,
                     tuple(binding.name for binding in self.optimizer.bindings),
                     self.optimizer.mutation_names,
                 ),
@@ -609,20 +617,34 @@ class _OptimizerTaskAppender:
             and self.binding_by_name[name].created_on_first_step
         )
 
-    @staticmethod
     def _entrypoint(
+        self,
         component: OptimizerTask,
         task_id: str,
     ) -> TrainingTaskEntrypoint:
+        artifact = component.artifact
+        output_names = (
+            artifact.profile_output_names
+            if isinstance(artifact, OpaqueOptimizerArtifact)
+            else ()
+        )
+        output_slots = tuple(
+            TensorSlot(leaf_index, self.object_by_name[name])
+            for leaf_index, name in enumerate(output_names)
+            if name in self.object_by_name
+        )
         return TrainingTaskEntrypoint(
             task_id,
             "optimizer",
             None,
             None,
-            component.artifact,
+            artifact,
             (),
-            (),
+            output_slots,
             optimizer_binding_names=component.binding_names,
+            optimizer_output_names=tuple(
+                name for name in output_names if name in self.object_by_name
+            ),
         )
 
 

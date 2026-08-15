@@ -20,6 +20,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     actions_by_task,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
+from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 
 
@@ -199,6 +200,7 @@ class ForwardExecutor:
         user_output_indices: tuple[int, ...],
         output_tree_spec: TreeSpec,
         *,
+        fixed_layout: RuntimeFixedLayout,
         memory_envelopes: Mapping[str, TaskMemoryEnvelope],
     ) -> None:
         self._root = partitioned.root
@@ -210,6 +212,28 @@ class ForwardExecutor:
         self._output_tree_spec = output_tree_spec
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
+        self._initial_prefetches = tuple(
+            item.alias_group_id
+            for item in plan.schedule.initial_residency
+            if item.location.value == "device"
+            and bridge.requires_storage(item.alias_group_id)
+        )
+        initial_actions = tuple(
+            self._initial_prefetch_action(alias_id)
+            for alias_id in self._initial_prefetches
+        )
+        # Materialization uses short-lived legacy action records.  They are
+        # idle now and must not become part of the immutable execution plan.
+        bridge.clear_execution_plan()
+        bridge.admit_fixed_layout(fixed_layout)
+        bridge.admit_initial_actions(
+            initial_actions,
+            task_number=fixed_layout.initial_task_id,
+            action_trace_labels=tuple(
+                f"shadowspill.fetch.initial.{alias_id}"
+                for alias_id in self._initial_prefetches
+            ),
+        )
         trace_labels = {
             entrypoint.task_id: (
                 f"execution_{execution_ordinal:06d}.forward."
@@ -250,6 +274,7 @@ class ForwardExecutor:
                 ),
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
+        bridge.seal_fixed_layout()
         output_objects = {
             item.object_id
             for item in plan.program.objects
@@ -263,12 +288,7 @@ class ForwardExecutor:
                 if slot.object_id in output_objects
             )
         )
-        self._initial_prefetches = tuple(
-            item.alias_group_id
-            for item in plan.schedule.initial_residency
-            if item.location.value == "device"
-            and bridge.requires_storage(item.alias_group_id)
-        )
+        self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
         self._profiler_annotations_enabled = False
 
@@ -298,7 +318,7 @@ class ForwardExecutor:
         )
         self._bridge.submit_initial_actions(
             initial_actions,
-            task_number=(1 << 60) + self._invocations,
+            task_number=self._initial_task_id,
         )
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)

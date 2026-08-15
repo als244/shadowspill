@@ -52,6 +52,7 @@ class TrainingTaskEntrypoint:
     public_output_count: int = 0
     public_output_leaves: tuple[int, ...] = ()
     optimizer_binding_names: tuple[str, ...] = ()
+    optimizer_output_names: tuple[str, ...] = ()
     stage_index: int | None = None
     replacement_output_leaves: tuple[int, ...] = ()
     storage_handoffs: tuple[TaskStorageHandoff, ...] = ()

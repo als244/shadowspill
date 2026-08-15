@@ -135,6 +135,14 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     )
     assert training.plan_report.diagnostics.cache_artifacts
     assert len(training.plan_report.diagnostics.profiling_metadata) == 2
+    layouts = training.plan_report.diagnostics.physical_layouts
+    assert tuple(item.plan_role for item in layouts) in {
+        ("recurrent",),
+        ("initial", "recurrent"),
+    }
+    assert all(item.strategy == "fixed" for item in layouts)
+    assert all(item.required_bytes <= item.pool_capacity_bytes for item in layouts)
+    assert all(item.attempts[-1].accepted for item in layouts)
     assert all(parameter.device.type == "cuda" for parameter in model.parameters())
     with pytest.raises(InputGuardError):
         training([[*steps[0][0][:-1], "changed"], steps[0][1]])

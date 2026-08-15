@@ -193,6 +193,13 @@ def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
     assert captured.first_step_is_opaque
     assert captured.created_state_names == ("optimizer.weight.momentum_buffer",)
     assert captured.preinitialized_state_names == ()
+    assert captured.initial is not None
+    assert captured.initial.profile_output_names == (
+        "optimizer.weight.momentum_buffer",
+    )
+    assert captured.initial.compatibility_digest != (
+        captured.recurrent.compatibility_digest
+    )
     assert optimizer.state == {}
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 

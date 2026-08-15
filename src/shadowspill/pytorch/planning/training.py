@@ -60,7 +60,6 @@ from shadowspill.pytorch.state.optimizer import (
     release_optimizer_state_from_plan,
     relocate_optimizer_state_for_plan,
 )
-from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
 
 from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
@@ -88,14 +87,17 @@ from ..materialization import representative_cpu_inputs
 from ..partition import (
     PartitionSpec,
 )
-from ..runtime_adapter import PlanMemory, Runtime
+from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
 from .admission import (
+    FixedLayoutInfeasibleError,
     SelectedAdmission,
     build_admission_topology,
-    build_selected_admission,
+    build_fixed_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
+    project_runtime_fixed_layout,
     reconcile_spill_pool,
+    resolve_fixed_layout_selection,
     seal_physical_budget,
 )
 from .artifacts import (
@@ -117,7 +119,12 @@ from .common import (
     validate_cpu_model,
     workspace_reserve,
 )
-from .reporting import build_training_report, cache_artifacts, publish_plan_report
+from .reporting import (
+    build_training_report,
+    cache_artifacts,
+    fixed_layout_diagnostic,
+    publish_plan_report,
+)
 from .repositories import PlanningArtifactRepositories, open_artifact_repositories
 
 
@@ -665,21 +672,31 @@ def pressurefit_training_programs(
             raise public_infeasible_plan_error(error) from error
     with timer.measure("pressurefit_simulation"):
         try:
-            recurrent = artifact_cache.resolve_pressurefit(
-                programs.recurrent.program,
-                initial_residency=programs.recurrent.initial_residency,
-                final_residency=programs.recurrent.final_residency,
-                config=programs.simulation_config,
-                admission=programs.recurrent_admission,
+            recurrent = resolve_fixed_layout_selection(
+                programs.simulation_config,
+                programs.recurrent_admission,
+                lambda config, admission: artifact_cache.resolve_pressurefit(
+                    programs.recurrent.program,
+                    initial_residency=programs.recurrent.initial_residency,
+                    final_residency=programs.recurrent.final_residency,
+                    config=config,
+                    admission=admission,
+                    progress=timer.progress,
+                ),
                 progress=timer.progress,
             )
             initial = (
-                artifact_cache.resolve_pressurefit(
-                    programs.initial.program,
-                    initial_residency=programs.initial.initial_residency,
-                    final_residency=programs.initial.final_residency,
-                    config=programs.simulation_config,
-                    admission=programs.initial_admission,
+                resolve_fixed_layout_selection(
+                    programs.simulation_config,
+                    programs.initial_admission,
+                    lambda config, admission: artifact_cache.resolve_pressurefit(
+                        programs.initial.program,
+                        initial_residency=programs.initial.initial_residency,
+                        final_residency=programs.initial.final_residency,
+                        config=config,
+                        admission=admission,
+                        progress=timer.progress,
+                    ),
                     progress=timer.progress,
                 )
                 if needs_initial
@@ -687,6 +704,8 @@ def pressurefit_training_programs(
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
+        except FixedLayoutInfeasibleError as error:
+            raise AdmissionError(f"fixed slab admission failed: {error}") from error
     return TrainingSelections(recurrent, initial)
 
 
@@ -762,6 +781,26 @@ def admit_training_plan(
         )
         recurrent_plan = admitted.recurrent
         initial_plan = admitted.initial
+        recurrent_fixed_layout = admitted.recurrent_admission.fixed_layout
+        if recurrent_fixed_layout is None:
+            raise AssertionError("recurrent admission did not produce a fixed layout")
+        recurrent_runtime_layout = project_runtime_fixed_layout(
+            recurrent_fixed_layout,
+            recurrent_plan.program,
+            recurrent_plan.schedule,
+            initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+        )
+        initial_runtime_layout = None
+        if initial_plan is not None:
+            initial_admission = admitted.initial_admission
+            if initial_admission is None or initial_admission.fixed_layout is None:
+                raise AssertionError("initial admission did not produce a fixed layout")
+            initial_runtime_layout = project_runtime_fixed_layout(
+                initial_admission.fixed_layout,
+                initial_plan.program,
+                initial_plan.schedule,
+                initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+            )
         bridge = RuntimeBridge(captured.installed.library, recurrent_plan.program)
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(
@@ -779,6 +818,8 @@ def admit_training_plan(
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
+                initial_fixed_layout=initial_runtime_layout,
+                recurrent_fixed_layout=recurrent_runtime_layout,
                 initial_memory_envelopes=(
                     None
                     if admitted.initial_admission is None
@@ -861,9 +902,8 @@ def _admit_training_execution_plans(
         memory,
         captured.installed,
         workspace_reserve=programs.workspace_reserve,
-        admission_replay=max(
-            (item.replay for item in admissions),
-            key=lambda item: item.peak_fragmentation_bytes,
+        predicted_fragmentation_bytes=max(
+            item.predicted_fragmentation_bytes for item in admissions
         ),
     )
     recurrent_plan = _execution_plan(
@@ -962,6 +1002,24 @@ def _training_plan_report(
         cache_directories=artifact_cache.store.diagnostics(),
         touched_cache_artifacts=cache_artifacts(artifact_cache.store),
         profiling_metadata=captured.workloads,
+        physical_layouts=(
+            *(
+                ()
+                if selections.initial is None or admitted.initial_admission is None
+                else (
+                    fixed_layout_diagnostic(
+                        "initial",
+                        selections.initial,
+                        admitted.initial_admission,
+                    ),
+                )
+            ),
+            fixed_layout_diagnostic(
+                "recurrent",
+                selections.recurrent,
+                admitted.recurrent_admission,
+            ),
+        ),
         optimizer_ordering=optimizer_ordering,
         memory=memory,
     )
@@ -1155,15 +1213,14 @@ def _training_task_inventory(
             (task.artifact.compatibility_digest, None),
             task.artifact,
         )
-    if optimizer_capture.created_state_names:
-        assert optimizer_capture.recurrent is not None
+    if optimizer_capture.initial is not None:
         compile_by_digest.setdefault(
-            optimizer_capture.recurrent.compatibility_digest,
-            optimizer_capture.recurrent,
+            optimizer_capture.initial.compatibility_digest,
+            optimizer_capture.initial,
         )
         profile_by_key.setdefault(
-            (optimizer_capture.recurrent.compatibility_digest, None),
-            optimizer_capture.recurrent,
+            (optimizer_capture.initial.compatibility_digest, None),
+            optimizer_capture.initial,
         )
     keys = tuple(profile_by_key)
     return _TrainingTaskInventory(
@@ -1183,40 +1240,31 @@ def _build_training_admissions(
     timer: PlanningTimer,
 ) -> tuple[SelectedAdmission, ...]:
     pairs = [
-        (
-            programs.recurrent,
-            selections.recurrent.result,
-            programs.recurrent_admission,
-        )
+        (programs.recurrent, selections.recurrent)
     ]
     if selections.initial is not None:
-        pairs.append(
-            (programs.initial, selections.initial.result, programs.initial_admission)
-        )
+        pairs.append((programs.initial, selections.initial))
     with timer.measure("slab_admission"):
-        try:
-            return tuple(
-                build_selected_admission(
+        admitted: list[SelectedAdmission] = []
+        for lowered, fixed_selection in pairs:
+            selected = fixed_selection.result
+            output_bindings = output_bindings_for_entrypoints(
+                selected.program.selected_tasks(selected.selections),
+                lowered.entrypoints,
+                {
+                    item.object_id: item.alias_group_id
+                    for item in selected.program.objects
+                },
+            )
+            admitted.append(
+                build_fixed_selected_admission(
                     selected,
                     programs.measurements_by_profile,
-                    execution_pool_bytes=(
-                        memory.execution_budget
-                        - fixed_execution_bytes(memory, profiled.profiles)
-                    ),
-                    topology=topology,
-                    output_bindings=output_bindings_for_entrypoints(
-                        selected.program.selected_tasks(selected.selections),
-                        lowered.entrypoints,
-                        {
-                            item.object_id: item.alias_group_id
-                            for item in selected.program.objects
-                        },
-                    ),
-                )
-                for lowered, selected, topology in pairs
+                    fixed_admission=fixed_selection.admission,
+                    output_bindings=output_bindings,
+                ),
             )
-        except RuntimeAdmissionError as exc:
-            raise AdmissionError(f"dynamic slab admission failed: {exc}") from exc
+        return tuple(admitted)
 
 
 def _selected_artifact_digests(

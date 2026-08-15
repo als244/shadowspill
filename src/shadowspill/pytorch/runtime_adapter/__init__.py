@@ -7,6 +7,7 @@ from .failures import (
     RuntimeFailureDiagnostics,
 )
 from .fixed_layout import (
+    INITIAL_PLACEMENT_TASK_ID,
     RuntimeFixedDependency,
     RuntimeFixedLayout,
     RuntimeFixedPlacement,
@@ -22,6 +23,7 @@ from .runtime import (
 )
 
 __all__ = [
+    "INITIAL_PLACEMENT_TASK_ID",
     "ExecutionTaskIdentity",
     "MemoryPool",
     "PlanMemory",
@@ -29,10 +31,10 @@ __all__ = [
     "RuntimeBridge",
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
+    "RuntimeFailureDiagnostics",
     "RuntimeFixedDependency",
     "RuntimeFixedLayout",
     "RuntimeFixedPlacement",
-    "RuntimeFailureDiagnostics",
     "RuntimePlacementKind",
     "TransferCapabilities",
     "TransferProfile",

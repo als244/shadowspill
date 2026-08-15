@@ -160,6 +160,9 @@ class RuntimeBridge:
         self._registered: set[str] = set()
         self._debug_task_timing_capacity = 0
         self._admitted_tasks: dict[str, tuple[str, ...]] = {}
+        self._admitted_action_tasks: dict[
+            int, tuple[int, tuple[tuple[str, MemoryActionKind], ...]]
+        ] = {}
         self._fixed_layout_installed = False
 
     def profile_range_begin(self, name: str) -> int:
@@ -223,7 +226,7 @@ class RuntimeBridge:
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
         """Copy one dense physical-layout certificate into the C runtime."""
 
-        if self._admitted_tasks:
+        if self._admitted_tasks or self._admitted_action_tasks:
             raise RuntimeExecutionError(
                 "fixed layout must be admitted before execution tasks"
             )
@@ -245,9 +248,7 @@ class RuntimeBridge:
             *(
                 FixedDependencyDescription(
                     predecessor_task_id=item.predecessor_task_id,
-                    predecessor_action_ordinal=(
-                        item.predecessor_action_ordinal
-                    ),
+                    predecessor_action_ordinal=(item.predecessor_action_ordinal),
                     successor_task_id=item.successor_task_id,
                     successor_ordinal=item.successor_ordinal,
                     successor_kind=int(item.successor_kind),
@@ -270,6 +271,56 @@ class RuntimeBridge:
             "admit fixed physical layout",
         )
         self._fixed_layout_installed = True
+
+    def admit_initial_actions(
+        self,
+        actions: tuple[MemoryAction, ...],
+        *,
+        task_number: int,
+        action_trace_labels: tuple[str, ...] | None = None,
+    ) -> int:
+        """Admit one reusable action-only execution for initial placement."""
+
+        if task_number in self._admitted_action_tasks:
+            raise RuntimeExecutionError(
+                f"initial action execution {task_number} is already admitted"
+            )
+        labels = _action_labels(actions, action_trace_labels)
+        action_pairs = self._runtime_actions(actions, labels)
+        for action, _label in action_pairs:
+            self.register_placeholder(action.alias_group_id)
+        encoded_labels = tuple(
+            label.encode("utf-8") if label else None for _action, label in action_pairs
+        )
+        runtime_actions = (RuntimeAction * len(action_pairs))(
+            *(
+                _runtime_action(
+                    _dense_id(action.alias_group_id, "alias_"),
+                    _ACTION_KIND[action.kind],
+                    trace_label=encoded,
+                )
+                for (action, _label), encoded in zip(
+                    action_pairs, encoded_labels, strict=True
+                )
+            )
+        )
+        description = ExecutionDescription(
+            task_id=task_number,
+            actions=runtime_actions if action_pairs else None,
+            action_count=len(action_pairs),
+        )
+        self._require(
+            self.library.shadowspill_pytorch_admit_execution(ctypes.byref(description)),
+            f"admit initial action execution {task_number}",
+        )
+        handle = self._resolve_execution_handle_number(task_number)
+        self._admitted_action_tasks[task_number] = (
+            handle,
+            tuple(
+                (action.alias_group_id, action.kind) for action, _label in action_pairs
+            ),
+        )
+        return handle
 
     def seal_fixed_layout(self) -> None:
         """Resolve the installed certificate after execution admission."""
@@ -402,16 +453,19 @@ class RuntimeBridge:
         )
 
     def _resolve_execution_handle(self, task_id: str) -> int:
+        return self._resolve_execution_handle_number(_dense_id(task_id, "task_"))
+
+    def _resolve_execution_handle_number(self, task_number: int) -> int:
         handle = ctypes.c_size_t()
         self._require(
             self.library.shadowspill_pytorch_resolve_execution(
-                _dense_id(task_id, "task_"), ctypes.byref(handle)
+                task_number, ctypes.byref(handle)
             ),
-            f"resolve execution {task_id}",
+            f"resolve execution {task_number}",
         )
         if handle.value == 0:
             raise RuntimeExecutionError(
-                f"execution {task_id} resolved to a null handle"
+                f"execution {task_number} resolved to a null handle"
             )
         return int(handle.value)
 
@@ -958,6 +1012,38 @@ class RuntimeBridge:
         if not runtime_actions_values:
             return
         stream = torch.cuda.current_stream()
+        admitted = self._admitted_action_tasks.get(task_number)
+        if admitted is not None:
+            handle, expected = admitted
+            observed = tuple(
+                (action.alias_group_id, action.kind)
+                for action in runtime_actions_values
+            )
+            if observed != expected:
+                raise RuntimeExecutionError(
+                    "initial action execution changed after admission: "
+                    f"task={task_number}, expected={expected}, observed={observed}"
+                )
+            task_open = False
+            try:
+                self._require(
+                    self.library.shadowspill_pytorch_before_execution_handle(
+                        handle, task_number, stream.cuda_stream, None, 0
+                    ),
+                    "begin admitted initial actions",
+                )
+                task_open = True
+                self._require(
+                    self.library.shadowspill_pytorch_after_execution_handle(
+                        handle, task_number, stream.cuda_stream
+                    ),
+                    "submit admitted initial actions",
+                )
+                task_open = False
+                return
+            finally:
+                if task_open:
+                    self.abort_task()
         runtime_actions = (RuntimeAction * len(runtime_actions_values))(
             *(
                 _runtime_action(
@@ -978,6 +1064,17 @@ class RuntimeBridge:
             ),
             "submit initial actions",
         )
+
+    def clear_execution_plan(self) -> None:
+        """Discard immutable execution records and their fixed layout."""
+
+        self._require(
+            self.library.shadowspill_pytorch_clear_execution_plan(),
+            "clear execution plan",
+        )
+        self._admitted_tasks.clear()
+        self._admitted_action_tasks.clear()
+        self._fixed_layout_installed = False
 
     def transfer_outputs_to_caller(
         self,

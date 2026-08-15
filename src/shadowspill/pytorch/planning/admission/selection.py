@@ -16,6 +16,7 @@ from shadowspill.simulator import SimulationAdmission, SimulationResult, simulat
 
 from .admission_replay import AdmissionReplay, replay_admission
 from .bindings import TaskOutputBinding, output_bindings_for_entrypoints
+from .layout import FixedLayoutAdmission, FixedPhysicalLayout
 from .simulation import simulation_admission_from_replay
 
 
@@ -23,16 +24,35 @@ from .simulation import simulation_admission_from_replay
 class SelectedAdmission:
     """Physical admission evidence plus runtime task-allocation limits."""
 
-    admission: AdmissionReplay
     task_envelopes: tuple[tuple[str, TaskMemoryEnvelope], ...]
     simulation_admission: SimulationAdmission
     simulation: SimulationResult
+    admission: AdmissionReplay | None = None
+    fixed_layout: FixedPhysicalLayout | None = None
+
+    def __post_init__(self) -> None:
+        if (self.admission is None) == (self.fixed_layout is None):
+            raise ValueError(
+                "selected admission requires exactly one physical strategy"
+            )
 
     @property
     def replay(self) -> AdmissionReplayResult:
         """Return the exact production-pool result used for admission."""
 
+        if self.admission is None:
+            raise ValueError("fixed-layout admission has no dynamic replay")
         return self.admission.pool
+
+    @property
+    def predicted_fragmentation_bytes(self) -> int:
+        """Return fragmentation charged by the selected physical strategy."""
+
+        return (
+            0
+            if self.admission is None
+            else self.admission.pool.peak_fragmentation_bytes
+        )
 
     def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
         return dict(self.task_envelopes)
@@ -106,7 +126,6 @@ def build_selected_admission(
         device_capacity_bytes=execution_pool_bytes,
     )
     return SelectedAdmission(
-        admission=admission,
         task_envelopes=_selected_task_envelopes(
             selected,
             measurements,
@@ -120,6 +139,28 @@ def build_selected_admission(
             config=selected.simulation_config,
             admission=simulation_admission,
         ),
+        admission=admission,
+    )
+
+
+def build_fixed_selected_admission(
+    selected: PressureFitResult,
+    measurements: Mapping[str, TaskMeasurement],
+    *,
+    fixed_admission: FixedLayoutAdmission,
+    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+) -> SelectedAdmission:
+    """Bind task envelopes to an already-certified fixed layout."""
+
+    return SelectedAdmission(
+        task_envelopes=_selected_task_envelopes(
+            selected,
+            measurements,
+            output_bindings=output_bindings,
+        ),
+        simulation_admission=fixed_admission.simulator_input,
+        simulation=fixed_admission.simulation,
+        fixed_layout=fixed_admission.layout,
     )
 
 
@@ -140,8 +181,7 @@ def _selected_task_envelopes(
                     profiles[task.profile_id].compatibility_digest,
                 ),
                 retained_output_leaves=tuple(
-                    item.leaf_index
-                    for item in bindings_by_task.get(task.task_id, ())
+                    item.leaf_index for item in bindings_by_task.get(task.task_id, ())
                 ),
             ),
         )
@@ -157,8 +197,7 @@ def _measurement_for_digest(
         return measurements[compatibility_digest]
     except KeyError as error:
         raise ValueError(
-            f"task-envelope admission lacks measurement "
-            f"{compatibility_digest!r}"
+            f"task-envelope admission lacks measurement {compatibility_digest!r}"
         ) from error
 
 
@@ -214,6 +253,7 @@ __all__ = [
     "SelectedAdmission",
     "TaskOutputBinding",
     "admit_selected_schedule",
+    "build_fixed_selected_admission",
     "build_selected_admission",
     "output_bindings_for_entrypoints",
 ]

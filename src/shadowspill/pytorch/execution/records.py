@@ -35,6 +35,7 @@ class ExecutionTaskRecord:
     argument_template: tuple[object, ...] | None
     forward_outputs: tuple[ForwardOutputRecord, ...]
     gradient_outputs: tuple[GradientOutputRecord, ...]
+    optimizer_outputs: tuple[OptimizerOutputRecord, ...]
     optimizer_argument_object_ids: tuple[str | None, ...]
     handoff_source_aliases: frozenset[str]
     dematerialize_aliases: tuple[str, ...]
@@ -74,6 +75,15 @@ class GradientOutputRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class OptimizerOutputRecord:
+    """One lazily created optimizer tensor published by an initial task."""
+
+    name: str
+    object_id: str
+    alias_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanRun:
     """One immutable initial or recurrent training execution program."""
 
@@ -83,6 +93,7 @@ class PlanRun:
     execution: tuple[ExecutionTaskRecord, ...]
     initial_prefetches: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
+    initial_task_id: int | None = None
 
 
 def build_plan_run(
@@ -167,7 +178,11 @@ def _build_task_record(
         if isinstance(artifact, GraphArtifact) and entrypoint.phase != "optimizer"
         else None
     )
-    outputs = _forward_outputs(entrypoint, input_aliases, bridge)
+    outputs = (
+        ()
+        if entrypoint.phase == "optimizer"
+        else _forward_outputs(entrypoint, input_aliases, bridge)
+    )
     handoff_aliases = frozenset(
         bridge.alias_for_object(item.source_object_id)
         for item in entrypoint.storage_handoffs
@@ -187,6 +202,7 @@ def _build_task_record(
         argument_template=argument_template,
         forward_outputs=outputs,
         gradient_outputs=_gradient_outputs(entrypoint, bridge),
+        optimizer_outputs=_optimizer_outputs_for_entrypoint(entrypoint, bridge),
         optimizer_argument_object_ids=tuple(
             optimizer_objects.get(name) for name in entrypoint.optimizer_binding_names
         ),
@@ -244,6 +260,28 @@ def _gradient_outputs(
     return tuple(
         GradientOutputRecord(object_id, alias_id, tuple(indices))
         for alias_id, (object_id, indices) in grouped.items()
+    )
+
+
+def _optimizer_outputs_for_entrypoint(
+    entrypoint: TrainingTaskEntrypoint,
+    bridge: RuntimeBridge,
+) -> tuple[OptimizerOutputRecord, ...]:
+    if entrypoint.phase != "optimizer":
+        return ()
+    if len(entrypoint.optimizer_output_names) != len(entrypoint.output_slots):
+        raise ValueError("optimizer output names and tensor slots must align")
+    return tuple(
+        OptimizerOutputRecord(
+            name,
+            slot.object_id,
+            bridge.alias_for_object(slot.object_id),
+        )
+        for name, slot in zip(
+            entrypoint.optimizer_output_names,
+            entrypoint.output_slots,
+            strict=True,
+        )
     )
 
 
@@ -335,6 +373,7 @@ __all__ = [
     "ExecutionTaskRecord",
     "ForwardOutputRecord",
     "GradientOutputRecord",
+    "OptimizerOutputRecord",
     "PlanRun",
     "build_plan_run",
 ]

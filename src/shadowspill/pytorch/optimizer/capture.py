@@ -46,6 +46,8 @@ class _OptimizerDiscovery:
     created_state_names: tuple[str, ...]
     initialized_state_dict: dict[str, Any] | None
     representative_values: dict[str, torch.Tensor]
+    initial_sandbox: torch.optim.Optimizer
+    initial_parameter_names: dict[int, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +127,24 @@ def capture_optimizer(
         optimizer,
         parameter_stage_owners=parameter_stage_owners,
     )
+    if discovery.created_state_names:
+        spillable_names = {
+            binding.name for binding in captured.bindings if binding.spillable
+        }
+        initial_bindings = _tensor_bindings(
+            discovery.initial_sandbox,
+            discovery.initial_parameter_names,
+        )
+        initial = OpaqueOptimizerArtifact.capture(
+            discovery.initial_sandbox,
+            initial_bindings,
+            profile_output_names=tuple(
+                name
+                for name in discovery.created_state_names
+                if name in spillable_names
+            ),
+        )
+        captured = replace(captured, initial=initial)
     if preinitialized_state_names:
         captured = replace(
             captured,
@@ -186,6 +206,23 @@ def _discover_optimizer_state(
         sandbox_parameters,
     )
     baseline = _discovery_baseline(sandbox, sandbox_parameters, names)
+    initial_sandbox = _copy_optimizer(sandbox)
+    initial_parameters = _optimizer_parameters(initial_sandbox)
+    for source, copied_parameter in zip(
+        sandbox_parameters,
+        initial_parameters,
+        strict=True,
+    ):
+        if source.grad is not None:
+            copied_parameter.grad = source.grad.detach().clone()
+    initial_parameter_names = {
+        id(copied): names[id(source)]
+        for source, copied in zip(
+            sandbox_parameters,
+            initial_parameters,
+            strict=True,
+        )
+    }
     step = _run_discovery_step(
         inventory.optimizer_type,
         sandbox,
@@ -204,6 +241,8 @@ def _discover_optimizer_state(
         baseline,
         initialized_state,
         representative_values,
+        initial_sandbox,
+        initial_parameter_names,
     )
 
 
@@ -365,6 +404,8 @@ def _finish_optimizer_discovery(
     baseline: _DiscoveryBaseline,
     initialized_state: dict[str, Any] | None,
     representative_values: dict[str, torch.Tensor],
+    initial_sandbox: torch.optim.Optimizer,
+    initial_parameter_names: dict[int, str],
 ) -> _OptimizerDiscovery:
     first_step_is_opaque = _state_structure(sandbox, names) != baseline.state_structure
     actual_names = {
@@ -386,6 +427,8 @@ def _finish_optimizer_discovery(
         created_state_names=created_state_names,
         initialized_state_dict=initialized_state,
         representative_values=representative_values,
+        initial_sandbox=initial_sandbox,
+        initial_parameter_names=initial_parameter_names,
     )
 
 
@@ -427,6 +470,7 @@ def _capture_recurrent_optimizer(
         optimizer_type=discovery.optimizer_type,
         first_step_is_opaque=discovery.first_step_is_opaque,
         created_state_names=discovery.created_state_names,
+        initial=None,
         recurrent=artifact,
         recurrent_tasks=recurrent_tasks,
         bindings=bindings,
@@ -547,6 +591,7 @@ def _opaque_optimizer_capture(
         optimizer_type=discovery.optimizer_type,
         first_step_is_opaque=discovery.first_step_is_opaque,
         created_state_names=discovery.created_state_names,
+        initial=None,
         recurrent=artifact,
         recurrent_tasks=(
             OptimizerTask(
@@ -567,6 +612,7 @@ def _empty_opaque_capture(optimizer_type: str, reason: str) -> OptimizerCapture:
         optimizer_type=optimizer_type,
         first_step_is_opaque=True,
         created_state_names=(),
+        initial=None,
         recurrent=None,
         recurrent_tasks=(),
         bindings=(),
@@ -994,6 +1040,77 @@ def materialize_opaque_optimizer(
         converted_state[real_parameter] = converted
     optimizer.state = converted_state
     return optimizer
+
+
+def opaque_optimizer_outputs(
+    artifact: OpaqueOptimizerArtifact,
+    optimizer: torch.optim.Optimizer,
+    *,
+    device_ordinal: int,
+) -> tuple[OptimizerTensorBinding, ...]:
+    """Expose first-step state using one profiling/execution storage policy.
+
+    An opaque optimizer does not return its lazily created state from
+    ``step()``.  The initial structural profile nevertheless needs those
+    tensors as explicit persistent outputs so allocator ordinals can be
+    reconciled with Program objects.  Names come from optimizer discovery;
+    values come only from the real isolated first step.
+    """
+
+    parameters = _optimizer_parameters(optimizer)
+    if len(parameters) != len(artifact.parameter_names):
+        raise CaptureError("opaque optimizer changed its parameter inventory")
+    names = {
+        id(parameter): name
+        for parameter, name in zip(
+            parameters,
+            artifact.parameter_names,
+            strict=True,
+        )
+        if name is not None
+    }
+    by_name = {
+        binding.name: binding
+        for binding in _tensor_bindings(
+            optimizer,
+            names,
+            require_gradients=False,
+        )
+    }
+    outputs: list[OptimizerTensorBinding] = []
+    target = torch.device("cuda", device_ordinal)
+    for name in artifact.profile_output_names:
+        binding = by_name.get(name)
+        if binding is None:
+            raise CaptureError(
+                f"opaque optimizer did not create profiled state {name!r}"
+            )
+        tensor = binding.tensor
+        if not binding.spillable:
+            raise CaptureError(
+                f"opaque optimizer output {name!r} is not spillable"
+            )
+        if tensor.device.type == "cpu":
+            owner = torch.empty(
+                tensor.untyped_storage().nbytes(),
+                dtype=torch.uint8,
+                device=target,
+            )
+            relocated = torch.empty(0, dtype=tensor.dtype, device=target).set_(
+                owner.untyped_storage(),
+                int(tensor.storage_offset()),
+                tuple(tensor.shape),
+                tuple(tensor.stride()),
+            )
+            relocated.copy_(tensor)
+            tensor.data = relocated
+        elif tensor.device != target:
+            raise CaptureError(
+                f"opaque optimizer output {name!r} was created on {tensor.device}, "
+                f"expected cpu or {target}"
+            )
+        outputs.append(binding)
+    return tuple(outputs)
 
 
 def _tensor_leaves(

@@ -75,6 +75,14 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     assert planned.plan_report.pressurefit_result.program == planned.plan_report.program
     assert planned.plan_report.diagnostics.cache_artifacts
     assert len(planned.plan_report.diagnostics.profiling_metadata) == 1
+    assert len(planned.plan_report.diagnostics.physical_layouts) == 1
+    layout = planned.plan_report.diagnostics.physical_layouts[0]
+    assert layout.plan_role == "forward"
+    assert layout.strategy == "fixed"
+    assert layout.required_bytes <= layout.pool_capacity_bytes
+    assert layout.attempts[-1].accepted
+    assert layout.task_memory_envelopes
+    assert planned.plan_report.diagnostics.as_dict()["physical_layouts"]
     actual = planned([inputs, 17])[0]
     torch.testing.assert_close(
         actual.cpu(), reference(inputs, 17)[0], rtol=2e-5, atol=2e-6

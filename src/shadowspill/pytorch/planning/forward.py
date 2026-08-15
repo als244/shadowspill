@@ -17,7 +17,6 @@ from shadowspill.planner import (
     PressureFitResult,
     validate_schedule_feasibility,
 )
-from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
@@ -42,7 +41,6 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
-from shadowspill.runtime import AdmissionError as RuntimeAdmissionError
 
 from ..cache import PlanningCache
 from ..callables import PlannedForward
@@ -61,14 +59,18 @@ from ..partition import (
     PartitionSpec,
     partition_export,
 )
-from ..runtime_adapter import PlanMemory, Runtime
+from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
 from .admission import (
+    FixedLayoutInfeasibleError,
+    FixedLayoutSelection,
     SelectedAdmission,
     build_admission_topology,
-    build_selected_admission,
+    build_fixed_selected_admission,
     output_bindings_for_entrypoints,
     physical_admission,
+    project_runtime_fixed_layout,
     reconcile_spill_pool,
+    resolve_fixed_layout_selection,
     seal_physical_budget,
 )
 from .artifacts import (
@@ -86,7 +88,12 @@ from .common import (
     validate_cpu_model,
     workspace_reserve,
 )
-from .reporting import build_forward_report, cache_artifacts, publish_plan_report
+from .reporting import (
+    build_forward_report,
+    cache_artifacts,
+    fixed_layout_diagnostic,
+    publish_plan_report,
+)
 from .repositories import PlanningArtifactRepositories, open_artifact_repositories
 
 
@@ -321,10 +328,7 @@ def build_forward_program(
         output_bindings = output_bindings_for_entrypoints(
             lowered.program.tasks,
             lowered.entrypoints,
-            {
-                item.object_id: item.alias_group_id
-                for item in lowered.program.objects
-            },
+            {item.object_id: item.alias_group_id for item in lowered.program.objects},
         )
         admission = build_admission_topology(
             lowered.program,
@@ -355,7 +359,7 @@ def pressurefit_forward_program(
     *,
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
-) -> CachedPressureFitResult:
+) -> FixedLayoutSelection:
     """Resolve the exact PressureFit result for a canonical forward Program."""
 
     with timer.measure("feasibility_preflight"):
@@ -371,15 +375,22 @@ def pressurefit_forward_program(
             raise public_infeasible_plan_error(error) from error
     with timer.measure("pressurefit_simulation"):
         try:
-            return artifact_cache.resolve_pressurefit(
-                program.lowered.program,
-                initial_residency=program.lowered.initial_residency,
-                final_residency=program.lowered.final_residency,
-                config=program.simulation_config,
-                admission=program.admission,
+            return resolve_fixed_layout_selection(
+                program.simulation_config,
+                program.admission,
+                lambda config, admission: artifact_cache.resolve_pressurefit(
+                    program.lowered.program,
+                    initial_residency=program.lowered.initial_residency,
+                    final_residency=program.lowered.final_residency,
+                    config=config,
+                    admission=admission,
+                ),
+                progress=timer.progress,
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
+        except FixedLayoutInfeasibleError as error:
+            raise AdmissionError(f"fixed slab admission failed: {error}") from error
 
 
 def admit_forward_plan(
@@ -387,7 +398,7 @@ def admit_forward_plan(
     captured: ForwardCaptureArtifacts,
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
-    selection: CachedPressureFitResult,
+    selection: FixedLayoutSelection,
     *,
     memory: PlanMemory,
     artifact_cache: PlanningArtifactRepositories,
@@ -403,19 +414,32 @@ def admit_forward_plan(
             budget=memory.spill_budget,
         )
     selected_admission = _build_forward_admission(
-        captured, profiled, program, selection, memory, timer
+        program,
+        selection,
+        timer,
     )
     admission = physical_admission(
         memory,
         captured.installed,
         workspace_reserve=program.workspace_reserve,
-        admission_replay=selected_admission.replay,
+        predicted_fragmentation_bytes=(
+            selected_admission.predicted_fragmentation_bytes
+        ),
     )
     admitted_result = selected_admission.apply_prediction(selected)
     execution_plan = _forward_execution_plan(
         program.lowered,
         admitted_result,
         admission,
+    )
+    fixed_layout = selected_admission.fixed_layout
+    if fixed_layout is None:
+        raise AssertionError("forward admission did not produce a fixed layout")
+    runtime_fixed_layout = project_runtime_fixed_layout(
+        fixed_layout,
+        execution_plan.program,
+        execution_plan.schedule,
+        initial_task_id=INITIAL_PLACEMENT_TASK_ID,
     )
     bridge = RuntimeBridge(captured.installed.library, execution_plan.program)
     state: MaterializedForwardState | None = None
@@ -442,6 +466,7 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
+                fixed_layout=runtime_fixed_layout,
                 memory_envelopes=selected_admission.envelopes_by_task(),
             )
         report = _forward_plan_report(
@@ -450,6 +475,7 @@ def admit_forward_plan(
             profiled,
             program,
             selection,
+            selected_admission,
             admitted_result,
             execution_plan,
             artifact_cache=artifact_cache,
@@ -525,7 +551,8 @@ def _forward_plan_report(
     captured: ForwardCaptureArtifacts,
     profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
-    selection: CachedPressureFitResult,
+    selection: FixedLayoutSelection,
+    selected_admission: SelectedAdmission,
     admitted_result: PressureFitResult,
     execution_plan: ExecutionPlan,
     *,
@@ -561,6 +588,13 @@ def _forward_plan_report(
         cache_directories=artifact_cache.store.diagnostics(),
         touched_cache_artifacts=cache_artifacts(artifact_cache.store),
         profiling_metadata=(captured.workload,),
+        physical_layouts=(
+            fixed_layout_diagnostic(
+                "forward",
+                selection,
+                selected_admission,
+            ),
+        ),
         memory=memory,
     )
     return publish_plan_report(
@@ -616,36 +650,23 @@ def build_forward(
 
 
 def _build_forward_admission(
-    captured: ForwardCaptureArtifacts,
-    profiled: ForwardProfileArtifacts,
     program: ForwardProgramArtifacts,
-    selection: CachedPressureFitResult,
-    memory: PlanMemory,
+    selection: FixedLayoutSelection,
     timer: PlanningTimer,
 ) -> SelectedAdmission:
     with timer.measure("slab_admission"):
-        try:
-            return build_selected_admission(
-                selection.result,
-                program.measurements_by_profile,
-                execution_pool_bytes=(
-                    memory.execution_budget
-                    - fixed_execution_bytes(memory, profiled.profiles)
-                ),
-                topology=program.admission,
-                output_bindings=output_bindings_for_entrypoints(
-                    selection.result.program.selected_tasks(
-                        selection.result.selections
-                    ),
-                    program.lowered.entrypoints,
-                    {
-                        item.object_id: item.alias_group_id
-                        for item in selection.result.program.objects
-                    },
-                ),
-            )
-        except RuntimeAdmissionError as exc:
-            raise AdmissionError(f"dynamic slab admission failed: {exc}") from exc
+        selected = selection.result
+        output_bindings = output_bindings_for_entrypoints(
+            selected.program.selected_tasks(selected.selections),
+            program.lowered.entrypoints,
+            {item.object_id: item.alias_group_id for item in selected.program.objects},
+        )
+        return build_fixed_selected_admission(
+            selected,
+            program.measurements_by_profile,
+            fixed_admission=selection.admission,
+            output_bindings=output_bindings,
+        )
 
 
 def _verify_manifest_identity(
