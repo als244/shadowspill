@@ -175,6 +175,7 @@ class AdmissionError(ValueError):
         position: int | None = None,
         free_bytes: int | None = None,
         largest_free_range_bytes: int | None = None,
+        live_lease_evidence: tuple[tuple[int, int, int, int, int], ...] = (),
         free_range_evidence: tuple[tuple[int, int, str | None, str | None], ...] = (),
     ) -> None:
         super().__init__(message)
@@ -184,6 +185,7 @@ class AdmissionError(ValueError):
         self.position = position
         self.free_bytes = free_bytes
         self.largest_free_range_bytes = largest_free_range_bytes
+        self.live_lease_evidence = live_lease_evidence
         self.free_range_evidence = free_range_evidence
 
 

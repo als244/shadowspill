@@ -12,6 +12,9 @@ typedef struct ReplayState {
     ShadowSpillMemoryLease *leases;
     ShadowSpillEventLease *events;
     uint64_t *expected_dependency_ids;
+    ShadowSpillMemoryLease **release_frontier;
+    ShadowSpillMemoryLease **blocking_order;
+    uint8_t *retirement_completed_early;
     uint64_t peak_reserved_bytes;
     uint64_t peak_fragmentation_bytes;
     uint64_t digest;
@@ -35,11 +38,23 @@ static uint64_t digest_u64(uint64_t digest, uint64_t value) {
     return digest;
 }
 
+static ShadowSpillMemoryPlacement replay_placement(
+    const ShadowSpillAdmissionReplayProgram *program,
+    uint64_t bytes
+) {
+    return program->large_request_threshold_bytes != 0U &&
+            bytes >= program->large_request_threshold_bytes
+        ? SHADOWSPILL_MEMORY_BEST_FIT_HIGH
+        : SHADOWSPILL_MEMORY_BEST_FIT_LOW;
+}
+
 static void initialize_result(ShadowSpillAdmissionReplayResult *result) {
     ShadowSpillAdmissionReplayDecision *decisions = result->decisions;
     const uint64_t decision_capacity = result->decision_capacity;
     ShadowSpillAdmissionReuseDependency *dependencies = result->dependencies;
     const uint64_t dependency_capacity = result->dependency_capacity;
+    ShadowSpillAdmissionReplayLiveLease *live_leases = result->live_leases;
+    const uint64_t live_lease_capacity = result->live_lease_capacity;
     *result = (ShadowSpillAdmissionReplayResult){
         .status = SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT,
         .error_operation_index = SHADOWSPILL_ADMISSION_REPLAY_NO_ID,
@@ -48,6 +63,8 @@ static void initialize_result(ShadowSpillAdmissionReplayResult *result) {
         .decision_capacity = decision_capacity,
         .dependencies = dependencies,
         .dependency_capacity = dependency_capacity,
+        .live_leases = live_leases,
+        .live_lease_capacity = live_lease_capacity,
     };
 }
 
@@ -75,6 +92,12 @@ static int reset_state(
         0xff,
         (size_t)workspace->lease_capacity *
             sizeof(*state->expected_dependency_ids)
+    );
+    memset(
+        state->retirement_completed_early,
+        0,
+        (size_t)workspace->lease_capacity *
+            sizeof(*state->retirement_completed_early)
     );
     if (shadowspill_range_initialize_with_nodes(
             &state->pool.ranges,
@@ -126,7 +149,8 @@ static int valid_program(
         (program->operation_count == 0U || program->operations != NULL) &&
         result->decision_capacity >= program->operation_count &&
         (program->operation_count == 0U || result->decisions != NULL) &&
-        (result->dependency_capacity == 0U || result->dependencies != NULL);
+        (result->dependency_capacity == 0U || result->dependencies != NULL) &&
+        (result->live_lease_capacity == 0U || result->live_leases != NULL);
 }
 
 static ShadowSpillEventLease *dependency_event(
@@ -165,6 +189,56 @@ static uint64_t lease_id(
     return (uint64_t)(lease - state->leases);
 }
 
+static int lease_offset_compare(const void *left_value, const void *right_value) {
+    const ShadowSpillMemoryLease *left =
+        *(ShadowSpillMemoryLease *const *)left_value;
+    const ShadowSpillMemoryLease *right =
+        *(ShadowSpillMemoryLease *const *)right_value;
+    if (left->offset != right->offset) {
+        return left->offset < right->offset ? -1 : 1;
+    }
+    if (left->charged_bytes != right->charged_bytes) {
+        return left->charged_bytes < right->charged_bytes ? -1 : 1;
+    }
+    return left < right ? -1 : left != right;
+}
+
+static int collect_failure_live_leases(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    ShadowSpillAdmissionReplayResult *result
+) {
+    uint64_t lease_count = 0U;
+    for (ShadowSpillMemoryLease *lease = state->pool.leases;
+         lease != NULL; lease = lease->pool_next) {
+        state->blocking_order[lease_count++] = lease;
+    }
+    qsort(
+        state->blocking_order,
+        (size_t)lease_count,
+        sizeof(*state->blocking_order),
+        lease_offset_compare
+    );
+    result->live_lease_count = lease_count;
+    if (result->live_leases == NULL || result->live_lease_capacity == 0U) {
+        return 0;
+    }
+    if (lease_count > result->live_lease_capacity) {
+        return -1;
+    }
+    for (uint64_t index = 0U; index < lease_count; ++index) {
+        const ShadowSpillMemoryLease *lease = state->blocking_order[index];
+        result->live_leases[index] = (ShadowSpillAdmissionReplayLiveLease){
+            .lease_id = lease_id(program, state, lease),
+            .offset = lease->offset,
+            .requested_bytes = lease->requested_bytes,
+            .charged_bytes = lease->charged_bytes,
+            .state = (uint8_t)lease->state,
+        };
+    }
+    return 0;
+}
+
 static void update_peaks(ReplayState *state) {
     const uint64_t free_bytes = shadowspill_memory_pool_free_bytes_locked(
         &state->pool
@@ -201,6 +275,95 @@ static int append_dependency(
     return 0;
 }
 
+static ShadowSpillEventLease *publish_retirement_dependency(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    uint64_t predecessor,
+    ShadowSpillMemoryLease *lease
+) {
+    if (lease->causal_event != NULL) {
+        return lease->causal_event;
+    }
+    if (lease->causal_dependency_expected == 0U ||
+        predecessor >= program->lease_count) {
+        return NULL;
+    }
+    const uint64_t expected = state->expected_dependency_ids[predecessor];
+    ShadowSpillEventLease *event = dependency_event(
+        program, state, expected
+    );
+    if (event == NULL ||
+        shadowspill_memory_pool_publish_retirement_dependency_locked(
+            lease, event
+        ) != 0) {
+        return NULL;
+    }
+    state->expected_dependency_ids[predecessor] =
+        SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
+    return event;
+}
+
+static int reserve_after_release_frontier(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    ShadowSpillAdmissionReplayResult *result,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *successor,
+    uint64_t bytes,
+    uint64_t alignment
+) {
+    uint64_t frontier_count = 0U;
+    const int found = shadowspill_memory_pool_find_release_frontier_locked(
+        &state->pool,
+        bytes,
+        alignment,
+        state->release_frontier,
+        program->lease_count,
+        &frontier_count
+    );
+    if (found <= 0) {
+        return found < 0 ? -1 : 1;
+    }
+    for (uint64_t index = 0U; index < frontier_count; ++index) {
+        ShadowSpillMemoryLease *predecessor_lease =
+            state->release_frontier[index];
+        const uint64_t predecessor = lease_id(
+            program, state, predecessor_lease
+        );
+        ShadowSpillEventLease *event = publish_retirement_dependency(
+            program, state, predecessor, predecessor_lease
+        );
+        const uint64_t dependency = event_id(program, state, event);
+        if (predecessor == SHADOWSPILL_ADMISSION_REPLAY_NO_ID ||
+            dependency == SHADOWSPILL_ADMISSION_REPLAY_NO_ID ||
+            append_dependency(
+                result,
+                predecessor,
+                lease_id(program, state, successor),
+                dependency,
+                operation_index
+            ) != 0) {
+            return -1;
+        }
+        atomic_store_explicit(
+            &event->backend_complete, 1U, memory_order_release
+        );
+        if (shadowspill_memory_pool_release_lease_locked(
+                predecessor_lease
+            ) != 0) {
+            return -1;
+        }
+        state->retirement_completed_early[predecessor] = 1U;
+    }
+    return shadowspill_memory_pool_reserve_lease_locked(
+        &state->pool,
+        successor,
+        bytes,
+        alignment,
+        replay_placement(program, bytes)
+    );
+}
+
 static ShadowSpillAdmissionReplayStatus apply_operation(
     const ShadowSpillAdmissionReplayProgram *program,
     ReplayState *state,
@@ -232,8 +395,19 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                 lease,
                 operation->bytes,
                 operation->alignment,
-                SHADOWSPILL_MEMORY_BEST_FIT_LOW
+                replay_placement(program, operation->bytes)
             );
+            if (status == 1) {
+                status = reserve_after_release_frontier(
+                    program,
+                    state,
+                    result,
+                    operation_index,
+                    lease,
+                    operation->bytes,
+                    operation->alignment
+                );
+            }
             break;
         case SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT: {
             ShadowSpillEventLease *event = dependency_event(
@@ -277,11 +451,22 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                 lease,
                 operation->bytes,
                 operation->alignment,
-                SHADOWSPILL_MEMORY_BEST_FIT_LOW
+                replay_placement(program, operation->bytes)
             );
             if (status == 1) {
                 status = shadowspill_memory_pool_reserve_causal_successor_locked(
                     &state->pool,
+                    lease,
+                    operation->bytes,
+                    operation->alignment
+                );
+            }
+            if (status == 1) {
+                status = reserve_after_release_frontier(
+                    program,
+                    state,
+                    result,
+                    operation_index,
                     lease,
                     operation->bytes,
                     operation->alignment
@@ -350,7 +535,12 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
             atomic_store_explicit(
                 &event->backend_complete, 1U, memory_order_release
             );
-            status = shadowspill_memory_pool_release_lease_locked(lease);
+            if (state->retirement_completed_early[operation->lease_id] != 0U) {
+                state->retirement_completed_early[operation->lease_id] = 0U;
+                status = 0;
+            } else {
+                status = shadowspill_memory_pool_release_lease_locked(lease);
+            }
             break;
         }
         case SHADOWSPILL_ADMISSION_REPLAY_RELEASE:
@@ -433,12 +623,27 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
         (lease_capacity == 0U ? 1U : (size_t)lease_capacity) *
         sizeof(*created->state.expected_dependency_ids)
     );
+    created->state.release_frontier = calloc(
+        lease_capacity == 0U ? 1U : (size_t)lease_capacity,
+        sizeof(*created->state.release_frontier)
+    );
+    created->state.blocking_order = calloc(
+        lease_capacity == 0U ? 1U : (size_t)lease_capacity,
+        sizeof(*created->state.blocking_order)
+    );
+    created->state.retirement_completed_early = calloc(
+        lease_capacity == 0U ? 1U : (size_t)lease_capacity,
+        sizeof(*created->state.retirement_completed_early)
+    );
     created->range_nodes = calloc(
         (size_t)created->range_node_capacity,
         sizeof(*created->range_nodes)
     );
     if (created->state.leases == NULL || created->state.events == NULL ||
         created->state.expected_dependency_ids == NULL ||
+        created->state.release_frontier == NULL ||
+        created->state.blocking_order == NULL ||
+        created->state.retirement_completed_early == NULL ||
         created->range_nodes == NULL ||
         pthread_mutex_init(&created->state.pool.lock, NULL) != 0) {
         shadowspill_admission_replay_workspace_destroy(created);
@@ -470,6 +675,9 @@ void shadowspill_admission_replay_workspace_destroy(
     free(workspace->state.events);
     free(workspace->state.leases);
     free(workspace->state.expected_dependency_ids);
+    free(workspace->state.release_frontier);
+    free(workspace->state.blocking_order);
+    free(workspace->state.retirement_completed_early);
     free(workspace);
 }
 
@@ -506,6 +714,10 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run_reusing(
             );
             result->error_largest_free_range_bytes =
                 shadowspill_memory_pool_largest_free_locked(&state->pool);
+            if (status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE &&
+                collect_failure_live_leases(program, state, result) != 0) {
+                status = SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
+            }
             break;
         }
     }

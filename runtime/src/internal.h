@@ -584,6 +584,14 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
     uint64_t bytes,
     uint64_t alignment
 );
+int shadowspill_memory_pool_find_release_frontier_locked(
+    const ShadowSpillMemoryPool *pool,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillMemoryLease **frontier,
+    uint64_t frontier_capacity,
+    uint64_t *frontier_count
+);
 int shadowspill_memory_pool_acquire_reserved_lease_locked(
     ShadowSpillMemoryLease *lease,
     ShadowSpillEventLease **dependency_event

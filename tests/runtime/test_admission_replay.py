@@ -101,6 +101,59 @@ def test_replay_carries_promised_dependency_without_timing() -> None:
     assert replay.decisions[2].physical_bytes_delta == 0
 
 
+def test_replay_waits_for_fifo_retirements_that_coalesce_one_range() -> None:
+    replay = run_admission_replay(
+        128,
+        (
+            _operation(0, 0, AdmissionReplayOperationKind.ACQUIRE, bytes_=32),
+            _operation(1, 1, AdmissionReplayOperationKind.ACQUIRE, bytes_=32),
+            _operation(2, 2, AdmissionReplayOperationKind.ACQUIRE, bytes_=64),
+            _operation(
+                3,
+                0,
+                AdmissionReplayOperationKind.BEGIN_RETIREMENT,
+                dependency_id=0,
+                dependency_expected=True,
+            ),
+            _operation(
+                4,
+                1,
+                AdmissionReplayOperationKind.BEGIN_RETIREMENT,
+                dependency_id=1,
+                dependency_expected=True,
+            ),
+            _operation(5, 3, AdmissionReplayOperationKind.RESERVE, bytes_=64),
+            _operation(6, 3, AdmissionReplayOperationKind.ACQUIRE_RESERVED),
+            _operation(
+                7,
+                0,
+                AdmissionReplayOperationKind.COMPLETE_RETIREMENT,
+                dependency_id=0,
+            ),
+            _operation(
+                8,
+                1,
+                AdmissionReplayOperationKind.COMPLETE_RETIREMENT,
+                dependency_id=1,
+            ),
+            _operation(9, 2, AdmissionReplayOperationKind.RELEASE),
+            _operation(10, 3, AdmissionReplayOperationKind.RELEASE),
+        ),
+        lease_count=4,
+        dependency_count=2,
+        minimum_alignment=1,
+    )
+
+    assert replay.peak_allocated_bytes == 128
+    assert replay.final_allocated_bytes == 0
+    assert replay.decisions[5].physical_bytes_delta == 0
+    assert replay.decisions[5].resulting_state is AdmissionReplayLeaseState.RESERVED
+    assert tuple(
+        (item.predecessor_lease_id, item.successor_lease_id, item.dependency_id)
+        for item in replay.dependencies
+    ) == ((0, 3, 0), (1, 3, 1))
+
+
 def test_replay_reports_exact_infeasible_geometry() -> None:
     with pytest.raises(AdmissionError) as caught:
         run_admission_replay(
@@ -119,3 +172,26 @@ def test_replay_reports_exact_infeasible_geometry() -> None:
     assert caught.value.required_bytes == 64
     assert caught.value.free_bytes == 32
     assert caught.value.largest_free_range_bytes == 32
+    assert caught.value.live_lease_evidence == ((0, 0, 96, 96, 1),)
+
+
+def test_replay_reports_the_physical_lease_blocking_best_window() -> None:
+    with pytest.raises(AdmissionError) as caught:
+        run_admission_replay(
+            128,
+            (
+                _operation(0, 0, AdmissionReplayOperationKind.ACQUIRE, bytes_=32),
+                _operation(1, 1, AdmissionReplayOperationKind.ACQUIRE, bytes_=32),
+                _operation(2, 2, AdmissionReplayOperationKind.ACQUIRE, bytes_=64),
+                _operation(3, 0, AdmissionReplayOperationKind.RELEASE),
+                _operation(4, 2, AdmissionReplayOperationKind.RELEASE),
+                _operation(5, 3, AdmissionReplayOperationKind.ACQUIRE, bytes_=80),
+            ),
+            lease_count=4,
+            dependency_count=0,
+            minimum_alignment=1,
+        )
+
+    assert caught.value.free_bytes == 96
+    assert caught.value.largest_free_range_bytes == 64
+    assert caught.value.live_lease_evidence == ((1, 32, 32, 32, 1),)

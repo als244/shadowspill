@@ -10,6 +10,7 @@ from ._admission_capi import (
     ABI_VERSION,
     NO_ID,
     CAdmissionReplayDecision,
+    CAdmissionReplayLiveLease,
     CAdmissionReplayOperation,
     CAdmissionReplayProgram,
     CAdmissionReplayResult,
@@ -106,10 +107,16 @@ def run_admission_replay(
     lease_count: int,
     dependency_count: int,
     minimum_alignment: int = 256,
+    large_request_threshold_bytes: int = 0,
 ) -> AdmissionReplayResult:
     """Replay an ordered script through the exact production MemoryPool core."""
 
-    if capacity_bytes < 0 or lease_count < 0 or dependency_count < 0:
+    if (
+        capacity_bytes < 0
+        or lease_count < 0
+        or dependency_count < 0
+        or large_request_threshold_bytes < 0
+    ):
         raise ValueError("admission capacities and counts must be non-negative")
     if minimum_alignment <= 0:
         raise ValueError("minimum alignment must be positive")
@@ -129,10 +136,12 @@ def run_admission_replay(
     )
     decision_buffer = (CAdmissionReplayDecision * max(1, len(operations)))()
     dependency_buffer = (CAdmissionReuseDependency * max(1, len(operations)))()
+    live_lease_buffer = (CAdmissionReplayLiveLease * max(1, lease_count))()
     program = CAdmissionReplayProgram(
         ABI_VERSION,
         capacity_bytes,
         minimum_alignment,
+        large_request_threshold_bytes,
         lease_count,
         dependency_count,
         operation_buffer,
@@ -143,6 +152,8 @@ def run_admission_replay(
         decision_capacity=len(operations),
         dependencies=dependency_buffer,
         dependency_capacity=len(operations),
+        live_leases=live_lease_buffer,
+        live_lease_capacity=lease_count,
     )
     library = load_admission_replay_library()
     status = int(
@@ -157,13 +168,24 @@ def run_admission_replay(
             f"{int(result.error_lease_id)}: requested "
             f"{int(result.error_requested_bytes)} bytes, free "
             f"{int(result.error_free_bytes)}, largest range "
-            f"{int(result.error_largest_free_range_bytes)}",
+            f"{int(result.error_largest_free_range_bytes)}; "
+            f"{int(result.live_lease_count)} physical leases remain live",
             kind="memory_pool_fragmentation",
             required_bytes=int(result.error_requested_bytes),
             capacity_bytes=capacity_bytes,
             position=int(result.error_operation_index),
             free_bytes=int(result.error_free_bytes),
             largest_free_range_bytes=int(result.error_largest_free_range_bytes),
+            live_lease_evidence=tuple(
+                (
+                    int(item.lease_id),
+                    int(item.offset),
+                    int(item.requested_bytes),
+                    int(item.charged_bytes),
+                    int(item.state),
+                )
+                for item in live_lease_buffer[: int(result.live_lease_count)]
+            ),
         )
     if status != 0:
         description = library.shadowspill_admission_replay_status_string(

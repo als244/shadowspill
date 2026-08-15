@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
     ShadowSpillRuntime *runtime,
@@ -433,6 +434,23 @@ static int causal_candidate_precedes(
     return candidate->offset < selected->offset;
 }
 
+static int release_sequence_compare(
+    const void *left_value,
+    const void *right_value
+) {
+    const ShadowSpillMemoryLease *left =
+        *(ShadowSpillMemoryLease *const *)left_value;
+    const ShadowSpillMemoryLease *right =
+        *(ShadowSpillMemoryLease *const *)right_value;
+    if (left->release_sequence != right->release_sequence) {
+        return left->release_sequence < right->release_sequence ? -1 : 1;
+    }
+    if (left->offset != right->offset) {
+        return left->offset < right->offset ? -1 : 1;
+    }
+    return 0;
+}
+
 int shadowspill_memory_pool_reserve_causal_successor_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *successor,
@@ -494,6 +512,49 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
     if (pool == NULL || !pool->initialized || bytes == 0U) {
         return -1;
     }
+    uint64_t candidate_count = 0U;
+    for (const ShadowSpillMemoryLease *lease = pool->leases;
+         lease != NULL; lease = lease->pool_next) {
+        if (lease_can_publish_causal_dependency(lease) &&
+            lease->causal_successor == NULL) {
+            ++candidate_count;
+        }
+    }
+    ShadowSpillMemoryLease **frontier = candidate_count == 0U
+        ? NULL
+        : calloc((size_t)candidate_count, sizeof(*frontier));
+    if (candidate_count != 0U && frontier == NULL) {
+        return -1;
+    }
+    uint64_t frontier_count = 0U;
+    const int status = shadowspill_memory_pool_find_release_frontier_locked(
+        pool,
+        bytes,
+        alignment,
+        frontier,
+        candidate_count,
+        &frontier_count
+    );
+    free(frontier);
+    return status;
+}
+
+int shadowspill_memory_pool_find_release_frontier_locked(
+    const ShadowSpillMemoryPool *pool,
+    uint64_t bytes,
+    uint64_t alignment,
+    ShadowSpillMemoryLease **frontier,
+    uint64_t frontier_capacity,
+    uint64_t *frontier_count
+) {
+    if (pool == NULL || !pool->initialized || bytes == 0U) {
+        return -1;
+    }
+    if (frontier_count == NULL ||
+        (frontier_capacity != 0U && frontier == NULL)) {
+        return -1;
+    }
+    *frontier_count = 0U;
     if (alignment < pool->minimum_alignment) {
         alignment = pool->minimum_alignment;
     }
@@ -503,23 +564,43 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
         ) != 0) {
         return -1;
     }
-    for (const ShadowSpillMemoryLease *lease = pool->leases;
+    uint64_t candidate_count = 0U;
+    for (ShadowSpillMemoryLease *lease = pool->leases;
          lease != NULL; lease = lease->pool_next) {
         if (!lease_can_publish_causal_dependency(lease) ||
             lease->causal_successor != NULL) {
             continue;
         }
+        if (candidate_count >= frontier_capacity) {
+            shadowspill_range_destroy(&future);
+            return -1;
+        }
+        frontier[candidate_count++] = lease;
+    }
+    qsort(
+        frontier,
+        (size_t)candidate_count,
+        sizeof(*frontier),
+        release_sequence_compare
+    );
+    int reserve_status = 1;
+    for (uint64_t index = 0U; index < candidate_count; ++index) {
+        ShadowSpillMemoryLease *lease = frontier[index];
         if (shadowspill_range_free(
                 &future, lease->offset, lease->charged_bytes
             ) != 0) {
             shadowspill_range_destroy(&future);
             return -1;
         }
+        uint64_t ignored_offset = 0U;
+        reserve_status = shadowspill_range_allocate_best_fit_low(
+            &future, bytes, alignment, &ignored_offset
+        );
+        if (reserve_status <= 0) {
+            *frontier_count = index + 1U;
+            break;
+        }
     }
-    uint64_t ignored_offset = 0U;
-    const int reserve_status = shadowspill_range_allocate_best_fit_low(
-        &future, bytes, alignment, &ignored_offset
-    );
     shadowspill_range_destroy(&future);
     return reserve_status == 0 ? 1 : reserve_status > 0 ? 0 : -1;
 }

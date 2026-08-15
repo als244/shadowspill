@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION 2U
+#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION 4U
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
 typedef enum ShadowSpillAdmissionReplayStatus {
@@ -61,6 +61,13 @@ typedef struct ShadowSpillAdmissionReplayProgram {
     uint32_t abi_version;
     uint64_t capacity_bytes;
     uint64_t minimum_alignment;
+    /*
+     * Zero preserves ordinary low-address best fit.  Otherwise requests at
+     * least this large split the selected free range from its high end.  The
+     * policy keeps one globally coalescing arena; it does not partition or
+     * reserve capacity for either size class.
+     */
+    uint64_t large_request_threshold_bytes;
     uint64_t lease_count;
     uint64_t dependency_count;
     const ShadowSpillAdmissionReplayOperation *operations;
@@ -89,6 +96,15 @@ typedef struct ShadowSpillAdmissionReuseDependency {
     uint64_t consumer_operation_index;
 } ShadowSpillAdmissionReuseDependency;
 
+/* Exact physical allocation ledger at the first infeasible operation. */
+typedef struct ShadowSpillAdmissionReplayLiveLease {
+    uint64_t lease_id;
+    uint64_t offset;
+    uint64_t requested_bytes;
+    uint64_t charged_bytes;
+    uint8_t state;
+} ShadowSpillAdmissionReplayLiveLease;
+
 typedef struct ShadowSpillAdmissionReplayResult {
     uint32_t status;
     uint64_t error_operation_index;
@@ -110,6 +126,9 @@ typedef struct ShadowSpillAdmissionReplayResult {
     ShadowSpillAdmissionReuseDependency *dependencies;
     uint64_t dependency_capacity;
     uint64_t dependency_result_count;
+    ShadowSpillAdmissionReplayLiveLease *live_leases;
+    uint64_t live_lease_capacity;
+    uint64_t live_lease_count;
 } ShadowSpillAdmissionReplayResult;
 
 /*

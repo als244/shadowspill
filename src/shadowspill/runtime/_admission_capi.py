@@ -7,7 +7,7 @@ from functools import cache
 
 from shadowspill._libraries import resolve_library
 
-ABI_VERSION = 2
+ABI_VERSION = 4
 NO_ID = (1 << 64) - 1
 
 
@@ -28,6 +28,7 @@ class CAdmissionReplayProgram(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("capacity_bytes", ctypes.c_uint64),
         ("minimum_alignment", ctypes.c_uint64),
+        ("large_request_threshold_bytes", ctypes.c_uint64),
         ("lease_count", ctypes.c_uint64),
         ("dependency_count", ctypes.c_uint64),
         ("operations", ctypes.POINTER(CAdmissionReplayOperation)),
@@ -59,6 +60,16 @@ class CAdmissionReuseDependency(ctypes.Structure):
     ]
 
 
+class CAdmissionReplayLiveLease(ctypes.Structure):
+    _fields_ = [
+        ("lease_id", ctypes.c_uint64),
+        ("offset", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("charged_bytes", ctypes.c_uint64),
+        ("state", ctypes.c_uint8),
+    ]
+
+
 class CAdmissionReplayResult(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
@@ -80,6 +91,9 @@ class CAdmissionReplayResult(ctypes.Structure):
         ("dependencies", ctypes.POINTER(CAdmissionReuseDependency)),
         ("dependency_capacity", ctypes.c_uint64),
         ("dependency_result_count", ctypes.c_uint64),
+        ("live_leases", ctypes.POINTER(CAdmissionReplayLiveLease)),
+        ("live_lease_capacity", ctypes.c_uint64),
+        ("live_lease_count", ctypes.c_uint64),
     ]
 
 
@@ -114,6 +128,7 @@ __all__ = [
     "ABI_VERSION",
     "NO_ID",
     "CAdmissionReplayDecision",
+    "CAdmissionReplayLiveLease",
     "CAdmissionReplayOperation",
     "CAdmissionReplayProgram",
     "CAdmissionReplayResult",
