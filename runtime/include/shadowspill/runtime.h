@@ -17,7 +17,7 @@ extern "C" {
 #endif
 
 #define SHADOWSPILL_RUNTIME_ABI_VERSION 27U
-#define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 1U
+#define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -162,14 +162,16 @@ typedef enum ShadowSpillFixedPlacementKind {
     SHADOWSPILL_FIXED_TASK_ALLOCATION = 1,
     SHADOWSPILL_FIXED_ACTION_DESTINATION = 2,
     SHADOWSPILL_DYNAMIC_TASK_ALLOCATION = 3,
+    SHADOWSPILL_DYNAMIC_ACTION_DESTINATION = 4,
 } ShadowSpillFixedPlacementKind;
 
 /*
  * One allocation policy inside an admitted physical layout. ``ordinal`` is a
  * task-local allocator ordinal or task-local action ordinal. Initial objects
  * use ``object_id`` and set task_id/ordinal to SHADOWSPILL_RUNTIME_NO_ID.
- * Dynamic task allocations set ``offset`` to SHADOWSPILL_RUNTIME_NO_ID; every
- * other kind names a subrange of the plan-owned execution-pool slice.
+ * Dynamic task allocations and action destinations set ``offset`` to
+ * SHADOWSPILL_RUNTIME_NO_ID; every fixed kind names a subrange of the
+ * plan-owned execution-pool slice.
  */
 typedef struct ShadowSpillFixedPlacementDescription {
     uint64_t task_id;
@@ -577,10 +579,11 @@ shadowspill_replace_object_allocation(
 );
 
 /*
- * Removes one EXECUTION_READY or PREFETCHING object while leaving its
- * allocation live under ordinary caller ownership.  If a fetch is still in
- * flight, the function inserts its readiness dependency on consumer_stream;
- * the fetch action retains the detached object until completion.  The
+ * Transfers one settled EXECUTION_READY generation to ordinary caller
+ * ownership while preserving the registered object record for recurrent
+ * execution. Pending actions are drained before handoff so immutable
+ * execution records never retain a stale object identity. The object becomes
+ * RELEASED and may bind a new generation on the next invocation. The
  * framework's eventual logical free and recorded streams govern range reuse.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus

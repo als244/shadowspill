@@ -355,6 +355,109 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
     return failed ? -1 : 0;
 }
 
+static int empty_fixed_slice_allows_dynamic_fetch(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 64U,
+        .spill_pool_bytes = 64U,
+        .minimum_alignment = 16U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    const ShadowSpillObjectDescription object = {
+        .object_id = 71U,
+        .size_bytes = 64U,
+        .retain_spill_copy = 1U,
+        .initially_spill_resident = 1U,
+    };
+    failed = failed || shadowspill_register_object(runtime, &object) !=
+        SHADOWSPILL_RUNTIME_OK;
+    const ShadowSpillFixedPlacementDescription placement = {
+        .task_id = 21U,
+        .ordinal = 0U,
+        .object_id = object.object_id,
+        .offset = SHADOWSPILL_RUNTIME_NO_ID,
+        .bytes = 64U,
+        .alignment_bytes = 16U,
+        .kind = SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
+    };
+    const ShadowSpillFixedLayoutDescription layout = {
+        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .placements = &placement,
+        .placement_count = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillExecutionDescription fetch_task = {
+        .task_id = 21U,
+        .actions = &fetch,
+        .action_count = 1U,
+    };
+    const ShadowSpillRuntimeAction release = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const ShadowSpillExecutionDescription release_task = {
+        .task_id = 22U,
+        .actions = &release,
+        .action_count = 1U,
+    };
+    failed = failed || shadowspill_admit_fixed_layout(runtime, &layout) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &fetch_task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &release_task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_seal_fixed_layout(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, fetch_task.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(runtime, fetch_task.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_object_snapshot(
+            runtime, object.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        snapshot.execution_pointer == NULL ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        statistics.allocated_bytes != 64U;
+    failed = failed || shadowspill_before_execution(
+            runtime, release_task.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(runtime, release_task.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_unregister_object(runtime, object.object_id) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_clear_execution_plan(runtime) !=
+            SHADOWSPILL_RUNTIME_OK;
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        failed = failed ||
+            shadowspill_mock_destroy_compute_stream(mock, compute) != 0;
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int eviction_completion_orders_fixed_reuse(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -715,6 +818,10 @@ int main(void) {
     }
     if (empty_fixed_slice_allows_dynamic_task() != 0) {
         fprintf(stderr, "empty fixed slice rejected a dynamic task\n");
+        return EXIT_FAILURE;
+    }
+    if (empty_fixed_slice_allows_dynamic_fetch() != 0) {
+        fprintf(stderr, "empty fixed slice rejected a dynamic fetch\n");
         return EXIT_FAILURE;
     }
     if (eviction_completion_orders_fixed_reuse() != 0) {

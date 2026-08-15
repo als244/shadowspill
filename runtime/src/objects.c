@@ -528,12 +528,14 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillObject *object = NULL;
-    ShadowSpillEventLease *readiness_event = NULL;
     uint64_t expected_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     uint64_t expected_generation = 0U;
-    int removed_from_table = 0;
 
-    /* Snapshot a possible in-flight readiness dependency under object lock. */
+    /*
+     * An admitted execution record retains direct object pointers.  Caller
+     * handoff therefore drains this generation's actions but preserves the
+     * object record itself for the next recurrent invocation.
+     */
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     if (status != SHADOWSPILL_RUNTIME_OK) {
@@ -546,20 +548,27 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     shadowspill_object_retain(object);
-    pthread_mutex_lock(&object->lock);
-    if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-         object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
-        object->allocation_id == SHADOWSPILL_RUNTIME_NO_ID ||
-        (object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
-         !object->has_readiness_event)) {
+    for (;;) {
+        pthread_mutex_lock(&object->lock);
+        const int settled = object->action_head == NULL &&
+            object->residency != SHADOWSPILL_OBJECT_PREFETCHING &&
+            object->residency != SHADOWSPILL_OBJECT_OFFLOADING;
+        if (settled || status != SHADOWSPILL_RUNTIME_OK) {
+            break;
+        }
+        pthread_mutex_unlock(&object->lock);
+        pthread_cond_wait(&runtime->condition, &runtime->mutex);
+        status = shadowspill_current_status_locked(runtime);
+    }
+    if (status == SHADOWSPILL_RUNTIME_OK &&
+        (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+         object->allocation_id == SHADOWSPILL_RUNTIME_NO_ID ||
+         object->has_readiness_event)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-    } else {
+    }
+    if (status == SHADOWSPILL_RUNTIME_OK) {
         expected_allocation_id = object->allocation_id;
         expected_generation = object->generation;
-        if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
-            readiness_event = object->readiness_event;
-            shadowspill_event_lease_retain(readiness_event);
-        }
     }
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&runtime->mutex);
@@ -567,25 +576,9 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         goto release_object;
     }
 
-    /* Publish readiness and lifetime ordering without synchronizing the host. */
-    if (readiness_event != NULL && runtime->backend.wait_event(
-            runtime->backend.context,
-            consumer_stream,
-            readiness_event->event
-        ) != 0) {
-        status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-    }
-    if (readiness_event != NULL && shadowspill_event_lease_release(
-            runtime, readiness_event
-        ) != 0 && status == SHADOWSPILL_RUNTIME_OK) {
-        status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-    }
-    readiness_event = NULL;
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = shadowspill_record_stream(
-            runtime, expected_allocation_id, consumer_stream
-        );
-    }
+    status = shadowspill_record_stream(
+        runtime, expected_allocation_id, consumer_stream
+    );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto release_object;
     }
@@ -598,32 +591,11 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         atomic_load_explicit(&object->detached, memory_order_acquire) != 0U ||
         object->allocation_id != expected_allocation_id ||
         object->generation != expected_generation ||
-        (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-         object->residency != SHADOWSPILL_OBJECT_PREFETCHING)) {
+        object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        object->action_head != NULL || object->has_readiness_event) {
         status = status == SHADOWSPILL_RUNTIME_OK
             ? SHADOWSPILL_RUNTIME_INVALID_STATE
             : status;
-        goto done_object;
-    }
-
-    uint32_t fetch_actions = 0U;
-    pthread_mutex_lock(&runtime->actions.lock);
-    for (ShadowSpillQueuedAction *action = runtime->actions.head;
-         action != NULL; action = action->next) {
-        if (action->object == object) {
-            if (action->kind != SHADOWSPILL_RUNTIME_PREFETCH ||
-                action->state != SHADOWSPILL_ACTION_IN_FLIGHT ||
-                ++fetch_actions > 1U) {
-                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-                break;
-            }
-        }
-    }
-    pthread_mutex_unlock(&runtime->actions.lock);
-    if (status != SHADOWSPILL_RUNTIME_OK ||
-        (object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
-         fetch_actions != 1U)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done_object;
     }
 
@@ -647,16 +619,22 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done_allocation;
         }
+        if (shadowspill_spill_location(runtime, object)->owns_lease) {
+            free(shadowspill_spill_location(runtime, object)->lease);
+        }
+        shadowspill_spill_location(runtime, object)->lease = NULL;
+        shadowspill_spill_location(runtime, object)->owns_lease = 0U;
+        shadowspill_spill_location(runtime, object)->current = 0U;
     }
-    if (shadowspill_object_table_remove(&runtime->objects, object) != 0) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-        goto done_allocation;
-    }
-    removed_from_table = 1;
-    --runtime->registered_objects;
     record->framework_free_seen = 0;
     record->plan_owned = 0;
     record->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    object->retired_generation = object->generation;
+    object->retired_execution_pointer = record->pointer;
+    object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    shadowspill_execution_location(runtime, object)->lease = NULL;
+    shadowspill_execution_location(runtime, object)->current = 0U;
+    object->residency = SHADOWSPILL_OBJECT_RELEASED;
     shadowspill_append_allocation_event_locked(
         runtime,
         record,
@@ -677,12 +655,6 @@ done_object:
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&runtime->mutex);
 release_object:
-    if (readiness_event != NULL) {
-        (void)shadowspill_event_lease_release(runtime, readiness_event);
-    }
-    if (removed_from_table) {
-        shadowspill_object_release(object);
-    }
     shadowspill_object_release(object);
     return status;
 }

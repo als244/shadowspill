@@ -56,7 +56,18 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
                   action->object->object_id
               )
             : NULL;
-        if (action->admitted && runtime->fixed_layout.sealed && fixed == NULL) {
+        const ShadowSpillFixedPlacementDescription *dynamic =
+            action->admitted && fixed == NULL
+            ? shadowspill_fixed_layout_find_placement(
+                  runtime,
+                  SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
+                  action->task_id,
+                  action->action_ordinal,
+                  action->object->object_id
+              )
+            : NULL;
+        if (action->admitted && runtime->fixed_layout.sealed &&
+            fixed == NULL && dynamic == NULL) {
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         }
         status = fixed == NULL

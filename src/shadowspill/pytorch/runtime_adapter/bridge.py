@@ -1089,7 +1089,6 @@ class RuntimeBridge:
             if alias_id in seen:
                 continue
             if not self.requires_storage(alias_id):
-                self._registered.discard(alias_id)
                 self._zero_generations.pop(alias_id, None)
                 seen.add(alias_id)
                 continue
@@ -1100,7 +1099,6 @@ class RuntimeBridge:
                 binding.allocation_id,
             )
             seen.add(alias_id)
-            self._registered.discard(alias_id)
 
     def rebind(
         self, tensor: torch.Tensor, alias_id: str, binding: ObjectBinding

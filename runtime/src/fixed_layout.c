@@ -66,15 +66,18 @@ static int valid_placement(
     const ShadowSpillFixedPlacementDescription *placement,
     uint64_t slice_bytes
 ) {
-    if (placement->kind > SHADOWSPILL_DYNAMIC_TASK_ALLOCATION ||
+    if (placement->kind > SHADOWSPILL_DYNAMIC_ACTION_DESTINATION ||
         placement->bytes == 0U || placement->alignment_bytes == 0U) {
         return 0;
     }
-    if (placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION) {
+    if (placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION ||
+        placement->kind == SHADOWSPILL_DYNAMIC_ACTION_DESTINATION) {
         return placement->task_id != SHADOWSPILL_RUNTIME_NO_ID &&
             placement->ordinal != SHADOWSPILL_RUNTIME_NO_ID &&
-            placement->object_id == SHADOWSPILL_RUNTIME_NO_ID &&
-            placement->offset == SHADOWSPILL_RUNTIME_NO_ID;
+            placement->offset == SHADOWSPILL_RUNTIME_NO_ID &&
+            (placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION
+                 ? placement->object_id == SHADOWSPILL_RUNTIME_NO_ID
+                 : placement->object_id != SHADOWSPILL_RUNTIME_NO_ID);
     }
     if (
         placement->offset > slice_bytes ||
@@ -159,7 +162,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
 
 static int has_borrowed_layout_lease(const ShadowSpillMemoryPool *pool) {
     for (const ShadowSpillMemoryLease *lease = pool->leases;
-         lease != NULL; lease = lease->pool_next) {
+        lease != NULL; lease = lease->pool_next) {
         if (!lease->owns_pool_range) {
             return 1;
         }
@@ -686,15 +689,29 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
         }
         for (uint32_t index = 0U; index < record->action_count; ++index) {
             const ShadowSpillExecutionAction *action = &record->actions[index];
-            if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
-                shadowspill_fixed_layout_find_placement(
-                    runtime,
-                    SHADOWSPILL_FIXED_ACTION_DESTINATION,
-                    record->task_id,
-                    index,
-                    action->object->object_id
-                ) == NULL) {
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+            if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                int policy_count = 0;
+                if (shadowspill_fixed_layout_find_placement(
+                        runtime,
+                        SHADOWSPILL_FIXED_ACTION_DESTINATION,
+                        record->task_id,
+                        index,
+                        action->object->object_id
+                    ) != NULL) {
+                    ++policy_count;
+                }
+                if (shadowspill_fixed_layout_find_placement(
+                        runtime,
+                        SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
+                        record->task_id,
+                        index,
+                        action->object->object_id
+                    ) != NULL) {
+                    ++policy_count;
+                }
+                if (policy_count != 1) {
+                    return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                }
             }
         }
     }

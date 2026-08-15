@@ -54,13 +54,14 @@ def build_fixed_layout_admission(
         selected.schedule,
         selected.simulation,
     )
+    dynamic_lease_ids = _final_dynamic_lease_ids(
+        builder,
+        dynamic_alias_group_ids,
+    )
     dynamic_lifetimes = tuple(
-        item
-        for item in lifetimes
-        if item.alias_group_id in dynamic_alias_group_ids
+        item for item in lifetimes if item.lease_id in dynamic_lease_ids
     )
     _validate_dynamic_lifetimes(dynamic_lifetimes)
-    dynamic_lease_ids = frozenset(item.lease_id for item in dynamic_lifetimes)
     fixed_lifetimes = tuple(
         item for item in lifetimes if item.lease_id not in dynamic_lease_ids
     )
@@ -111,13 +112,37 @@ def build_fixed_layout_admission(
     )
 
 
+def _final_dynamic_lease_ids(
+    builder: _AdmissionScriptBuilder,
+    alias_group_ids: frozenset[str],
+) -> frozenset[int]:
+    """Resolve caller-owned aliases to their final physical generations.
+
+    An alias may be produced, evicted, and fetched before caller handoff.  Only
+    the lease active at the final boundary escapes the reusable fixed slice;
+    historical generations remain ordinary fixed lifetimes.
+    """
+
+    missing = sorted(alias_group_ids - builder.active_aliases.keys())
+    if missing:
+        raise ValueError(
+            "dynamic terminal aliases lack final execution leases: "
+            f"{missing}"
+        )
+    return frozenset(builder.active_aliases[item] for item in alias_group_ids)
+
+
 def _validate_dynamic_lifetimes(lifetimes: tuple[LeaseLifetime, ...]) -> None:
-    """Require the dynamic exception to be a terminal task output only."""
+    """Require each dynamic exception to be one caller-owned final lease."""
 
     for item in lifetimes:
-        if item.purpose is not AdmissionReplayPurpose.TASK_OUTPUT:
+        if item.purpose not in {
+            AdmissionReplayPurpose.TASK_OUTPUT,
+            AdmissionReplayPurpose.FETCH_DESTINATION,
+        }:
             raise ValueError(
-                "only terminal caller-owned task outputs may remain dynamic; "
+                "only terminal caller-owned task outputs or their final fetch "
+                "destinations may remain dynamic; "
                 f"lease {item.lease_id} has purpose {item.purpose.value!r}"
             )
 

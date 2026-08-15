@@ -15,6 +15,7 @@ class RuntimePlacementKind(IntEnum):
     TASK_ALLOCATION = 1
     ACTION_DESTINATION = 2
     DYNAMIC_TASK_ALLOCATION = 3
+    DYNAMIC_ACTION_DESTINATION = 4
 
 
 @dataclass(frozen=True, slots=True)

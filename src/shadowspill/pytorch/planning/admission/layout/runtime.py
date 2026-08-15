@@ -57,7 +57,12 @@ def project_runtime_fixed_layout(
             initial_task_id=initial_task_id,
         ),
         *_task_placements(layout, fixed_by_lease, dynamic_by_lease),
-        *_action_placements(layout, fixed_by_lease, action_identities),
+        *_action_placements(
+            layout,
+            fixed_by_lease,
+            dynamic_by_lease,
+            action_identities,
+        ),
     ]
     dependencies = _runtime_dependencies(
         layout,
@@ -162,24 +167,43 @@ def _task_placements(
 def _action_placements(
     layout: FixedPhysicalLayout,
     fixed_by_lease: dict[int, FixedLayoutPlacement],
+    dynamic_by_lease: dict[int, LeaseLifetime],
     action_identities: dict[int, _ActionIdentity],
 ) -> tuple[RuntimeFixedPlacement, ...]:
     result: list[RuntimeFixedPlacement] = []
     for action_index, lease_id in layout.action_destination_leases:
         try:
             identity = action_identities[action_index]
-            placement = fixed_by_lease[lease_id]
         except KeyError as error:
             raise ValueError(
-                f"fixed action destination {action_index} has no runtime identity"
+                f"action destination {action_index} has no runtime identity"
             ) from error
+        fixed = fixed_by_lease.get(lease_id)
+        if fixed is not None:
+            result.append(
+                _fixed_runtime_placement(
+                    fixed,
+                    task_id=identity.task_id,
+                    ordinal=identity.ordinal,
+                    object_id=identity.object_id,
+                    kind=RuntimePlacementKind.ACTION_DESTINATION,
+                )
+            )
+            continue
+        dynamic = dynamic_by_lease.get(lease_id)
+        if dynamic is None:
+            raise ValueError(
+                f"action destination lease {lease_id} has no physical policy"
+            )
         result.append(
-            _fixed_runtime_placement(
-                placement,
+            RuntimeFixedPlacement(
                 task_id=identity.task_id,
                 ordinal=identity.ordinal,
                 object_id=identity.object_id,
-                kind=RuntimePlacementKind.ACTION_DESTINATION,
+                offset=_NO_ID,
+                bytes=dynamic.bytes,
+                alignment=dynamic.alignment,
+                kind=RuntimePlacementKind.DYNAMIC_ACTION_DESTINATION,
             )
         )
     return tuple(result)

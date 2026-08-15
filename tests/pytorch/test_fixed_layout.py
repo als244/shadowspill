@@ -248,6 +248,119 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
     assert runtime.placements[0].bytes == 8
 
 
+def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec(
+                "alias_000000",
+                "cuda_0",
+                8,
+                retain_spill_copy=True,
+            ),
+        ),
+        objects=(ObjectSpec("object_000000", "alias_000000", 0, 8),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "task_000000",
+                COMPUTE,
+                "profile",
+                outputs=("object_000000",),
+            ),
+            TaskSpec(
+                "task_000001",
+                COMPUTE,
+                "profile",
+                dependencies=("task_000000",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        (),
+        (
+            MemoryAction(
+                "task_000000",
+                "alias_000000",
+                MemoryActionKind.OFFLOAD,
+            ),
+            MemoryAction(
+                "task_000001",
+                "alias_000000",
+                MemoryActionKind.PREFETCH,
+            ),
+        ),
+        (ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=16,
+        host_capacity_bytes=16,
+        fetch_bandwidth_bytes_per_second=1_000_000_000,
+        evict_bandwidth_bytes_per_second=1_000_000_000,
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        16,
+        16,
+        1,
+        (
+            TaskAdmissionSpec(
+                "task_000000",
+                fresh_output_aliases=("alias_000000",),
+                allocation_steps=(
+                    TaskAllocationStep(
+                        0,
+                        TaskAllocationStepKind.ALLOCATE,
+                        8,
+                        output_alias_group_id="alias_000000",
+                    ),
+                ),
+            ),
+            TaskAdmissionSpec("task_000001"),
+        ),
+    )
+
+    admitted = build_fixed_layout_admission(
+        _selected(program, schedule, config),
+        topology,
+        dynamic_alias_group_ids=frozenset({"alias_000000"}),
+    )
+
+    assert admitted.layout.fixed_slice_bytes == 8
+    assert admitted.layout.dynamic_reserve_bytes == 8
+    assert admitted.layout.required_bytes == 16
+    assert len(admitted.layout.dynamic_lifetimes) == 1
+    dynamic = admitted.layout.dynamic_lifetimes[0]
+    assert dynamic.purpose.value == "fetch_destination"
+    assert dynamic.action_index == 1
+    assert len(admitted.layout.placements) == 1
+    assert admitted.layout.placements[0].purpose.value == "task_output"
+
+    runtime = project_runtime_fixed_layout(
+        admitted.layout,
+        program,
+        schedule,
+        initial_task_id=1 << 60,
+    )
+    assert len(runtime.placements) == 2
+    task_output = next(
+        item
+        for item in runtime.placements
+        if item.kind is RuntimePlacementKind.TASK_ALLOCATION
+    )
+    fetched_output = next(
+        item
+        for item in runtime.placements
+        if item.kind is RuntimePlacementKind.DYNAMIC_ACTION_DESTINATION
+    )
+    assert task_output.task_id == 0
+    assert fetched_output.task_id == 1
+    assert fetched_output.ordinal == 0
+    assert fetched_output.object_id == 0
+    assert fetched_output.bytes == 8
+
+
 def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
     program = Program(
         devices=(DEVICE,),

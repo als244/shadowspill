@@ -281,7 +281,9 @@ static int inflight_prefetch_transfers_to_caller(void) {
         caller.allocation_id != binding.allocation_id ||
         shadowspill_object_snapshot(
             runtime, object.object_id, &snapshot
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+        snapshot.execution_pointer != NULL ||
         shadowspill_free(runtime, caller.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
@@ -814,9 +816,10 @@ static int valid_transition_paths(void) {
         caller.allocation_id != third.allocation_id ||
         shadowspill_object_snapshot(
             fixture.runtime, device_created.object_id, &snapshot
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
         shadowspill_register_object(fixture.runtime, &device_created) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_RUNTIME_INVALID_STATE ||
         shadowspill_object_snapshot(
             fixture.runtime, device_created.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
@@ -885,6 +888,78 @@ static int immutable_execution_admission(void) {
         shadowspill_after_execution_handle(
             fixture.runtime, handle, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int caller_handoff_preserves_recurrent_object_identity(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription object = {
+        .object_id = 92U,
+        .size_bytes = 32U,
+    };
+    const ShadowSpillRuntimeAction evict = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillExecutionDescription evict_task = {
+        .task_id = 18U,
+        .actions = &evict,
+        .action_count = 1U,
+    };
+    const ShadowSpillExecutionDescription fetch_task = {
+        .task_id = 19U,
+        .actions = &fetch,
+        .action_count = 1U,
+    };
+    int failed = shadowspill_register_object(fixture.runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &evict_task
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &fetch_task
+        ) != SHADOWSPILL_RUNTIME_OK;
+    for (uint32_t invocation = 0U; !failed && invocation < 2U; ++invocation) {
+        ShadowSpillAllocation produced = {0};
+        ShadowSpillAllocation caller = {0};
+        ShadowSpillObjectSnapshot snapshot = {0};
+        failed = shadowspill_allocate(
+                fixture.runtime, object.size_bytes, 1U, fixture.compute, &produced
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+                fixture.runtime, object.object_id, produced.allocation_id
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+                fixture.runtime, evict_task.task_id, fixture.compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+                fixture.runtime, evict_task.task_id, fixture.compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+                fixture.runtime, fetch_task.task_id, fixture.compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+                fixture.runtime, fetch_task.task_id, fixture.compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_transfer_object_to_caller(
+                fixture.runtime, object.object_id, fixture.compute, &caller
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
+                fixture.runtime, object.object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+            snapshot.execution_pointer != NULL ||
+            caller.allocation_id == SHADOWSPILL_RUNTIME_NO_ID ||
+            shadowspill_free(
+                fixture.runtime, caller.allocation_id, fixture.compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+                fixture.runtime
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(
+            fixture.runtime, &statistics
+        ) != SHADOWSPILL_RUNTIME_OK || statistics.evict_transfers != 2U ||
+        statistics.fetch_transfers != 2U;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
@@ -1924,6 +1999,7 @@ int main(void) {
     REQUIRE_CANARY(offload_window_is_enqueued_without_host_serialization());
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());
+    REQUIRE_CANARY(caller_handoff_preserves_recurrent_object_identity());
     REQUIRE_CANARY(admitted_task_allocates_dynamic_ranges());
     REQUIRE_CANARY(admitted_reuse_reacquires_retired_dynamic_range());
     REQUIRE_CANARY(admitted_allocation_without_progress_reports_no_progress());
