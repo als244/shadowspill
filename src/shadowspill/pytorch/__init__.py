@@ -17,6 +17,7 @@ from .contracts import (
 from .diagnostics import (
     DiagnosticsHandle,
     ExecutionTiming,
+    PhaseTimingComparison,
     PlanAllocationEvent,
     PlanCacheArtifact,
     PlanCompiledOutputView,
@@ -34,8 +35,10 @@ from .diagnostics import (
     PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
+    SimulatorTransferComparison,
     StepDiagnostics,
     StepResult,
+    StepTimingSummary,
 )
 from .partition import PartitionPolicy, PartitionSpec
 from .runtime_adapter import (
@@ -68,6 +71,7 @@ __all__ = [
     "ObjectiveResult",
     "PartitionPolicy",
     "PartitionSpec",
+    "PhaseTimingComparison",
     "PlanAllocationEvent",
     "PlanCacheArtifact",
     "PlanCompiledOutputView",
@@ -94,8 +98,10 @@ __all__ = [
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
     "RuntimeFailureDiagnostics",
+    "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepResult",
+    "StepTimingSummary",
     "TensorSpec",
     "TransferCapabilities",
     "TransferProfile",

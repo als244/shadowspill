@@ -9,6 +9,7 @@ import torch
 from shadowspill.ir import MemoryAction
 from shadowspill.pytorch.lowering.training import TrainingTaskEntrypoint
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+from shadowspill.simulator import SimulationResult
 
 
 @dataclass(slots=True)
@@ -65,6 +66,7 @@ class ArmedExecutionTiming:
     stream: torch.cuda.Stream | None = None
     statistics_before: AdapterStatistics | None = None
     actions: tuple[MemoryAction, ...] = ()
+    simulation: SimulationResult | None = None
     trace_setup_ns: int = 0
 
 

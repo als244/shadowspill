@@ -289,6 +289,33 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     raise AssertionError("execution timing omitted a task phase")
                 if len(execution_timing.tasks) != len(active):
                     raise AssertionError("execution timing omitted a selected task")
+                if (
+                    not diagnostics.summary.trace_complete
+                    or diagnostics.summary.profiled_task_seconds <= 0.0
+                    or diagnostics.summary.real_task_event_seconds <= 0.0
+                    or diagnostics.summary.real_selected_span_seconds <= 0.0
+                ):
+                    raise AssertionError("step timing reconciliation is incomplete")
+                if set(diagnostics.simulator_comparison) != set(
+                    execution_timing.tasks
+                ):
+                    raise AssertionError("task simulator comparison is incomplete")
+                expected_transfers = (
+                    planned.plan_report.pressurefit_result.simulation.transfer_intervals
+                )
+                if len(diagnostics.transfers.simulator_comparison) != len(
+                    expected_transfers
+                ):
+                    raise AssertionError(
+                        "transfer simulator comparison is incomplete"
+                    )
+                for transfer in diagnostics.transfers.simulator_comparison.values():
+                    if (
+                        transfer.real_completion_timestamp_ns
+                        < transfer.real_dispatch_timestamp_ns
+                        or transfer.bytes <= 0
+                    ):
+                        raise AssertionError("transfer timing comparison is invalid")
                 for execution_ordinal, task_timing in enumerate(
                     execution_timing.tasks.values()
                 ):
@@ -315,6 +342,15 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         )
                     if task_timing.expected_profile_seconds <= 0.0:
                         raise AssertionError("task omitted expected profile time")
+                    comparison = diagnostics.simulator_comparison[execution_task_id]
+                    if (
+                        comparison.task_id != task_timing.task_id
+                        or comparison.simulated_end_ns
+                        < comparison.simulated_start_ns
+                        or comparison.real_end_seconds
+                        < comparison.real_start_seconds
+                    ):
+                        raise AssertionError("task simulator timing is invalid")
                     if any(
                         timestamp <= 0
                         for timestamp in (

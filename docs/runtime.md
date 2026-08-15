@@ -236,6 +236,13 @@ represent identity movement. Recalibration may target all or selected routes,
 requires local idleness, and atomically publishes a new generation. Existing
 plans retain their earlier immutable snapshot.
 
+Calibration retains an independently saturated bandwidth for each direction.
+When reverse routes are selected together, it additionally drives both lanes
+over disjoint ranges for a sustained window and publishes each direction's
+contended rate as the planning value. This deliberately accounts for shared
+host-memory and interconnect pressure. Both solo and concurrent measurements,
+their durations, and copy geometry remain visible in the route profile.
+
 The runtime performs no cross-process barrier. Users can coordinate separate
 processes and invoke calibration concurrently to measure shared-link
 contention.
@@ -243,7 +250,8 @@ contention.
 ## Tracing and profiling
 
 Runtime tracing is bounded and off by default. Preparation allocates record
-capacity; begin/end only enable and disable append. Records cover task
+capacity (one million runtime and one million allocation records per prepared
+training callable); begin/end only enable and disable append. Records cover task
 boundaries, waits, action queueing, lease reservation, transfer dispatch and
 completion, allocation pressure, retirement, and first failure. Allocation
 lifetimes have a separate ordered ledger.

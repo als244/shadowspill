@@ -24,11 +24,20 @@ from .plan import (
     PlanTaskStage,
     PlanUniqueStage,
 )
-from .step import DiagnosticsHandle, ExecutionTiming, StepDiagnostics, StepResult
+from .step import (
+    DiagnosticsHandle,
+    ExecutionTiming,
+    PhaseTimingComparison,
+    SimulatorTransferComparison,
+    StepDiagnostics,
+    StepResult,
+    StepTimingSummary,
+)
 
 __all__ = [
     "DiagnosticsHandle",
     "ExecutionTiming",
+    "PhaseTimingComparison",
     "PlanAllocationABIStep",
     "PlanAllocationEvent",
     "PlanCacheArtifact",
@@ -51,6 +60,8 @@ __all__ = [
     "PlanTaskMemoryEnvelope",
     "PlanTaskStage",
     "PlanUniqueStage",
+    "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepResult",
+    "StepTimingSummary",
 ]

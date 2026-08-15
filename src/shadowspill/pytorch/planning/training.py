@@ -822,6 +822,12 @@ def admit_training_plan(
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
+                recurrent_simulation=admitted.recurrent_admission.simulation,
+                initial_simulation=(
+                    None
+                    if admitted.initial_admission is None
+                    else admitted.initial_admission.simulation
+                ),
                 initial_fixed_layout=initial_runtime_layout,
                 recurrent_fixed_layout=recurrent_runtime_layout,
                 initial_memory_envelopes=(

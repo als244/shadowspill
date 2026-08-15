@@ -17,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     actions_by_task,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
+from shadowspill.simulator import SimulationResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,7 @@ class PlanRun:
 
     lowered: LoweredTrainingProgram
     plan: ExecutionPlan
+    simulation: SimulationResult
     expected_task_seconds: Mapping[str, float]
     execution: tuple[ExecutionTaskRecord, ...]
     initial_prefetches: tuple[str, ...]
@@ -99,6 +101,7 @@ class PlanRun:
 def build_plan_run(
     lowered: LoweredTrainingProgram,
     plan: ExecutionPlan,
+    simulation: SimulationResult,
     *,
     bridge: RuntimeBridge,
     functions: Mapping[str, Callable[..., object]],
@@ -138,6 +141,7 @@ def build_plan_run(
     return PlanRun(
         lowered=lowered,
         plan=plan,
+        simulation=simulation,
         expected_task_seconds={
             task_id: profiles[task.profile_id].runtime_ns / 1e9
             for task_id, task in tasks.items()

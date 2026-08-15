@@ -272,7 +272,9 @@ artifact read, written, matched, or managed by the planning call.
 execution-device ordinal, and the complete immutable transfer-capability
 matrix snapshot. `fetch_profile` and `evict_profile` expose the exact measured
 routes consumed by PressureFit, including matrix generation, digest,
-provenance, timestamp, latency, and bandwidth.
+provenance, timestamp, latency, solo bandwidth, simultaneous bidirectional
+bandwidth, sustained measurement windows, and the effective bandwidth used by
+planning.
 
 Each forward and backward graph profile contains its calibrated runtime and
 samples; input, mutation, and output object/alias identities and byte sizes;
@@ -339,8 +341,19 @@ ordinary execution launches no timing events. An earlier host-callback
 implementation was rejected because callbacks serialized fine-grained stream
 work and materially perturbed the measured schedule.
 
-`StepDiagnostics` is organized into `timing`, `tasks`, `allocator`,
-`transfers`, `runtime`, and `simulator_comparison`. The runtime section carries
+`StepDiagnostics` is organized into `summary`, `timing`, `tasks`, `allocator`,
+`transfers`, `runtime`, and `simulator_comparison`. `summary` directly
+reconciles the profiled and real task-event sums, simulated and real inter-task
+gaps, selected-task spans, terminal simulator tail, per-phase deltas, and trace
+completeness. `simulator_comparison` is keyed by `execution_XXXXXX` and records
+aligned simulator/real start, end, and duration values plus each delta, so
+schedule drift can be localized to the first divergent execution boundary.
+The transfer section provides the equivalent per-`fetch_XXXXXX` and
+`evict_XXXXXX` comparison: simulator ready/start/end, real queue/reservation/
+worker-dispatch/completion, duration, byte identity, and deltas. Transfer
+times use the host-observed FIFO frontier and are labeled accordingly; initial
+placement copies are counted separately because the recurrent simulator does
+not model that deferred cyclic-startup work. The runtime section carries
 the complete ordered neutral-C event stream and overflow/capacity summary. The
 transfer section provides the schedule actions, completed byte/count deltas,
 and a filtered queue/reservation/dispatch/completion view. Allocation records

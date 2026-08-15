@@ -47,6 +47,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
+from shadowspill.simulator import SimulationResult
 
 from .records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,
@@ -112,6 +113,8 @@ class TrainingExecutor:
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
         *,
+        recurrent_simulation: SimulationResult,
+        initial_simulation: SimulationResult | None = None,
         initial_fixed_layout: RuntimeFixedLayout | None = None,
         recurrent_fixed_layout: RuntimeFixedLayout,
         initial_memory_envelopes: Mapping[str, TaskMemoryEnvelope] | None = None,
@@ -123,11 +126,16 @@ class TrainingExecutor:
         self._state = state
         self._functions = functions
         self.optimizer = optimizer
+        if initial is not None and initial_simulation is None:
+            raise ValueError(
+                "initial execution plan requires matching simulator evidence"
+            )
         self._initial = (
             None
             if initial is None
             else build_plan_run(
                 *initial,
+                simulation=cast(SimulationResult, initial_simulation),
                 bridge=bridge,
                 functions=functions,
                 memory_envelopes=initial_memory_envelopes or {},
@@ -135,6 +143,7 @@ class TrainingExecutor:
         )
         self._recurrent = build_plan_run(
             *recurrent,
+            simulation=recurrent_simulation,
             bridge=bridge,
             functions=functions,
             memory_envelopes=recurrent_memory_envelopes,
@@ -176,15 +185,13 @@ class TrainingExecutor:
         self._armed_execution_timing: _ArmedExecutionTiming | None = None
         self._armed_span_timing: _ArmedSpanTiming | None = None
         self._profiler_annotations_enabled = False
+        # Detailed tracing is default-off and allocated lazily. Full-model
+        # schedules emit several records per action plus readiness and
+        # retirement records, so task count alone is not a safe bound. Keep a
+        # deliberately generous fixed capacity and report any overflow in the
+        # public reconciliation summary rather than truncating silently.
         self._trace_allocation_capacity = 1_000_000
-        self._trace_event_capacity = max(
-            65_536,
-            64
-            * max(
-                len(self._recurrent.execution),
-                len(self._initial.execution) if self._initial is not None else 0,
-            ),
-        )
+        self._trace_event_capacity = 1_000_000
         self._trace_start_event: torch.cuda.Event | None = None
         self._trace_end_event: torch.cuda.Event | None = None
         self._trace_origin_event: torch.cuda.Event | None = None
@@ -466,6 +473,7 @@ class TrainingExecutor:
                 )
                 + run.plan.schedule.actions
             ),
+            simulation=run.simulation,
             trace_setup_ns=trace_setup_ns,
         )
         self._bridge.enable_debug_task_timing(armed.task_order)

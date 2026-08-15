@@ -232,7 +232,10 @@ class TransferTrace:
     evict_transfers: int
     bytes_fetched: int
     bytes_evicted: int
+    initial_fetch_transfers: int
+    initial_bytes_fetched: int
     events: tuple[RuntimeTraceEvent, ...]
+    simulator_comparison: Mapping[str, SimulatorTransferComparison]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -241,7 +244,13 @@ class TransferTrace:
             "evict_transfers": self.evict_transfers,
             "bytes_fetched": self.bytes_fetched,
             "bytes_evicted": self.bytes_evicted,
+            "initial_fetch_transfers": self.initial_fetch_transfers,
+            "initial_bytes_fetched": self.initial_bytes_fetched,
             "events": [item.as_dict() for item in self.events],
+            "simulator_comparison": {
+                transfer_id: item.as_dict()
+                for transfer_id, item in self.simulator_comparison.items()
+            },
         }
 
 
@@ -295,17 +304,147 @@ class RuntimeTrace:
 class SimulatorTaskComparison:
     execution_task_id: str
     task_id: str
+    simulated_start_ns: int
+    simulated_end_ns: int
+    simulated_start_seconds: float
+    real_start_seconds: float
+    start_delta_seconds: float
+    simulated_end_seconds: float
+    real_end_seconds: float
+    end_delta_seconds: float
     expected_profile_seconds: float
     observed_gpu_seconds: float
-    delta_seconds: float
+    duration_delta_seconds: float
 
     def as_dict(self) -> dict[str, object]:
         return {
             "execution_task_id": self.execution_task_id,
             "task_id": self.task_id,
+            "simulated_start_ns": self.simulated_start_ns,
+            "simulated_end_ns": self.simulated_end_ns,
+            "simulated_start_seconds": self.simulated_start_seconds,
+            "real_start_seconds": self.real_start_seconds,
+            "start_delta_seconds": self.start_delta_seconds,
+            "simulated_end_seconds": self.simulated_end_seconds,
+            "real_end_seconds": self.real_end_seconds,
+            "end_delta_seconds": self.end_delta_seconds,
             "expected_profile_seconds": self.expected_profile_seconds,
             "observed_gpu_seconds": self.observed_gpu_seconds,
+            "duration_delta_seconds": self.duration_delta_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SimulatorTransferComparison:
+    """Simulator interval versus the worker-observed real transfer frontier."""
+
+    transfer_id: str
+    direction: str
+    sequence: int
+    trigger_task_id: str
+    execution_task_id: str
+    alias_group_id: str
+    bytes: int
+    simulated_ready_seconds: float
+    simulated_start_seconds: float
+    simulated_end_seconds: float
+    simulated_duration_seconds: float
+    real_queued_seconds: float | None
+    real_reserved_seconds: float | None
+    real_dispatch_timestamp_ns: int
+    real_completion_timestamp_ns: int
+    real_dispatch_seconds: float
+    real_completion_seconds: float
+    real_frontier_duration_seconds: float
+    start_delta_seconds: float
+    end_delta_seconds: float
+    duration_delta_seconds: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "transfer_id": self.transfer_id,
+            "direction": self.direction,
+            "sequence": self.sequence,
+            "trigger_task_id": self.trigger_task_id,
+            "execution_task_id": self.execution_task_id,
+            "alias_group_id": self.alias_group_id,
+            "bytes": self.bytes,
+            "timing_basis": (
+                "simulator_lane_interval_vs_host_worker_frontier; "
+                "aligned_to_first_scheduled_transfer"
+            ),
+            "simulated_ready_seconds": self.simulated_ready_seconds,
+            "simulated_start_seconds": self.simulated_start_seconds,
+            "simulated_end_seconds": self.simulated_end_seconds,
+            "simulated_duration_seconds": self.simulated_duration_seconds,
+            "real_queued_seconds": self.real_queued_seconds,
+            "real_reserved_seconds": self.real_reserved_seconds,
+            "real_dispatch_timestamp_ns": self.real_dispatch_timestamp_ns,
+            "real_completion_timestamp_ns": self.real_completion_timestamp_ns,
+            "real_dispatch_seconds": self.real_dispatch_seconds,
+            "real_completion_seconds": self.real_completion_seconds,
+            "real_frontier_duration_seconds": self.real_frontier_duration_seconds,
+            "start_delta_seconds": self.start_delta_seconds,
+            "end_delta_seconds": self.end_delta_seconds,
+            "duration_delta_seconds": self.duration_delta_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseTimingComparison:
+    """Expected and observed task-event time for one semantic phase."""
+
+    phase: str
+    profiled_task_seconds: float
+    real_task_event_seconds: float
+    delta_seconds: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "phase": self.phase,
+            "profiled_task_seconds": self.profiled_task_seconds,
+            "real_task_event_seconds": self.real_task_event_seconds,
             "delta_seconds": self.delta_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StepTimingSummary:
+    """Compact simulator-versus-runtime reconciliation for one traced step."""
+
+    profiled_task_seconds: float
+    real_task_event_seconds: float
+    task_event_delta_seconds: float
+    simulated_inter_task_gap_seconds: float
+    real_inter_task_gap_seconds: float
+    inter_task_gap_delta_seconds: float
+    simulated_selected_span_seconds: float
+    real_selected_span_seconds: float
+    selected_span_delta_seconds: float
+    simulator_makespan_seconds: float
+    simulator_terminal_tail_seconds: float
+    phase_comparisons: tuple[PhaseTimingComparison, ...]
+    trace_complete: bool
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "profiled_task_seconds": self.profiled_task_seconds,
+            "real_task_event_seconds": self.real_task_event_seconds,
+            "task_event_delta_seconds": self.task_event_delta_seconds,
+            "simulated_inter_task_gap_seconds": (
+                self.simulated_inter_task_gap_seconds
+            ),
+            "real_inter_task_gap_seconds": self.real_inter_task_gap_seconds,
+            "inter_task_gap_delta_seconds": self.inter_task_gap_delta_seconds,
+            "simulated_selected_span_seconds": self.simulated_selected_span_seconds,
+            "real_selected_span_seconds": self.real_selected_span_seconds,
+            "selected_span_delta_seconds": self.selected_span_delta_seconds,
+            "simulator_makespan_seconds": self.simulator_makespan_seconds,
+            "simulator_terminal_tail_seconds": self.simulator_terminal_tail_seconds,
+            "phase_comparisons": {
+                item.phase: item.as_dict() for item in self.phase_comparisons
+            },
+            "trace_complete": self.trace_complete,
         }
 
 
@@ -324,6 +463,7 @@ class StepDiagnostics:
     transfers: TransferTrace
     runtime: RuntimeTrace
     simulator_comparison: Mapping[str, SimulatorTaskComparison]
+    summary: StepTimingSummary
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -336,6 +476,7 @@ class StepDiagnostics:
             "allocator": self.allocator.as_dict(),
             "transfers": self.transfers.as_dict(),
             "runtime": self.runtime.as_dict(),
+            "summary": self.summary.as_dict(),
             "simulator_comparison": {
                 execution_task_id: item.as_dict()
                 for execution_task_id, item in self.simulator_comparison.items()
@@ -346,9 +487,12 @@ class StepDiagnostics:
 __all__ = [
     "AllocatorTrace",
     "ExecutionTiming",
+    "PhaseTimingComparison",
     "RuntimeTrace",
     "SimulatorTaskComparison",
+    "SimulatorTransferComparison",
     "StepDiagnostics",
+    "StepTimingSummary",
     "TaskExecutionTiming",
     "TransferTrace",
 ]
