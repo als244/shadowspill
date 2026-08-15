@@ -293,6 +293,9 @@ typedef enum ShadowSpillQueuedActionState {
 
 struct ShadowSpillQueuedAction {
     uint64_t task_id;
+    uint64_t action_ordinal;
+    uint64_t activation_generation;
+    uint64_t completed_generation;
     uint8_t kind;
     uint8_t state;
     ShadowSpillMemoryLease *destination_lease;
@@ -380,6 +383,7 @@ typedef struct ShadowSpillExecutionRecord {
     uint64_t maximum_charged_allocation_bytes;
     uint64_t live_requested_allocation_limit_bytes;
     uint64_t live_charged_allocation_limit_bytes;
+    _Atomic uint64_t invocation_count;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
 } ShadowSpillExecutionRecord;
@@ -682,6 +686,29 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
     uint64_t bytes,
     uint64_t alignment
 );
+int shadowspill_fixed_layout_dependencies_published(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation
+);
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+);
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+);
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
     ShadowSpillRuntime *runtime,
@@ -773,6 +800,13 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 );
+ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillFixedPlacementDescription *placement,
+    int plan_owned,
+    uint64_t origin_task_id,
+    ShadowSpillMemoryLease **record
+);
 ShadowSpillRuntimeStatus shadowspill_create_execution_successor_locked(
     ShadowSpillRuntime *runtime,
     uint64_t bytes,
@@ -828,6 +862,10 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
 );
 int shadowspill_has_actionable_retirement(ShadowSpillRuntime *runtime);
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
+uint64_t shadowspill_current_task_allocation_ordinal(
+    ShadowSpillRuntime *runtime
+);
+uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id

@@ -261,6 +261,7 @@ static ShadowSpillExecutionRecord *create_record(
     }
     record->runtime_owner = runtime;
     record->task_id = description->task_id;
+    atomic_init(&record->invocation_count, 0U);
     record->input_count = description->input_count;
     record->update_count = description->update_count;
     record->action_count = description->action_count;
@@ -393,6 +394,7 @@ static ShadowSpillExecutionRecord *create_record(
         };
         record->queued_actions[index] = (ShadowSpillQueuedAction){
             .task_id = record->task_id,
+            .action_ordinal = index,
             .kind = description->actions[index].kind,
             .object = object,
             .trace_label = trace_label,

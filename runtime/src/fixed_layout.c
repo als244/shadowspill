@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+static void cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    __asm__ volatile("yield");
+#else
+    atomic_signal_fence(memory_order_seq_cst);
+#endif
+}
+
 static int placement_key_compare(
     const ShadowSpillFixedPlacementDescription *left,
     const ShadowSpillFixedPlacementDescription *right
@@ -56,8 +66,17 @@ static int valid_placement(
     const ShadowSpillFixedPlacementDescription *placement,
     uint64_t slice_bytes
 ) {
-    if (placement->kind > SHADOWSPILL_FIXED_ACTION_DESTINATION ||
-        placement->bytes == 0U || placement->alignment_bytes == 0U ||
+    if (placement->kind > SHADOWSPILL_DYNAMIC_TASK_ALLOCATION ||
+        placement->bytes == 0U || placement->alignment_bytes == 0U) {
+        return 0;
+    }
+    if (placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION) {
+        return placement->task_id != SHADOWSPILL_RUNTIME_NO_ID &&
+            placement->ordinal != SHADOWSPILL_RUNTIME_NO_ID &&
+            placement->object_id == SHADOWSPILL_RUNTIME_NO_ID &&
+            placement->offset == SHADOWSPILL_RUNTIME_NO_ID;
+    }
+    if (
         placement->offset > slice_bytes ||
         placement->bytes > slice_bytes - placement->offset ||
         placement->offset % placement->alignment_bytes != 0U) {
@@ -234,6 +253,205 @@ shadowspill_fixed_layout_find_placement(
     );
 }
 
+static int dependency_successor_compare(
+    const ShadowSpillFixedRuntimeDependency *dependency,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal
+) {
+    const ShadowSpillFixedDependencyDescription *item =
+        &dependency->description;
+    if (item->successor_kind != successor_kind) {
+        return item->successor_kind < successor_kind ? -1 : 1;
+    }
+    if (item->successor_task_id != task_id) {
+        return item->successor_task_id < task_id ? -1 : 1;
+    }
+    if (item->successor_ordinal != ordinal) {
+        return item->successor_ordinal < ordinal ? -1 : 1;
+    }
+    return 0;
+}
+
+static uint64_t first_successor_dependency(
+    const ShadowSpillFixedLayoutState *layout,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal
+) {
+    uint64_t left = 0U;
+    uint64_t right = layout->dependency_count;
+    while (left < right) {
+        const uint64_t middle = left + (right - left) / 2U;
+        if (dependency_successor_compare(
+                &layout->dependencies[middle],
+                successor_kind,
+                task_id,
+                ordinal
+            ) < 0) {
+            left = middle + 1U;
+        } else {
+            right = middle;
+        }
+    }
+    return left;
+}
+
+static int snapshot_dependency_event(
+    const ShadowSpillFixedRuntimeDependency *dependency,
+    uint64_t invocation,
+    ShadowSpillEventLease **event
+) {
+    *event = NULL;
+    ShadowSpillQueuedAction *action = dependency->predecessor_action;
+    if (action == NULL || action->object == NULL || invocation == 0U) {
+        return -1;
+    }
+    pthread_mutex_lock(&action->object->lock);
+    int status = 0;
+    if (action->completed_generation == invocation) {
+        status = 1;
+    } else if (action->completed_generation > invocation ||
+               action->activation_generation > invocation) {
+        status = -1;
+    } else if (action->activation_generation == invocation &&
+               action->has_completion_event &&
+               action->completion_event != NULL) {
+        shadowspill_event_lease_retain(action->completion_event);
+        *event = action->completion_event;
+        status = 1;
+    }
+    pthread_mutex_unlock(&action->object->lock);
+    return status;
+}
+
+static int visit_successor_dependencies(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation,
+    ShadowSpillBackendStream *stream
+) {
+    const ShadowSpillFixedLayoutState *layout = &runtime->fixed_layout;
+    if (!layout->sealed) {
+        return 1;
+    }
+    uint64_t index = first_successor_dependency(
+        layout, successor_kind, task_id, ordinal
+    );
+    while (index < layout->dependency_count &&
+           dependency_successor_compare(
+               &layout->dependencies[index],
+               successor_kind,
+               task_id,
+               ordinal
+           ) == 0) {
+        ShadowSpillEventLease *event = NULL;
+        const int ready = snapshot_dependency_event(
+            &layout->dependencies[index], invocation, &event
+        );
+        if (ready <= 0) {
+            return ready;
+        }
+        if (event != NULL && stream != NULL) {
+            const int wait_status = runtime->backend.wait_event(
+                runtime->backend.context, *stream, event->event
+            );
+            (void)shadowspill_event_lease_release(runtime, event);
+            if (wait_status != 0) {
+                return -1;
+            }
+            (void)atomic_fetch_add_explicit(
+                &runtime->wait_events_inserted, 1U, memory_order_acq_rel
+            );
+        } else if (event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, event);
+        }
+        ++index;
+    }
+    return 1;
+}
+
+int shadowspill_fixed_layout_dependencies_published(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation
+) {
+    if (runtime == NULL) {
+        return -1;
+    }
+    return visit_successor_dependencies(
+        runtime,
+        successor_kind,
+        task_id,
+        ordinal,
+        invocation,
+        NULL
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    return visit_successor_dependencies(
+        runtime,
+        successor_kind,
+        task_id,
+        ordinal,
+        invocation,
+        &stream
+    ) > 0 ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_INVALID_STATE;
+}
+
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
+    ShadowSpillRuntime *runtime,
+    uint8_t successor_kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+) {
+    if (runtime == NULL || invocation == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    for (;;) {
+        const int ready = shadowspill_fixed_layout_dependencies_published(
+            runtime, successor_kind, task_id, ordinal, invocation
+        );
+        if (ready > 0) {
+            return shadowspill_fixed_layout_insert_dependency_waits(
+                runtime,
+                successor_kind,
+                task_id,
+                ordinal,
+                invocation,
+                stream
+            );
+        }
+        if (ready < 0) {
+            return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        }
+        const ShadowSpillRuntimeStatus status =
+            shadowspill_failure_status(runtime);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+        shadowspill_notify_worker(runtime);
+        cpu_relax();
+    }
+}
+
 static ShadowSpillRuntimeStatus copy_layout_description(
     ShadowSpillRuntime *runtime,
     const ShadowSpillFixedLayoutDescription *description
@@ -399,7 +617,8 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
     }
-    if (placement->kind == SHADOWSPILL_FIXED_TASK_ALLOCATION) {
+    if (placement->kind == SHADOWSPILL_FIXED_TASK_ALLOCATION ||
+        placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION) {
         const ShadowSpillTaskAllocationABIStep *step = allocation_step(
             record, placement->ordinal
         );
@@ -416,6 +635,67 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
         action->object->object_id == placement->object_id &&
         action->object->size_bytes == placement->bytes
         ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+}
+
+static int allocation_policy_count(
+    const ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    uint64_t ordinal
+) {
+    int count = 0;
+    if (shadowspill_fixed_layout_find_placement(
+            runtime,
+            SHADOWSPILL_FIXED_TASK_ALLOCATION,
+            task_id,
+            ordinal,
+            SHADOWSPILL_RUNTIME_NO_ID
+        ) != NULL) {
+        ++count;
+    }
+    if (shadowspill_fixed_layout_find_placement(
+            runtime,
+            SHADOWSPILL_DYNAMIC_TASK_ALLOCATION,
+            task_id,
+            ordinal,
+            SHADOWSPILL_RUNTIME_NO_ID
+        ) != NULL) {
+        ++count;
+    }
+    return count;
+}
+
+static ShadowSpillRuntimeStatus validate_layout_coverage(
+    ShadowSpillRuntime *runtime
+) {
+    for (ShadowSpillExecutionRecord *record = runtime->execution.owned_head;
+         record != NULL; record = record->ownership_next) {
+        for (uint32_t index = 0U;
+             index < record->allocation_abi_step_count;
+             ++index) {
+            const ShadowSpillTaskAllocationABIStep *step =
+                &record->allocation_abi_steps[index];
+            if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
+                allocation_policy_count(
+                    runtime, record->task_id, step->allocation_ordinal
+                ) != 1) {
+                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+            }
+        }
+        for (uint32_t index = 0U; index < record->action_count; ++index) {
+            const ShadowSpillExecutionAction *action = &record->actions[index];
+            if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+                shadowspill_fixed_layout_find_placement(
+                    runtime,
+                    SHADOWSPILL_FIXED_ACTION_DESTINATION,
+                    record->task_id,
+                    index,
+                    action->object->object_id
+                ) == NULL) {
+                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+            }
+        }
+    }
+    return SHADOWSPILL_RUNTIME_OK;
 }
 
 static ShadowSpillRuntimeStatus resolve_dependency(
@@ -480,9 +760,14 @@ ShadowSpillRuntimeStatus shadowspill_seal_fixed_layout(
             return status;
         }
     }
+    ShadowSpillRuntimeStatus status = validate_layout_coverage(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        runtime->fixed_layout.sealed = 0U;
+        return status;
+    }
     for (uint64_t index = 0U; index < runtime->fixed_layout.dependency_count;
          ++index) {
-        ShadowSpillRuntimeStatus status = resolve_dependency(
+        status = resolve_dependency(
             runtime, &runtime->fixed_layout.dependencies[index]
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {

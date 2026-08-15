@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 26U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 27U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 1U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
@@ -161,12 +161,15 @@ typedef enum ShadowSpillFixedPlacementKind {
     SHADOWSPILL_FIXED_INITIAL_OBJECT = 0,
     SHADOWSPILL_FIXED_TASK_ALLOCATION = 1,
     SHADOWSPILL_FIXED_ACTION_DESTINATION = 2,
+    SHADOWSPILL_DYNAMIC_TASK_ALLOCATION = 3,
 } ShadowSpillFixedPlacementKind;
 
 /*
- * One placement inside a plan-owned execution-pool slice. ``ordinal`` is a
+ * One allocation policy inside an admitted physical layout. ``ordinal`` is a
  * task-local allocator ordinal or task-local action ordinal. Initial objects
  * use ``object_id`` and set task_id/ordinal to SHADOWSPILL_RUNTIME_NO_ID.
+ * Dynamic task allocations set ``offset`` to SHADOWSPILL_RUNTIME_NO_ID; every
+ * other kind names a subrange of the plan-owned execution-pool slice.
  */
 typedef struct ShadowSpillFixedPlacementDescription {
     uint64_t task_id;

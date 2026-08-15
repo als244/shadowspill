@@ -8,6 +8,7 @@ typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
     uint64_t task_id;
     const ShadowSpillExecutionRecord *execution;
+    uint64_t invocation;
     uint64_t operation_index;
     uint64_t allocation_ordinal;
     uint64_t live_requested_bytes;
@@ -30,6 +31,20 @@ uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime) {
         : SHADOWSPILL_RUNTIME_NO_ID;
 }
 
+uint64_t shadowspill_current_task_allocation_ordinal(
+    ShadowSpillRuntime *runtime
+) {
+    return task_scope.runtime == runtime && task_scope.execution != NULL
+        ? task_scope.allocation_ordinal
+        : SHADOWSPILL_RUNTIME_NO_ID;
+}
+
+uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime) {
+    return task_scope.runtime == runtime && task_scope.execution != NULL
+        ? task_scope.invocation
+        : 0U;
+}
+
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
@@ -40,6 +55,7 @@ int shadowspill_enter_task_scope(
     task_scope.runtime = runtime;
     task_scope.task_id = task_id;
     task_scope.execution = NULL;
+    task_scope.invocation = 0U;
     task_scope.operation_index = 0U;
     task_scope.allocation_ordinal = 0U;
     task_scope.live_requested_bytes = 0U;
@@ -104,6 +120,11 @@ int shadowspill_enter_execution_scope(
         return -1;
     }
     task_scope.execution = record;
+    task_scope.invocation = atomic_fetch_add_explicit(
+        &((ShadowSpillExecutionRecord *)record)->invocation_count,
+        1U,
+        memory_order_acq_rel
+    ) + 1U;
     return 0;
 }
 
@@ -268,6 +289,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.runtime = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.execution = NULL;
+        task_scope.invocation = 0U;
         task_scope.operation_index = 0U;
         task_scope.allocation_ordinal = 0U;
         task_scope.live_requested_bytes = 0U;

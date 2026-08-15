@@ -46,16 +46,37 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-        status = shadowspill_create_execution_lease_locked(
-            runtime,
-            action->object->size_bytes,
-            pool->minimum_alignment,
-            1,
-            SHADOWSPILL_MEMORY_BEST_FIT_LOW,
-            action->task_id,
-            &action->destination_lease
-        );
-        if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
+        const ShadowSpillFixedPlacementDescription *fixed =
+            action->admitted
+            ? shadowspill_fixed_layout_find_placement(
+                  runtime,
+                  SHADOWSPILL_FIXED_ACTION_DESTINATION,
+                  action->task_id,
+                  action->action_ordinal,
+                  action->object->object_id
+              )
+            : NULL;
+        if (action->admitted && runtime->fixed_layout.sealed && fixed == NULL) {
+            return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        }
+        status = fixed == NULL
+            ? shadowspill_create_execution_lease_locked(
+                  runtime,
+                  action->object->size_bytes,
+                  pool->minimum_alignment,
+                  1,
+                  SHADOWSPILL_MEMORY_BEST_FIT_LOW,
+                  action->task_id,
+                  &action->destination_lease
+              )
+            : shadowspill_create_fixed_execution_lease_locked(
+                  runtime,
+                  fixed,
+                  1,
+                  action->task_id,
+                  &action->destination_lease
+              );
+        if (fixed == NULL && status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
             status = shadowspill_create_execution_successor_locked(
                 runtime,
                 action->object->size_bytes,
@@ -373,9 +394,14 @@ static void discard_action_batch_locked(
             const uint8_t kind = action->kind;
             ShadowSpillObject *object = action->object;
             const uint64_t task_id = action->task_id;
+            const uint64_t action_ordinal = action->action_ordinal;
+            const uint64_t completed_generation =
+                action->completed_generation;
             const char *trace_label = action->trace_label;
             *action = (ShadowSpillQueuedAction){
                 .task_id = task_id,
+                .action_ordinal = action_ordinal,
+                .completed_generation = completed_generation,
                 .kind = kind,
                 .object = object,
                 .trace_label = trace_label,
@@ -434,6 +460,8 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
              (shadowspill_spill_location(runtime, object)->lease == NULL ||
               !object->retain_spill_copy));
         queued->active = 1U;
+        queued->activation_generation =
+            shadowspill_current_task_invocation(runtime);
         queued->state = SHADOWSPILL_ACTION_QUEUED;
         queued->fence = fence;
         shadowspill_retain_task_fence(fence);

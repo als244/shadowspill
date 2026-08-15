@@ -107,6 +107,7 @@ static void complete_action(
         return;
     }
     action->state = SHADOWSPILL_ACTION_FINISHED;
+    action->completed_generation = action->activation_generation;
     pthread_mutex_unlock(&action->object->lock);
     pthread_mutex_lock(&runtime->actions.lock);
     unlink_action_locked(runtime, action);
@@ -151,9 +152,13 @@ static void complete_action(
         const uint8_t kind = action->kind;
         ShadowSpillObject *object = action->object;
         const uint64_t task_id = action->task_id;
+        const uint64_t action_ordinal = action->action_ordinal;
+        const uint64_t completed_generation = action->completed_generation;
         const char *trace_label = action->trace_label;
         *action = (ShadowSpillQueuedAction){
             .task_id = task_id,
+            .action_ordinal = action_ordinal,
+            .completed_generation = completed_generation,
             .kind = kind,
             .object = object,
             .trace_label = trace_label,
@@ -210,8 +215,20 @@ static int event_complete_locked(
 }
 
 static int destination_dependency_is_published(
+    ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
+    const int fixed_ready =
+        shadowspill_fixed_layout_dependencies_published(
+            runtime,
+            SHADOWSPILL_FIXED_ACTION_DESTINATION,
+            action->task_id,
+            action->action_ordinal,
+            action->activation_generation
+        );
+    if (fixed_ready <= 0) {
+        return fixed_ready;
+    }
     ShadowSpillMemoryLease *lease = action->destination_lease;
     if (lease == NULL) {
         return 1;
@@ -236,6 +253,17 @@ static int acquire_reserved_destination(
 ) {
     ShadowSpillMemoryLease *lease = action->destination_lease;
     if (lease == NULL || lease->pool == NULL) {
+        return -1;
+    }
+    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+        shadowspill_fixed_layout_insert_dependency_waits(
+            runtime,
+            SHADOWSPILL_FIXED_ACTION_DESTINATION,
+            action->task_id,
+            action->action_ordinal,
+            action->activation_generation,
+            runtime->fetch_stream
+        ) != SHADOWSPILL_RUNTIME_OK) {
         return -1;
     }
     ShadowSpillMemoryPool *pool = lease->pool;
@@ -754,7 +782,28 @@ static int handle_action(
                  * published the event that makes address reuse safe.  Leave
                  * it queued so it cannot occupy and stall the lane head.
                  */
-                if (!destination_dependency_is_published(action)) {
+                pthread_mutex_unlock(&object->lock);
+                const int dependency_ready =
+                    destination_dependency_is_published(runtime, action);
+                pthread_mutex_lock(&object->lock);
+                if (dependency_ready < 0) {
+                    latch_action_failure(
+                        runtime,
+                        action,
+                        SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                        object->object_id,
+                        object->allocation_id,
+                        object->size_bytes
+                    );
+                    pthread_mutex_unlock(&object->lock);
+                    return -1;
+                }
+                if (!dependency_ready) {
+                    pthread_mutex_unlock(&object->lock);
+                    return 0;
+                }
+                if (!shadowspill_object_action_is_head_locked(object, action) ||
+                    action->state != SHADOWSPILL_ACTION_QUEUED) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
