@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -200,12 +201,8 @@ class PlanningCache:
             previous = os.environ.get(_PYTORCH_CACHE_ENVIRONMENT)
             previous_triton = os.environ.get("TRITON_CACHE_DIR")
             isolated = self.force_fresh or not self.save_plan
-            temporary_parent = self.inductor.parent if self.save_plan else None
-            if temporary_parent is not None:
-                temporary_parent.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(
                 prefix="shadowspill-plan-",
-                dir=temporary_parent,
             ) as temporary:
                 active = Path(temporary) if isolated else self.inductor
                 clear_caches = _clear_pytorch_compiler_caches if isolated else None
@@ -587,9 +584,12 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.exists():
-        # The staging directory lives beside the destination, so this is the
-        # normal, constant-time path for a new implementation revision.
-        os.replace(source, destination)
+        try:
+            os.replace(source, destination)
+        except OSError as error:
+            if error.errno != errno.EXDEV:
+                raise
+            _copy_cache_tree_atomically(source, destination)
         return
 
     for source_path in sorted(source.rglob("*")):
@@ -624,6 +624,22 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
         finally:
             with suppress(FileNotFoundError):
                 temporary.unlink()
+
+
+def _copy_cache_tree_atomically(source: Path, destination: Path) -> None:
+    """Publish a cache tree across filesystems through a sibling staging path."""
+
+    staging = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.{os.getpid()}.",
+            dir=destination.parent,
+        )
+    )
+    try:
+        shutil.copytree(source, staging, dirs_exist_ok=True)
+        os.replace(staging, destination)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def _files_equal(left: Path, right: Path) -> bool:

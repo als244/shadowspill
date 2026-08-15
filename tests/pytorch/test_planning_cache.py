@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 from pathlib import Path
 
 import pytest
 
+from shadowspill.pytorch import cache as cache_module
 from shadowspill.pytorch.cache import PlanningCache
 from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
@@ -121,3 +123,28 @@ def test_force_fresh_publishes_a_write_enabled_isolated_pytorch_cache(
         artifact.kind == "inductor_cache" and artifact.path == cache.inductor
         for artifact in cache.artifacts()
     )
+
+
+def test_inductor_cache_publish_crosses_filesystems_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "published"
+    artifact = source / "triton" / "kernel"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("compiled")
+    replace = os.replace
+    calls = 0
+
+    def cross_device_once(left: object, right: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(errno.EXDEV, "cross-device link")
+        replace(left, right)
+
+    monkeypatch.setattr(cache_module.os, "replace", cross_device_once)
+    cache_module._publish_cache_tree(source, destination, overwrite=False)
+
+    assert (destination / "triton" / "kernel").read_text() == "compiled"
+    assert source.is_dir()
