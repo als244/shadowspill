@@ -255,17 +255,6 @@ static int acquire_reserved_destination(
     if (lease == NULL || lease->pool == NULL) {
         return -1;
     }
-    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
-        shadowspill_fixed_layout_insert_dependency_waits(
-            runtime,
-            SHADOWSPILL_FIXED_ACTION_DESTINATION,
-            action->task_id,
-            action->action_ordinal,
-            action->activation_generation,
-            runtime->fetch_stream
-        ) != SHADOWSPILL_RUNTIME_OK) {
-        return -1;
-    }
     ShadowSpillMemoryPool *pool = lease->pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillEventLease *dependency_event = NULL;
@@ -792,12 +781,42 @@ static int handle_action(
                 pthread_mutex_unlock(&object->lock);
                 const int dependency_ready =
                     destination_dependency_is_published(runtime, action);
+                /*
+                 * Insert fixed-range reuse waits without owning the current
+                 * object.  A later fetch commonly reuses the range freed by
+                 * an earlier eviction of this same object; resolving that
+                 * predecessor therefore locks this exact object internally.
+                 */
+                const ShadowSpillRuntimeStatus dependency_wait_status =
+                    dependency_ready > 0 &&
+                        action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+                    ? shadowspill_fixed_layout_insert_dependency_waits(
+                          runtime,
+                          SHADOWSPILL_FIXED_ACTION_DESTINATION,
+                          action->task_id,
+                          action->action_ordinal,
+                          action->activation_generation,
+                          runtime->fetch_stream
+                      )
+                    : SHADOWSPILL_RUNTIME_OK;
                 pthread_mutex_lock(&object->lock);
                 if (dependency_ready < 0) {
                     latch_action_failure(
                         runtime,
                         action,
                         SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                        object->object_id,
+                        object->allocation_id,
+                        object->size_bytes
+                    );
+                    pthread_mutex_unlock(&object->lock);
+                    return -1;
+                }
+                if (dependency_wait_status != SHADOWSPILL_RUNTIME_OK) {
+                    latch_action_failure(
+                        runtime,
+                        action,
+                        dependency_wait_status,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes

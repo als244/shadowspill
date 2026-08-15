@@ -621,7 +621,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
     return failed ? -1 : 0;
 }
 
-static int eviction_completion_orders_fixed_fetch_reuse(void) {
+static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
@@ -662,6 +662,9 @@ static int eviction_completion_orders_fixed_fetch_reuse(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &objects[1]) !=
             SHADOWSPILL_RUNTIME_OK;
+    const uint64_t successor_object_id = same_object
+        ? objects[0].object_id
+        : objects[1].object_id;
 
     const ShadowSpillFixedPlacementDescription placements[2] = {
         {
@@ -675,7 +678,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(void) {
         {
             .task_id = 13U,
             .ordinal = 0U,
-            .object_id = objects[1].object_id,
+            .object_id = successor_object_id,
             .bytes = 64U,
             .alignment_bytes = 16U,
             .kind = SHADOWSPILL_FIXED_ACTION_DESTINATION,
@@ -721,7 +724,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(void) {
         .action_count = 1U,
     };
     const ShadowSpillRuntimeAction fetch_second = {
-        .object_id = objects[1].object_id,
+        .object_id = successor_object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
     const ShadowSpillExecutionDescription second_fetch_task = {
@@ -730,7 +733,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(void) {
         .action_count = 1U,
     };
     const ShadowSpillRuntimeAction release_second = {
-        .object_id = objects[1].object_id,
+        .object_id = successor_object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
     const ShadowSpillExecutionDescription release_task = {
@@ -778,13 +781,13 @@ static int eviction_completion_orders_fixed_fetch_reuse(void) {
     ShadowSpillObjectSnapshot second = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_object_snapshot(
-            runtime, objects[1].object_id, &second
+            runtime, successor_object_id, &second
         ) != SHADOWSPILL_RUNTIME_OK ||
         second.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         second.execution_pointer != first.execution_pointer ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.wait_events_inserted == 0U;
+        (!same_object && statistics.wait_events_inserted == 0U);
 
     failed = failed || shadowspill_before_execution(
             runtime, release_task.task_id, compute, NULL, 0U
@@ -828,8 +831,12 @@ int main(void) {
         fprintf(stderr, "fixed eviction dependency failed\n");
         return EXIT_FAILURE;
     }
-    if (eviction_completion_orders_fixed_fetch_reuse() != 0) {
+    if (eviction_completion_orders_fixed_fetch_reuse(0) != 0) {
         fprintf(stderr, "fixed fetch dependency failed\n");
+        return EXIT_FAILURE;
+    }
+    if (eviction_completion_orders_fixed_fetch_reuse(1) != 0) {
+        fprintf(stderr, "same-object fixed fetch dependency failed\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

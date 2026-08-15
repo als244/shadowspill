@@ -379,6 +379,10 @@ if(BUILD_TESTING)
     NAME shadowspill_fixed_layout_canary
     COMMAND shadowspill_fixed_layout_canary
   )
+  set_tests_properties(
+    shadowspill_fixed_layout_canary
+    PROPERTIES TIMEOUT 10
+  )
 
   add_executable(
     shadowspill_admission_replay_canary
