@@ -1146,19 +1146,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_clear_execution_plan(void) {
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
-    const ShadowSpillRuntimeStatus status =
-        shadowspill_clear_execution_plan(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        /*
-         * Physical admission is sealed for one admitted plan, not for the
-         * process-global allocator lifetime. A later exclusive planning
-         * session must be able to validate and seal its own provider use.
-         */
-        pthread_mutex_lock(&adapter.mutex);
-        adapter.physical_budget_sealed = 0U;
-        pthread_mutex_unlock(&adapter.mutex);
-    }
-    return status;
+    /*
+     * Execution records are plan-scoped, but the CUDA slab, provider reserve,
+     * and sealed event inventory are runtime-scoped.  Internal initial-to-
+     * recurrent plan switches must therefore preserve the physical seal.
+     */
+    return shadowspill_clear_execution_plan(runtime);
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_resolve_execution(

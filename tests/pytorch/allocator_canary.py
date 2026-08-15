@@ -467,6 +467,20 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
+    if int(library.shadowspill_pytorch_clear_execution_plan()) != 0:
+        raise AssertionError("execution-plan clear failed after physical sealing")
+    cleared_statistics = AdapterStatistics()
+    if (
+        int(
+            library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(cleared_statistics)
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("post-clear statistics query failed")
+    if cleared_statistics.physical_budget_sealed != 1:
+        raise AssertionError("execution-plan clear dropped the runtime physical seal")
     if int(library.shadowspill_pytorch_resize_spill_pool(48 << 20)) == 0:
         raise AssertionError("sealed adapter accepted pinned-host growth")
     if sealed_statistics.physical_checks < 3:

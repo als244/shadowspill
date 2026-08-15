@@ -162,7 +162,10 @@ shadowspill_pytorch_admit_fixed_layout(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_seal_fixed_layout(void);
 
-/* Clear the completed plan's immutable execution records. */
+/*
+ * Clear immutable execution records while preserving the runtime-scoped
+ * physical-budget and event-pool seal.
+ */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_clear_execution_plan(void);
 
