@@ -1105,19 +1105,18 @@ def _rollback_training_failure(
 ) -> NoReturn:
     """Recover a planning OOM before releasing materialized frontend state."""
 
-    translated = runtime._translate_allocator_failure(error, operation=operation)
-    surfaced = error if translated is None else translated
-    if translated is not None:
-        runtime._prepare_failure_cleanup(surfaced)
+    runtime._prepare_failure_cleanup(
+        error,
+        operation=operation,
+        synchronize_unlatched=False,
+    )
     try:
         rollback()
     except BaseException as cleanup_error:
-        surfaced.add_note(
+        error.add_note(
             f"Failed to roll back materialized training state: {cleanup_error}"
         )
-    if surfaced is error:
-        raise error
-    raise surfaced from error
+    raise error
 
 
 def build_training(

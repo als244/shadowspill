@@ -34,9 +34,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskAllocationABIStep as CTaskAllocationABIStep,
 )
 from shadowspill.pytorch.runtime_adapter.failures import (
-    ExecutionTaskIdentity,
     RuntimeExecutionError,
-    allocator_oom_error,
     generic_runtime_error,
     raise_if_allocator_failed,
     read_allocator_failure,
@@ -1295,32 +1293,9 @@ class RuntimeBridge:
         return tuple(result)
 
     def abort_task(self) -> None:
+        """Close the current native task scope after frontend failure."""
+
         self.library.shadowspill_pytorch_abort_task_range()
-
-    def abort_task_after_failure(
-        self,
-        operation: str,
-        cause: BaseException,
-        *,
-        task: ExecutionTaskIdentity | None = None,
-    ) -> None:
-        """Close a failed boundary and surface allocator contract failures.
-
-        Backend, worker, invalid-state, and ordinary CUDA failures deliberately
-        remain the original exception raised by PyTorch.  This avoids masking
-        illegal memory accesses or bad kernels with stale runtime diagnostics.
-        A placement violation is ShadowSpill's own exact-allocation contract,
-        so the private allocator wrapper stops dispatch and this boundary
-        replaces its generic allocation exception with structured diagnostics.
-        """
-
-        self.abort_task()
-        diagnostics = read_allocator_failure(self.library, operation, task=task)
-        if diagnostics is not None:
-            if diagnostics.is_allocator_oom:
-                raise allocator_oom_error(diagnostics) from cause
-            if diagnostics.is_shadowspill_contract_failure:
-                raise generic_runtime_error(diagnostics) from cause
 
     def raise_if_allocator_failed(self, operation: str) -> None:
         """Raise the first callback failure without touching the device timeline."""

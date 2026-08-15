@@ -70,14 +70,10 @@ class PlannedForward:
         try:
             return self._executor(inputs)
         except BaseException as error:
-            translated = self._runtime._translate_allocator_failure(
+            self._close_after_failure(
                 error, operation="execute planned forward"
             )
-            surfaced = error if translated is None else translated
-            self._close_after_failure(surfaced)
-            if surfaced is error:
-                raise
-            raise surfaced from error
+            raise
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         """Synchronously return a normal CPU model state mapping."""
@@ -101,8 +97,14 @@ class PlannedForward:
             return
         self._close(primary_error=None)
 
-    def _close_after_failure(self, error: BaseException) -> None:
-        self._runtime._prepare_failure_cleanup(error)
+    def _close_after_failure(
+        self, error: BaseException, *, operation: str
+    ) -> None:
+        self._runtime._prepare_failure_cleanup(
+            error,
+            operation=operation,
+            synchronize_unlatched=True,
+        )
         self._close(primary_error=error)
 
     def _close(self, *, primary_error: BaseException | None) -> None:
@@ -240,14 +242,10 @@ class PlannedTrainStep:
                         "Failed to cancel execution timing during fault cleanup: "
                         f"{timing_error}"
                     )
-            translated = self._runtime._translate_allocator_failure(
+            self._close_after_failure(
                 error, operation="execute planned training step"
             )
-            surfaced = error if translated is None else translated
-            self._close_after_failure(surfaced)
-            if surfaced is error:
-                raise
-            raise surfaced from error
+            raise
         self._step += 1
         diagnostics = (
             DiagnosticsHandle(self._executor.collect_step_diagnostics)
@@ -306,8 +304,14 @@ class PlannedTrainStep:
             return
         self._close(primary_error=None)
 
-    def _close_after_failure(self, error: BaseException) -> None:
-        self._runtime._prepare_failure_cleanup(error)
+    def _close_after_failure(
+        self, error: BaseException, *, operation: str
+    ) -> None:
+        self._runtime._prepare_failure_cleanup(
+            error,
+            operation=operation,
+            synchronize_unlatched=True,
+        )
         self._close(primary_error=error)
 
     def _close(self, *, primary_error: BaseException | None) -> None:

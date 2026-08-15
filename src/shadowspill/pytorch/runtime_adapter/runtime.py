@@ -30,11 +30,8 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     install_allocator,
 )
 from shadowspill.pytorch.runtime_adapter.failures import (
-    ExecutionTaskIdentity,
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
-    allocator_oom_error,
-    generic_runtime_error,
     read_allocator_failure,
 )
 
@@ -475,45 +472,28 @@ class Runtime:
                 f"execution-plan teardown failed with status {status}"
             )
 
-    def _translate_allocator_failure(
+    def _prepare_failure_cleanup(
         self,
-        cause: BaseException,
+        error: BaseException,
         *,
         operation: str,
-        task: ExecutionTaskIdentity | None = None,
-    ) -> RuntimeExecutionError | None:
-        """Translate allocator and admitted-runtime contract failures."""
-
-        if isinstance(cause, RuntimeExecutionError):
-            diagnostics = cause.diagnostics
-            if diagnostics is not None:
-                self._record_failure(diagnostics)
-            return cause if diagnostics is not None and (
-                diagnostics.is_allocator_oom
-                or diagnostics.is_shadowspill_contract_failure
-            ) else None
-        diagnostics = read_allocator_failure(
-            self._installed.library, operation, task=task
-        )
-        if diagnostics is None:
-            return None
-        self._record_failure(diagnostics)
-        if diagnostics.is_allocator_oom:
-            return allocator_oom_error(diagnostics)
-        if diagnostics.is_shadowspill_contract_failure:
-            return generic_runtime_error(diagnostics)
-        return None
-
-    def _prepare_failure_cleanup(self, error: BaseException) -> None:
-        """Quiesce compute and recover a no-progress latch before teardown."""
+        synchronize_unlatched: bool,
+    ) -> None:
+        """Record native failure state and safely prepare runtime teardown."""
 
         if isinstance(error, RuntimeExecutionError) and not error._begin_cleanup():
             return
         diagnostics = (
             error.diagnostics if isinstance(error, RuntimeExecutionError) else None
         )
+        if diagnostics is None:
+            diagnostics = read_allocator_failure(
+                self._installed.library, operation
+            )
         if diagnostics is not None:
             self._record_failure(diagnostics)
+        elif not synchronize_unlatched:
+            return
         try:
             torch.cuda.synchronize(int(self._installed.admission.device_ordinal))
         except BaseException as synchronize_error:

@@ -20,7 +20,6 @@ from shadowspill.pytorch import (
     PlanInfeasibleError,
     ProfilingError,
     Runtime,
-    RuntimeExecutionError,
     externalize_model_state,
     plan_forward,
     relocate_model_state,
@@ -281,12 +280,12 @@ def main() -> int:
         profiling_oom = _relocated(runtime, _ProfilingOOM())
         try:
             error = _expect(
-                RuntimeExecutionError,
+                ProfilingError,
                 lambda: _plan(profiling_oom, [inputs], runtime, cache),
                 text="ShadowSpill no-progress OOM",
             )
-            if not isinstance(error.__cause__, ProfilingError):
-                raise AssertionError("profiling OOM lost its profiling cause")
+            if not isinstance(error.__cause__, torch.OutOfMemoryError):
+                raise AssertionError("profiling OOM lost its allocator cause")
         finally:
             _release(runtime, profiling_oom)
 

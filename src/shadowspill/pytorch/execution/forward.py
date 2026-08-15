@@ -57,8 +57,8 @@ class _ExecutingStage(nn.Module):
         try:
             raw_outputs = self._run_compiled_task(prepared)
             return self._after_task(prepared, raw_outputs)
-        except BaseException as error:
-            self._abort_task(prepared, error)
+        except BaseException:
+            self._abort_task(prepared)
             raise
 
     def _before_task(self, arguments: tuple[object, ...]) -> _PreparedForwardTask:
@@ -94,13 +94,9 @@ class _ExecutingStage(nn.Module):
             return _PreparedForwardTask(
                 tuple(compiled_arguments), input_aliases, stream
             )
-        except BaseException as error:
+        except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task_after_failure(
-                    f"prepare task {self._task.task_id}",
-                    error,
-                    task=self._identity,
-                )
+                self._bridge.abort_task()
             raise
 
     def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
@@ -175,15 +171,10 @@ class _ExecutingStage(nn.Module):
     def _abort_task(
         self,
         prepared: _PreparedForwardTask,
-        error: BaseException,
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task_after_failure(
-                f"execute task {self._task.task_id}",
-                error,
-                task=self._identity,
-            )
+            self._bridge.abort_task()
 
 
 class ForwardExecutor:

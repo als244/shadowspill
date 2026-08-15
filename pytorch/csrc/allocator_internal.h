@@ -15,6 +15,12 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     void *stream
 );
 
+/* Format the first allocator/runtime failure for the exception-safe wrapper. */
+ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
+    char *destination,
+    size_t destination_bytes
+);
+
 #ifdef __cplusplus
 }
 #endif

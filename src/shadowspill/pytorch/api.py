@@ -49,23 +49,20 @@ def _surface_failed_plan(
     operation: str,
     error: BaseException,
 ) -> NoReturn:
-    """Recover allocator OOM teardown, roll back, and preserve other errors."""
+    """Prepare allocator teardown, roll back, and preserve the first error."""
 
-    translated = runtime._translate_allocator_failure(error, operation=operation)
-    surfaced = error if translated is None else translated
-    if translated is not None:
-        runtime._prepare_failure_cleanup(surfaced)
+    runtime._prepare_failure_cleanup(
+        error,
+        operation=operation,
+        synchronize_unlatched=False,
+    )
     _cleanup_failed_plan(
         runtime,
         planning_started=planning_started,
-        error=surfaced,
+        error=error,
     )
     _clear_failure_frame_locals(error)
-    if surfaced is not error:
-        _clear_failure_frame_locals(surfaced)
-    if surfaced is error:
-        raise error
-    raise surfaced from error
+    raise error
 
 
 def _clear_failure_frame_locals(error: BaseException) -> None:

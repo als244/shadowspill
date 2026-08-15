@@ -48,13 +48,10 @@ class _Runtime:
     def _adopt_plan(self) -> None:
         self.adopted = True
 
-    def _translate_allocator_failure(
+    def _prepare_failure_cleanup(
         self, error: BaseException, **kwargs: object
     ) -> None:
-        del error, kwargs
-        return None
-
-    def _prepare_failure_cleanup(self, error: BaseException) -> None:
+        del kwargs
         self.prepared_error = error
 
     def _release_plan(self) -> None:

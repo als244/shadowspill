@@ -15,8 +15,6 @@ from shadowspill.pytorch.runtime_adapter.abi import (
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
-    RuntimeExecutionError,
-    generic_runtime_error,
     read_allocator_failure,
 )
 
@@ -64,6 +62,15 @@ def main() -> int:
     )
     if status != 0:
         raise AssertionError(f"execution admission failed with status {status}")
+    labels = (ctypes.c_char_p * (TASK_ID + 1))()
+    labels[TASK_ID] = b"execution_000017.canary.stage_0000.forward"
+    status = int(
+        library.shadowspill_pytorch_task_labels_configure(
+            labels, TASK_ID + 1
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"task label configuration failed with status {status}")
     stream = torch.cuda.current_stream()
     status = int(
         library.shadowspill_pytorch_before_execution(
@@ -76,8 +83,21 @@ def main() -> int:
     try:
         torch.empty((24,), dtype=torch.uint8, device="cuda")
     except RuntimeError as cause:
-        if "bad_alloc" not in str(cause):
-            raise AssertionError(f"unexpected callback exception: {cause}") from cause
+        message = str(cause)
+        for expected_text in (
+            "ShadowSpill allocator callback failed",
+            "status: 11 (task allocation ABI mismatch)",
+            "reason: TASK_ALLOCATION_ABI_MISMATCH",
+            "execution_task: execution_000017",
+            "semantic_task: canary.stage_0000.forward",
+            "canonical_task: task_000017",
+            "expected_requested: 4096",
+            "actual_requested: 24",
+        ):
+            if expected_text not in message:
+                raise AssertionError(
+                    f"direct ABI failure omitted {expected_text!r}: {message}"
+                ) from cause
         library.shadowspill_pytorch_abort_task_range()
         diagnostics = read_allocator_failure(
             library,
@@ -92,20 +112,6 @@ def main() -> int:
             raise AssertionError(
                 "allocation ABI mismatch was not preserved"
             ) from cause
-        try:
-            raise generic_runtime_error(diagnostics) from cause
-        except RuntimeExecutionError as error:
-            message = str(error)
-            for expected_text in (
-                "TASK_ALLOCATION_ABI_MISMATCH",
-                "execution_task: execution_000017",
-                "expected_requested: 4096",
-                "actual_requested: 24",
-            ):
-                if expected_text not in message:
-                    raise AssertionError(
-                        f"structured failure omitted {expected_text!r}: {message}"
-                    ) from error
     else:
         raise AssertionError("ABI mismatch returned invalid storage to its caller")
 

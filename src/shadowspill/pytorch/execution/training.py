@@ -780,8 +780,8 @@ class TrainingExecutor:
             # after-task boundary must be able to destroy every unadopted
             # output before it publishes actions that reuse those ranges.
             return self._after_task(prepared, self._run_compiled_task(prepared))
-        except BaseException as error:
-            self._abort_task(prepared, error)
+        except BaseException:
+            self._abort_task(prepared)
             raise
         finally:
             self._finish_task_timing(prepared.timing)
@@ -824,13 +824,9 @@ class TrainingExecutor:
             self._record_compute_start(stream)
             self._record_task_start(timing, stream)
             return prepared
-        except BaseException as error:
+        except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task_after_failure(
-                    f"prepare task {record.task.task_id}",
-                    error,
-                    task=record.identity,
-                )
+                self._bridge.abort_task()
             self._finish_task_timing(timing)
             raise
 
@@ -1265,15 +1261,10 @@ class TrainingExecutor:
     def _abort_task(
         self,
         prepared: _PreparedTask,
-        error: BaseException,
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task_after_failure(
-                f"execute task {prepared.record.task.task_id}",
-                error,
-                task=prepared.record.identity,
-            )
+            self._bridge.abort_task()
 
     def _bind_forward_outputs(
         self,
