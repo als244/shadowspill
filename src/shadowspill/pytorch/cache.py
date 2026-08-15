@@ -179,6 +179,10 @@ class PlanningCache:
         return self.pressurefit / "selections" / "v3"
 
     @property
+    def pressurefit_requests(self) -> Path:
+        return self.pressurefit / "requests" / "v1"
+
+    @property
     def read_enabled(self) -> bool:
         return not self.force_fresh
 
@@ -461,6 +465,41 @@ class PlanningCache:
             schema="shadowspill.program/v1",
         )
         return path
+
+    def archive_pressurefit_request(
+        self,
+        value: Mapping[str, object],
+    ) -> tuple[str, Path]:
+        """Persist one complete, framework-free PressureFit call boundary."""
+
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(encoded.encode()).hexdigest()
+        path = _digest_directory(self.pressurefit_requests, digest) / "request.json"
+        if not self.save_plan:
+            return digest, path
+        operation = "matched" if path.exists() else "write"
+        if path.exists() and not self.overwrite_plan:
+            try:
+                existing = path.read_text()
+            except OSError as exc:
+                raise ValueError(
+                    f"PressureFit request artifact {path} cannot be read"
+                ) from exc
+            if existing != encoded:
+                raise ValueError(f"PressureFit request artifact {path} is corrupt")
+        else:
+            _atomic_text(path, encoded)
+            operation = "write"
+        self.record(
+            category="pressurefit",
+            kind="request",
+            digest=digest,
+            path=path,
+            access=operation,
+            schema="shadowspill.pressurefit_request/v1",
+            dependencies=(str(value["program_digest"]),),
+        )
+        return digest, path
 
     def archive_plan(
         self,

@@ -391,6 +391,12 @@ class PlanGraphPair:
     recomputation: bool
     saved_value_count: int
     specialized_unit_tangent_count: int
+    saved_input_root_count: int
+    saved_boundary_root_count: int
+    saved_internal_root_count: int
+    saved_input_minimum_bytes: int
+    saved_boundary_minimum_bytes: int
+    saved_internal_minimum_bytes: int
     forward: PlanGraphProfile
     backward: PlanGraphProfile | None
 
@@ -401,6 +407,12 @@ class PlanGraphPair:
             "recomputation": self.recomputation,
             "saved_value_count": self.saved_value_count,
             "specialized_unit_tangent_count": self.specialized_unit_tangent_count,
+            "saved_input_root_count": self.saved_input_root_count,
+            "saved_boundary_root_count": self.saved_boundary_root_count,
+            "saved_internal_root_count": self.saved_internal_root_count,
+            "saved_input_minimum_bytes": self.saved_input_minimum_bytes,
+            "saved_boundary_minimum_bytes": self.saved_boundary_minimum_bytes,
+            "saved_internal_minimum_bytes": self.saved_internal_minimum_bytes,
             "forward": self.forward.as_dict(),
             "backward": None if self.backward is None else self.backward.as_dict(),
         }

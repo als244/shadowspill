@@ -7,7 +7,7 @@ tasks, construct Programs, or admit runtime memory.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import AdmissionTopology, PressureFitOptions
@@ -80,12 +80,38 @@ class PlanningArtifactRepositories:
         """Return a validated selection, running PressureFit only on a miss."""
 
         self.store.archive_program(program)
+        selected_options = options or PressureFitOptions()
+        self.store.archive_pressurefit_request(
+            {
+                "schema": "shadowspill.pressurefit_request/v1",
+                "program_digest": program.digest,
+                "initial_residency": [
+                    item.to_dict() for item in initial_residency
+                ],
+                "final_residency": [item.to_dict() for item in final_residency],
+                "simulation": {
+                    "devices": [asdict(item) for item in config.devices],
+                    "host_capacity_bytes": config.host_capacity_bytes,
+                },
+                "options": {
+                    "initial_placement": selected_options.initial_placement.value,
+                    "residency_strategies": list(
+                        selected_options.residency_strategies
+                    ),
+                    "prefetch_rules": list(selected_options.prefetch_rules),
+                    "evaluate_coalesced": selected_options.evaluate_coalesced,
+                    "max_repair_attempts": selected_options.max_repair_attempts,
+                    "workers": selected_options.workers,
+                },
+                "admission": None if admission is None else admission.to_dict(),
+            }
+        )
         return self.pressurefit.resolve(
             program,
             initial_residency=initial_residency,
             final_residency=final_residency,
             config=config,
-            options=options,
+            options=selected_options,
             admission=admission,
             progress=progress,
         )

@@ -46,6 +46,7 @@ from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,
     PartitionedTrainingCapture,
+    saved_value_footprint,
 )
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.lowering.profiles import ProfileMeasurementKey
@@ -363,12 +364,19 @@ def _training_graph_pair(
     backward_entrypoint = index.entrypoint_by_key[
         microbatch, stage_index, variant, "backward"
     ]
+    footprint = saved_value_footprint(pair)
     return PlanGraphPair(
         variant=variant,
         memory_budget=option.memory_budget,
         recomputation=pair.recomputation,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
+        saved_input_root_count=len(footprint.input_root_ids),
+        saved_boundary_root_count=len(footprint.boundary_root_ids),
+        saved_internal_root_count=len(footprint.internal_root_ids),
+        saved_input_minimum_bytes=footprint.input_minimum_bytes,
+        saved_boundary_minimum_bytes=footprint.boundary_minimum_bytes,
+        saved_internal_minimum_bytes=footprint.internal_minimum_bytes,
         forward=_graph_profile(
             pair.forward,
             "forward",
@@ -555,6 +563,12 @@ def _forward_unique_stage(
                 recomputation=False,
                 saved_value_count=0,
                 specialized_unit_tangent_count=0,
+                saved_input_root_count=0,
+                saved_boundary_root_count=0,
+                saved_internal_root_count=0,
+                saved_input_minimum_bytes=0,
+                saved_boundary_minimum_bytes=0,
+                saved_internal_minimum_bytes=0,
                 forward=profile,
                 backward=None,
             ),
