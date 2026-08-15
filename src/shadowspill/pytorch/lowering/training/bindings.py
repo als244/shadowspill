@@ -17,7 +17,12 @@ from ...graph_pairs import (
     PartitionedTrainingCapture,
     saved_value_footprint,
 )
-from ..catalog import ObjectCatalog, TensorSlot
+from ..catalog import (
+    ObjectCatalog,
+    TensorSlot,
+    serialized_dtype_role,
+    tensor_value_role,
+)
 from ..profiles import TaskProfileCatalog
 from ..task_binding import (
     TaskBindingResolver,
@@ -142,7 +147,10 @@ def _bind_canonical_stage_boundary(
                 role=(
                     ObjectRole.OUTPUT
                     if index in public_leaves
-                    else ObjectRole.ACTIVATION
+                    else tensor_value_role(
+                        value,
+                        continuous_role=ObjectRole.ACTIVATION,
+                    )
                 ),
                 persistence=Persistence.STEP,
             )
@@ -418,18 +426,30 @@ def _stage_forward_outputs(
     root_by_leaf = {
         item.leaf_index: item.root_id for item in storage_contract.output_views
     }
+    view_by_leaf = {
+        item.leaf_index: item for item in storage_contract.output_views
+    }
     for index in range(pair.forward.output_count):
+        try:
+            role = serialized_dtype_role(
+                view_by_leaf[index].dtype,
+                continuous_role=ObjectRole.ACTIVATION,
+            )
+        except KeyError as error:
+            raise CaptureError(
+                f"{context}: forward output {index} has no storage view"
+            ) from error
         if index < public_count:
             object_id = resolver.bind_contract(
                 index,
-                role=ObjectRole.ACTIVATION,
+                role=role,
                 persistence=Persistence.STEP,
                 canonical_object_id=canonical_outputs[index],
             )
         else:
             object_id = resolver.bind_contract(
                 index,
-                role=ObjectRole.ACTIVATION,
+                role=role,
                 persistence=Persistence.STEP,
             )
         slots.append(TensorSlot(index, object_id))
@@ -549,7 +569,11 @@ def _tensor_slots(
     return tuple(
         TensorSlot(
             index,
-            inventory.add(value, role=ObjectRole.INPUT, persistence=Persistence.STEP),
+            inventory.add(
+                value,
+                role=tensor_value_role(value, continuous_role=ObjectRole.INPUT),
+                persistence=Persistence.STEP,
+            ),
         )
         for index, value in enumerate(values)
         if isinstance(value, torch.Tensor)

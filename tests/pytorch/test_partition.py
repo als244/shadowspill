@@ -7,7 +7,10 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx import GraphModule
 
 from shadowspill.pytorch.capture.aot import capture_forward
-from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
+from shadowspill.pytorch.capture.artifacts import (
+    TaskInputRole,
+    capture_forward_stage_artifacts,
+)
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.partition import (
@@ -69,6 +72,28 @@ class _TwoStagePolicy:
             node.name: 10 if index < midpoint else 20
             for index, node in enumerate(nodes)
         }
+
+
+class _ControlBlock(nn.Module):
+    def forward(
+        self,
+        value: torch.Tensor,
+        cumulative: torch.Tensor,
+    ) -> torch.Tensor:
+        return value + cumulative[-1].to(dtype=value.dtype)
+
+
+class _ProducedControlNetwork(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks = nn.ModuleList([_ControlBlock() for _ in range(2)])
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        cumulative = tokens.cumsum(0)
+        value = tokens.to(dtype=torch.float32)
+        for block in self.blocks:
+            value = block(value, cumulative)
+        return value
 
 
 def test_custom_partition_policy_is_normalized_and_shared_by_forward() -> None:
@@ -144,7 +169,7 @@ def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
     assert len({artifact.compatibility_digest for artifact in artifacts}) == 1
 
 
-def test_auto_partition_keeps_first_consumer_and_isolates_epilogue() -> None:
+def test_auto_partition_isolates_prologue_blocks_and_epilogue() -> None:
     model = _RepeatedNetworkWithBoundaries()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_cuda_model(model, mode)
@@ -155,13 +180,80 @@ def test_auto_partition_keeps_first_consumer_and_isolates_epilogue() -> None:
         artifacts = capture_forward_stage_artifacts(partitioned)
 
     assert partitioned.repeated_groups == ("blocks",)
-    assert len(partitioned.stages) == 5
-    assert len(artifacts) == 5
-    block_artifacts = artifacts[1:4]
+    assert len(partitioned.stages) == 6
+    assert len(artifacts) == 6
+    block_artifacts = artifacts[1:5]
     assert len({artifact.compatibility_digest for artifact in block_artifacts}) == 1
     assert any("linear" in target for target in artifacts[0].operator_targets)
-    assert any("relu" in target for target in artifacts[0].operator_targets)
+    assert any("silu" in target for target in artifacts[0].operator_targets)
+    assert not any("relu" in target for target in artifacts[0].operator_targets)
     assert any("layer_norm" in target for target in artifacts[-1].operator_targets)
+
+
+def test_partition_propagates_authentic_producer_control_values() -> None:
+    model = _ProducedControlNetwork()
+    tokens = torch.tensor([13, 19, 32], dtype=torch.int64)
+    captured = capture_forward(model, (tokens,))
+    partitioned = partition_export(
+        captured,
+        model,
+        representative_root_inputs=captured.flat_inputs,
+    )
+
+    assert partitioned.repeated_groups == ("blocks",)
+    assert len(partitioned.stages) == 3
+    first_block = partitioned.stages[1].stage
+    second_block = partitioned.stages[2].stage
+    first_control = next(
+        item
+        for item in first_block.input_provenance
+        if item.role is TaskInputRole.CONTROL
+    )
+    second_control = next(
+        item
+        for item in second_block.input_provenance
+        if item.role is TaskInputRole.CONTROL
+    )
+    expected = tokens.cumsum(0)
+    torch.testing.assert_close(first_control.representative_value, expected)
+    torch.testing.assert_close(second_control.representative_value, expected)
+
+
+def test_partition_accepts_explicit_caller_control_value() -> None:
+    model = _ProducedControlNetwork()
+    tokens = torch.tensor([13, 19, 32], dtype=torch.int64)
+    captured = capture_forward(model, (tokens,))
+    derived = partition_export(
+        captured,
+        model,
+        representative_root_inputs=captured.flat_inputs,
+    )
+    source = next(
+        source
+        for source, item in zip(
+            derived.stages[1].stage.input_sources,
+            derived.stages[1].stage.input_provenance,
+            strict=True,
+        )
+        if item.role is TaskInputRole.CONTROL
+    )
+    assert source is not None
+    assert source.producer_stage_index is not None
+    assert source.producer_output_index is not None
+    key = (source.producer_stage_index, source.producer_output_index)
+    supplied = torch.tensor([7, 11, 29], dtype=torch.int64)
+
+    partitioned = partition_export(
+        captured,
+        model,
+        representative_stage_outputs={key: supplied},
+    )
+    control = next(
+        item
+        for item in partitioned.stages[1].stage.input_provenance
+        if item.role is TaskInputRole.CONTROL
+    )
+    torch.testing.assert_close(control.representative_value, supplied)
 
 
 def test_whole_partition_is_one_stage() -> None:

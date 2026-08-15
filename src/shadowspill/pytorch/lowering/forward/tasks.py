@@ -18,7 +18,7 @@ from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
 from ...partition import PartitionedExport, StageExample
-from ..catalog import ObjectCatalog, TensorSlot
+from ..catalog import ObjectCatalog, TensorSlot, tensor_value_role
 from ..task_binding import TaskBindingResolver, resolve_stage_input_slots
 from .artifacts import (
     ForwardObjects,
@@ -193,7 +193,10 @@ def _bind_forward_outputs(
         object_id = resolver.bind(
             position,
             leaf,
-            role=ObjectRole.ACTIVATION,
+            role=tensor_value_role(
+                leaf,
+                continuous_role=ObjectRole.ACTIVATION,
+            ),
             persistence=Persistence.STEP,
         )
         output_slots.append(TensorSlot(position, object_id))

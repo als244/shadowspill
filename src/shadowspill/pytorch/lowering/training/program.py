@@ -37,7 +37,10 @@ def lower_partitioned_training_program(
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     layout_cache: CompiledLayoutIndex | None = None,
     profiling_metadata_digests: tuple[str, ...] | None = None,
-    profile_compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
+    profile_compatibility_digests: Mapping[
+        tuple[str, str | None, str | None], str
+    ]
+    | None = None,
 ) -> LoweredTrainingProgram:
     """Compose stage-local graph pairs into one accumulated training program."""
 

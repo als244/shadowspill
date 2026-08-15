@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import torch
 from torch.export.graph_signature import InputKind
 from torch.fx import GraphModule
@@ -13,12 +15,13 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputRole,
     TensorGeometry,
 )
-from shadowspill.pytorch.capture.storage import ExplicitMutation
 
+from ..capture.storage import ExplicitMutation
 from ..contracts import CaptureError
 from .artifacts import Stage, StageExample, StageValueSource
 from .sources import stage_value_source
 from .split import SplitExportGraph
+from .values import StageOutputKey, derive_authentic_control_values
 
 
 def root_input_provenance(
@@ -45,6 +48,12 @@ def root_input_provenance(
     result: list[TaskInputProvenance] = []
     for index, (spec, value) in enumerate(zip(specs, inputs, strict=True)):
         role = role_by_kind.get(spec.kind, TaskInputRole.USER_INPUT)
+        if (
+            role is TaskInputRole.USER_INPUT
+            and isinstance(value, torch.Tensor)
+            and _requires_authentic_value(value)
+        ):
+            role = TaskInputRole.CONTROL
         source = spec.target if isinstance(spec.target, str) else f"input_{index}"
         reference = _representative_root_tensor(
             value,
@@ -60,32 +69,49 @@ def build_stage_examples(
     capture: ExportCapture,
     split: SplitExportGraph,
     root_provenance: tuple[TaskInputProvenance, ...],
+    *,
+    representative_root_inputs: tuple[object, ...] | None = None,
+    caller_stage_values: Mapping[StageOutputKey, torch.Tensor] | None = None,
 ) -> tuple[StageExample, ...]:
     """Build occurrence-local stage ABIs from one split root graph."""
 
     mutations = _partition_mutations(capture, split)
     user_outputs = _partition_user_outputs(capture, split)
-    return tuple(
-        StageExample(
-            stage=Stage(
-                stage_id=f"stage_{index:04d}",
-                module_target=record.module_target,
-                graph_module=record.graph_module,
-                input_sources=record.input_sources,
-                input_provenance=tuple(
-                    _stage_input_provenance(source, root_provenance)
-                    if source is not None
-                    else TaskInputProvenance(TaskInputRole.USER_INPUT)
-                    for source in record.input_sources
-                ),
-                mutations=mutations.get(index, ()),
-                user_output_indices=user_outputs.get(index, ()),
-            ),
-            inputs=record.inputs,
-            output=record.output,
-        )
-        for index, record in enumerate(split.stages)
+    control_values = derive_authentic_control_values(
+        split,
+        representative_root_inputs,
+        caller_values=caller_stage_values,
     )
+    examples: list[StageExample] = []
+    for index, record in enumerate(split.stages):
+        provenance: list[TaskInputProvenance] = []
+        for input_position, source in enumerate(record.input_sources):
+            if source is None:
+                provenance.append(TaskInputProvenance(TaskInputRole.USER_INPUT))
+                continue
+            item = _stage_input_provenance(
+                source,
+                value=record.inputs[input_position],
+                roots=root_provenance,
+                control_values=control_values,
+            )
+            provenance.append(item)
+        examples.append(
+            StageExample(
+                stage=Stage(
+                    stage_id=f"stage_{index:04d}",
+                    module_target=record.module_target,
+                    graph_module=record.graph_module,
+                    input_sources=record.input_sources,
+                    input_provenance=tuple(provenance),
+                    mutations=mutations.get(index, ()),
+                    user_output_indices=user_outputs.get(index, ()),
+                ),
+                inputs=record.inputs,
+                output=record.output,
+            )
+        )
+    return tuple(examples)
 
 
 def _representative_root_tensor(
@@ -188,7 +214,10 @@ def _root_output_leaves(root: GraphModule) -> list[object]:
 
 def _stage_input_provenance(
     source: StageValueSource,
+    *,
+    value: object,
     roots: tuple[TaskInputProvenance, ...],
+    control_values: dict[StageOutputKey, torch.Tensor],
 ) -> TaskInputProvenance:
     if source.root_input_index is not None:
         try:
@@ -199,13 +228,20 @@ def _stage_input_provenance(
             ) from exc
     assert source.producer_stage_index is not None
     assert source.producer_output_index is not None
+    key = (source.producer_stage_index, source.producer_output_index)
+    control = isinstance(value, torch.Tensor) and _requires_authentic_value(value)
     return TaskInputProvenance(
-        TaskInputRole.ACTIVATION,
+        TaskInputRole.CONTROL if control else TaskInputRole.ACTIVATION,
         (
             f"stage_{source.producer_stage_index:04d}."
             f"output_{source.producer_output_index:04d}"
         ),
+        representative_value=control_values.get(key),
     )
+
+
+def _requires_authentic_value(value: torch.Tensor) -> bool:
+    return not value.is_floating_point() and not value.is_complex()
 
 
 __all__ = ["build_stage_examples", "root_input_provenance"]

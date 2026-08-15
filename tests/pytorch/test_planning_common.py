@@ -39,6 +39,7 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
     ]
     profiler = SimpleNamespace(
         compilation_wall_time_ns=40,
+        saved_control_compilation_wall_time_ns=0,
         profiling_wall_time_ns=60,
         entrypoint_warmup_wall_time_ns=5,
     )

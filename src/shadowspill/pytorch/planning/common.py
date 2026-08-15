@@ -63,7 +63,10 @@ class PlanningTimer:
         if {name for _index, name, _duration in indexed} != names:
             raise RuntimeError("planning profile intervals are incomplete")
         combined = sum(duration for _index, _name, duration in indexed)
-        compilation = profiler.compilation_wall_time_ns
+        compilation = (
+            profiler.compilation_wall_time_ns
+            - profiler.saved_control_compilation_wall_time_ns
+        )
         profiling = profiler.profiling_wall_time_ns
         cached_warmup = profiler.entrypoint_warmup_wall_time_ns
         measured = compilation + profiling + cached_warmup

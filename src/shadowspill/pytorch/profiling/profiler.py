@@ -12,7 +12,12 @@ from typing import Any, cast
 import torch
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+    TaskInputProvenance,
+    TaskInputRole,
+)
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.contracts import CaptureError, ProfilingError
@@ -33,6 +38,7 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
 )
 
 from .allocation_abi import TaskAllocationABI
+from .context import profile_input_context_digest
 from .executables import ProfileExecutable, ProfileExecutableStore
 from .records import TaskMeasurement, TaskOutputInputBinding
 from .runner import ProfilableArtifact
@@ -107,6 +113,10 @@ class CudaTaskProfiler:
         self._device_conditioned = False
         self._last_workspace_observation: _WorkspaceObservation | None = None
         self._last_audit_timings: tuple[tuple[str, int], ...] = ()
+        self._saved_control_values: dict[
+            tuple[str, str | None, int], tuple[torch.Tensor | None, ...]
+        ] = {}
+        self._saved_control_compilation_wall_time_ns = 0
 
     @property
     def compilation_wall_time_ns(self) -> int:
@@ -139,6 +149,12 @@ class CudaTaskProfiler:
         """Warmup required only for entrypoints whose profile was cached."""
 
         return self._entrypoint_warmup_wall_time_ns
+
+    @property
+    def saved_control_compilation_wall_time_ns(self) -> int:
+        """Compilation already charged to the saved-control planning phase."""
+
+        return self._saved_control_compilation_wall_time_ns
 
     def measure(self, artifact: ProfilableArtifact) -> TaskMeasurement:
         """Measure one compiled graph or bounded eager optimizer task."""
@@ -194,6 +210,92 @@ class CudaTaskProfiler:
             return measurement
         finally:
             del executable
+
+    def resolve_graph_pair_controls(self, pair: AotGraphPair) -> AotGraphPair:
+        """Populate backward saved controls from the paired forward task."""
+
+        compilation_before = self.compilation_wall_time_ns
+        try:
+            return self._resolve_graph_pair_controls(pair)
+        finally:
+            self._saved_control_compilation_wall_time_ns += (
+                self.compilation_wall_time_ns - compilation_before
+            )
+
+    def _resolve_graph_pair_controls(self, pair: AotGraphPair) -> AotGraphPair:
+        """Resolve one pair while the public wrapper accounts compilation."""
+
+        provenance = pair.backward.input_provenance
+        missing = tuple(
+            position
+            for position, item in enumerate(provenance[: pair.saved_value_count])
+            if item.role is TaskInputRole.CONTROL
+            and item.representative_value is None
+        )
+        if not missing:
+            return pair
+        key = (
+            pair.forward.compatibility_digest,
+            profile_input_context_digest(pair.forward),
+            pair.saved_value_count,
+        )
+        values = self._saved_control_values.get(key)
+        if values is None:
+            values = self._execute_saved_control_producer(pair)
+            self._saved_control_values[key] = values
+        rebound = tuple(
+            _bind_saved_control(item, values[position])
+            if position in missing
+            else item
+            for position, item in enumerate(provenance)
+        )
+        backward = pair.backward.rebind_examples(
+            pair.backward.example_arguments,
+            input_provenance=rebound,
+        )
+        return replace(pair, backward=backward)
+
+    def _execute_saved_control_producer(
+        self,
+        pair: AotGraphPair,
+    ) -> tuple[torch.Tensor | None, ...]:
+        """Run one forward task and snapshot only non-floating saved leaves."""
+
+        executable = self._compiled(pair.forward)
+        if not executable.example_arguments:
+            executable = self._restore_example_arguments(executable)
+        torch.cuda.set_device(self._device_ordinal)
+        stream = torch.cuda.current_stream(self._device_ordinal)
+        task_id = self._open_profile_task(stream)
+        task_open = True
+        output: object | None = None
+        try:
+            output = executable()
+            leaves, _ = tree_flatten(output)
+            original_count = pair.forward.output_count - pair.saved_value_count
+            saved = leaves[original_count:]
+            if len(saved) != pair.saved_value_count:
+                raise CaptureError("paired forward changed its saved-value arity")
+            values = tuple(
+                _snapshot_saved_control(value)
+                if pair.backward.input_provenance[position].role
+                is TaskInputRole.CONTROL
+                else None
+                for position, value in enumerate(saved)
+            )
+            output = None
+            self._close_profile_task(task_id, stream)
+            task_open = False
+            stream.synchronize()
+            self._diagnose_allocator_idle(context="saved-control producer")
+            return values
+        except BaseException:
+            if task_open:
+                self._library.shadowspill_pytorch_abort_task_range()
+            raise
+        finally:
+            output = None
+            self._executables.release_occurrence_values(executable)
 
     def prepare_manifests(
         self,
@@ -985,6 +1087,34 @@ def _profiling_error(
         task_kind=kind,
         operators=operators,
     )
+
+
+def _bind_saved_control(
+    provenance: TaskInputProvenance,
+    value: torch.Tensor | None,
+) -> TaskInputProvenance:
+    if value is None:
+        raise CaptureError(
+            "paired forward did not produce an authentic saved control: "
+            f"source={provenance.source}"
+        )
+    return replace(provenance, representative_value=value)
+
+
+def _snapshot_saved_control(value: object) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        raise CaptureError("paired forward saved control is not a tensor")
+    if value.is_floating_point() or value.is_complex():
+        raise CaptureError("paired forward saved control has a continuous dtype")
+    source = value.detach().to(device="cpu")
+    result = torch.empty_strided(
+        tuple(source.shape),
+        tuple(source.stride()),
+        dtype=source.dtype,
+        device="cpu",
+    )
+    result.copy_(source)
+    return result
 
 
 def _persistent_profile_extents(

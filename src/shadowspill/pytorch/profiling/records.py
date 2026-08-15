@@ -20,7 +20,7 @@ from shadowspill.pytorch.profiling.inputs import (
 # The opaque-optimizer artifact versions its own representative-gradient
 # construction contract.  That targeted identity change avoids invalidating
 # unrelated compiled-graph measurements.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v15"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v16"
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +312,7 @@ class ProfileKey:
     graph_digest: str
     environment: ProfileEnvironment
     profiling_metadata_digest: str | None = None
+    input_context_digest: str | None = None
 
     @property
     def digest(self) -> str:
@@ -321,6 +322,7 @@ class ProfileKey:
             "graph_digest": self.graph_digest,
             "environment": self.environment.identity(),
             "profiling_metadata_digest": self.profiling_metadata_digest,
+            "input_context_digest": self.input_context_digest,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
@@ -337,6 +339,7 @@ class ProfilingResult:
     fixed_slab_bytes: int
     key_digests: tuple[str, ...] = ()
     profiling_metadata_digests: tuple[str | None, ...] = ()
+    input_context_digests: tuple[str | None, ...] = ()
 
 
 __all__ = [

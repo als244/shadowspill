@@ -49,6 +49,12 @@ def representative_cpu_inputs(values: Any) -> Any:
             result.requires_grad_(value.requires_grad)
         elif not isinstance(value, TensorSpec):
             return value
+        if not result.is_floating_point() and not result.is_complex():
+            raise PlanningError(
+                "integer/boolean planning inputs require authentic "
+                "caller-supplied tensor values; TensorSpec and meta tensors "
+                "provide geometry only"
+            )
         generator = torch.Generator(device="cpu").manual_seed(
             0x5A17_0000 + synthetic_ordinal
         )
@@ -70,9 +76,6 @@ def representative_cpu_inputs(values: Any) -> Any:
                     tuple(result.shape), dtype=torch.float32, generator=generator
                 )
                 result.copy_(torch.complex(real, imaginary).to(dtype=result.dtype))
-            else:
-                pattern = torch.arange(result.numel(), dtype=torch.int64).remainder_(2)
-                result.copy_(pattern.reshape(tuple(result.shape)).to(result.dtype))
         return result
 
     return tree_map(convert, values)

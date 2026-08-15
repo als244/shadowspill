@@ -7,6 +7,7 @@ from typing import Protocol
 
 from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 
+from .context import profile_input_context_digest
 from .records import (
     ProfileEnvironment,
     ProfileKey,
@@ -37,9 +38,13 @@ def profile_unique_artifacts(
 
     sequence = tuple(artifacts)
     metadata = _aligned_metadata(sequence, profiling_metadata_digests)
-    keys, positions, representatives, position_keys = _index_profile_keys(
-        sequence, metadata, environment
-    )
+    (
+        keys,
+        positions,
+        representatives,
+        position_keys,
+        input_contexts,
+    ) = _index_profile_keys(sequence, metadata, environment)
     measurements, hits, misses = _measure_unique_keys(
         keys,
         positions,
@@ -50,7 +55,14 @@ def profile_unique_artifacts(
         progress,
     )
     return _build_profiling_result(
-        metadata, keys, positions, position_keys, measurements, hits, misses
+        metadata,
+        input_contexts,
+        keys,
+        positions,
+        position_keys,
+        measurements,
+        hits,
+        misses,
     )
 
 
@@ -58,7 +70,10 @@ def _aligned_metadata(
     artifacts: tuple[ProfilableArtifact, ...],
     metadata: Sequence[str | None] | None,
 ) -> tuple[str | None, ...]:
-    values = (None,) * len(artifacts) if metadata is None else tuple(metadata)
+    if metadata is None:
+        values: tuple[str | None, ...] = (None,) * len(artifacts)
+    else:
+        values = tuple(metadata)
     if len(values) != len(artifacts):
         raise ValueError("profiling metadata must align with task artifacts")
     return values
@@ -73,20 +88,35 @@ def _index_profile_keys(
     dict[str, list[int]],
     dict[str, ProfilableArtifact],
     tuple[str, ...],
+    tuple[str | None, ...],
 ]:
     keys: dict[str, ProfileKey] = {}
     positions: dict[str, list[int]] = {}
     representatives: dict[str, ProfilableArtifact] = {}
     position_keys: list[str] = []
+    input_contexts: list[str | None] = []
     for position, (artifact, metadata_digest) in enumerate(
         zip(artifacts, metadata, strict=True)
     ):
-        key = ProfileKey(artifact.compatibility_digest, environment, metadata_digest)
+        input_context = profile_input_context_digest(artifact)
+        key = ProfileKey(
+            artifact.compatibility_digest,
+            environment,
+            metadata_digest,
+            input_context,
+        )
         keys[key.digest] = key
         position_keys.append(key.digest)
         positions.setdefault(key.digest, []).append(position)
         representatives.setdefault(key.digest, artifact)
-    return keys, positions, representatives, tuple(position_keys)
+        input_contexts.append(input_context)
+    return (
+        keys,
+        positions,
+        representatives,
+        tuple(position_keys),
+        tuple(input_contexts),
+    )
 
 
 def _measure_unique_keys(
@@ -162,6 +192,7 @@ def _report_progress(
 
 def _build_profiling_result(
     metadata: tuple[str | None, ...],
+    input_contexts: tuple[str | None, ...],
     keys: dict[str, ProfileKey],
     positions: dict[str, list[int]],
     position_keys: tuple[str, ...],
@@ -190,6 +221,7 @@ def _build_profiling_result(
         fixed_slab_bytes=sum(persistent_by_graph.values()),
         key_digests=position_keys,
         profiling_metadata_digests=metadata,
+        input_context_digests=input_contexts,
     )
 
 

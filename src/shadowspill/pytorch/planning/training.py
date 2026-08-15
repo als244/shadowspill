@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -46,6 +46,7 @@ from shadowspill.pytorch.profiling import (
     resolve_task_manifests,
     validate_compiled_profile,
 )
+from shadowspill.pytorch.profiling.context import profile_input_context_digest
 from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     training_profiling_metadata,
@@ -74,6 +75,7 @@ from ..execution import TrainingExecutor
 from ..graph_pairs import (
     PartitionedTrainingCapture,
     partition_training_capture,
+    resolve_partitioned_saved_controls,
 )
 from ..guards import InputSignature, capture_training_signatures
 from ..lowering.profiles import CompiledLayoutIndex, ProfileMeasurementKey
@@ -131,7 +133,7 @@ from .repositories import PlanningArtifactRepositories, open_artifact_repositori
 @dataclass(frozen=True, slots=True)
 class _TrainingTaskInventory:
     compile_tasks: tuple[OptimizerTaskArtifact, ...]
-    profile_keys: tuple[tuple[str, str | None], ...]
+    profile_keys: tuple[tuple[str, str | None, str | None], ...]
     profile_tasks: tuple[OptimizerTaskArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
 
@@ -373,15 +375,24 @@ def profile_training_tasks(
 ) -> TrainingProfileArtifacts:
     """Compile/profile each unique graph-pair and optimizer structural ABI."""
 
-    inventory = _training_task_inventory(captured, materialized.optimizer_capture)
+    profiler = CudaTaskProfiler(
+        captured.installed.library,
+        device_ordinal=captured.device_ordinal,
+    )
+    with timer.measure("saved_control_resolution"):
+        partitioned = resolve_partitioned_saved_controls(
+            captured.partitioned,
+            profiler.resolve_graph_pair_controls,
+        )
+    resolved_capture = replace(captured, partitioned=partitioned)
+    inventory = _training_task_inventory(
+        resolved_capture,
+        materialized.optimizer_capture,
+    )
     _report_training_profile_inventory(
         inventory,
         materialized.optimizer_capture,
         timer,
-    )
-    profiler = CudaTaskProfiler(
-        captured.installed.library,
-        device_ordinal=captured.device_ordinal,
     )
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
@@ -404,6 +415,7 @@ def profile_training_tasks(
         timer,
     )
     return TrainingProfileArtifacts(
+        partitioned,
         inventory.compile_tasks,
         inventory.profile_keys,
         inventory.profile_tasks,
@@ -558,7 +570,7 @@ def _training_measurement_maps(
 ) -> tuple[
     dict[ProfileMeasurementKey, TaskMeasurement],
     dict[str, TaskMeasurement],
-    dict[tuple[str, str | None], str],
+    dict[tuple[str, str | None, str | None], str],
 ]:
     measurements: dict[ProfileMeasurementKey, TaskMeasurement] = dict(
         zip(
@@ -589,7 +601,7 @@ def _lower_optimizer_phases(
     optimizer_capture: OptimizerCapture,
     profiled: TrainingProfileArtifacts,
     measurements: dict[ProfileMeasurementKey, TaskMeasurement],
-    compatibility_digests: dict[tuple[str, str | None], str],
+    compatibility_digests: dict[tuple[str, str | None, str | None], str],
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
 ) -> tuple[LoweredTrainingProgram, LoweredTrainingProgram]:
@@ -1152,6 +1164,7 @@ def build_training(
             artifact_cache=artifacts,
             timer=timer,
         )
+        captured = replace(captured, partitioned=profiled.partitioned)
         programs = build_training_programs(
             captured,
             materialized,
@@ -1200,7 +1213,9 @@ def _training_task_inventory(
     optimizer_capture: OptimizerCapture,
 ) -> _TrainingTaskInventory:
     compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
-    profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
+    profile_by_key: dict[
+        tuple[str, str | None, str | None], OptimizerTaskArtifact
+    ] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:
@@ -1211,7 +1226,11 @@ def _training_task_inventory(
                         artifact,
                     )
                     profile_by_key.setdefault(
-                        (artifact.compatibility_digest, metadata_digest),
+                        (
+                            artifact.compatibility_digest,
+                            metadata_digest,
+                            profile_input_context_digest(artifact),
+                        ),
                         artifact,
                     )
     for task in optimizer_capture.recurrent_tasks:
@@ -1220,7 +1239,11 @@ def _training_task_inventory(
             task.artifact,
         )
         profile_by_key.setdefault(
-            (task.artifact.compatibility_digest, None),
+            (
+                task.artifact.compatibility_digest,
+                None,
+                profile_input_context_digest(task.artifact),
+            ),
             task.artifact,
         )
     if optimizer_capture.initial is not None:
@@ -1229,7 +1252,11 @@ def _training_task_inventory(
             optimizer_capture.initial,
         )
         profile_by_key.setdefault(
-            (optimizer_capture.initial.compatibility_digest, None),
+            (
+                optimizer_capture.initial.compatibility_digest,
+                None,
+                profile_input_context_digest(optimizer_capture.initial),
+            ),
             optimizer_capture.initial,
         )
     keys = tuple(profile_by_key)

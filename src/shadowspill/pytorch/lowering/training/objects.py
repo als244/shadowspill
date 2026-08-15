@@ -13,7 +13,12 @@ from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTensorRole
 
 from ...contracts import CaptureError
 from ...graph_pairs import PartitionedTrainingCapture
-from ..catalog import ObjectCatalog, TensorSlot, register_model_state
+from ..catalog import (
+    ObjectCatalog,
+    TensorSlot,
+    register_model_state,
+    tensor_value_role,
+)
 from ..program import execution_device_id, publish_storage_program
 from .artifacts import (
     GradientBinding,
@@ -98,7 +103,7 @@ def _register_microbatch_inputs(
                 continue
             object_id = inventory.add(
                 value,
-                role=ObjectRole.INPUT,
+                role=tensor_value_role(value, continuous_role=ObjectRole.INPUT),
                 persistence=Persistence.STEP,
                 retain_spill_copy=True,
             )

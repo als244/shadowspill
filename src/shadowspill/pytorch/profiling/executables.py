@@ -15,7 +15,10 @@ from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.contracts import CompilationError
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 
-from .inputs import RepresentativeInputSummary, materialize_representative_inputs
+from .inputs import (
+    RepresentativeInputSummary,
+    materialize_representative_inputs,
+)
 from .runner import ProfilableArtifact
 
 

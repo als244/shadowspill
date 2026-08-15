@@ -41,6 +41,7 @@ class ObjectRole(StrEnum):
     OPTIMIZER_STATE = "optimizer_state"
     OUTPUT = "output"
     OTHER = "other"
+    CONTROL = "control"
 
 
 class Persistence(StrEnum):

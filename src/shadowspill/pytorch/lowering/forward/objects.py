@@ -8,7 +8,12 @@ import torch.nn as nn
 from shadowspill.ir import ObjectRole, Persistence
 
 from ...partition import PartitionedExport
-from ..catalog import ObjectCatalog, TensorSlot, register_model_state
+from ..catalog import (
+    ObjectCatalog,
+    TensorSlot,
+    register_model_state,
+    tensor_value_role,
+)
 from .artifacts import ForwardObjects
 
 
@@ -25,7 +30,7 @@ def register_forward_objects(
             position,
             catalog.add(
                 value,
-                role=ObjectRole.INPUT,
+                role=tensor_value_role(value, continuous_role=ObjectRole.INPUT),
                 persistence=Persistence.STEP,
                 retain_spill_copy=True,
             ),

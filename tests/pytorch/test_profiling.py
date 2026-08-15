@@ -9,6 +9,8 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
+    TaskInputProvenance,
+    TaskInputRole,
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
@@ -17,6 +19,7 @@ from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
     ProfileRepository,
+    TaskAllocationABI,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
@@ -94,6 +97,8 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
         measure=measure,
         cache=cache,
     )
+    # Semantic roles do not split an otherwise identical physical profile.
+    # Authentic non-floating contents still do.
     assert cold.unique_keys == 1
     assert cold.cache_hits == 0
     assert cold.cache_misses == 1
@@ -144,6 +149,88 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
         cache=cache,
     )
     assert calls == 2
+
+
+def test_profile_identity_includes_control_contents(
+    tmp_path: Path,
+) -> None:
+    module = torch.fx.symbolic_trace(nn.Identity())
+
+    def artifact(value: torch.Tensor) -> GraphArtifact:
+        return GraphArtifact.capture(
+            kind="inference",
+            graph_module=module,
+            example_inputs=(value,),
+            input_provenance=(
+                TaskInputProvenance(
+                    TaskInputRole.CONTROL,
+                    "metadata",
+                    representative_value=value,
+                ),
+            ),
+        )
+
+    first_value = torch.tensor([0, 13, 32, 64], dtype=torch.int64)
+    second_value = torch.tensor([0, 17, 48, 96], dtype=torch.int64)
+    artifacts = (
+        artifact(first_value),
+        artifact(first_value.clone()),
+        artifact(second_value),
+    )
+    calls = 0
+
+    def measure(candidate: GraphArtifact) -> TaskMeasurement:
+        nonlocal calls
+        calls += 1
+        trace = ()
+        return TaskMeasurement(
+            calls,
+            24 if trace else 0,
+            256 if trace else 0,
+            (256,) if trace else (),
+            (calls,),
+            "context-test",
+            allocation_trace=trace,
+            allocation_abi=TaskAllocationABI.capture(trace),
+        )
+
+    result = profile_unique_artifacts(
+        artifacts,
+        environment=_environment(),
+        measure=measure,
+        cache=ProfileRepository(tmp_path),
+    )
+    assert calls == 2
+    assert result.unique_keys == 2
+    assert len(set(result.input_context_digests)) == 2
+    assert len({item.compatibility_digest for item in artifacts}) == 1
+    assert result.measurements[0] is result.measurements[1]
+    assert result.measurements[0] is not result.measurements[2]
+
+
+def test_profile_identity_accepts_scalar_integer_control(tmp_path: Path) -> None:
+    module = torch.fx.symbolic_trace(nn.Identity())
+    value = torch.tensor(1, dtype=torch.int64)
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=module,
+        example_inputs=(value,),
+        input_provenance=(
+            TaskInputProvenance(
+                TaskInputRole.CONTROL,
+                "step",
+                representative_value=value,
+            ),
+        ),
+    )
+    result = profile_unique_artifacts(
+        (artifact,),
+        environment=_environment(),
+        measure=lambda _artifact: TaskMeasurement(1, 0, 0, (), (1,), "scalar"),
+        cache=ProfileRepository(tmp_path),
+    )
+    assert result.unique_keys == 1
+    assert result.input_context_digests[0] is not None
 
 
 def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:

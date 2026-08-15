@@ -567,7 +567,7 @@ def _forward_plan_report(
         task_stage_map, unique_stages = forward_stage_inventory(
             program.lowered,
             execution_plan,
-            program.measurements,
+            program.measurements_by_profile,
             profiled.compiled_tasks.manifests,
             profiling_metadata_digest=captured.workload.digest,
         )

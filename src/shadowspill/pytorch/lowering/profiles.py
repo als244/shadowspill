@@ -15,10 +15,11 @@ from shadowspill.pytorch.compilation.layout import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling.context import profile_input_context_digest
 
 from ..contracts import CaptureError
 
-ProfileMeasurementKey = str | tuple[str, str | None]
+ProfileMeasurementKey = str | tuple[str, str | None, str | None]
 ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact
 
 
@@ -26,7 +27,7 @@ class CompiledLayoutIndex:
     """Deduplicate immutable compiled layouts within one lowering call."""
 
     def __init__(self) -> None:
-        self._layouts: dict[str, CompiledTaskLayout] = {}
+        self._layouts: dict[tuple[str, str], CompiledTaskLayout] = {}
 
     def resolve(
         self,
@@ -35,16 +36,18 @@ class CompiledLayoutIndex:
         measurement: TaskMeasurement,
         root_allocations: tuple[ExecutableRootAllocation, ...] | None = None,
     ) -> CompiledTaskLayout:
-        existing = self._layouts.get(artifact.compatibility_digest)
+        candidate = reconcile_compiled_task_layout(
+            contract,
+            measurement,
+            root_allocations=root_allocations,
+        )
+        key = artifact.compatibility_digest, candidate.compatibility_digest
+        existing = self._layouts.get(key)
         if existing is None:
-            existing = reconcile_compiled_task_layout(
-                contract,
-                measurement,
-                root_allocations=root_allocations,
-            )
-            self._layouts[artifact.compatibility_digest] = existing
-        elif existing.contract_digest != contract.compatibility_digest:
-            raise CaptureError("one artifact ABI resolved to several storage contracts")
+            self._layouts[key] = candidate
+            return candidate
+        if existing.contract_digest != contract.compatibility_digest:
+            raise CaptureError("one physical profile resolved to several contracts")
         return existing
 
 
@@ -58,7 +61,10 @@ class TaskProfileCatalog:
         storage_contracts: Mapping[str, TaskStorageContract] | None = None,
         root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
         | None = None,
-        compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
+        compatibility_digests: Mapping[
+            tuple[str, str | None, str | None], str
+        ]
+        | None = None,
         metadata_enabled: bool = False,
         layout_cache: CompiledLayoutIndex | None = None,
     ) -> None:
@@ -92,7 +98,11 @@ class TaskProfileCatalog:
         metadata_digest: str | None = None,
     ) -> TaskMeasurement:
         measurement = self._measurements.get(
-            (artifact.compatibility_digest, metadata_digest)
+            (
+                artifact.compatibility_digest,
+                metadata_digest,
+                profile_input_context_digest(artifact),
+            )
         )
         if measurement is None and not self._metadata_enabled:
             measurement = self._measurements.get(artifact.compatibility_digest)
@@ -166,7 +176,11 @@ class TaskProfileCatalog:
             return artifact.compatibility_digest
         try:
             return self._compatibility_digests[
-                (artifact.compatibility_digest, metadata_digest)
+                (
+                    artifact.compatibility_digest,
+                    metadata_digest,
+                    profile_input_context_digest(artifact),
+                )
             ]
         except KeyError as exc:
             raise CaptureError(

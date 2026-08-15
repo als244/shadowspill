@@ -221,13 +221,11 @@ def _automatic_partition_assignments(
     assignments: dict[Node, int] = {}
     partition_id = 0
 
-    # Keep leading producers with the first repeated task.  A value created in
-    # the prefix may drive opaque first-consumer behavior (for example an
-    # identity-keyed provider cache) that is invisible in the repeated FX
-    # graph itself.  Profiling the prefix and first consumer together preserves
-    # that physical ABI while later repeated occurrences remain reusable.
-    for node in executable[:first_anchored]:
-        assignments[node] = partition_id
+    # Model setup before the first repeated block is an independent prologue.
+    if first_anchored:
+        for node in executable[:first_anchored]:
+            assignments[node] = partition_id
+        partition_id += 1
 
     previous_anchor: str | None = None
     for index in range(first_anchored, last_anchored + 1):

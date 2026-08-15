@@ -9,11 +9,9 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.contracts import CaptureError, TensorSpec
+from shadowspill.pytorch.contracts import CaptureError, PlanningError, TensorSpec
 from shadowspill.pytorch.materialization import representative_cpu_inputs
-from shadowspill.pytorch.profiling.inputs import (
-    materialize_representative_inputs,
-)
+from shadowspill.pytorch.profiling.inputs import materialize_representative_inputs
 
 
 class _Add(nn.Module):
@@ -113,6 +111,47 @@ def test_missing_user_value_uses_explicit_deterministic_fallback() -> None:
     torch.testing.assert_close(first.arguments[0], second.arguments[0])
 
 
+def test_integer_task_input_requires_authentic_value() -> None:
+    integers = (torch.empty(8, dtype=torch.int64),) * 2
+    missing = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_Add()),
+        example_inputs=integers,
+        input_provenance=(
+            TaskInputProvenance(TaskInputRole.ACTIVATION, "producer.left"),
+            TaskInputProvenance(TaskInputRole.ACTIVATION, "producer.right"),
+        ),
+    )
+    with pytest.raises(CaptureError, match="producer-derived or caller-supplied"):
+        materialize_representative_inputs(missing, device_ordinal=0)
+
+    left = torch.tensor([0, 13, 32, 64, 0, 0, 0, 0], dtype=torch.int64)
+    right = torch.tensor([1, 2, 3, 4, 5, 6, 7, 8], dtype=torch.int64)
+    authentic = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_Add()),
+        example_inputs=(left, right),
+        input_provenance=(
+            TaskInputProvenance(
+                TaskInputRole.CONTROL,
+                "producer.left",
+                representative_value=left,
+            ),
+            TaskInputProvenance(
+                TaskInputRole.CONTROL,
+                "caller.right",
+                representative_value=right,
+            ),
+        ),
+    )
+    result = materialize_representative_inputs(authentic, device_ordinal=0)
+    torch.testing.assert_close(result.arguments[0], left)
+    torch.testing.assert_close(result.arguments[1], right)
+    assert {item.value_policy for item in result.summaries} == {
+        "authentic_control"
+    }
+
+
 def test_allocator_failure_is_checked_before_representative_population() -> None:
     artifact = GraphArtifact.capture(
         kind="inference",
@@ -140,13 +179,19 @@ def test_allocator_failure_is_checked_before_representative_population() -> None
     assert "alias group" in operations[0]
 
 
-def test_tensor_spec_values_are_nonzero_deterministic_and_low_domain() -> None:
+def test_tensor_spec_float_values_are_nonzero_and_deterministic() -> None:
     floating = TensorSpec((4096,), torch.float32)
-    integer = TensorSpec((32,), torch.int64)
-    first_float, first_int = representative_cpu_inputs((floating, integer))
-    second_float, second_int = representative_cpu_inputs((floating, integer))
+    (first_float,) = representative_cpu_inputs((floating,))
+    (second_float,) = representative_cpu_inputs((floating,))
     torch.testing.assert_close(first_float, second_float, rtol=0, atol=0)
-    torch.testing.assert_close(first_int, second_int, rtol=0, atol=0)
     assert abs(float(first_float.mean())) < 0.06
     assert abs(float(first_float.std()) - 1.0) < 0.06
-    assert set(first_int.tolist()) == {0, 1}
+
+
+def test_integer_tensor_spec_requires_authentic_caller_value() -> None:
+    with pytest.raises(PlanningError, match="caller-supplied tensor values"):
+        representative_cpu_inputs((TensorSpec((32,), torch.int64),))
+
+    authentic = torch.tensor([13, 19, 32], dtype=torch.int64)
+    (observed,) = representative_cpu_inputs((authentic,))
+    assert observed is authentic

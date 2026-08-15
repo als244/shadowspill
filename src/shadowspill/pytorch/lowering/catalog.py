@@ -59,12 +59,45 @@ _ROLE_PRIORITY = {
     ObjectRole.OTHER: 0,
     ObjectRole.INPUT: 1,
     ObjectRole.ACTIVATION: 2,
+    ObjectRole.CONTROL: 2,
     ObjectRole.OUTPUT: 3,
     ObjectRole.GRADIENT: 3,
     ObjectRole.OPTIMIZER_STATE: 4,
     ObjectRole.BUFFER: 5,
     ObjectRole.PARAMETER: 6,
 }
+
+
+def tensor_value_role(
+    tensor: torch.Tensor,
+    *,
+    continuous_role: ObjectRole,
+) -> ObjectRole:
+    """Classify integer/boolean values as control objects."""
+
+    return (
+        continuous_role
+        if tensor.is_floating_point() or tensor.is_complex()
+        else ObjectRole.CONTROL
+    )
+
+
+def serialized_dtype_role(
+    dtype_name: str,
+    *,
+    continuous_role: ObjectRole,
+) -> ObjectRole:
+    """Classify one storage-contract dtype without materializing a tensor."""
+
+    name = dtype_name.removeprefix("torch.")
+    dtype = getattr(torch, name, None)
+    if not isinstance(dtype, torch.dtype):
+        raise CaptureError(f"storage contract has unknown dtype {dtype_name!r}")
+    return (
+        continuous_role
+        if dtype.is_floating_point or dtype.is_complex
+        else ObjectRole.CONTROL
+    )
 
 
 def _view_extent_bytes(tensor: torch.Tensor) -> int:
@@ -389,7 +422,11 @@ class ObjectCatalog:
 
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
-        if record.role in {ObjectRole.OTHER, ObjectRole.ACTIVATION}:
+        if record.role in {
+            ObjectRole.OTHER,
+            ObjectRole.ACTIVATION,
+            ObjectRole.CONTROL,
+        }:
             record.role = ObjectRole.OUTPUT
             self._object_specs = None
 
@@ -460,4 +497,6 @@ __all__ = [
     "RegistrationBinding",
     "TensorSlot",
     "register_model_state",
+    "serialized_dtype_role",
+    "tensor_value_role",
 ]

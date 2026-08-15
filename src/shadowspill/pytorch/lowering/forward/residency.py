@@ -16,13 +16,20 @@ def derive_forward_residency(
     initial_aliases = {
         item.alias_group_id
         for item in logical_objects
-        if item.role in {ObjectRole.PARAMETER, ObjectRole.BUFFER, ObjectRole.INPUT}
+        if item.role
+        in {
+            ObjectRole.PARAMETER,
+            ObjectRole.BUFFER,
+            ObjectRole.INPUT,
+            ObjectRole.CONTROL,
+        }
         and item.alias_group_id not in graph.produced_aliases
     }
     final_host = {
         item.alias_group_id
         for item in logical_objects
-        if item.persistence is Persistence.CHECKPOINT or item.role is ObjectRole.INPUT
+        if item.persistence is Persistence.CHECKPOINT
+        or item.role in {ObjectRole.INPUT, ObjectRole.CONTROL}
     }
     final_device = {
         objects.catalog.alias_id(object_id) for object_id in graph.public_outputs

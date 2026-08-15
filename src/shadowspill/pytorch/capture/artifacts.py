@@ -65,6 +65,7 @@ class TaskInputRole(StrEnum):
     BUFFER = "buffer"
     CONSTANT = "constant"
     USER_INPUT = "user_input"
+    CONTROL = "control"
     ACTIVATION = "activation"
     RESIDUAL = "residual"
     TANGENT = "tangent"
@@ -91,7 +92,6 @@ class TaskInputProvenance:
         repr=False,
         compare=False,
     )
-
     def __post_init__(self) -> None:
         if not isinstance(self.role, TaskInputRole):
             raise TypeError("task input role has an invalid type")
@@ -504,7 +504,7 @@ def _canonical_argument(value: object, identities: dict[Node, int]) -> object:
                 for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
             ]
         }
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
     return {"type": type(value).__qualname__, "value": str(value)}
 

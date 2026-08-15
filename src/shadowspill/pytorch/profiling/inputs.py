@@ -16,7 +16,7 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.contracts import CaptureError
 
-REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v3"
+REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v4"
 
 _REFERENCE_ROLES = frozenset(
     {
@@ -244,10 +244,7 @@ def _populate_value(
     position: int,
 ) -> str:
     reference = provenance.representative_value
-    if reference is not None and (
-        provenance.role in _REFERENCE_ROLES
-        or provenance.role is TaskInputRole.USER_INPUT
-    ):
+    if reference is not None:
         _validate_reference(
             reference,
             target,
@@ -256,7 +253,11 @@ def _populate_value(
             provenance=provenance,
         )
         target.copy_(reference, non_blocking=False)
-        return "authentic"
+        return (
+            "authentic_control"
+            if provenance.role is TaskInputRole.CONTROL
+            else "authentic"
+        )
     if provenance.role in _REQUIRED_REFERENCE_ROLES:
         raise _value_error(
             structural_abi_key,
@@ -268,6 +269,15 @@ def _populate_value(
     if provenance.role is TaskInputRole.OPTIMIZER_STATE:
         target.zero_()
         return "lazy_optimizer_state_zero"
+    if not target.is_floating_point() and not target.is_complex():
+        raise _value_error(
+            structural_abi_key,
+            position,
+            provenance,
+            target,
+            "integer/boolean inputs require an authentic producer-derived or "
+            "caller-supplied value",
+        )
 
     seed = _seed(structural_abi_key, position)
     try:
@@ -283,16 +293,7 @@ def _populate_value(
                 generator=generator,
             )
             return "deterministic_complex_normal_0_1"
-        logical = torch.arange(
-            target.numel(), dtype=torch.int64, device=target.device
-        ).remainder_(2)
-        source = logical.reshape(tuple(target.shape)).to(dtype=target.dtype)
-        target.copy_(source)
-        return (
-            "deterministic_balanced_bool"
-            if target.dtype is torch.bool
-            else ("deterministic_integer_0_1")
-        )
+        raise AssertionError("floating/complex representative policy is incomplete")
     except BaseException as exc:
         raise _value_error(
             structural_abi_key,

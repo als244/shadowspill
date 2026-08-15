@@ -580,7 +580,11 @@ def _backward_input_provenance(
         else:
             result.append(
                 TaskInputProvenance(
-                    TaskInputRole.RESIDUAL,
+                    (
+                        TaskInputRole.RESIDUAL
+                        if _is_continuous_dtype_name(view.dtype)
+                        else TaskInputRole.CONTROL
+                    ),
                     f"forward_output_{leaf_index}",
                 )
             )
@@ -589,6 +593,13 @@ def _backward_input_provenance(
         for index in range(backward_argument_count - saved_value_count)
     )
     return tuple(result)
+
+
+def _is_continuous_dtype_name(dtype_name: str) -> bool:
+    dtype = getattr(torch, dtype_name.removeprefix("torch."), None)
+    if not isinstance(dtype, torch.dtype):
+        raise CaptureError(f"AOT saved value has unknown dtype {dtype_name!r}")
+    return bool(dtype.is_floating_point or dtype.is_complex)
 
 
 def rebind_backward_input_provenance(

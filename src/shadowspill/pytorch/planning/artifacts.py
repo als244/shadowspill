@@ -103,8 +103,9 @@ class TrainingMaterializationArtifacts:
 class TrainingProfileArtifacts:
     """Unique structural ABI inventory, manifests, and task measurements."""
 
+    partitioned: tuple[PartitionedTrainingCapture, ...]
     compile_tasks: tuple[OptimizerTaskArtifact, ...]
-    profile_keys: tuple[tuple[str, str | None], ...]
+    profile_keys: tuple[tuple[str, str | None, str | None], ...]
     profile_tasks: tuple[OptimizerTaskArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
     profiler: CudaTaskProfiler

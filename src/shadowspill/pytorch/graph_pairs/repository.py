@@ -27,7 +27,7 @@ from .serialization import (
     valid_cached_variant,
 )
 
-_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v5"
+_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v6"
 
 
 class GraphPairRepository:
@@ -101,7 +101,7 @@ class GraphPairRepository:
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         selection = hashlib.sha256(encoded.encode()).hexdigest()
-        return self._root / "v5" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
+        return self._root / "v6" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
 
     def _manifest_path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         path = self._path(key)

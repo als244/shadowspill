@@ -57,6 +57,7 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling.context import profile_input_context_digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,7 +415,13 @@ def _training_measurement(
     metadata_digests: tuple[str, ...] | None,
 ) -> TaskMeasurement:
     metadata = _metadata_for(entrypoint, metadata_digests)
-    measurement = measurements.get((artifact.compatibility_digest, metadata))
+    measurement = measurements.get(
+        (
+            artifact.compatibility_digest,
+            metadata,
+            profile_input_context_digest(artifact),
+        )
+    )
     if measurement is None and metadata_digests is None:
         measurement = measurements.get(artifact.compatibility_digest)
     if measurement is None:
@@ -470,14 +477,20 @@ def _index_forward_inventory(
     execution_plan: ExecutionPlan,
 ) -> _ForwardInventoryIndex:
     selected = execution_plan.program.selected_tasks(execution_plan.selections)
+    task_by_id = {task.task_id: task for task in lowered.program.tasks}
+    profile_by_id = {
+        profile.profile_id: profile for profile in lowered.program.profiles
+    }
     keys = sorted(
-        {entrypoint.artifact.compatibility_digest for entrypoint in lowered.entrypoints}
+        {
+            profile_by_id[task_by_id[entrypoint.task_id].profile_id]
+            .compatibility_digest
+            for entrypoint in lowered.entrypoints
+        }
     )
     return _ForwardInventoryIndex(
-        task_by_id={task.task_id: task for task in lowered.program.tasks},
-        profile_by_id={
-            profile.profile_id: profile for profile in lowered.program.profiles
-        },
+        task_by_id=task_by_id,
+        profile_by_id=profile_by_id,
         selected_ids=frozenset(task.task_id for task in selected),
         execution_ordinal={task.task_id: index for index, task in enumerate(selected)},
         unique_id_by_key={
@@ -495,16 +508,16 @@ def _forward_task_stage(
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digest: str | None,
 ) -> PlanTaskStage:
-    key = entrypoint.artifact.compatibility_digest
-    manifest = manifests[key]
+    artifact_key = entrypoint.artifact.compatibility_digest
+    manifest = manifests[artifact_key]
+    task = index.task_by_id[entrypoint.task_id]
+    profile = index.profile_by_id[task.profile_id]
     layout = reconcile_compiled_task_layout(
         manifest.storage_contract,
-        measurements[key],
+        measurements[profile.compatibility_digest],
         root_allocations=manifest.root_allocations,
     )
     ordinal = index.execution_ordinal.get(entrypoint.task_id)
-    task = index.task_by_id[entrypoint.task_id]
-    profile = index.profile_by_id[task.profile_id]
     return PlanTaskStage(
         task_id=entrypoint.task_id,
         execution_ordinal=ordinal,
@@ -513,8 +526,8 @@ def _forward_task_stage(
         phase="forward",
         microbatch=None,
         stage_occurrence_id=f"stage_{occurrence:04d}",
-        unique_stage_id=index.unique_id_by_key[key],
-        structural_abi_key=key,
+        unique_stage_id=index.unique_id_by_key[profile.compatibility_digest],
+        structural_abi_key=artifact_key,
         semantic_contract_digest=(
             entrypoint.artifact.storage_contract.compatibility_digest
         ),
@@ -538,7 +551,10 @@ def _forward_unique_stage(
     occurrences = tuple(
         entrypoint
         for entrypoint in lowered.entrypoints
-        if entrypoint.artifact.compatibility_digest == key
+        if index.profile_by_id[
+            index.task_by_id[entrypoint.task_id].profile_id
+        ].compatibility_digest
+        == key
     )
     representative = occurrences[0]
     task = index.task_by_id[representative.task_id]
@@ -548,7 +564,7 @@ def _forward_unique_stage(
         task,
         lowered.program,
         measurements[key],
-        manifests[key],
+        manifests[representative.artifact.compatibility_digest],
     )
     return PlanUniqueStage(
         unique_stage_id=index.unique_id_by_key[key],
