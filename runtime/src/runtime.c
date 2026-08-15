@@ -244,6 +244,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     shadowspill_retirement_queue_destroy(runtime, &runtime->retirements);
     destroy_actions(runtime);
     destroy_allocations(runtime);
+    shadowspill_fixed_layout_destroy(runtime);
     destroy_objects(runtime);
     free(runtime->execution_leases_by_id);
     free(runtime->execution_leases_by_pointer);

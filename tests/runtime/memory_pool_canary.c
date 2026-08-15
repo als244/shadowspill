@@ -255,43 +255,6 @@ static int borrowed_subranges_do_not_change_parent_geometry(void) {
     return failed ? -1 : 0;
 }
 
-static int fixed_layout_slice_owns_one_pool_range(void) {
-    ShadowSpillMemoryPool pool = {0};
-    ShadowSpillRuntime runtime = {0};
-    ShadowSpillMemoryLease first = {0};
-    ShadowSpillMemoryLease second = {0};
-    if (initialize_pool(&pool) != 0) {
-        return -1;
-    }
-    runtime.pools = &pool;
-    runtime.pool_count = 1U;
-    runtime.execution_pool_id = 0U;
-    int failed = shadowspill_fixed_layout_reserve_slice(&runtime, 96U) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        !runtime.fixed_layout.active || runtime.fixed_layout.slice_offset != 0U ||
-        pool.ranges.allocated != 96U;
-    shadowspill_memory_pool_lock_foreground(&pool);
-    failed = failed || shadowspill_fixed_layout_adopt_execution_lease_locked(
-            &runtime, &first, 0U, 64U, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_fixed_layout_adopt_execution_lease_locked(
-            &runtime, &second, 32U, 64U, 1U
-        ) != SHADOWSPILL_RUNTIME_OK;
-    shadowspill_memory_pool_unlock_foreground(&pool);
-    failed = failed || shadowspill_fixed_layout_clear(&runtime) !=
-        SHADOWSPILL_RUNTIME_INVALID_STATE;
-    shadowspill_memory_pool_lock_foreground(&pool);
-    failed = failed || shadowspill_memory_pool_release_lease_locked(&first) != 0 ||
-        shadowspill_memory_pool_release_lease_locked(&second) != 0;
-    shadowspill_memory_pool_unlock_foreground(&pool);
-    failed = failed || shadowspill_fixed_layout_clear(&runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        runtime.fixed_layout.active || pool.ranges.allocated != 0U ||
-        shadowspill_memory_pool_largest_free_locked(&pool) != 128U;
-    destroy_pool(&pool);
-    return failed ? -1 : 0;
-}
-
 static int promised_dependency_is_published_before_acquisition(void) {
     ShadowSpillMemoryPool pool = {0};
     ShadowSpillMemoryLease predecessor = {0};
@@ -366,10 +329,6 @@ int main(void) {
     }
     if (borrowed_subranges_do_not_change_parent_geometry() != 0) {
         fprintf(stderr, "borrowed subrange changed parent geometry\n");
-        return 1;
-    }
-    if (fixed_layout_slice_owns_one_pool_range() != 0) {
-        fprintf(stderr, "fixed layout slice ownership failed\n");
         return 1;
     }
     if (promised_dependency_is_published_before_acquisition() != 0) {

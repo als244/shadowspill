@@ -16,7 +16,8 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 25U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 26U
+#define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 1U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
@@ -155,6 +156,49 @@ typedef struct ShadowSpillTaskAllocationABIStep {
     uint64_t alignment_bytes;
     uint8_t operation;
 } ShadowSpillTaskAllocationABIStep;
+
+typedef enum ShadowSpillFixedPlacementKind {
+    SHADOWSPILL_FIXED_INITIAL_OBJECT = 0,
+    SHADOWSPILL_FIXED_TASK_ALLOCATION = 1,
+    SHADOWSPILL_FIXED_ACTION_DESTINATION = 2,
+} ShadowSpillFixedPlacementKind;
+
+/*
+ * One placement inside a plan-owned execution-pool slice. ``ordinal`` is a
+ * task-local allocator ordinal or task-local action ordinal. Initial objects
+ * use ``object_id`` and set task_id/ordinal to SHADOWSPILL_RUNTIME_NO_ID.
+ */
+typedef struct ShadowSpillFixedPlacementDescription {
+    uint64_t task_id;
+    uint64_t ordinal;
+    uint64_t object_id;
+    uint64_t offset;
+    uint64_t bytes;
+    uint64_t alignment_bytes;
+    uint8_t kind;
+} ShadowSpillFixedPlacementDescription;
+
+/*
+ * One cross-lane address-reuse proof. The predecessor must be an admitted
+ * eviction action. The successor names a fixed task allocation or fixed fetch
+ * destination using the same task-local identity as its placement.
+ */
+typedef struct ShadowSpillFixedDependencyDescription {
+    uint64_t predecessor_task_id;
+    uint64_t predecessor_action_ordinal;
+    uint64_t successor_task_id;
+    uint64_t successor_ordinal;
+    uint8_t successor_kind;
+} ShadowSpillFixedDependencyDescription;
+
+typedef struct ShadowSpillFixedLayoutDescription {
+    uint32_t abi_version;
+    uint64_t slice_bytes;
+    const ShadowSpillFixedPlacementDescription *placements;
+    uint64_t placement_count;
+    const ShadowSpillFixedDependencyDescription *dependencies;
+    uint64_t dependency_count;
+} ShadowSpillFixedLayoutDescription;
 
 typedef struct ShadowSpillExecutionDescription {
     uint64_t task_id;
@@ -598,6 +642,21 @@ shadowspill_admit_execution(
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);
+
+/*
+ * Copies and validates one immutable physical-layout certificate and reserves
+ * its single parent slice. Task and action identities are resolved when
+ * shadowspill_seal_fixed_layout() is called after execution admission.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_admit_fixed_layout(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillFixedLayoutDescription *description
+);
+
+/* Resolve every task/action reference and enable fixed placement. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_seal_fixed_layout(ShadowSpillRuntime *runtime);
 
 /*
  * Resolves one stable, immutable execution handle on the cold path. The handle

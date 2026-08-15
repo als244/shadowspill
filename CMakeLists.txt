@@ -347,7 +347,6 @@ if(BUILD_TESTING)
   add_executable(
     shadowspill_memory_pool_canary
     tests/runtime/memory_pool_canary.c
-    runtime/src/fixed_layout.c
     runtime/src/memory_pool.c
     runtime/src/ranges.c
   )
@@ -362,6 +361,23 @@ if(BUILD_TESTING)
   add_test(
     NAME shadowspill_memory_pool_canary
     COMMAND shadowspill_memory_pool_canary
+  )
+
+  add_executable(
+    shadowspill_fixed_layout_canary
+    tests/runtime/fixed_layout_canary.c
+  )
+  target_link_libraries(
+    shadowspill_fixed_layout_canary
+    PRIVATE
+      shadowspill_runtime
+      shadowspill_backend_mock
+      shadowspill_build_options
+      Threads::Threads
+  )
+  add_test(
+    NAME shadowspill_fixed_layout_canary
+    COMMAND shadowspill_fixed_layout_canary
   )
 
   add_executable(

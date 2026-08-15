@@ -188,10 +188,20 @@ typedef struct ShadowSpillMemoryLease {
     uint8_t owns_pool_range;
 } ShadowSpillMemoryLease;
 
+typedef struct ShadowSpillFixedRuntimeDependency {
+    ShadowSpillFixedDependencyDescription description;
+    struct ShadowSpillQueuedAction *predecessor_action;
+} ShadowSpillFixedRuntimeDependency;
+
 typedef struct ShadowSpillFixedLayoutState {
     uint64_t slice_offset;
     uint64_t slice_bytes;
+    ShadowSpillFixedPlacementDescription *placements;
+    uint64_t placement_count;
+    ShadowSpillFixedRuntimeDependency *dependencies;
+    uint64_t dependency_count;
     uint8_t active;
+    uint8_t sealed;
 } ShadowSpillFixedLayoutState;
 
 typedef struct ShadowSpillRetirementRecord {
@@ -655,6 +665,15 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
     ShadowSpillRuntime *runtime
+);
+void shadowspill_fixed_layout_destroy(ShadowSpillRuntime *runtime);
+const ShadowSpillFixedPlacementDescription *
+shadowspill_fixed_layout_find_placement(
+    const ShadowSpillRuntime *runtime,
+    uint8_t kind,
+    uint64_t task_id,
+    uint64_t ordinal,
+    uint64_t object_id
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
     ShadowSpillRuntime *runtime,

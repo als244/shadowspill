@@ -531,6 +531,10 @@ ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
         ) != 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
+    status = shadowspill_fixed_layout_clear(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
     shadowspill_execution_table_clear(&runtime->execution);
     return SHADOWSPILL_RUNTIME_OK;
 }

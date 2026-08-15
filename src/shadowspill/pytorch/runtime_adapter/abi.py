@@ -6,7 +6,7 @@ import ctypes
 from typing import Any, Final
 
 ADAPTER_ABI_VERSION: Final = 34
-RUNTIME_ABI_VERSION: Final = 25
+RUNTIME_ABI_VERSION: Final = 26
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 1
 
