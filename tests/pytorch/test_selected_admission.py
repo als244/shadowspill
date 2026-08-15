@@ -4,6 +4,14 @@ from dataclasses import replace
 
 import pytest
 
+from shadowspill.ir import (
+    AliasGroupSpec,
+    MutationSpec,
+    ObjectSpec,
+    Program,
+    TaskProfile,
+    TaskSpec,
+)
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.planning.admission.bindings import build_admission_topology
 from shadowspill.pytorch.planning.admission.selection import (
@@ -17,6 +25,8 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
 )
 from tests.planner._examples import (
+    COMPUTE,
+    DEVICE,
     config,
     exact_capacity_program,
     exact_capacity_residency,
@@ -74,6 +84,44 @@ def test_admission_topology_preserves_workspace_extent_multiset() -> None:
         (32, 64),
         (32, 64),
     )
+
+
+def test_admission_topology_preserves_gradient_contribution_extents() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec("gradient_a", "cuda_0", 32),
+            AliasGroupSpec("gradient_b", "cuda_0", 64),
+        ),
+        objects=(
+            ObjectSpec("gradient_a_object", "gradient_a", 0, 32),
+            ObjectSpec("gradient_b_object", "gradient_b", 0, 64),
+        ),
+        profiles=(TaskProfile("backward_profile", 10, 112, "backward_abi"),),
+        tasks=(
+            TaskSpec(
+                "backward",
+                COMPUTE,
+                "backward_profile",
+                inputs=("gradient_a_object", "gradient_b_object"),
+                mutations=(
+                    MutationSpec("gradient_a_object"),
+                    MutationSpec("gradient_b_object"),
+                ),
+                phase="backward",
+            ),
+        ),
+    )
+
+    topology = build_admission_topology(
+        program,
+        execution_pool_bytes=256,
+        object_capacity_bytes=128,
+        workspace_extents_by_compatibility={"backward_abi": (16,)},
+        alignment=1,
+    )
+
+    assert topology.tasks[0].workspace_extents == (16, 32, 64)
 
 
 def test_selected_admission_requires_every_task_envelope_measurement() -> None:

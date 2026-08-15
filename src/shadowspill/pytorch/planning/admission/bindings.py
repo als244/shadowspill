@@ -158,15 +158,20 @@ def build_admission_topology(
                     f"extents={measured_workspace}, "
                     f"workspace={anonymous_workspace}"
                 )
-            # Functional mutation roots can have a charged physical extent
-            # larger than the persistent logical alias that replaces them.
-            # The profile charge includes that transition padding, while the
-            # persistent alias is admitted separately above. Keep the residual
-            # as one additional dynamic extent instead of collapsing the whole
-            # anonymous workspace into a contiguous lease.
             residual = anonymous_workspace - measured_workspace
             if residual:
-                workspace_extents = (*workspace_extents, residual)
+                workspace_extents = (
+                    *workspace_extents,
+                    *_unclassified_workspace_extents(
+                        task,
+                        residual,
+                        alias_by_object=alias_by_object,
+                        alias_size=alias_size,
+                        persistent_destinations=(
+                            set(replacements) | handoff_destinations
+                        ),
+                    ),
+                )
         task_specs.append(
             TaskAdmissionSpec(
                 task_id=task.task_id,
@@ -185,6 +190,46 @@ def build_admission_topology(
     )
     topology.validate(program)
     return topology
+
+
+def _unclassified_workspace_extents(
+    task: TaskSpec,
+    residual_bytes: int,
+    *,
+    alias_by_object: Mapping[str, str],
+    alias_size: Mapping[str, int],
+    persistent_destinations: set[str],
+) -> tuple[int, ...]:
+    """Recover transient mutation extents hidden by a scalar task profile.
+
+    Recurrent gradient accumulation keeps the existing gradient objects live
+    while a compiled backward returns one contribution allocation per mutated
+    alias. Training lowering charges those contributions in ``workspace_bytes``
+    so the simulator sees the correct total overlap. They remain separate
+    allocator requests and must not become one synthetic contiguous lease.
+
+    Replacement and handoff destinations are admitted as persistent object
+    generations elsewhere. Any remaining bytes are physical transition
+    padding whose individual geometry is not otherwise represented.
+    """
+
+    mutation_aliases = tuple(
+        dict.fromkeys(
+            alias_by_object[item.object_id]
+            for item in task.mutations
+            if alias_by_object[item.object_id] not in persistent_destinations
+            and alias_size[alias_by_object[item.object_id]] != 0
+        )
+    )
+    mutation_extents = tuple(alias_size[item] for item in mutation_aliases)
+    classified_bytes = sum(mutation_extents)
+    if classified_bytes > residual_bytes:
+        # The mutations are in-place or their transition storage is already
+        # represented by another physical binding. Preserve the conservative
+        # residual without inventing a partial decomposition.
+        return (residual_bytes,)
+    padding = residual_bytes - classified_bytes
+    return (*mutation_extents, *((padding,) if padding else ()))
 
 
 __all__ = [
