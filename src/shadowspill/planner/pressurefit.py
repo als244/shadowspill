@@ -8,7 +8,6 @@ from bisect import bisect_right
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from itertools import product
 
 from shadowspill.ir import (
     MemorySchedule,
@@ -53,6 +52,7 @@ from ._native_portfolio import (
     evaluate_context_compiled,
     evaluate_program_context_compiled,
 )
+from ._recomputation import build_recomputation_portfolio
 from ._residency import (
     Cut,
     ResidencyPlan,
@@ -210,61 +210,6 @@ def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
 
 
-def _selection_portfolio(
-    program: Program,
-) -> tuple[tuple[RecomputationSelection, ...], ...]:
-    groups = program.recomputation_groups
-    if not groups:
-        return ((),)
-    option_counts = [len(group.options) for group in groups]
-    combination_count = 1
-    for count in option_counts:
-        combination_count *= count
-    raw: list[tuple[int, ...]] = []
-    if combination_count <= 64:
-        raw.extend(product(*(range(count) for count in option_counts)))
-    else:
-        first = tuple(0 for _ in groups)
-        last = tuple(count - 1 for count in option_counts)
-        raw.extend((first, last))
-        for split in range(len(groups) + 1):
-            raw.append(
-                tuple(
-                    0 if index < split else last[index] for index in range(len(groups))
-                )
-            )
-            raw.append(
-                tuple(
-                    last[index] if index < split else 0 for index in range(len(groups))
-                )
-            )
-        for group_index, count in enumerate(option_counts):
-            for option_index in range(count):
-                changed_first = list(first)
-                changed_first[group_index] = option_index
-                raw.append(tuple(changed_first))
-                changed_last = list(last)
-                changed_last[group_index] = option_index
-                raw.append(tuple(changed_last))
-
-    unique: list[tuple[int, ...]] = []
-    seen: set[tuple[int, ...]] = set()
-    for value in raw:
-        if value not in seen:
-            seen.add(value)
-            unique.append(value)
-    return tuple(
-        tuple(
-            RecomputationSelection(
-                group.group_id,
-                group.options[option_index].option_id,
-            )
-            for group, option_index in zip(groups, indices, strict=True)
-        )
-        for indices in unique
-    )
-
-
 def validate_schedule_feasibility(
     program: Program,
     *,
@@ -305,7 +250,7 @@ def validate_schedule_feasibility(
             )
 
     failures: list[PressureFitInfeasibleError] = []
-    for selections in _selection_portfolio(program):
+    for selections in build_recomputation_portfolio(program):
         try:
             facts = build_facts(
                 program,
@@ -955,7 +900,7 @@ def _pressurefit_once(
             raise TypeError("admission must be an AdmissionTopology")
         admission.validate(program)
     selected_options = options or PressureFitOptions()
-    portfolio = _selection_portfolio(program)
+    portfolio = build_recomputation_portfolio(program)
     if progress is not None:
         progress(
             "PressureFit portfolio: "
