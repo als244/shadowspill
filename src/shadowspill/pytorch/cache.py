@@ -165,7 +165,7 @@ class PlanningCache:
 
     @property
     def profile_measurements(self) -> Path:
-        return self.profiling / "measurements" / "v12"
+        return self.profiling / "measurements" / "v15"
 
     @property
     def compiled_manifests(self) -> Path:

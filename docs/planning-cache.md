@@ -33,7 +33,7 @@ planning_cachedir/
 │   └── v4/<prefix>/<structural-task-abi>/<selection-digest>/
 ├── profiling/
 │   ├── compiled_manifests/v2/<prefix>/<compiler-key>.json
-│   └── measurements/v12/<prefix>/<profile-key>.json
+│   └── measurements/v15/<prefix>/<profile-key>.json
 ├── pressurefit/
 │   ├── programs/v1/<prefix>/<program-digest>/program.json
 │   └── selections/v3/<prefix>/<selection-key>.json

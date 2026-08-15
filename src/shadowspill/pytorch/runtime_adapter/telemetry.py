@@ -153,12 +153,11 @@ class _TraceNormalizer:
             for event in self.trace
             if event.allocation_ordinal not in persistent_ordinals
         )
-        abi_filtered = tuple(
-            event
-            for event in self.abi_trace
-            if event.allocation_ordinal not in persistent_ordinals
-        )
-        return filtered, abi_filtered, persistent_ids
+        # Persistent provider allocations still occur inside the callable and
+        # therefore remain part of its runtime callback ABI.  Only the
+        # task-memory replay excludes them: their bounded high-water is carved
+        # from the execution pool separately.
+        return filtered, tuple(self.abi_trace), persistent_ids
 
     def _create(self, event: CapturedAllocationEvent) -> None:
         if event.allocation_id in self.ordinal_by_id:

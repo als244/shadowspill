@@ -20,7 +20,7 @@ from shadowspill.pytorch.profiling.inputs import (
 # The opaque-optimizer artifact versions its own representative-gradient
 # construction contract.  That targeted identity change avoids invalidating
 # unrelated compiled-graph measurements.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v13"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v15"
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +163,7 @@ class TaskMeasurement:
                 )
                 for step in self.allocation_abi.steps
                 if step.operation is TaskAllocationOperation.ALLOCATE
+                and not (step.persistent_after_task and not step.output_leaf_indices)
             )
             if trace_geometry != abi_geometry:
                 raise ValueError(

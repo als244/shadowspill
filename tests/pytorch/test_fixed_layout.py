@@ -22,6 +22,7 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
 )
 from shadowspill.pytorch.planning.admission import (
+    DynamicTaskAllocationPolicy,
     build_fixed_layout_admission,
     project_runtime_fixed_layout,
 )
@@ -238,14 +239,20 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         program,
         schedule,
         initial_task_id=1 << 60,
+        dynamic_task_allocations=(
+            DynamicTaskAllocationPolicy("task_000000", 1, 32, 256),
+        ),
     )
     assert runtime.slice_bytes == 0
     assert runtime.dependencies == ()
-    assert len(runtime.placements) == 1
-    assert runtime.placements[0].kind is RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION
-    assert runtime.placements[0].task_id == 0
-    assert runtime.placements[0].ordinal == 0
-    assert runtime.placements[0].bytes == 8
+    assert len(runtime.placements) == 2
+    assert all(
+        item.kind is RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION
+        for item in runtime.placements
+    )
+    assert tuple(
+        (item.task_id, item.ordinal, item.bytes) for item in runtime.placements
+    ) == ((0, 0, 8), (0, 1, 32))
 
 
 def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
@@ -397,9 +404,7 @@ def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
         ),
     )
     schedule = MemorySchedule(
-        initial_residency=(
-            ResidencySpec("alias_000000", MemoryLocation.DEVICE),
-        ),
+        initial_residency=(ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
         actions=(
             MemoryAction(
                 "task_000000",
@@ -412,9 +417,7 @@ def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
                 MemoryActionKind.PREFETCH,
             ),
         ),
-        final_residency=(
-            ResidencySpec("alias_000000", MemoryLocation.DEVICE),
-        ),
+        final_residency=(ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
     )
     config = SimulationConfig.single_device(
         "cuda_0",
@@ -442,9 +445,7 @@ def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
     )
 
     assert len(runtime.placements) == 2
-    initial = next(
-        item for item in runtime.placements if item.task_id == 1 << 60
-    )
+    initial = next(item for item in runtime.placements if item.task_id == 1 << 60)
     scheduled = next(item for item in runtime.placements if item.task_id == 1)
     assert initial.ordinal == 0
     assert initial.kind is RuntimePlacementKind.ACTION_DESTINATION

@@ -98,6 +98,29 @@ def test_workspace_classifies_unbound_live_allocation_as_persistent() -> None:
     assert all(event.allocation_ordinal == 0 for event in profile.allocation_trace)
 
 
+def test_workspace_keeps_provider_growth_in_runtime_abi_only() -> None:
+    events = (
+        _event(0, 10, AllocationEventKind.CREATED, 64),
+        _event(1, 11, AllocationEventKind.CREATED, 32),
+        _event(2, 10, AllocationEventKind.LOGICAL_FREED, 64),
+        _event(3, 12, AllocationEventKind.CREATED, 96),
+        _event(4, 12, AllocationEventKind.LOGICAL_FREED, 96),
+    )
+
+    profile = summarize_task_workspace(events, task_id=7)
+
+    assert profile.persistent_allocation_ids == (11,)
+    assert tuple(event.allocation_ordinal for event in profile.allocation_trace) == (
+        0,
+        0,
+        2,
+        2,
+    )
+    assert tuple(
+        event.allocation_ordinal for event in profile.allocation_abi_trace
+    ) == (0, 1, 0, 2, 2)
+
+
 def test_workspace_ignores_other_tasks_and_unknown_prior_release() -> None:
     events = (
         _event(0, 1, AllocationEventKind.LOGICAL_FREED, 64),

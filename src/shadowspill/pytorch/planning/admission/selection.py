@@ -16,7 +16,11 @@ from shadowspill.simulator import SimulationAdmission, SimulationResult, simulat
 
 from .admission_replay import AdmissionReplay, replay_admission
 from .bindings import TaskOutputBinding, output_bindings_for_entrypoints
-from .layout import FixedLayoutAdmission, FixedPhysicalLayout
+from .layout import (
+    DynamicTaskAllocationPolicy,
+    FixedLayoutAdmission,
+    FixedPhysicalLayout,
+)
 from .simulation import simulation_admission_from_replay
 
 
@@ -56,6 +60,30 @@ class SelectedAdmission:
 
     def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
         return dict(self.task_envelopes)
+
+    def dynamic_provider_allocations(
+        self,
+    ) -> tuple[DynamicTaskAllocationPolicy, ...]:
+        """Return bounded provider-owned allocations excluded from the layout."""
+
+        result: list[DynamicTaskAllocationPolicy] = []
+        for task_id, envelope in self.task_envelopes:
+            abi = envelope.allocation_abi
+            if abi is None:
+                continue
+            result.extend(
+                DynamicTaskAllocationPolicy(
+                    task_id,
+                    step.allocation_ordinal,
+                    step.charged_bytes,
+                    step.alignment_bytes,
+                )
+                for step in abi.steps
+                if step.operation is TaskAllocationOperation.ALLOCATE
+                and step.persistent_after_task
+                and not step.output_leaf_indices
+            )
+        return tuple(result)
 
     def apply_prediction(self, selected: PressureFitResult) -> PressureFitResult:
         """Return the selection with admission-aware simulator evidence."""

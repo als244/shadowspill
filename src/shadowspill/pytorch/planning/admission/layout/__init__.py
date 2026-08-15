@@ -8,9 +8,10 @@ from .model import (
     FixedLayoutReuse,
     FixedPhysicalLayout,
 )
-from .runtime import project_runtime_fixed_layout
+from .runtime import DynamicTaskAllocationPolicy, project_runtime_fixed_layout
 
 __all__ = [
+    "DynamicTaskAllocationPolicy",
     "FixedLayoutAdmission",
     "FixedLayoutInfeasibleError",
     "FixedLayoutPlacement",

@@ -789,6 +789,9 @@ def admit_training_plan(
             recurrent_plan.program,
             recurrent_plan.schedule,
             initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+            dynamic_task_allocations=(
+                admitted.recurrent_admission.dynamic_provider_allocations()
+            ),
         )
         initial_runtime_layout = None
         if initial_plan is not None:
@@ -800,6 +803,9 @@ def admit_training_plan(
                 initial_plan.program,
                 initial_plan.schedule,
                 initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+                dynamic_task_allocations=(
+                    initial_admission.dynamic_provider_allocations()
+                ),
             )
         bridge = RuntimeBridge(captured.installed.library, recurrent_plan.program)
         with timer.measure("plan_adoption"):

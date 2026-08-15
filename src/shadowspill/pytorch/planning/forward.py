@@ -440,6 +440,9 @@ def admit_forward_plan(
         execution_plan.program,
         execution_plan.schedule,
         initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+        dynamic_task_allocations=(
+            selected_admission.dynamic_provider_allocations()
+        ),
     )
     bridge = RuntimeBridge(captured.installed.library, execution_plan.program)
     state: MaterializedForwardState | None = None

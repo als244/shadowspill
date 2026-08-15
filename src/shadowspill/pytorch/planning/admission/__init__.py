@@ -11,6 +11,7 @@ from .admission_replay import (
 )
 from .bindings import TaskOutputBinding, build_admission_topology
 from .layout import (
+    DynamicTaskAllocationPolicy,
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
     FixedLayoutPlacement,
@@ -39,6 +40,7 @@ __all__ = [
     "AdmissionReplayPurpose",
     "AdmissionReplayStep",
     "CausalAdmissionDependency",
+    "DynamicTaskAllocationPolicy",
     "FixedLayoutAdmission",
     "FixedLayoutAttempt",
     "FixedLayoutInfeasibleError",

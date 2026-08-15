@@ -88,16 +88,19 @@ def test_task_allocation_abi_is_pointer_free_and_deterministic() -> None:
     assert "offset" not in str(abi.to_dict())
     assert TaskAllocationABI.from_dict(abi.to_dict()) == abi
 
-    changed_physical_placement = (*trace[:-1], trace[-1].__class__(
-        1,
-        TaskAllocationOperation.ALLOCATE,
-        16,
-        64,
-        output_leaf_indices=(0,),
-        output_view_offsets=(48,),
-        reuses_ordinal=None,
-        alignment_bytes=512,
-    ))
+    changed_physical_placement = (
+        *trace[:-1],
+        trace[-1].__class__(
+            1,
+            TaskAllocationOperation.ALLOCATE,
+            16,
+            64,
+            output_leaf_indices=(0,),
+            output_view_offsets=(48,),
+            reuses_ordinal=None,
+            alignment_bytes=512,
+        ),
+    )
     assert (
         TaskAllocationABI.capture(changed_physical_placement, _mutation_contract())
         == abi
@@ -125,6 +128,41 @@ def test_task_allocation_abi_rejects_geometry_changes_on_free() -> None:
     )
     with pytest.raises(ValueError, match="geometry on free"):
         TaskAllocationABI(steps, "0" * 64)
+
+
+def test_task_allocation_abi_rejects_sparse_allocation_ordinals() -> None:
+    steps = (
+        TaskAllocationABIStep(
+            0,
+            1,
+            TaskAllocationOperation.ALLOCATE,
+            32,
+            64,
+            256,
+            output_leaf_indices=(0,),
+            persistent_after_task=True,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="dense allocation ordinals"):
+        TaskAllocationABI(steps, "0" * 64)
+
+
+def test_task_allocation_abi_retains_bounded_provider_allocation() -> None:
+    abi = TaskAllocationABI.capture(
+        (
+            TaskAllocationEvent(
+                0,
+                TaskAllocationOperation.ALLOCATE,
+                32,
+                32,
+            ),
+        )
+    )
+
+    assert abi.steps[0].persistent_after_task
+    assert not abi.steps[0].output_leaf_indices
+    assert abi.for_retained_output_leaves(()).steps[0].persistent_after_task
 
 
 def test_task_allocation_abi_specializes_returned_output_ownership() -> None:

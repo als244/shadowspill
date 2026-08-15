@@ -16,6 +16,8 @@ from enum import StrEnum
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 
+_TASK_ALLOCATION_ABI_SCHEMA = "shadowspill.task_allocation_abi/v2"
+
 
 class TaskAllocationOperation(StrEnum):
     """One allocator transition made by a compiled task."""
@@ -107,7 +109,11 @@ class TaskAllocationEvent:
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationABIStep:
-    """One operation in a pointer-free compiled-task allocator ABI."""
+    """One operation in a pointer-free compiled-task allocator ABI.
+
+    A persistent allocation is either returned storage (identified by output
+    leaves) or bounded provider-owned state retained beyond the task boundary.
+    """
 
     operation_index: int
     allocation_ordinal: int
@@ -138,10 +144,6 @@ class TaskAllocationABIStep:
             or self.persistent_after_task
         ):
             raise ValueError("task allocation ABI free carries allocation-only fields")
-        if self.persistent_after_task and not self.output_leaf_indices:
-            raise ValueError(
-                "only returned output storage may persist after a task"
-            )
 
     def identity(self) -> dict[str, object]:
         return {
@@ -256,7 +258,7 @@ class TaskAllocationABI:
                 and step.allocation_ordinal in retained_ordinals
             ):
                 continue
-            persistent = (
+            retained_output = (
                 step.operation is TaskAllocationOperation.ALLOCATE
                 and step.allocation_ordinal in retained_ordinals
             )
@@ -264,7 +266,9 @@ class TaskAllocationABI:
                 replace(
                     step,
                     operation_index=len(rewritten),
-                    persistent_after_task=persistent,
+                    persistent_after_task=(
+                        step.persistent_after_task or retained_output
+                    ),
                 )
             )
         values = tuple(rewritten)
@@ -272,7 +276,7 @@ class TaskAllocationABI:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.task_allocation_abi/v1",
+            "schema": _TASK_ALLOCATION_ABI_SCHEMA,
             "compatibility_digest": self.compatibility_digest,
             "steps": [step.identity() for step in self.steps],
         }
@@ -281,7 +285,7 @@ class TaskAllocationABI:
     def from_dict(cls, value: object) -> TaskAllocationABI:
         if not isinstance(value, dict):
             raise ValueError("cached task allocation ABI must be an object")
-        if value.get("schema") != "shadowspill.task_allocation_abi/v1":
+        if value.get("schema") != _TASK_ALLOCATION_ABI_SCHEMA:
             raise ValueError("cached task allocation ABI has an invalid schema")
         try:
             steps = tuple(
@@ -317,7 +321,8 @@ def _abi_step(
         output_leaf_indices=leaves,
         mutation_input_positions=mutations,
         persistent_after_task=(
-            bool(leaves) and event.allocation_ordinal not in freed_ordinals
+            event.operation is TaskAllocationOperation.ALLOCATE
+            and event.allocation_ordinal not in freed_ordinals
         ),
     )
 
@@ -326,9 +331,15 @@ def _validate_steps(steps: tuple[TaskAllocationABIStep, ...]) -> None:
     live: dict[int, TaskAllocationABIStep] = {}
     retired: set[int] = set()
     returned_leaves: set[int] = set()
+    next_allocation_ordinal = 0
     for step in steps:
         ordinal = step.allocation_ordinal
         if step.operation is TaskAllocationOperation.ALLOCATE:
+            if ordinal != next_allocation_ordinal:
+                raise ValueError(
+                    "task allocation ABI requires dense allocation ordinals"
+                )
+            next_allocation_ordinal += 1
             if ordinal in live or ordinal in retired:
                 raise ValueError("task allocation ABI allocates one ordinal twice")
             if returned_leaves.intersection(step.output_leaf_indices):
@@ -355,7 +366,7 @@ def _validate_steps(steps: tuple[TaskAllocationABIStep, ...]) -> None:
 def _digest_steps(steps: tuple[TaskAllocationABIStep, ...]) -> str:
     encoded = json.dumps(
         {
-            "schema": "shadowspill.task_allocation_abi/v1",
+            "schema": _TASK_ALLOCATION_ABI_SCHEMA,
             "steps": [step.identity() for step in steps],
         },
         sort_keys=True,

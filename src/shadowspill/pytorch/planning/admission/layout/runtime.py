@@ -25,12 +25,23 @@ class _ActionIdentity:
     object_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class DynamicTaskAllocationPolicy:
+    """One task allocation served outside the reusable fixed-layout slice."""
+
+    task_id: str
+    allocation_ordinal: int
+    bytes: int
+    alignment: int
+
+
 def project_runtime_fixed_layout(
     layout: FixedPhysicalLayout,
     program: Program,
     schedule: MemorySchedule,
     *,
     initial_task_id: int,
+    dynamic_task_allocations: tuple[DynamicTaskAllocationPolicy, ...] = (),
 ) -> RuntimeFixedLayout:
     """Translate one layout without changing its placement or dependency policy."""
 
@@ -42,9 +53,7 @@ def project_runtime_fixed_layout(
         raise ValueError("initial-placement task cannot use the no-ID sentinel")
 
     fixed_by_lease = {item.lease_id: item for item in layout.placements}
-    dynamic_by_lease = {
-        item.lease_id: item for item in layout.dynamic_lifetimes
-    }
+    dynamic_by_lease = {item.lease_id: item for item in layout.dynamic_lifetimes}
     action_identities = _action_identities(program, schedule)
     task_allocations = _task_allocation_identities(layout)
 
@@ -56,7 +65,12 @@ def project_runtime_fixed_layout(
             fixed_by_lease,
             initial_task_id=initial_task_id,
         ),
-        *_task_placements(layout, fixed_by_lease, dynamic_by_lease),
+        *_task_placements(
+            layout,
+            fixed_by_lease,
+            dynamic_by_lease,
+            dynamic_task_allocations=dynamic_task_allocations,
+        ),
         *_action_placements(
             layout,
             fixed_by_lease,
@@ -111,8 +125,7 @@ def _initial_placements(
     aliases = tuple(
         item.alias_group_id
         for item in schedule.initial_residency
-        if item.location is MemoryLocation.DEVICE
-        and sizes[item.alias_group_id] != 0
+        if item.location is MemoryLocation.DEVICE and sizes[item.alias_group_id] != 0
     )
     if set(aliases) != set(initial_leases):
         raise ValueError("fixed layout initial objects differ from the schedule")
@@ -132,9 +145,13 @@ def _task_placements(
     layout: FixedPhysicalLayout,
     fixed_by_lease: dict[int, FixedLayoutPlacement],
     dynamic_by_lease: dict[int, LeaseLifetime],
+    *,
+    dynamic_task_allocations: tuple[DynamicTaskAllocationPolicy, ...],
 ) -> tuple[RuntimeFixedPlacement, ...]:
     result: list[RuntimeFixedPlacement] = []
+    covered: set[tuple[str, int]] = set()
     for task_id, ordinal, lease_id in layout.task_allocation_leases:
+        covered.add((task_id, ordinal))
         fixed = fixed_by_lease.get(lease_id)
         if fixed is not None:
             result.append(
@@ -158,6 +175,24 @@ def _task_placements(
                 offset=_NO_ID,
                 bytes=dynamic.bytes,
                 alignment=dynamic.alignment,
+                kind=RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION,
+            )
+        )
+    for policy in dynamic_task_allocations:
+        identity = policy.task_id, policy.allocation_ordinal
+        if identity in covered:
+            raise ValueError(
+                f"task allocation {policy.task_id}:{policy.allocation_ordinal} "
+                "has fixed and dynamic physical policies"
+            )
+        result.append(
+            RuntimeFixedPlacement(
+                task_id=_dense_id(policy.task_id, "task_"),
+                ordinal=policy.allocation_ordinal,
+                object_id=_NO_ID,
+                offset=_NO_ID,
+                bytes=policy.bytes,
+                alignment=policy.alignment,
                 kind=RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION,
             )
         )
@@ -313,4 +348,4 @@ def _dense_id(value: str, prefix: str) -> int:
     return int(suffix)
 
 
-__all__ = ["project_runtime_fixed_layout"]
+__all__ = ["DynamicTaskAllocationPolicy", "project_runtime_fixed_layout"]
