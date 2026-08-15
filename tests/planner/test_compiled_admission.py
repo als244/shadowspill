@@ -274,6 +274,82 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         evaluate((64,))
 
 
+def test_compiled_admission_sizes_reuse_results_independently_of_events() -> None:
+    """One completion event may make several predecessor ranges reusable."""
+
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    aliases = ("first", "second", "third")
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=tuple(
+            AliasGroupSpec(alias, "cuda_0", 8) for alias in aliases
+        ),
+        objects=tuple(ObjectSpec(alias, alias, 0, 8) for alias in aliases),
+        profiles=(
+            TaskProfile("release_profile", 1, 0, "release_abi"),
+            TaskProfile("workspace_profile", 1, 24, "workspace_abi"),
+        ),
+        tasks=(
+            TaskSpec(
+                "release_all",
+                compute,
+                "release_profile",
+                inputs=aliases,
+            ),
+            TaskSpec(
+                "use_workspace",
+                compute,
+                "workspace_profile",
+                dependencies=("release_all",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=tuple(
+            ResidencySpec(alias, MemoryLocation.DEVICE) for alias in aliases
+        ),
+        actions=tuple(
+            MemoryAction("release_all", alias, MemoryActionKind.RELEASE)
+            for alias in aliases
+        ),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=24,
+        host_capacity_bytes=1,
+        fetch_bandwidth_bytes_per_second=1,
+        evict_bandwidth_bytes_per_second=1,
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        24,
+        24,
+        1,
+        (
+            TaskAdmissionSpec("release_all"),
+            TaskAdmissionSpec("use_workspace", workspace_extents=(24,)),
+        ),
+    )
+    template = compile_simulation_template(program, (), config)
+
+    compiled = evaluate_schedule_admission(
+        template,
+        compile_admission_topology(topology, template),
+        encode_schedule(schedule, template),
+    )
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=24,
+        topology=topology,
+        alignment=1,
+    )
+
+    assert len(replay.pool.dependencies) == 3
+    assert compiled.decision_digest == replay.pool.decision_digest
+    assert compiled.peak_allocated_bytes == 24
+
+
 def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     """A peak multiset alone can invent fragmentation that execution avoids."""
 

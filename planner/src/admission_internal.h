@@ -35,6 +35,7 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     uint64_t operation_capacity;
     uint64_t lease_capacity;
     uint64_t dependency_capacity;
+    uint64_t reuse_dependency_capacity;
 
     uint64_t *active_alias_leases;
     uint64_t *new_alias_leases;

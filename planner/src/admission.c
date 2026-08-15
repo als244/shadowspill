@@ -207,9 +207,11 @@ static int reserve_candidate_buffers(
         dependency_count > SIZE_MAX || lease_count > (SIZE_MAX - 2U) / 2U) {
         return -1;
     }
+    uint64_t reuse_dependency_count = lease_count;
     if (operation_count > workspace->operation_capacity ||
         lease_count > workspace->lease_capacity ||
-        dependency_count > workspace->dependency_capacity) {
+        dependency_count > workspace->dependency_capacity ||
+        reuse_dependency_count > workspace->reuse_dependency_capacity) {
         /* Keep every scratch dimension at its prior high-water mark. */
         if (operation_count < workspace->operation_capacity) {
             operation_count = workspace->operation_capacity;
@@ -219,6 +221,9 @@ static int reserve_candidate_buffers(
         }
         if (dependency_count < workspace->dependency_capacity) {
             dependency_count = workspace->dependency_capacity;
+        }
+        if (reuse_dependency_count < workspace->reuse_dependency_capacity) {
+            reuse_dependency_count = workspace->reuse_dependency_capacity;
         }
         ShadowSpillAdmissionReplayOperation *operations = calloc(
             operation_count == 0U ? 1U : (size_t)operation_count,
@@ -233,7 +238,8 @@ static int reserve_candidate_buffers(
             sizeof(*annotations)
         );
         ShadowSpillAdmissionReuseDependency *dependencies = calloc(
-            dependency_count == 0U ? 1U : (size_t)dependency_count,
+            reuse_dependency_count == 0U
+                ? 1U : (size_t)reuse_dependency_count,
             sizeof(*dependencies)
         );
         ShadowSpillAdmissionReplayLiveLease *live_leases = calloc(
@@ -320,6 +326,7 @@ static int reserve_candidate_buffers(
         workspace->operation_capacity = operation_count;
         workspace->lease_capacity = lease_count;
         workspace->dependency_capacity = dependency_count;
+        workspace->reuse_dependency_capacity = reuse_dependency_count;
     }
     if (schedule->action_count > workspace->action_capacity) {
         const size_t count = schedule->action_count == 0U
@@ -1083,7 +1090,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
         .decisions = workspace->decisions,
         .decision_capacity = workspace->operation_capacity,
         .dependencies = workspace->dependencies,
-        .dependency_capacity = workspace->dependency_capacity,
+        .dependency_capacity = workspace->reuse_dependency_capacity,
         .live_leases = workspace->live_leases,
         .live_lease_capacity = workspace->lease_capacity,
     };
