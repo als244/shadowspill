@@ -38,8 +38,10 @@ PyTorch caller ──► task boundaries ──► neutral C runtime
 ## Runtime topology
 
 `Runtime` is initialized explicitly before planning. It owns a registry of
-named pools and directed routes. Each route has independent measured latency
-and bandwidth; calibration publishes an immutable generation-tagged matrix.
+named pools and directed routes. Each route has independently measured latency
+and solo bandwidth. Reverse routes are also calibrated under simultaneous
+saturation, and that conservative directional bandwidth is consumed by
+planning. Calibration publishes an immutable generation-tagged matrix.
 Plans select one execution pool and one spill pool, take an exact matrix
 snapshot, and record the selected fetch/evict profiles in `PlanReport`.
 

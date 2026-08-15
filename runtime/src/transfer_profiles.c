@@ -1,7 +1,9 @@
 #include "internal.h"
 
 #include <pthread.h>
+#include <sched.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,6 +97,10 @@ int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime) {
                         runtime, source, destination
                     ) != NULL,
                 .calibrated = source == destination,
+                .calibration_mode = source == destination
+                    ? SHADOWSPILL_TRANSFER_CALIBRATION_IDENTITY
+                    : SHADOWSPILL_TRANSFER_CALIBRATION_SOLO,
+                .concurrent_route_count = source == destination ? 0U : 1U,
             };
         }
     }
@@ -220,6 +226,52 @@ static int measure_copy(
     return 0;
 }
 
+static int measure_copy_batch(
+    const ShadowSpillTransferRoute *route,
+    ShadowSpillBackendStream lane,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    uint32_t copies,
+    uint64_t *elapsed_nanoseconds
+) {
+    const uint64_t begin = monotonic_nanoseconds();
+    if (begin == 0U) {
+        return -1;
+    }
+    for (uint32_t copy = 0U; copy < copies; ++copy) {
+        if (route->copy_async(
+                route->context, destination, source, bytes, lane
+            ) != 0) {
+            return -1;
+        }
+    }
+    if (route->synchronize_lane(route->context, lane) != 0) {
+        return -1;
+    }
+    const uint64_t end = monotonic_nanoseconds();
+    if (end <= begin) {
+        return -1;
+    }
+    *elapsed_nanoseconds = end - begin;
+    return 0;
+}
+
+static uint64_t measured_bandwidth(
+    uint64_t bytes, uint32_t copies, uint64_t elapsed_nanoseconds
+) {
+    if (bytes == 0U || copies == 0U || elapsed_nanoseconds == 0U) {
+        return 0U;
+    }
+    const uint64_t total_bytes = bytes <= UINT64_MAX / copies
+        ? bytes * copies
+        : UINT64_MAX;
+    if (total_bytes <= UINT64_MAX / 1000000000U) {
+        return total_bytes * 1000000000U / elapsed_nanoseconds;
+    }
+    return (total_bytes / elapsed_nanoseconds) * 1000000000U;
+}
+
 static int calibrate_route(
     ShadowSpillRuntime *runtime,
     ShadowSpillTransferRoute *route,
@@ -276,7 +328,7 @@ static int calibrate_route(
             config->small_copy_bytes,
             config->measured_copies,
             &small_nanoseconds
-        ) != 0 || measure_copy(
+        ) != 0 || measure_copy_batch(
             route,
             *lane,
             destination_pointer,
@@ -297,37 +349,27 @@ static int calibrate_route(
     if (status != 0) {
         return status;
     }
-    uint64_t bandwidth = 0U;
+    uint64_t bandwidth = measured_bandwidth(
+        config->large_copy_bytes,
+        config->measured_copies,
+        large_nanoseconds
+    );
     uint64_t latency = small_nanoseconds;
-    if (config->large_copy_bytes > config->small_copy_bytes &&
-        large_nanoseconds > small_nanoseconds) {
-        const uint64_t byte_delta =
-            config->large_copy_bytes - config->small_copy_bytes;
-        const uint64_t time_delta = large_nanoseconds - small_nanoseconds;
-        if (byte_delta <= UINT64_MAX / 1000000000U) {
-            bandwidth = byte_delta * 1000000000U / time_delta;
-        } else {
-            bandwidth = (byte_delta / time_delta) * 1000000000U;
-        }
-        if (bandwidth != 0U &&
-            config->small_copy_bytes <= UINT64_MAX / 1000000000U) {
-            const uint64_t payload =
-                config->small_copy_bytes * 1000000000U / bandwidth;
-            latency = small_nanoseconds > payload
-                ? small_nanoseconds - payload
-                : 0U;
-        }
-    }
-    if (bandwidth == 0U) {
-        bandwidth = config->large_copy_bytes <= UINT64_MAX / 1000000000U
-            ? config->large_copy_bytes * 1000000000U /
-                (large_nanoseconds == 0U ? 1U : large_nanoseconds)
-            : config->large_copy_bytes /
-                (large_nanoseconds == 0U ? 1U : large_nanoseconds) *
-                1000000000U;
+    if (bandwidth != 0U &&
+        config->small_copy_bytes <= UINT64_MAX / 1000000000U) {
+        const uint64_t payload =
+            config->small_copy_bytes * 1000000000U / bandwidth;
+        latency = small_nanoseconds > payload
+            ? small_nanoseconds - payload
+            : 0U;
     }
     profile->latency_nanoseconds = latency;
     profile->bandwidth_bytes_per_second = bandwidth == 0U ? 1U : bandwidth;
+    profile->solo_bandwidth_bytes_per_second =
+        profile->bandwidth_bytes_per_second;
+    profile->concurrent_bandwidth_bytes_per_second = 0U;
+    profile->solo_measurement_nanoseconds = large_nanoseconds;
+    profile->concurrent_measurement_nanoseconds = 0U;
     profile->small_copy_bytes = config->small_copy_bytes;
     profile->large_copy_bytes = config->large_copy_bytes;
     profile->measured_copies = config->measured_copies;
@@ -335,6 +377,218 @@ static int calibrate_route(
     profile->available = 1U;
     profile->calibrated = 1U;
     profile->provenance = config->provenance;
+    profile->calibration_mode = SHADOWSPILL_TRANSFER_CALIBRATION_SOLO;
+    profile->concurrent_route_count = 1U;
+    return 0;
+}
+
+typedef struct ShadowSpillCalibrationProbe {
+    ShadowSpillTransferRoute *route;
+    ShadowSpillBackendStream lane;
+    ShadowSpillMemoryPool *source_pool;
+    ShadowSpillMemoryPool *destination_pool;
+    uint64_t bytes;
+    uint64_t source_offset;
+    uint64_t destination_offset;
+    const void *source_pointer;
+    void *destination_pointer;
+} ShadowSpillCalibrationProbe;
+
+static int prepare_probe(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTransferRoute *route,
+    uint64_t bytes,
+    ShadowSpillCalibrationProbe *probe
+) {
+    ShadowSpillMemoryPool *source = shadowspill_runtime_pool(
+        runtime, route->source_pool_id
+    );
+    ShadowSpillMemoryPool *destination = shadowspill_runtime_pool(
+        runtime, route->destination_pool_id
+    );
+    ShadowSpillBackendStream *lane = shadowspill_transfer_route_lane(
+        runtime, route
+    );
+    if (source == NULL || destination == NULL || lane == NULL) {
+        return -1;
+    }
+    uint64_t source_offset = 0U;
+    uint64_t destination_offset = 0U;
+    if (reserve_probe_ranges(
+            source,
+            destination,
+            bytes,
+            &source_offset,
+            &destination_offset
+        ) != 0) {
+        return -1;
+    }
+    *probe = (ShadowSpillCalibrationProbe){
+        .route = route,
+        .lane = *lane,
+        .source_pool = source,
+        .destination_pool = destination,
+        .bytes = bytes,
+        .source_offset = source_offset,
+        .destination_offset = destination_offset,
+        .source_pointer = shadowspill_memory_pool_pointer(
+            source, source_offset
+        ),
+        .destination_pointer = shadowspill_memory_pool_pointer(
+            destination, destination_offset
+        ),
+    };
+    return 0;
+}
+
+static void release_probe(ShadowSpillCalibrationProbe *probe) {
+    release_probe_ranges(
+        probe->source_pool,
+        probe->destination_pool,
+        probe->bytes,
+        probe->source_offset,
+        probe->destination_offset
+    );
+}
+
+typedef struct ShadowSpillCalibrationGate {
+    _Atomic uint32_t ready;
+    _Atomic uint8_t start;
+} ShadowSpillCalibrationGate;
+
+typedef struct ShadowSpillCalibrationJob {
+    ShadowSpillCalibrationProbe *probe;
+    ShadowSpillCalibrationGate *gate;
+    uint32_t copies;
+    uint64_t elapsed_nanoseconds;
+    int status;
+} ShadowSpillCalibrationJob;
+
+static void *run_calibration_job(void *context) {
+    ShadowSpillCalibrationJob *job = context;
+    atomic_fetch_add_explicit(&job->gate->ready, 1U, memory_order_release);
+    while (!atomic_load_explicit(&job->gate->start, memory_order_acquire)) {
+        sched_yield();
+    }
+    job->status = measure_copy_batch(
+        job->probe->route,
+        job->probe->lane,
+        job->probe->destination_pointer,
+        job->probe->source_pointer,
+        job->probe->bytes,
+        job->copies,
+        &job->elapsed_nanoseconds
+    );
+    return NULL;
+}
+
+static int measure_concurrent_pair(
+    ShadowSpillCalibrationProbe *first,
+    ShadowSpillCalibrationProbe *second,
+    uint32_t copies,
+    uint64_t *first_nanoseconds,
+    uint64_t *second_nanoseconds
+) {
+    ShadowSpillCalibrationGate gate = {0};
+    ShadowSpillCalibrationJob jobs[2] = {
+        {.probe = first, .gate = &gate, .copies = copies, .status = -1},
+        {.probe = second, .gate = &gate, .copies = copies, .status = -1},
+    };
+    pthread_t threads[2];
+    if (pthread_create(&threads[0], NULL, run_calibration_job, &jobs[0]) != 0) {
+        return -1;
+    }
+    if (pthread_create(&threads[1], NULL, run_calibration_job, &jobs[1]) != 0) {
+        atomic_store_explicit(&gate.start, 1U, memory_order_release);
+        (void)pthread_join(threads[0], NULL);
+        return -1;
+    }
+    while (atomic_load_explicit(&gate.ready, memory_order_acquire) != 2U) {
+        sched_yield();
+    }
+    atomic_store_explicit(&gate.start, 1U, memory_order_release);
+    const int first_join = pthread_join(threads[0], NULL);
+    const int second_join = pthread_join(threads[1], NULL);
+    if (first_join != 0 || second_join != 0 ||
+        jobs[0].status != 0 || jobs[1].status != 0) {
+        return -1;
+    }
+    *first_nanoseconds = jobs[0].elapsed_nanoseconds;
+    *second_nanoseconds = jobs[1].elapsed_nanoseconds;
+    return 0;
+}
+
+static int calibrate_reverse_pair(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTransferRoute *first_route,
+    ShadowSpillTransferRoute *second_route,
+    const ShadowSpillTransferCalibrationConfig *config,
+    ShadowSpillTransferProfile *first_profile,
+    ShadowSpillTransferProfile *second_profile
+) {
+    ShadowSpillCalibrationProbe first = {0};
+    ShadowSpillCalibrationProbe second = {0};
+    if (prepare_probe(
+            runtime, first_route, config->large_copy_bytes, &first
+        ) != 0) {
+        return -1;
+    }
+    if (prepare_probe(
+            runtime, second_route, config->large_copy_bytes, &second
+        ) != 0) {
+        release_probe(&first);
+        return -1;
+    }
+    uint64_t first_nanoseconds = 0U;
+    uint64_t second_nanoseconds = 0U;
+    int status = 0;
+    if (config->warmup_copies != 0U && measure_concurrent_pair(
+            &first,
+            &second,
+            config->warmup_copies,
+            &first_nanoseconds,
+            &second_nanoseconds
+        ) != 0) {
+        status = -1;
+    }
+    if (status == 0 && measure_concurrent_pair(
+            &first,
+            &second,
+            config->measured_copies,
+            &first_nanoseconds,
+            &second_nanoseconds
+        ) != 0) {
+        status = -1;
+    }
+    release_probe(&second);
+    release_probe(&first);
+    if (status != 0) {
+        return status;
+    }
+    ShadowSpillTransferProfile *profiles[2] = {
+        first_profile, second_profile
+    };
+    const uint64_t measurements[2] = {
+        first_nanoseconds, second_nanoseconds
+    };
+    for (uint32_t index = 0U; index < 2U; ++index) {
+        const uint64_t bandwidth = measured_bandwidth(
+            config->large_copy_bytes,
+            config->measured_copies,
+            measurements[index]
+        );
+        profiles[index]->concurrent_bandwidth_bytes_per_second =
+            bandwidth == 0U ? 1U : bandwidth;
+        profiles[index]->bandwidth_bytes_per_second =
+            profiles[index]->concurrent_bandwidth_bytes_per_second;
+        profiles[index]->concurrent_measurement_nanoseconds =
+            measurements[index];
+        profiles[index]->calibration_mode =
+            SHADOWSPILL_TRANSFER_CALIBRATION_BIDIRECTIONAL;
+        profiles[index]->concurrent_route_count = 2U;
+        profiles[index]->calibrated_timestamp_nanoseconds =
+            monotonic_nanoseconds();
+    }
     return 0;
 }
 
@@ -351,9 +605,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
         ? (ShadowSpillTransferCalibrationConfig){
             .abi_version = SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION,
             .small_copy_bytes = 4096U,
-            .large_copy_bytes = 64U << 20U,
-            .warmup_copies = 2U,
-            .measured_copies = 5U,
+            .large_copy_bytes = 256U << 20U,
+            .warmup_copies = 4U,
+            .measured_copies = 16U,
             .provenance = SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION,
         }
         : *provided_config;
@@ -409,6 +663,35 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
                     route,
                     &config,
                     &next[profile_index(runtime, source, destination)]
+                ) != 0) {
+                free(next);
+                return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+            }
+        }
+    }
+    for (uint32_t source = 0U; source < runtime->pool_count; ++source) {
+        for (uint32_t destination = source + 1U;
+             destination < runtime->pool_count; ++destination) {
+            if (!route_selected(
+                    source, destination, routes, route_count
+                ) || !route_selected(
+                    destination, source, routes, route_count
+                )) {
+                continue;
+            }
+            ShadowSpillTransferRoute *forward = shadowspill_transfer_route(
+                runtime, source, destination
+            );
+            ShadowSpillTransferRoute *reverse = shadowspill_transfer_route(
+                runtime, destination, source
+            );
+            if (forward != NULL && reverse != NULL && calibrate_reverse_pair(
+                    runtime,
+                    forward,
+                    reverse,
+                    &config,
+                    &next[profile_index(runtime, source, destination)],
+                    &next[profile_index(runtime, destination, source)]
                 ) != 0) {
                 free(next);
                 return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;

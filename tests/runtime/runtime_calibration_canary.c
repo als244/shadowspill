@@ -56,7 +56,12 @@ int main(void) {
             profiles[index].generation != generation ||
             (profiles[index].source_pool_id !=
                  profiles[index].destination_pool_id &&
-             profiles[index].bandwidth_bytes_per_second == 0U)) {
+             (profiles[index].bandwidth_bytes_per_second == 0U ||
+              profiles[index].solo_bandwidth_bytes_per_second == 0U ||
+              profiles[index].concurrent_bandwidth_bytes_per_second == 0U ||
+              profiles[index].calibration_mode !=
+                  SHADOWSPILL_TRANSFER_CALIBRATION_BIDIRECTIONAL ||
+              profiles[index].concurrent_route_count != 2U))) {
             fprintf(stderr, "invalid matrix cell %u\n", index);
             return 5;
         }
@@ -73,6 +78,17 @@ int main(void) {
         ) != SHADOWSPILL_RUNTIME_OK || generation != 2U) {
         fprintf(stderr, "selected-route recalibration failed\n");
         return 6;
+    }
+    const uint32_t selected_index =
+        selected.source_pool_id * 2U + selected.destination_pool_id;
+    if (profiles[selected_index].calibration_mode !=
+            SHADOWSPILL_TRANSFER_CALIBRATION_SOLO ||
+        profiles[selected_index].concurrent_route_count != 1U ||
+        profiles[selected_index].concurrent_bandwidth_bytes_per_second != 0U ||
+        profiles[selected_index].bandwidth_bytes_per_second !=
+            profiles[selected_index].solo_bandwidth_bytes_per_second) {
+        fprintf(stderr, "selected route did not publish a solo profile\n");
+        return 7;
     }
     shadowspill_runtime_destroy(runtime);
     shadowspill_mock_backend_destroy(mock);

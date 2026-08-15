@@ -28,6 +28,8 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TraceConfig,
     TraceEvent,
     TraceSummary,
+    TransferCalibrationConfig,
+    TransferProfile,
     configure_adapter_library,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
@@ -123,6 +125,8 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(TraceConfig) == 24
     assert ctypes.sizeof(TraceEvent) == 80
     assert ctypes.sizeof(TraceSummary) == 72
+    assert ctypes.sizeof(TransferCalibrationConfig) == 40
+    assert ctypes.sizeof(TransferProfile) == 112
 
 
 def test_adapter_signatures_are_configured_together() -> None:

@@ -19,7 +19,7 @@ extern "C" {
 #define SHADOWSPILL_RUNTIME_ABI_VERSION 27U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
-#define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 1U
+#define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
@@ -256,6 +256,12 @@ typedef enum ShadowSpillTransferProfileProvenance {
     SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION = 1,
 } ShadowSpillTransferProfileProvenance;
 
+typedef enum ShadowSpillTransferCalibrationMode {
+    SHADOWSPILL_TRANSFER_CALIBRATION_IDENTITY = 0,
+    SHADOWSPILL_TRANSFER_CALIBRATION_SOLO = 1,
+    SHADOWSPILL_TRANSFER_CALIBRATION_BIDIRECTIONAL = 2,
+} ShadowSpillTransferCalibrationMode;
+
 typedef struct ShadowSpillTransferCalibrationConfig {
     uint32_t abi_version;
     uint64_t small_copy_bytes;
@@ -277,7 +283,14 @@ typedef struct ShadowSpillTransferProfile {
     uint32_t destination_pool_id;
     uint64_t generation;
     uint64_t latency_nanoseconds;
+    /* Effective sustained rate consumed by planning and simulation. */
     uint64_t bandwidth_bytes_per_second;
+    /* Independently measured rate with no reverse-route traffic. */
+    uint64_t solo_bandwidth_bytes_per_second;
+    /* Directional rate while the reverse route is simultaneously saturated. */
+    uint64_t concurrent_bandwidth_bytes_per_second;
+    uint64_t solo_measurement_nanoseconds;
+    uint64_t concurrent_measurement_nanoseconds;
     uint64_t calibrated_timestamp_nanoseconds;
     uint64_t small_copy_bytes;
     uint64_t large_copy_bytes;
@@ -285,6 +298,8 @@ typedef struct ShadowSpillTransferProfile {
     uint8_t available;
     uint8_t calibrated;
     uint8_t provenance;
+    uint8_t calibration_mode;
+    uint8_t concurrent_route_count;
 } ShadowSpillTransferProfile;
 
 /*

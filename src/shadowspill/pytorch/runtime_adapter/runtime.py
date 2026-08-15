@@ -69,6 +69,10 @@ class TransferProfile:
     generation: int
     latency_nanoseconds: int
     bandwidth_bytes_per_second: int
+    solo_bandwidth_bytes_per_second: int
+    concurrent_bandwidth_bytes_per_second: int
+    solo_measurement_nanoseconds: int
+    concurrent_measurement_nanoseconds: int
     calibrated_timestamp_nanoseconds: int
     small_copy_bytes: int
     large_copy_bytes: int
@@ -76,6 +80,8 @@ class TransferProfile:
     available: bool
     calibrated: bool
     provenance: str
+    calibration_mode: str
+    concurrent_route_count: int
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -86,6 +92,14 @@ class TransferProfile:
             "generation": self.generation,
             "latency_nanoseconds": self.latency_nanoseconds,
             "bandwidth_bytes_per_second": self.bandwidth_bytes_per_second,
+            "solo_bandwidth_bytes_per_second": self.solo_bandwidth_bytes_per_second,
+            "concurrent_bandwidth_bytes_per_second": (
+                self.concurrent_bandwidth_bytes_per_second
+            ),
+            "solo_measurement_nanoseconds": self.solo_measurement_nanoseconds,
+            "concurrent_measurement_nanoseconds": (
+                self.concurrent_measurement_nanoseconds
+            ),
             "calibrated_timestamp_nanoseconds": self.calibrated_timestamp_nanoseconds,
             "small_copy_bytes": self.small_copy_bytes,
             "large_copy_bytes": self.large_copy_bytes,
@@ -93,6 +107,8 @@ class TransferProfile:
             "available": self.available,
             "calibrated": self.calibrated,
             "provenance": self.provenance,
+            "calibration_mode": self.calibration_mode,
+            "concurrent_route_count": self.concurrent_route_count,
         }
 
 
@@ -247,9 +263,9 @@ class Runtime:
         *,
         routes: Sequence[tuple[str, str]] | None = None,
         small_copy_bytes: int = 4096,
-        large_copy_bytes: int = 64 << 20,
-        warmup_copies: int = 2,
-        measured_copies: int = 5,
+        large_copy_bytes: int = 256 << 20,
+        warmup_copies: int = 4,
+        measured_copies: int = 16,
     ) -> TransferCapabilities:
         """Measure all or selected routes and atomically publish a new matrix.
 
@@ -533,9 +549,9 @@ class Runtime:
         routes: Sequence[tuple[str, str]] | None,
         provenance: int,
         small_copy_bytes: int = 4096,
-        large_copy_bytes: int = 64 << 20,
-        warmup_copies: int = 2,
-        measured_copies: int = 5,
+        large_copy_bytes: int = 256 << 20,
+        warmup_copies: int = 4,
+        measured_copies: int = 16,
     ) -> TransferCapabilities:
         with self._lock:
             self._require_open()
@@ -611,6 +627,18 @@ class Runtime:
                 generation=int(item.generation),
                 latency_nanoseconds=int(item.latency_nanoseconds),
                 bandwidth_bytes_per_second=int(item.bandwidth_bytes_per_second),
+                solo_bandwidth_bytes_per_second=int(
+                    item.solo_bandwidth_bytes_per_second
+                ),
+                concurrent_bandwidth_bytes_per_second=int(
+                    item.concurrent_bandwidth_bytes_per_second
+                ),
+                solo_measurement_nanoseconds=int(
+                    item.solo_measurement_nanoseconds
+                ),
+                concurrent_measurement_nanoseconds=int(
+                    item.concurrent_measurement_nanoseconds
+                ),
                 calibrated_timestamp_nanoseconds=int(
                     item.calibrated_timestamp_nanoseconds
                 ),
@@ -624,6 +652,12 @@ class Runtime:
                     if int(item.provenance) == _INITIALIZATION_PROVENANCE
                     else "recalibration"
                 ),
+                calibration_mode={
+                    0: "identity",
+                    1: "solo",
+                    2: "bidirectional_concurrent",
+                }.get(int(item.calibration_mode), "unknown"),
+                concurrent_route_count=int(item.concurrent_route_count),
             )
             for item in native
         )

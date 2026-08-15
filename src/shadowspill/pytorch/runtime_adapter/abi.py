@@ -9,7 +9,7 @@ ADAPTER_ABI_VERSION: Final = 35
 RUNTIME_ABI_VERSION: Final = 27
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
-TRANSFER_PROFILE_ABI_VERSION: Final = 1
+TRANSFER_PROFILE_ABI_VERSION: Final = 2
 
 
 class AdapterConfig(ctypes.Structure):
@@ -159,6 +159,10 @@ class TransferProfile(ctypes.Structure):
         ("generation", ctypes.c_uint64),
         ("latency_nanoseconds", ctypes.c_uint64),
         ("bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("solo_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("concurrent_bandwidth_bytes_per_second", ctypes.c_uint64),
+        ("solo_measurement_nanoseconds", ctypes.c_uint64),
+        ("concurrent_measurement_nanoseconds", ctypes.c_uint64),
         ("calibrated_timestamp_nanoseconds", ctypes.c_uint64),
         ("small_copy_bytes", ctypes.c_uint64),
         ("large_copy_bytes", ctypes.c_uint64),
@@ -166,6 +170,8 @@ class TransferProfile(ctypes.Structure):
         ("available", ctypes.c_uint8),
         ("calibrated", ctypes.c_uint8),
         ("provenance", ctypes.c_uint8),
+        ("calibration_mode", ctypes.c_uint8),
+        ("concurrent_route_count", ctypes.c_uint8),
     ]
 
 

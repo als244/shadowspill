@@ -132,10 +132,25 @@ otherwise. The runtime must be locally idle. There is deliberately no
 cross-process coordination, allowing applications to barrier separate runtimes
 and calibrate concurrently under shared-link load.
 
+Each selected route is first measured independently to retain its solo latency
+and sustained bandwidth. When both directions of a pool pair are selected, the
+runtime then reserves disjoint probe ranges and saturates both route lanes at
+the same time. Each direction records its own completion window. The
+bidirectional directional bandwidth becomes the effective value consumed by
+planning and simulation; the stronger solo value remains diagnostic evidence.
+Calibrating only one direction intentionally publishes a labeled solo profile.
+
+The default initialization sample moves sixteen 256-MiB copies (4 GiB) per
+direction after four warmup copies. Calibration therefore measures a sustained
+window rather than extrapolating from a handful of short, separately
+synchronized copies. The profile records both bandwidths, both measurement
+durations, copy geometry, concurrency mode, and route count.
+
 `shadowspill_runtime_transfer_profiles` returns one lock-consistent row-major
 N-by-N matrix plus its generation. Profiles contain measured latency,
-bandwidth, timestamp, sample geometry/count, availability, calibration state,
-and provenance. Successful recalibration atomically publishes a new matrix.
+effective/solo/concurrent bandwidth, timestamp, sample geometry/count,
+measurement windows, concurrency mode, availability, calibration state, and
+provenance. Successful recalibration atomically publishes a new matrix.
 
 ## Bounded telemetry
 
