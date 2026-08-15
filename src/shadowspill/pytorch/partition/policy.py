@@ -154,14 +154,7 @@ def _outer_repeated_groups(module: nn.Module) -> tuple[str, ...]:
 
 
 def _anchor(node: Node, repeated_groups: tuple[str, ...]) -> str | None:
-    stack = node.meta.get("nn_module_stack")
-    if not isinstance(stack, dict):
-        return None
-    paths = tuple(
-        value[0]
-        for value in stack.values()
-        if isinstance(value, tuple) and value and isinstance(value[0], str)
-    )
+    paths = _module_paths(node)
     matches: list[tuple[int, str]] = []
     for group in repeated_groups:
         prefix = f"{group}." if group else ""
@@ -173,23 +166,84 @@ def _anchor(node: Node, repeated_groups: tuple[str, ...]) -> str | None:
     return max(matches)[1] if matches else None
 
 
+def _module_paths(node: Node) -> tuple[str, ...]:
+    stack = node.meta.get("nn_module_stack")
+    if not isinstance(stack, dict):
+        return ()
+    return tuple(
+        value[0]
+        for value in stack.values()
+        if isinstance(value, tuple) and value and isinstance(value[0], str)
+    )
+
+
+def _belongs_to_repeated_group(path: str, repeated_groups: tuple[str, ...]) -> bool:
+    return any(
+        path == group
+        or path.startswith(f"{group}.")
+        or group.startswith(f"{path}.")
+        for group in repeated_groups
+    )
+
+
+def _starts_epilogue(node: Node, repeated_groups: tuple[str, ...]) -> bool:
+    """Return whether a trailing node belongs to a non-repeated module.
+
+    Root-scoped operations immediately after a repeated block remain part of
+    that block.  This preserves structurally identical block-local epilogues
+    such as a residual activation.  The first operation attributed to a module
+    outside every repeated group starts the independent model epilogue; later
+    root-scoped operations (for example a functional objective) stay with it.
+    """
+
+    return any(
+        path and not _belongs_to_repeated_group(path, repeated_groups)
+        for path in _module_paths(node)
+    )
+
+
 def _automatic_partition_assignments(
     graph_module: GraphModule, repeated_groups: tuple[str, ...]
 ) -> dict[Node, int]:
+    executable = _executable_nodes(graph_module)
+    if not executable:
+        raise CaptureError("export graph has no executable operations")
+
+    anchors = tuple(_anchor(node, repeated_groups) for node in executable)
+    anchored_indices = tuple(
+        index for index, anchor in enumerate(anchors) if anchor is not None
+    )
+    if not anchored_indices:
+        return {node: 0 for node in executable}
+
+    first_anchored = anchored_indices[0]
+    last_anchored = anchored_indices[-1]
     assignments: dict[Node, int] = {}
     partition_id = 0
+
+    # Model setup before the first repeated block is an independent prologue.
+    if first_anchored:
+        for node in executable[:first_anchored]:
+            assignments[node] = partition_id
+        partition_id += 1
+
     previous_anchor: str | None = None
-    for node in graph_module.graph.nodes:
-        if node.op in {"placeholder", "output", "get_attr"}:
-            continue
-        current_anchor = _anchor(node, repeated_groups)
+    for index in range(first_anchored, last_anchored + 1):
+        current_anchor = anchors[index]
         if current_anchor is not None and current_anchor != previous_anchor:
             if previous_anchor is not None:
                 partition_id += 1
             previous_anchor = current_anchor
+        assignments[executable[index]] = partition_id
+
+    # Keep root-scoped block-local suffix operations with the final block.  A
+    # trailing module outside the repeated stack begins one model epilogue.
+    epilogue_started = False
+    for node in executable[last_anchored + 1 :]:
+        if not epilogue_started and _starts_epilogue(node, repeated_groups):
+            partition_id += 1
+            epilogue_started = True
         assignments[node] = partition_id
-    if not assignments:
-        raise CaptureError("export graph has no executable operations")
     return assignments
 
 

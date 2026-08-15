@@ -37,6 +37,21 @@ class _Block(nn.Module):
         return result
 
 
+class _RepeatedNetworkWithBoundaries(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedding = nn.Sequential(nn.Linear(8, 8), nn.SiLU())
+        self.blocks = nn.ModuleList([_Block() for _ in range(4)])
+        self.final_norm = nn.LayerNorm(8)
+        self.head = nn.Linear(8, 4)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        value = self.embedding(value)
+        for block in self.blocks:
+            value = torch.relu(block(value))
+        return self.head(self.final_norm(value))
+
+
 class _TwoStagePolicy:
     def assign_stages(
         self,
@@ -127,6 +142,25 @@ def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
     assert len(artifacts) == 4
     assert all(artifact.operator_targets for artifact in artifacts)
     assert len({artifact.compatibility_digest for artifact in artifacts}) == 1
+
+
+def test_auto_partition_isolates_model_prologue_and_epilogue() -> None:
+    model = _RepeatedNetworkWithBoundaries()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_cuda_model(model, mode)
+    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    with mode, torch.no_grad():
+        exported = capture_forward(replica, inputs)
+        partitioned = partition_export(exported, replica)
+        artifacts = capture_forward_stage_artifacts(partitioned)
+
+    assert partitioned.repeated_groups == ("blocks",)
+    assert len(partitioned.stages) == 6
+    assert len(artifacts) == 6
+    block_artifacts = artifacts[1:5]
+    assert len({artifact.compatibility_digest for artifact in block_artifacts}) == 1
+    assert any("linear" in target for target in artifacts[0].operator_targets)
+    assert any("layer_norm" in target for target in artifacts[-1].operator_targets)
 
 
 def test_whole_partition_is_one_stage() -> None:
