@@ -422,10 +422,17 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         }
         const uint64_t expected_generation = object->generation;
         const uint64_t expected_version = object->authoritative_version;
+        /*
+         * A non-retained spill lease belongs to the preceding fetch and is
+         * retired when that fetch completes.  It may still be visible here
+         * while the dispatcher runs ahead, but it cannot serve a later
+         * eviction.  Reserve the next spill generation at this trigger.
+         */
         const int destination_required =
             action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
             (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-             shadowspill_spill_location(runtime, object)->lease == NULL);
+             (shadowspill_spill_location(runtime, object)->lease == NULL ||
+              !object->retain_spill_copy));
         queued->active = 1U;
         queued->state = SHADOWSPILL_ACTION_QUEUED;
         queued->fence = fence;

@@ -1448,6 +1448,120 @@ static int queued_release_causally_precedes_fetch(void) {
     return failed ? -1 : 0;
 }
 
+static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = 100000000U,
+        .evict_delay_nanoseconds = 1000000U,
+        .event_delay_nanoseconds = 10000000U,
+    };
+    const ShadowSpillRuntimeConfig runtime_config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntimeConfig configured = runtime_config;
+    configured.backend = shadowspill_mock_backend_vtable(mock);
+    if (shadowspill_runtime_create(&configured, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_runtime_destroy(runtime);
+        shadowspill_mock_backend_destroy(mock);
+        return -1;
+    }
+
+    const ShadowSpillObjectDescription description = {
+        .object_id = 104U,
+        .size_bytes = 32U,
+        .initial_version = 1U,
+        .retain_spill_copy = 0U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = description.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillRuntimeAction offload = {
+        .object_id = description.object_id,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillObjectUpdate update = {
+        .object_id = description.object_id,
+        .version_delta = 1U,
+    };
+    const uint64_t input = description.object_id;
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_register_object(runtime, &description) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_task(
+            runtime, 1U, compute, NULL, 0U, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK;
+
+    for (uint32_t attempt = 0U; !failed && attempt < 500U; ++attempt) {
+        failed = shadowspill_object_snapshot(
+            runtime, description.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK;
+        if (!failed && snapshot.residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+            break;
+        }
+        sleep_milliseconds(1U);
+    }
+    failed = failed || snapshot.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+        shadowspill_before_task(
+            runtime, 2U, compute, &input, 1U, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_enqueue_compute(mock, compute, 1000000U) != 0 ||
+        shadowspill_after_task(
+            runtime, 2U, compute, &update, 1U, &offload, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            runtime, description.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
+        !snapshot.spill_current || !snapshot.has_spill_lease ||
+        snapshot.authoritative_version != 2U ||
+        statistics.fetch_transfers != 1U ||
+        statistics.evict_transfers != 1U ||
+        statistics.allocated_bytes != 0U ||
+        statistics.spill_allocated_bytes != description.size_bytes;
+
+    if (failed) {
+        fprintf(
+            stderr,
+            "nonretained fetch/offload mismatch: residency=%u spill=%u "
+            "lease=%u version=%llu fetches=%llu evicts=%llu "
+            "execution_bytes=%llu spill_bytes=%llu\n",
+            (unsigned)snapshot.residency,
+            (unsigned)snapshot.spill_current,
+            (unsigned)snapshot.has_spill_lease,
+            (unsigned long long)snapshot.authoritative_version,
+            (unsigned long long)statistics.fetch_transfers,
+            (unsigned long long)statistics.evict_transfers,
+            (unsigned long long)statistics.allocated_bytes,
+            (unsigned long long)statistics.spill_allocated_bytes
+        );
+    }
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 #define REQUIRE_CANARY(expression)                                           \
     do {                                                                     \
         if ((expression) != 0) {                                             \
@@ -1482,5 +1596,6 @@ int main(void) {
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
+    REQUIRE_CANARY(nonretained_fetch_then_offload_reserves_fresh_spill());
     return EXIT_SUCCESS;
 }
