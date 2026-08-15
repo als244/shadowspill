@@ -144,7 +144,7 @@ def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
     assert len({artifact.compatibility_digest for artifact in artifacts}) == 1
 
 
-def test_auto_partition_isolates_model_prologue_and_epilogue() -> None:
+def test_auto_partition_keeps_first_consumer_and_isolates_epilogue() -> None:
     model = _RepeatedNetworkWithBoundaries()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_cuda_model(model, mode)
@@ -155,11 +155,12 @@ def test_auto_partition_isolates_model_prologue_and_epilogue() -> None:
         artifacts = capture_forward_stage_artifacts(partitioned)
 
     assert partitioned.repeated_groups == ("blocks",)
-    assert len(partitioned.stages) == 6
-    assert len(artifacts) == 6
-    block_artifacts = artifacts[1:5]
+    assert len(partitioned.stages) == 5
+    assert len(artifacts) == 5
+    block_artifacts = artifacts[1:4]
     assert len({artifact.compatibility_digest for artifact in block_artifacts}) == 1
     assert any("linear" in target for target in artifacts[0].operator_targets)
+    assert any("relu" in target for target in artifacts[0].operator_targets)
     assert any("layer_norm" in target for target in artifacts[-1].operator_targets)
 
 
