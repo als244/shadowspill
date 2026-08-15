@@ -992,6 +992,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 shadowspill_commit_task_allocation(
                 runtime, record->requested_bytes, record->charged_bytes
             );
+            record->origin_task_invocation = task_invocation;
             break;
         }
         if (status != SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
@@ -1263,6 +1264,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
         status = shadowspill_release_task_allocation(
             runtime,
             allocation->origin_task_id,
+            allocation->origin_task_invocation,
             allocation->origin_task_allocation_ordinal,
             allocation->requested_bytes,
             allocation->charged_bytes,
@@ -1301,6 +1303,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
     status = shadowspill_release_task_allocation(
         runtime,
         allocation->origin_task_id,
+        allocation->origin_task_invocation,
         allocation->origin_task_allocation_ordinal,
         allocation->requested_bytes,
         allocation->charged_bytes,

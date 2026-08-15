@@ -136,6 +136,7 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t alignment_bytes;
     uint64_t offset;
     uint64_t origin_task_id;
+    uint64_t origin_task_invocation;
     uint64_t origin_task_allocation_ordinal;
     uint64_t release_task_id;
     uint64_t request_sequence;
@@ -888,6 +889,7 @@ uint64_t shadowspill_commit_task_allocation(
 ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
+    uint64_t origin_task_invocation,
     uint64_t allocation_ordinal,
     uint64_t requested_bytes,
     uint64_t charged_bytes,

@@ -220,13 +220,15 @@ uint64_t shadowspill_commit_task_allocation(
 ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
+    uint64_t origin_task_invocation,
     uint64_t allocation_ordinal,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
     uint64_t alignment_bytes
 ) {
     if (task_scope.runtime != runtime || task_scope.execution == NULL ||
-        task_scope.task_id != origin_task_id) {
+        task_scope.task_id != origin_task_id ||
+        task_scope.invocation != origin_task_invocation) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     if (task_scope.execution->enforce_allocation_abi) {

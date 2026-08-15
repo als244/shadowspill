@@ -1168,6 +1168,62 @@ static int admitted_task_accepts_exact_allocation_abi(void) {
     return failed ? -1 : 0;
 }
 
+static int delayed_free_is_not_charged_to_later_task_invocation(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationABIStep step = {
+        .allocation_ordinal = 0U,
+        .requested_bytes = 32U,
+        .charged_bytes = 32U,
+        .alignment_bytes = 1U,
+        .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 56U,
+        .allocation_abi_steps = &step,
+        .allocation_abi_step_count = 1U,
+        .enforce_allocation_abi = 1U,
+        .maximum_requested_allocation_bytes = 32U,
+        .maximum_charged_allocation_bytes = 32U,
+        .live_requested_allocation_limit_bytes = 32U,
+        .live_charged_allocation_limit_bytes = 32U,
+    };
+    ShadowSpillAllocation first = {0};
+    ShadowSpillAllocation second = {0};
+    int failed = shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 32U, 1U, fixture.compute, &first
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 32U, 1U, fixture.compute, &second
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, first.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, second.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_RUNTIME_OK;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -1874,6 +1930,7 @@ int main(void) {
     REQUIRE_CANARY(admitted_dynamic_allocations_use_deterministic_low_ranges());
     REQUIRE_CANARY(admitted_task_rejects_envelope_excess());
     REQUIRE_CANARY(admitted_task_accepts_exact_allocation_abi());
+    REQUIRE_CANARY(delayed_free_is_not_charged_to_later_task_invocation());
     REQUIRE_CANARY(admitted_task_rejects_allocation_abi_geometry_mismatch());
     REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_abi());
     REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
