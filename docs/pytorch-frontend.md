@@ -106,11 +106,13 @@ specific source:
 - `RuntimeExecutionError` carries structured allocator diagnostics for
   out-of-memory/no-progress during profiling or execution.
 
-Only allocator OOM is translated from PyTorch's null-allocation consequence.
-Frontend-owned CUDA allocation boundaries check the allocator latch before
-issuing dependent fills, copies, or kernels; this is required because the
-pluggable allocator interface can return a null pointer without making tensor
-construction itself raise immediately.
+The private PyTorch adapter fails a rejected nonzero allocation before a tensor
+can escape from `CUDAPluggableAllocator`.  The neutral C runtime first latches
+complete structured diagnostics; its C++ callback wrapper then raises inside
+PyTorch's allocator call because PyTorch does not itself validate a null
+pointer.  The enclosing task boundary translates that exception into the
+latched OOM, no-progress, envelope, or allocation-ABI error before an opaque
+operator can launch a kernel against invalid storage.
 The planning wrappers preserve exact lower-level exceptions through
 `__cause__`. During execution of a returned callable, illegal memory accesses
 and other genuine provider failures retain their original exception rather

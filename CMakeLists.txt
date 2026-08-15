@@ -249,6 +249,7 @@ if(SHADOWSPILL_BUILD_CUDA)
       shadowspill_pytorch
       SHARED
       pytorch/csrc/allocator.c
+      pytorch/csrc/allocator_callback.cpp
     )
     target_include_directories(
       shadowspill_pytorch
@@ -517,6 +518,21 @@ if(BUILD_TESTING)
         ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/allocator_oom_canary.py
         $<TARGET_FILE:shadowspill_pytorch>
+    )
+
+    add_test(
+      NAME shadowspill_pytorch_allocation_abi_failure_canary
+      COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/pytorch/allocation_abi_failure_canary.py
+        $<TARGET_FILE:shadowspill_pytorch>
+    )
+    set_tests_properties(
+      shadowspill_pytorch_allocation_abi_failure_canary
+      PROPERTIES
+        LABELS "cuda;pytorch"
+        ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src"
+        TIMEOUT 20
     )
     set_tests_properties(
       shadowspill_pytorch_allocator_oom_canary

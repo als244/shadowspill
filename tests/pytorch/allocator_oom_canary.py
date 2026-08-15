@@ -30,9 +30,15 @@ def main() -> int:
         spill_pool_bytes=1 << 20,
         worker_poll_nanoseconds=10_000,
     )
-    impossible = torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
-    if impossible.data_ptr() != 0:
-        raise AssertionError("failed callback produced a non-null data pointer")
+    try:
+        torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
+    except RuntimeError as error:
+        if "bad_alloc" not in str(error):
+            raise AssertionError(
+                f"failed callback raised an unexpected error: {error}"
+            ) from error
+    else:
+        raise AssertionError("failed callback returned a tensor to its caller")
     failure = AdapterFailure()
     status = int(
         installed.library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))
@@ -76,7 +82,6 @@ def main() -> int:
             raise AssertionError(
                 "structured OOM did not retain its diagnostics"
             ) from error
-    del impossible
     torch.cuda.synchronize()
     if int(installed.library.shadowspill_pytorch_recover_no_progress()) != 0:
         raise AssertionError("failed to recover no-progress for teardown")

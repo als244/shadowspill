@@ -468,10 +468,11 @@ SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_abort_task_range(void);
 
 /*
  * Exact callback ABI consumed by torch.cuda.memory.CUDAPluggableAllocator.
- * These functions never throw across the C boundary. Failures are latched and
- * malloc returns NULL after latching diagnostics. CUDAPluggableAllocator does
- * not validate that pointer before constructing a DataPtr, so the frontend
- * callable translates only the resulting OOM/null-dereference case.
+ * The C runtime never throws and latches complete first-failure diagnostics.
+ * The private C++ PyTorch adapter throws std::bad_alloc for a failed nonzero
+ * request because CUDAPluggableAllocator does not validate a null pointer
+ * before constructing a DataPtr. The enclosing frontend task boundary then
+ * translates the latched diagnostics into ShadowSpill's structured error.
  */
 SHADOWSPILL_PYTORCH_API void *shadowspill_pytorch_cuda_malloc(
     ptrdiff_t bytes,

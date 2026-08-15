@@ -1511,7 +1511,7 @@ void shadowspill_pytorch_abort_task_range(void) {
     end_task_range();
 }
 
-void *shadowspill_pytorch_cuda_malloc(
+void *shadowspill_pytorch_cuda_malloc_impl(
     ptrdiff_t bytes,
     int32_t device_ordinal,
     void *stream

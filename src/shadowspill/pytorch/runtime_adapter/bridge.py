@@ -1310,7 +1310,8 @@ class RuntimeBridge:
         remain the original exception raised by PyTorch.  This avoids masking
         illegal memory accesses or bad kernels with stale runtime diagnostics.
         A placement violation is ShadowSpill's own exact-allocation contract,
-        so it is surfaced before PyTorch's secondary null-storage error.
+        so the private allocator wrapper stops dispatch and this boundary
+        replaces its generic allocation exception with structured diagnostics.
         """
 
         self.abort_task()
