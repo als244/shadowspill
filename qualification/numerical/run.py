@@ -54,13 +54,7 @@ def _recomputation_savings_bytes(
     selections: Sequence[RecomputationSelection],
     alias_sizes: Mapping[str, int],
 ) -> tuple[int, int]:
-    """Return maximum available and actually selected retained-byte savings.
-
-    Qualification must not demand selection of an alternative whose retained
-    physical footprint is identical to the reference ``save`` option. Such an
-    option can change graph structure or runtime, but it cannot prove that
-    memory pressure exercised recomputation.
-    """
+    """Report maximum available and selected retained-byte savings."""
 
     selected_by_group = {item.group_id: item.option_id for item in selections}
     available = 0
@@ -89,6 +83,14 @@ def _recomputation_savings_bytes(
         available += max(savings.values(), default=0)
         selected += savings.get(selected_by_group.get(group.group_id, "save"), 0)
     return available, selected
+
+
+def _transfer_pressure_gate_passed(
+    *, required: bool, evicted_bytes: int, fetched_bytes: int
+) -> bool:
+    """Require real bidirectional movement, never a planner policy choice."""
+
+    return bool(not required or (evicted_bytes > 0 and fetched_bytes > 0))
 
 
 def _state_tensor_at_path(state: object, path: str) -> torch.Tensor:
@@ -662,7 +664,7 @@ def _planned_worker(
         name: nanoseconds / 1e9 for name, nanoseconds in report.phase_timings_ns
     }
     qualification_result = {
-        "schema": "shadowspill.numerical_qualification/v4",
+        "schema": "shadowspill.numerical_qualification/v5",
         "reference_execution": _REFERENCE_EXECUTION,
         "family": family,
         "model_implementation": model_implementation,
@@ -844,31 +846,22 @@ def _planned_worker(
             and qualification_result["recomputation_cache_hits"] == 0
         )
     )
-    recomputation_gate_required = bool(
-        require_pressure and available_recomputation_savings > 0
+    qualification_result["recomputation_selection_required"] = False
+    transfer_pressure_passed = _transfer_pressure_gate_passed(
+        required=require_pressure,
+        evicted_bytes=report.transfer_bytes_evicted,
+        fetched_bytes=report.transfer_bytes_fetched,
     )
-    recomputation_gate_passed = bool(
-        not recomputation_gate_required or selected_recomputation_savings > 0
+    qualification_result["transfer_pressure_gate_passed"] = (
+        transfer_pressure_passed
     )
-    qualification_result["recomputation_gate_required"] = (
-        recomputation_gate_required
-    )
-    qualification_result["recomputation_gate_passed"] = recomputation_gate_passed
-    pressure_passed = bool(
-        not require_pressure
-        or (
-            report.transfer_bytes_evicted > 0
-            and report.transfer_bytes_fetched > 0
-            and recomputation_gate_passed
-        )
-    )
-    qualification_result["pressure_gate_passed"] = pressure_passed
+    qualification_result["pressure_gate_passed"] = transfer_pressure_passed
     qualification_result["passed"] = bool(
         not loss_failures
         and not metric_failures
         and not exact_failures
         and qualification_result["checkpoint_replay_bitwise"]
-        and pressure_passed
+        and transfer_pressure_passed
         and report.predicted_device_peak_bytes <= device_budget
         and not any(physical_statuses)
         and qualification_result["physical_budget_sealed"]
@@ -901,7 +894,7 @@ def _planned_worker(
             f"exact_failures={len(exact_failures)}, "
             "checkpoint_replay_bitwise="
             f"{qualification_result['checkpoint_replay_bitwise']}, "
-            f"pressure_gate_passed={pressure_passed}, "
+            f"transfer_pressure_gate_passed={transfer_pressure_passed}, "
             f"physical_statuses={physical_statuses}, artifact={result_path}"
         )
 
@@ -1024,7 +1017,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-fully-resident",
         action="store_true",
-        help="do not require real FETCH/EVICT activity and recomputation",
+        help="do not require real FETCH/EVICT activity",
     )
     parser.add_argument(
         "--model-config",

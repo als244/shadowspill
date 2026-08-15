@@ -7,6 +7,7 @@ from qualification.numerical.run import (
     _failure_tensor_values,
     _meets_tensor_tolerance,
     _recomputation_savings_bytes,
+    _transfer_pressure_gate_passed,
 )
 from shadowspill.ir import (
     RecomputationGroup,
@@ -66,7 +67,7 @@ def test_numerical_gate_uses_one_global_tensor_policy() -> None:
     assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
 
 
-def test_recomputation_gate_counts_only_retained_physical_savings() -> None:
+def test_recomputation_diagnostics_count_only_retained_physical_savings() -> None:
     groups = (
         RecomputationGroup(
             "group_0",
@@ -91,7 +92,7 @@ def test_recomputation_gate_counts_only_retained_physical_savings() -> None:
     ) == (32, 32)
 
 
-def test_recomputation_gate_is_not_applicable_to_equal_footprints() -> None:
+def test_recomputation_diagnostics_ignore_equal_footprints() -> None:
     groups = (
         RecomputationGroup(
             "group_0",
@@ -106,3 +107,15 @@ def test_recomputation_gate_is_not_applicable_to_equal_footprints() -> None:
         (RecomputationSelection("group_0", "save"),),
         {"a": 64, "b": 64},
     ) == (0, 0)
+
+
+def test_correctness_pressure_gate_requires_only_real_transfers() -> None:
+    assert _transfer_pressure_gate_passed(
+        required=True, evicted_bytes=1, fetched_bytes=1
+    )
+    assert not _transfer_pressure_gate_passed(
+        required=True, evicted_bytes=1, fetched_bytes=0
+    )
+    assert _transfer_pressure_gate_passed(
+        required=False, evicted_bytes=0, fetched_bytes=0
+    )

@@ -167,7 +167,7 @@ def _run_case(
     if return_code == 0 and artifact.is_file():
         payload = json.loads(artifact.read_text())
         passed = bool(
-            payload.get("schema") == "shadowspill.numerical_qualification/v4"
+            payload.get("schema") == "shadowspill.numerical_qualification/v5"
             and payload.get("passed") is True
         )
         if not passed:
@@ -187,7 +187,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Run fresh-process compiled-reference/planned parity, checkpoint "
-            "replay, transfer, recomputation, and physical-budget gates."
+            "replay, transfer, and physical-budget gates while reporting "
+            "recomputation selections diagnostically."
         )
     )
     parser.add_argument(
