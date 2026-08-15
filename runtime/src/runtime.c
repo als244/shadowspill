@@ -698,6 +698,12 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     if (runtime == NULL) {
         return;
     }
+    /*
+     * A failed allocator callback can leave this dispatch thread inside a
+     * task scope.  Clear its thread-local reference before closing and
+     * freeing the runtime so a later runtime cannot inherit stale scope state.
+     */
+    shadowspill_abort_task(runtime);
     (void)shadowspill_runtime_close_legacy(runtime);
     shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
     pthread_cond_destroy(&runtime->condition);
