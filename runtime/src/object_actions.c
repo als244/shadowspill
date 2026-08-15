@@ -106,6 +106,44 @@ int shadowspill_object_action_is_head_locked(
     return object != NULL && action != NULL && object->action_head == action;
 }
 
+int shadowspill_object_reset_admitted_action_locked(
+    ShadowSpillObject *object,
+    ShadowSpillQueuedAction *action
+) {
+    if (object == NULL || action == NULL || !action->admitted ||
+        action->object != object || action->object_previous != NULL ||
+        action->object_next != NULL) {
+        return -1;
+    }
+    /*
+     * Keep the admitted identity immutable. Fixed-layout dependencies retain
+     * direct pointers to these records across invocations, so an aggregate
+     * zero-and-rebuild would expose transient NULL identity to concurrent
+     * readers. Only per-invocation state is reset here, under the object lock.
+     */
+    action->activation_generation = 0U;
+    action->state = SHADOWSPILL_ACTION_QUEUED;
+    action->destination_lease = NULL;
+    action->fence = NULL;
+    action->completion_event = NULL;
+    action->dependency_event = NULL;
+    action->owns_trace_label = 0U;
+    action->has_completion_event = 0U;
+    action->processing = 0U;
+    action->active = 0U;
+    action->produces_current_execution = 0U;
+    action->produces_current_spill = 0U;
+    action->scheduled_version = 0U;
+    action->previous = NULL;
+    action->next = NULL;
+    action->object_previous = NULL;
+    action->object_next = NULL;
+    action->lane_previous = NULL;
+    action->lane_next = NULL;
+    action->lane_state = 0U;
+    return 0;
+}
+
 void shadowspill_object_note_fetch_queued_locked(ShadowSpillObject *object) {
     if (object == NULL) {
         return;

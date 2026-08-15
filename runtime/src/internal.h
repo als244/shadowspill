@@ -791,6 +791,10 @@ int shadowspill_object_action_is_head_locked(
     const ShadowSpillObject *object,
     const ShadowSpillQueuedAction *action
 );
+int shadowspill_object_reset_admitted_action_locked(
+    ShadowSpillObject *object,
+    ShadowSpillQueuedAction *action
+);
 void shadowspill_object_note_fetch_queued_locked(ShadowSpillObject *object);
 int shadowspill_object_note_fetch_published_locked(ShadowSpillObject *object);
 int shadowspill_object_note_fetch_discarded_locked(ShadowSpillObject *object);

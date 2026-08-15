@@ -401,32 +401,31 @@ static void discard_action_batch_locked(
             }
         }
         pthread_cond_broadcast(&action->object->state_changed);
-        pthread_mutex_unlock(&action->object->lock);
-        shadowspill_release_task_fence_locked(runtime, action->fence);
+        ShadowSpillTaskFence *fence = action->fence;
         if (action->admitted) {
-            const uint8_t kind = action->kind;
             ShadowSpillObject *object = action->object;
-            const uint64_t task_id = action->task_id;
-            const uint64_t action_ordinal = action->action_ordinal;
-            const uint64_t completed_generation =
-                action->completed_generation;
-            const char *trace_label = action->trace_label;
-            *action = (ShadowSpillQueuedAction){
-                .task_id = task_id,
-                .action_ordinal = action_ordinal,
-                .completed_generation = completed_generation,
-                .kind = kind,
-                .object = object,
-                .trace_label = trace_label,
-                .admitted = 1U,
-            };
+            if (shadowspill_object_reset_admitted_action_locked(
+                    object, action
+                ) != 0) {
+                shadowspill_latch_task_failure(
+                    runtime,
+                    SHADOWSPILL_RUNTIME_INVALID_STATE,
+                    action->task_id,
+                    object->object_id,
+                    object->allocation_id,
+                    0U
+                );
+            }
+            pthread_mutex_unlock(&object->lock);
         } else {
+            pthread_mutex_unlock(&action->object->lock);
             shadowspill_object_release(action->object);
             if (action->owns_trace_label) {
                 free((void *)action->trace_label);
             }
             free(action);
         }
+        shadowspill_release_task_fence_locked(runtime, fence);
         action = next;
     }
     *batch = (ShadowSpillActionBatch){0};
@@ -574,8 +573,33 @@ static void publish_action_batch_locked(
     if (batch->head == NULL) {
         return;
     }
+    const uint64_t published_count = atomic_load_explicit(
+        &runtime->actions.count, memory_order_acquire
+    ) + record->action_count;
     for (ShadowSpillQueuedAction *queued = batch->head; queued != NULL;
          queued = queued->next) {
+        /* Complete dispatcher bookkeeping before the worker can see it. */
+        if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
+            queued->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+            (void)atomic_fetch_add_explicit(
+                &runtime->pending_capacity_actions, 1U, memory_order_release
+            );
+        }
+        pthread_mutex_lock(&queued->object->lock);
+        const uint64_t object_id = queued->object->object_id;
+        const uint64_t allocation_id = queued->object->allocation_id;
+        const uint64_t size_bytes = queued->object->size_bytes;
+        pthread_mutex_unlock(&queued->object->lock);
+        shadowspill_append_trace_event_locked(
+            runtime,
+            SHADOWSPILL_TRACE_ACTION_QUEUED,
+            record->task_id,
+            object_id,
+            allocation_id,
+            size_bytes,
+            queued->kind,
+            published_count
+        );
         ShadowSpillTransferLane *lane = shadowspill_transfer_lane_for_action(
             runtime, queued
         );
@@ -598,34 +622,7 @@ static void publish_action_batch_locked(
         &runtime->actions.count, record->action_count, memory_order_release
     );
     pthread_mutex_unlock(&runtime->actions.lock);
-    for (ShadowSpillQueuedAction *queued = batch->head; queued != NULL;
-         queued = queued->next) {
-        if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
-            queued->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
-            (void)atomic_fetch_add_explicit(
-                &runtime->pending_capacity_actions, 1U, memory_order_release
-            );
-        }
-        pthread_mutex_lock(&queued->object->lock);
-        const uint64_t allocation_id = queued->object->allocation_id;
-        const uint64_t size_bytes = queued->object->size_bytes;
-        pthread_mutex_unlock(&queued->object->lock);
-        shadowspill_append_trace_event_locked(
-            runtime,
-            SHADOWSPILL_TRACE_ACTION_QUEUED,
-            record->task_id,
-            queued->object->object_id,
-            allocation_id,
-            size_bytes,
-            queued->kind,
-            atomic_load_explicit(
-                &runtime->actions.count, memory_order_acquire
-            )
-        );
-        if (queued == batch->tail) {
-            break;
-        }
-    }
+    /* Publishing the action count is the final mutable batch operation. */
     *batch = (ShadowSpillActionBatch){0};
 }
 

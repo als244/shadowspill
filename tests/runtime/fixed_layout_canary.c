@@ -626,7 +626,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000000U,
-        .evict_delay_nanoseconds = 100000000U,
+        .evict_delay_nanoseconds = same_object ? 1000000U : 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
@@ -753,48 +753,55 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_seal_fixed_layout(runtime) != SHADOWSPILL_RUNTIME_OK;
 
-    failed = failed || shadowspill_before_execution(
-            runtime, first_fetch_task.task_id, compute, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(
-            runtime, first_fetch_task.task_id, compute
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
-    ShadowSpillObjectSnapshot first = {0};
-    failed = failed || shadowspill_object_snapshot(
-            runtime, objects[0].object_id, &first
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        first.residency != SHADOWSPILL_OBJECT_EXECUTION_READY;
+    const uint32_t invocation_count = same_object ? 128U : 1U;
+    for (uint32_t invocation = 0U;
+         !failed && invocation < invocation_count; ++invocation) {
+        failed = shadowspill_before_execution(
+                runtime, first_fetch_task.task_id, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_after_execution(
+                runtime, first_fetch_task.task_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+        ShadowSpillObjectSnapshot first = {0};
+        failed = failed || shadowspill_object_snapshot(
+                runtime, objects[0].object_id, &first
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            first.residency != SHADOWSPILL_OBJECT_EXECUTION_READY;
 
-    failed = failed || shadowspill_before_execution(
-            runtime, eviction_task.task_id, compute, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(runtime, eviction_task.task_id, compute) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
-            runtime, second_fetch_task.task_id, compute, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(
-            runtime, second_fetch_task.task_id, compute
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
-    ShadowSpillObjectSnapshot second = {0};
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_object_snapshot(
-            runtime, successor_object_id, &second
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        second.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
-        second.execution_pointer != first.execution_pointer ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        (!same_object && statistics.wait_events_inserted == 0U);
+        failed = failed || shadowspill_before_execution(
+                runtime, eviction_task.task_id, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_after_execution(
+                runtime, eviction_task.task_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_before_execution(
+                runtime, second_fetch_task.task_id, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_after_execution(
+                runtime, second_fetch_task.task_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+        ShadowSpillObjectSnapshot second = {0};
+        ShadowSpillRuntimeStatistics statistics = {0};
+        failed = failed || shadowspill_object_snapshot(
+                runtime, successor_object_id, &second
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            second.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+            second.execution_pointer != first.execution_pointer ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            (!same_object && statistics.wait_events_inserted == 0U);
 
-    failed = failed || shadowspill_before_execution(
-            runtime, release_task.task_id, compute, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(runtime, release_task.task_id, compute) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        failed = failed || shadowspill_before_execution(
+                runtime, release_task.task_id, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_after_execution(
+                runtime, release_task.task_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    }
+    failed = failed ||
         shadowspill_unregister_object(runtime, objects[0].object_id) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_unregister_object(runtime, objects[1].object_id) !=

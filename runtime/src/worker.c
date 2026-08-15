@@ -149,21 +149,21 @@ static void complete_action(
         action->dependency_event = NULL;
     }
     if (action->admitted) {
-        const uint8_t kind = action->kind;
         ShadowSpillObject *object = action->object;
-        const uint64_t task_id = action->task_id;
-        const uint64_t action_ordinal = action->action_ordinal;
-        const uint64_t completed_generation = action->completed_generation;
-        const char *trace_label = action->trace_label;
-        *action = (ShadowSpillQueuedAction){
-            .task_id = task_id,
-            .action_ordinal = action_ordinal,
-            .completed_generation = completed_generation,
-            .kind = kind,
-            .object = object,
-            .trace_label = trace_label,
-            .admitted = 1U,
-        };
+        pthread_mutex_lock(&object->lock);
+        const int reset_status =
+            shadowspill_object_reset_admitted_action_locked(object, action);
+        pthread_mutex_unlock(&object->lock);
+        if (reset_status != 0) {
+            latch_action_failure(
+                runtime,
+                action,
+                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                object->object_id,
+                object->allocation_id,
+                0U
+            );
+        }
     } else {
         shadowspill_object_release(action->object);
         if (action->owns_trace_label) {
