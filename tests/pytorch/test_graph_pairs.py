@@ -6,12 +6,14 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.pytorch.capture import aot as aot_module
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairRepository,
     capture_training_stages,
+    saved_value_footprint,
 )
 from shadowspill.pytorch.partition import PartitionedExport, partition_export
 
@@ -66,7 +68,25 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
         tuple(
             (item.option_id, item.memory_budget) for item in stage.graph_pairs.variants
         )
-        == (("save", None), ("recompute", 1.0))
+        == (("save", None), ("recompute", 0.0))
+        for stage in stages
+    )
+    save_footprints = tuple(
+        saved_value_footprint(stage.graph_pairs.variant("save").pair)
+        for stage in stages
+    )
+    recompute_footprints = tuple(
+        saved_value_footprint(stage.graph_pairs.variant("recompute").pair)
+        for stage in stages
+    )
+    assert all(item.internal_minimum_bytes == 0 for item in recompute_footprints)
+    assert sum(item.internal_minimum_bytes for item in save_footprints) > 0
+    assert sum(item.internal_minimum_bytes for item in save_footprints) > sum(
+        item.internal_minimum_bytes for item in recompute_footprints
+    )
+    assert all(
+        str(stage.graph_pairs.variant("save").pair.forward.graph_module.graph)
+        != str(stage.graph_pairs.variant("recompute").pair.forward.graph_module.graph)
         for stage in stages
     )
     assert all(
@@ -87,6 +107,22 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
     assert (
         stages[-1].graph_pairs.variant("recompute").pair.specialized_unit_tangent_count
         == 1
+    )
+
+
+def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
+    mode, partitioned = _capture()
+    with (
+        aot_module.functorch_config.patch(activation_memory_budget=1.0),
+        mode,
+    ):
+        stages = capture_training_stages(partitioned)
+
+    assert all(
+        saved_value_footprint(stage.graph_pairs.variant("recompute").pair)
+        .internal_minimum_bytes
+        == 0
+        for stage in stages
     )
 
 

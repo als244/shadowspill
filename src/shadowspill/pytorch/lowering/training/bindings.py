@@ -15,6 +15,7 @@ from ...graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,
     PartitionedTrainingCapture,
+    saved_value_footprint,
 )
 from ..catalog import ObjectCatalog, TensorSlot
 from ..profiles import TaskProfileCatalog
@@ -401,7 +402,7 @@ def _stage_forward_outputs(
     if public_count != len(canonical_outputs):
         raise CaptureError("stage boundary output count changed across AOT capture")
     slots: list[TensorSlot] = []
-    residual_object_ids: list[str] = []
+    saved_internal_object_ids: list[str] = []
     if compiled_layout.contract_digest != storage_contract.compatibility_digest:
         raise CaptureError(f"{context}: compiled layout belongs to another contract")
     resolver = TaskBindingResolver(
@@ -411,6 +412,12 @@ def _stage_forward_outputs(
         compiled_layout,
         storage_contract=storage_contract,
     )
+    internal_root_ids = frozenset(
+        saved_value_footprint(pair, storage_contract).internal_root_ids
+    )
+    root_by_leaf = {
+        item.leaf_index: item.root_id for item in storage_contract.output_views
+    }
     for index in range(pair.forward.output_count):
         if index < public_count:
             object_id = resolver.bind_contract(
@@ -426,11 +433,11 @@ def _stage_forward_outputs(
                 persistence=Persistence.STEP,
             )
         slots.append(TensorSlot(index, object_id))
-        if index >= public_count:
-            residual_object_ids.append(object_id)
+        if index >= public_count and root_by_leaf.get(index) in internal_root_ids:
+            saved_internal_object_ids.append(object_id)
     return (
         tuple(slots),
-        tuple(dict.fromkeys(residual_object_ids)),
+        tuple(dict.fromkeys(saved_internal_object_ids)),
         resolver.mutation_object_ids,
         resolver.replacement_output_leaves,
         resolver.storage_handoffs,

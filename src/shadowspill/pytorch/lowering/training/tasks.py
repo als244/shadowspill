@@ -423,7 +423,7 @@ class _TrainingTaskEmitter:
                                 self.objects.catalog.alias_id(object_id)
                                 for object_id in self.prepared[position][stage_index][
                                     variant
-                                ].residual_object_ids
+                                ].saved_internal_object_ids
                             )
                         ),
                     )

@@ -92,7 +92,7 @@ class PreparedStageVariant:
     forward_outputs: tuple[TensorSlot, ...]
     backward_inputs: tuple[TensorSlot, ...]
     contributions: tuple[TensorSlot, ...]
-    residual_object_ids: tuple[str, ...]
+    saved_internal_object_ids: tuple[str, ...]
     public_output_leaves: tuple[int, ...]
     mutation_object_ids: tuple[str, ...]
     replacement_output_leaves: tuple[int, ...]

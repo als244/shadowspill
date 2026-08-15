@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -386,21 +385,50 @@ def _aot_callable(
                 bw_compiler=collector.compile_backward,
             ),
         )
-    budget_scope = (
-        nullcontext()
-        if activation_memory_budget is None
-        else functorch_config.patch(activation_memory_budget=activation_memory_budget)
+    return cast(
+        Callable[..., object],
+        aot(
+            graph_module,
+            fw_compiler=collector.compile_forward,
+            bw_compiler=collector.compile_backward,
+            partition_fn=_min_cut_partitioner(activation_memory_budget),
+        ),
     )
-    with budget_scope:
-        return cast(
-            Callable[..., object],
-            aot(
-                graph_module,
-                fw_compiler=collector.compile_forward,
-                bw_compiler=collector.compile_backward,
-                partition_fn=min_cut_rematerialization_partition,
-            ),
-        )
+
+
+def _min_cut_partitioner(
+    activation_memory_budget: float | None,
+) -> Callable[..., tuple[torch.fx.GraphModule, torch.fx.GraphModule]]:
+    """Bind a memory budget to the lazy AOT partition callback itself.
+
+    ``aot_function`` does not partition when its callable is constructed.  It
+    partitions on the first invocation, after the caller's construction scope
+    has returned.  The budget must therefore be scoped inside the callback
+    that AOT invokes; wrapping callable construction silently observes the
+    ambient Functorch default instead.
+    """
+
+    def partition(
+        joint_module: torch.fx.GraphModule,
+        joint_inputs: object,
+        **kwargs: Any,
+    ) -> tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
+        if activation_memory_budget is None:
+            return min_cut_rematerialization_partition(
+                joint_module,
+                joint_inputs,
+                **kwargs,
+            )
+        with functorch_config.patch(
+            activation_memory_budget=activation_memory_budget
+        ):
+            return min_cut_rematerialization_partition(
+                joint_module,
+                joint_inputs,
+                **kwargs,
+            )
+
+    return partition
 
 
 def _differentiable_roots(

@@ -22,10 +22,10 @@ def build_default_portfolio(
     added here without changing partitioning, caching, lowering, diagnostics,
     or the canonical Program representation.
 
-    The historical ``recompute`` choice uses PyTorch's min-cut budget ``1.0``.
-    It is fixed explicitly here so ambient Functorch configuration cannot alter
-    the structural ABI. It is not mislabeled as the ``0.0`` full-recompute
-    endpoint.
+    PyTorch's min-cut budget ``0.0`` is the full-recompute endpoint.  Fix it
+    explicitly so ambient Functorch configuration cannot alter the structural
+    ABI.  The opposite endpoint, ``1.0``, retains the full saved-value set and
+    therefore must not be exposed as recomputation.
     """
 
     stage = example.stage
@@ -52,12 +52,12 @@ def build_default_portfolio(
         ),
         GraphPairVariant(
             "recompute",
-            1.0,
+            0.0,
             capture_graph_pair(
                 stage.graph_module,
                 example.inputs,
                 recomputation=True,
-                activation_memory_budget=1.0,
+                activation_memory_budget=0.0,
                 original_output=example.output,
                 root_output_positions=roots,
                 specialize_unit_tangents=specialize_unit_tangents,

@@ -241,6 +241,18 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     assert len(lowered.gradients) == 2
     assert lowered.fixed_tensors == ()
     assert lowered.program.tasks[-1].phase == "optimizer"
+    assert all(
+        not next(
+            option for option in group.options if option.option_id == "recompute"
+        ).retained_alias_group_ids
+        for group in lowered.program.recomputation_groups
+    )
+    assert any(
+        next(
+            option for option in group.options if option.option_id == "save"
+        ).retained_alias_group_ids
+        for group in lowered.program.recomputation_groups
+    )
     selections = tuple(
         RecomputationSelection(group.group_id, "save")
         for group in lowered.program.recomputation_groups
