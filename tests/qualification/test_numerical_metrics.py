@@ -4,6 +4,7 @@ import torch
 
 from qualification.numerical.metrics import TensorMetrics, compare_states, state_digest
 from qualification.numerical.run import (
+    _failure_tensor_values,
     _meets_tensor_tolerance,
     _recomputation_savings_bytes,
 )
@@ -40,6 +41,22 @@ def test_state_metrics_reject_nonfloating_and_structural_differences() -> None:
         "state/kind: 'x' != 'y'",
         "state/value: integral tensor differs [1, 2] != [1, 3]",
     )
+
+
+def test_failure_values_resolve_integer_optimizer_state_keys() -> None:
+    reference = {"optimizer": {"state": {31: {"exp_avg": torch.tensor([1.0])}}}}
+    actual = {"optimizer": {"state": {31: {"exp_avg": torch.tensor([2.0])}}}}
+
+    values = _failure_tensor_values(
+        ["state/optimizer/state/31/exp_avg"], reference, actual
+    )
+
+    assert values["state/optimizer/state/31/exp_avg"] == {
+        "numel": 1,
+        "truncated": False,
+        "reference": [1.0],
+        "actual": [2.0],
+    }
 
 
 def test_numerical_gate_uses_one_global_tensor_policy() -> None:

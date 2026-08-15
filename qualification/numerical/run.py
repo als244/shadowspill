@@ -100,7 +100,16 @@ def _state_tensor_at_path(state: object, path: str) -> torch.Tensor:
     value = state
     for component in components[1:]:
         if isinstance(value, dict):
-            value = value[component]
+            if component in value:
+                value = value[component]
+            elif component.isdecimal() and int(component) in value:
+                # Optimizer state_dict() keys are integer parameter ordinals,
+                # while compare_states() renders every path component as text.
+                value = value[int(component)]
+            else:
+                raise KeyError(
+                    f"state metric path component {component!r} is absent"
+                )
         elif isinstance(value, (list, tuple)):
             value = value[int(component)]
         else:
