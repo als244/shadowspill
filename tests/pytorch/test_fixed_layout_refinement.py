@@ -85,7 +85,7 @@ def test_refinement_uses_pressurefit_effective_capacity() -> None:
     selected = resolve_fixed_layout_selection(
         _config(capacity),
         _topology(capacity),
-        lambda config, _topology: _selection(
+        lambda config: _selection(
             config,
             effective_capacity=effective,
         ),
@@ -121,7 +121,7 @@ def test_refinement_retries_in_128_mib_steps(monkeypatch) -> None:  # type: igno
     selected = resolve_fixed_layout_selection(
         _config(capacity),
         _topology(capacity),
-        lambda config, _topology: _selection(config),
+        lambda config: _selection(config),
     )
 
     assert calls == [capacity, capacity - (128 << 20)]
@@ -145,7 +145,7 @@ def test_refinement_rejects_invalid_effective_capacity() -> None:
         effective_object_capacity_bytes=capacity + 1,
     )
 
-    def resolve(config, _topology):  # type: ignore[no-untyped-def]
+    def resolve(config):  # type: ignore[no-untyped-def]
         base = _selection(config)
         return replace(base, result=replace(base.result, diagnostics=invalid))
 

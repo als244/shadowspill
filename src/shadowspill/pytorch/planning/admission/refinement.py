@@ -62,7 +62,7 @@ class FixedLayoutSelection:
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
     topology: AdmissionTopology,
-    resolve: Callable[[SimulationConfig, AdmissionTopology], CachedPressureFitResult],
+    resolve: Callable[[SimulationConfig], CachedPressureFitResult],
     *,
     progress: Callable[[str], None] | None = None,
 ) -> FixedLayoutSelection:
@@ -84,11 +84,11 @@ def resolve_fixed_layout_selection(
             device_id=topology.device_id,
             capacity_bytes=requested_capacity,
         )
-        requested_topology = replace(
-            topology,
-            object_capacity_bytes=requested_capacity,
-        )
-        selected = resolve(requested_config, requested_topology)
+        # PressureFit selects against logical capacity. The fixed-layout
+        # builder below is the sole physical-placement authority for this
+        # strategy; prefiltering through dynamic-pool admission would discard
+        # schedules that are feasible under certified fixed placement.
+        selected = resolve(requested_config)
         effective_topology = replace(
             topology,
             object_capacity_bytes=_effective_object_capacity(

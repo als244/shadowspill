@@ -675,12 +675,11 @@ def pressurefit_training_programs(
             recurrent = resolve_fixed_layout_selection(
                 programs.simulation_config,
                 programs.recurrent_admission,
-                lambda config, admission: artifact_cache.resolve_pressurefit(
+                lambda config: artifact_cache.resolve_pressurefit(
                     programs.recurrent.program,
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
                     config=config,
-                    admission=admission,
                     progress=timer.progress,
                 ),
                 progress=timer.progress,
@@ -689,12 +688,11 @@ def pressurefit_training_programs(
                 resolve_fixed_layout_selection(
                     programs.simulation_config,
                     programs.initial_admission,
-                    lambda config, admission: artifact_cache.resolve_pressurefit(
+                    lambda config: artifact_cache.resolve_pressurefit(
                         programs.initial.program,
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
                         config=config,
-                        admission=admission,
                         progress=timer.progress,
                     ),
                     progress=timer.progress,
