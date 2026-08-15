@@ -298,12 +298,13 @@ int shadowspill_memory_pool_reserve_lease_locked(
     return adopt_status;
 }
 
-int shadowspill_memory_pool_adopt_lease_locked(
+static int adopt_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,
     uint64_t bytes,
     uint64_t alignment,
-    uint64_t offset
+    uint64_t offset,
+    uint8_t owns_pool_range
 ) {
     const uint64_t charged = bytes == 0U ? 1U : bytes;
     if (pool == NULL || lease == NULL || alignment == 0U ||
@@ -327,6 +328,7 @@ int shadowspill_memory_pool_adopt_lease_locked(
     lease->causal_predecessor_generation = 0U;
     lease->causal_event = NULL;
     lease->causal_dependency_expected = 0U;
+    lease->owns_pool_range = owns_pool_range;
     lease->pool_next = pool->leases;
     lease->pool_previous_link = &pool->leases;
     if (lease->pool_next != NULL) {
@@ -334,6 +336,26 @@ int shadowspill_memory_pool_adopt_lease_locked(
     }
     pool->leases = lease;
     return 0;
+}
+
+int shadowspill_memory_pool_adopt_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t offset
+) {
+    return adopt_lease_locked(pool, lease, bytes, alignment, offset, 1U);
+}
+
+int shadowspill_memory_pool_adopt_borrowed_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t offset
+) {
+    return adopt_lease_locked(pool, lease, bytes, alignment, offset, 0U);
 }
 
 int shadowspill_memory_pool_mark_reserved_locked(
@@ -473,7 +495,8 @@ int shadowspill_memory_pool_reserve_causal_successor_locked(
     ShadowSpillMemoryLease *selected = NULL;
     for (ShadowSpillMemoryLease *candidate = pool->leases;
          candidate != NULL; candidate = candidate->pool_next) {
-        if (!lease_can_publish_causal_dependency(candidate) ||
+        if (!candidate->owns_pool_range ||
+            !lease_can_publish_causal_dependency(candidate) ||
             candidate->causal_successor != NULL ||
             candidate->charged_bytes < bytes ||
             candidate->offset % alignment != 0U) {
@@ -507,6 +530,7 @@ int shadowspill_memory_pool_reserve_causal_successor_locked(
     successor->causal_predecessor_generation = selected->generation;
     selected->causal_successor = successor;
     successor->causal_dependency_expected = 0U;
+    successor->owns_pool_range = 1U;
     pool->reserved_bytes += successor->charged_bytes;
     return 0;
 }
@@ -522,7 +546,8 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
     uint64_t candidate_count = 0U;
     for (const ShadowSpillMemoryLease *lease = pool->leases;
          lease != NULL; lease = lease->pool_next) {
-        if (lease_can_publish_causal_dependency(lease) &&
+        if (lease->owns_pool_range &&
+            lease_can_publish_causal_dependency(lease) &&
             lease->causal_successor == NULL) {
             ++candidate_count;
         }
@@ -574,7 +599,8 @@ int shadowspill_memory_pool_find_release_frontier_locked(
     uint64_t candidate_count = 0U;
     for (ShadowSpillMemoryLease *lease = pool->leases;
          lease != NULL; lease = lease->pool_next) {
-        if (!lease_can_publish_causal_dependency(lease) ||
+        if (!lease->owns_pool_range ||
+            !lease_can_publish_causal_dependency(lease) ||
             lease->causal_successor != NULL) {
             continue;
         }
@@ -652,6 +678,7 @@ static int handoff_causal_range_locked(
     predecessor->pool_next = NULL;
     predecessor->pool = NULL;
     predecessor->state = SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED;
+    predecessor->owns_pool_range = 0U;
     predecessor->retired_pointer = predecessor->pointer;
     predecessor->causal_successor = NULL;
     predecessor->causal_event = NULL;
@@ -720,6 +747,7 @@ int shadowspill_memory_pool_cancel_reservation_locked(
     lease->pointer = NULL;
     lease->causal_event = NULL;
     lease->causal_dependency_expected = 0U;
+    lease->owns_pool_range = 0U;
     return 0;
 }
 
@@ -737,6 +765,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->offset = 0U;
         lease->causal_event = NULL;
         lease->causal_dependency_expected = 0U;
+        lease->owns_pool_range = 0U;
         return 0;
     }
     if (lease == NULL || lease->pool == NULL ||
@@ -764,6 +793,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->offset = 0U;
         lease->causal_event = NULL;
         lease->causal_dependency_expected = 0U;
+        lease->owns_pool_range = 0U;
         return 0;
     }
     if (lease->state == SHADOWSPILL_LEASE_SUCCESSOR_RESERVED ||
@@ -777,9 +807,11 @@ int shadowspill_memory_pool_release_lease_locked(
         pool->reserved_bytes -= lease->charged_bytes;
     }
     lease->release_sequence = pool->next_release_sequence++;
-    const int status = shadowspill_memory_pool_release_locked(
-        pool, lease->offset, lease->charged_bytes
-    );
+    const int status = lease->owns_pool_range
+        ? shadowspill_memory_pool_release_locked(
+              pool, lease->offset, lease->charged_bytes
+          )
+        : 0;
     if (status == 0) {
         lease->retired_pointer = lease->pointer;
         *lease->pool_previous_link = lease->pool_next;
@@ -797,6 +829,7 @@ int shadowspill_memory_pool_release_lease_locked(
         lease->pointer = NULL;
         lease->causal_event = NULL;
         lease->causal_dependency_expected = 0U;
+        lease->owns_pool_range = 0U;
     }
     return status;
 }

@@ -115,6 +115,7 @@ add_library(
   runtime/src/event_pool.c
   runtime/src/execution_table.c
   runtime/src/failure_state.c
+  runtime/src/fixed_layout.c
   runtime/src/lifecycle.c
   runtime/src/memory_pool.c
   runtime/src/admission_replay.c
@@ -346,6 +347,7 @@ if(BUILD_TESTING)
   add_executable(
     shadowspill_memory_pool_canary
     tests/runtime/memory_pool_canary.c
+    runtime/src/fixed_layout.c
     runtime/src/memory_pool.c
     runtime/src/ranges.c
   )

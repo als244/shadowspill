@@ -180,7 +180,19 @@ typedef struct ShadowSpillMemoryLease {
     struct ShadowSpillMemoryLease *pool_next;
     struct ShadowSpillMemoryLease **pool_previous_link;
     uint8_t in_reusable_index;
+    /*
+     * The pool range allocator owns ordinary leases.  A borrowed lease names
+     * bytes inside a separately owned parent range (for example, one admitted
+     * plan slice) and therefore must never free those bytes independently.
+     */
+    uint8_t owns_pool_range;
 } ShadowSpillMemoryLease;
+
+typedef struct ShadowSpillFixedLayoutState {
+    uint64_t slice_offset;
+    uint64_t slice_bytes;
+    uint8_t active;
+} ShadowSpillFixedLayoutState;
 
 typedef struct ShadowSpillRetirementRecord {
     ShadowSpillMemoryLease *allocation;
@@ -420,6 +432,7 @@ struct ShadowSpillRuntime {
     ShadowSpillActionQueue actions;
     ShadowSpillTransferLane fetch_lane;
     ShadowSpillTransferLane evict_lane;
+    ShadowSpillFixedLayoutState fixed_layout;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -611,6 +624,13 @@ int shadowspill_memory_pool_adopt_lease_locked(
     uint64_t alignment,
     uint64_t offset
 );
+int shadowspill_memory_pool_adopt_borrowed_lease_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillMemoryLease *lease,
+    uint64_t bytes,
+    uint64_t alignment,
+    uint64_t offset
+);
 void shadowspill_memory_pool_rebase_locked(
     ShadowSpillMemoryPool *pool,
     void *new_base
@@ -627,6 +647,21 @@ uint64_t shadowspill_memory_pool_largest_free_locked(
 void *shadowspill_memory_pool_pointer(
     const ShadowSpillMemoryPool *pool,
     uint64_t offset
+);
+
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
+    ShadowSpillRuntime *runtime,
+    uint64_t bytes
+);
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
+    ShadowSpillRuntime *runtime
+);
+ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryLease *lease,
+    uint64_t relative_offset,
+    uint64_t bytes,
+    uint64_t alignment
 );
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
