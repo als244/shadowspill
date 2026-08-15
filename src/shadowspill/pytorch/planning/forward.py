@@ -330,6 +330,10 @@ def build_forward_program(
             lowered.program,
             execution_pool_bytes=execution_pool_bytes,
             object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
+            workspace_extents_by_compatibility={
+                digest: measurement.workspace_extent_bytes
+                for digest, measurement in measurements_by_profile.items()
+            },
             output_bindings=output_bindings,
         )
     return ForwardProgramArtifacts(

@@ -9,7 +9,7 @@ from pathlib import Path
 from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 6
+ABI_VERSION = 7
 NO_INDEX = (1 << 32) - 1
 
 
@@ -117,7 +117,8 @@ class CAdmissionTopology(ctypes.Structure):
         ("pool_capacity_bytes", ctypes.c_uint64),
         ("object_capacity_bytes", ctypes.c_uint64),
         ("minimum_alignment", ctypes.c_uint64),
-        ("task_workspace_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("task_workspace_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("task_workspace_extent_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("fresh_output_offsets", ctypes.POINTER(ctypes.c_uint32)),
         ("fresh_output_aliases", ctypes.POINTER(ctypes.c_uint32)),
         ("replacement_offsets", ctypes.POINTER(ctypes.c_uint32)),

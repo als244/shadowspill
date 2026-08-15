@@ -175,7 +175,7 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
         9 * one_gib,
         eight_gib,
         1,
-        tuple(TaskAdmissionSpec(task.task_id, 0) for task in program.tasks),
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
     capacities: list[int] = []
 

@@ -40,7 +40,7 @@ class TaskAdmissionSpec:
     """Physical ownership transitions for one executable task."""
 
     task_id: str
-    workspace_bytes: int
+    workspace_extents: tuple[int, ...] = ()
     fresh_output_aliases: tuple[str, ...] = ()
     replacement_aliases: tuple[str, ...] = ()
     storage_handoffs: tuple[StorageHandoff, ...] = ()
@@ -48,8 +48,8 @@ class TaskAdmissionSpec:
     def __post_init__(self) -> None:
         if not self.task_id:
             raise ValueError("task admission ID must be non-empty")
-        if self.workspace_bytes < 0:
-            raise ValueError("task admission workspace must be non-negative")
+        if any(value <= 0 for value in self.workspace_extents):
+            raise ValueError("task admission workspace extents must be positive")
         for field, values in (
             ("fresh_output_aliases", self.fresh_output_aliases),
             ("replacement_aliases", self.replacement_aliases),
@@ -80,13 +80,19 @@ class TaskAdmissionSpec:
                 "fresh, replacement, and handoff destination aliases must be disjoint"
             )
 
+    @property
+    def workspace_bytes(self) -> int:
+        """Return total simultaneously-live anonymous workspace bytes."""
+
+        return sum(self.workspace_extents)
+
     def to_dict(self) -> dict[str, object]:
         return {
             "fresh_output_aliases": list(self.fresh_output_aliases),
             "replacement_aliases": list(self.replacement_aliases),
             "storage_handoffs": [item.to_dict() for item in self.storage_handoffs],
             "task_id": self.task_id,
-            "workspace_bytes": self.workspace_bytes,
+            "workspace_extents": list(self.workspace_extents),
         }
 
 

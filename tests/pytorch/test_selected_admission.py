@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.pytorch.planning.admission.bindings import build_admission_topology
 from shadowspill.pytorch.planning.admission.selection import (
     _task_memory_envelope,
     admit_selected_schedule,
@@ -48,6 +51,28 @@ def test_selected_schedule_replays_only_task_boundary_state() -> None:
         ("task0", 0),
         ("task1", 0),
         ("task2", 0),
+    )
+
+
+def test_admission_topology_preserves_workspace_extent_multiset() -> None:
+    program = exact_capacity_program()
+    program = replace(
+        program,
+        profiles=(replace(program.profiles[0], workspace_bytes=96),),
+    )
+
+    topology = build_admission_topology(
+        program,
+        execution_pool_bytes=256,
+        object_capacity_bytes=160,
+        workspace_extents_by_compatibility={"task_abi": (32, 64)},
+        alignment=1,
+    )
+
+    assert tuple(task.workspace_extents for task in topology.tasks) == (
+        (32, 64),
+        (32, 64),
+        (32, 64),
     )
 
 

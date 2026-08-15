@@ -43,19 +43,23 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
         topology->object_capacity_bytes == 0U ||
         topology->object_capacity_bytes > topology->pool_capacity_bytes ||
         topology->minimum_alignment == 0U ||
-        topology->task_workspace_bytes == NULL ||
+        topology->task_workspace_offsets == NULL ||
         topology->fresh_output_offsets == NULL ||
         topology->replacement_offsets == NULL ||
         topology->handoff_offsets == NULL) {
         return 0;
     }
+    const uint32_t workspace_count =
+        topology->task_workspace_offsets[topology->task_count];
     const uint32_t fresh_count =
         topology->fresh_output_offsets[topology->task_count];
     const uint32_t replacement_count =
         topology->replacement_offsets[topology->task_count];
     const uint32_t handoff_count =
         topology->handoff_offsets[topology->task_count];
-    if ((fresh_count != 0U && topology->fresh_output_aliases == NULL) ||
+    if ((workspace_count != 0U &&
+         topology->task_workspace_extent_bytes == NULL) ||
+        (fresh_count != 0U && topology->fresh_output_aliases == NULL) ||
         (replacement_count != 0U && topology->replacement_aliases == NULL) ||
         (handoff_count != 0U &&
          (topology->handoff_source_aliases == NULL ||
@@ -63,12 +67,19 @@ static int topology_valid(const ShadowSpillPressureFitContext *context) {
         return 0;
     }
     for (uint32_t task = 0U; task < topology->task_count; ++task) {
-        if (topology->fresh_output_offsets[task] >
+        if (topology->task_workspace_offsets[task] >
+                topology->task_workspace_offsets[task + 1U] ||
+            topology->fresh_output_offsets[task] >
                 topology->fresh_output_offsets[task + 1U] ||
             topology->replacement_offsets[task] >
                 topology->replacement_offsets[task + 1U] ||
             topology->handoff_offsets[task] >
                 topology->handoff_offsets[task + 1U]) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0U; index < workspace_count; ++index) {
+        if (topology->task_workspace_extent_bytes[index] == 0U) {
             return 0;
         }
     }
@@ -100,9 +111,7 @@ static uint64_t invariant_lease_count(
     const ShadowSpillAdmissionTopology *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = program->alias_count;
-    for (uint32_t task = 0U; task < topology->task_count; ++task) {
-        count += topology->task_workspace_bytes[task] != 0U ? 1U : 0U;
-    }
+    count += topology->task_workspace_offsets[topology->task_count];
     count += topology->fresh_output_offsets[topology->task_count];
     count += topology->replacement_offsets[topology->task_count];
     return count;
@@ -114,9 +123,8 @@ static uint64_t invariant_operation_count(
     const ShadowSpillAdmissionTopology *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = (uint64_t)program->alias_count * 2U;
-    for (uint32_t task = 0U; task < topology->task_count; ++task) {
-        count += topology->task_workspace_bytes[task] != 0U ? 3U : 0U;
-    }
+    count +=
+        (uint64_t)topology->task_workspace_offsets[topology->task_count] * 3U;
     count += (uint64_t)topology->fresh_output_offsets[topology->task_count] * 2U;
     count +=
         (uint64_t)topology->replacement_offsets[topology->task_count] * 3U;
@@ -460,16 +468,20 @@ static int build_script(
             }
         }
 
-        uint64_t workspace_lease = NO_LEASE;
-        if (topology->task_workspace_bytes[task] != 0U &&
-            acquire_lease(
-                state, topology->task_workspace_bytes[task],
-                topology->minimum_alignment,
-                SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task,
-                &workspace_lease
-            ) != 0) {
-            return -1;
+        const uint64_t workspace_lease_begin = state->lease_count;
+        for (uint32_t offset = topology->task_workspace_offsets[task];
+             offset < topology->task_workspace_offsets[task + 1U]; ++offset) {
+            uint64_t workspace_lease = NO_LEASE;
+            if (acquire_lease(
+                    state, topology->task_workspace_extent_bytes[offset],
+                    topology->minimum_alignment,
+                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task,
+                    &workspace_lease
+                ) != 0) {
+                return -1;
+            }
         }
+        const uint64_t workspace_lease_end = state->lease_count;
         for (uint32_t offset = topology->fresh_output_offsets[task];
              offset < topology->fresh_output_offsets[task + 1U]; ++offset) {
             const uint32_t alias = topology->fresh_output_aliases[offset];
@@ -505,12 +517,16 @@ static int build_script(
             }
         }
 
-        if (workspace_lease != NO_LEASE && append_operation(
-                state, workspace_lease, SHADOWSPILL_ADMISSION_REPLAY_RELEASE,
-                0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
-                SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION, task
-            ) != 0) {
-            return -1;
+        for (uint64_t workspace_lease = workspace_lease_begin;
+             workspace_lease < workspace_lease_end; ++workspace_lease) {
+            if (append_operation(
+                    state, workspace_lease,
+                    SHADOWSPILL_ADMISSION_REPLAY_RELEASE,
+                    0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
+                    SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION, task
+                ) != 0) {
+                return -1;
+            }
         }
         for (uint32_t offset = topology->handoff_offsets[task];
              offset < topology->handoff_offsets[task + 1U]; ++offset) {

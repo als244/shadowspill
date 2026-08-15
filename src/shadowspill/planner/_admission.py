@@ -193,8 +193,12 @@ def compile_admission_topology(
     replacement_offsets, replacements = _flatten_rows(replacement_rows)
     handoff_offsets, handoff_sources = _flatten_rows(handoff_source_rows)
     _, handoff_destinations = _flatten_rows(handoff_destination_rows)
+    workspace_offsets, workspace_extents = _flatten_rows(
+        tuple(task.workspace_extents for task in tasks)
+    )
     buffers = (
-        _u64(tuple(item.workspace_bytes for item in tasks)),
+        _u32(workspace_offsets),
+        _u64(workspace_extents),
         _u32(fresh_offsets),
         _u32(fresh),
         _u32(replacement_offsets),
@@ -210,14 +214,15 @@ def compile_admission_topology(
         pool_capacity_bytes=topology.pool_capacity_bytes,
         object_capacity_bytes=topology.object_capacity_bytes,
         minimum_alignment=topology.minimum_alignment,
-        task_workspace_bytes=buffers[0],
-        fresh_output_offsets=buffers[1],
-        fresh_output_aliases=buffers[2],
-        replacement_offsets=buffers[3],
-        replacement_aliases=buffers[4],
-        handoff_offsets=buffers[5],
-        handoff_source_aliases=buffers[6],
-        handoff_destination_aliases=buffers[7],
+        task_workspace_offsets=buffers[0],
+        task_workspace_extent_bytes=buffers[1],
+        fresh_output_offsets=buffers[2],
+        fresh_output_aliases=buffers[3],
+        replacement_offsets=buffers[4],
+        replacement_aliases=buffers[5],
+        handoff_offsets=buffers[6],
+        handoff_source_aliases=buffers[7],
+        handoff_destination_aliases=buffers[8],
     )
     return CompiledAdmissionTopology(value, buffers, topology.digest)
 

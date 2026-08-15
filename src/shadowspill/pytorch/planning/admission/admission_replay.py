@@ -213,16 +213,15 @@ class _AdmissionScriptBuilder:
         replacement_aliases = set(replacements)
         workspace_bytes = admission.workspace_bytes
         self.workspace_bytes_by_task.append((task.task_id, workspace_bytes))
-        workspace_lease = (
-            None
-            if workspace_bytes == 0
-            else self._acquire(
-                workspace_bytes,
+        workspace_leases = tuple(
+            self._acquire(
+                extent,
                 _LeaseProvenance(
                     AdmissionReplayPurpose.TASK_WORKSPACE,
                     task_id=task.task_id,
                 ),
             )
+            for extent in admission.workspace_extents
         )
 
         new_alias_leases: dict[str, int] = {}
@@ -245,7 +244,7 @@ class _AdmissionScriptBuilder:
 
         # The compiled task has now completed. Workspace is task-local, while
         # returned allocations become persistent object generations.
-        if workspace_lease is not None:
+        for workspace_lease in workspace_leases:
             self._release(
                 workspace_lease,
                 _LeaseProvenance(

@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 6U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 7U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -114,8 +114,10 @@ typedef struct ShadowSpillDenseSchedule {
 /*
  * Schedule-invariant physical ownership facts for one execution pool.
  * Offsets have task_count + 1 entries and index the corresponding flattened
- * alias arrays. Storage handoffs transfer a live lease from source to
- * destination without allocating. The arrays are borrowed for evaluation.
+ * workspace-extent or alias arrays. Workspace extents are the simultaneously
+ * live anonymous allocation multiset, not one artificial contiguous range.
+ * Storage handoffs transfer a live lease from source to destination without
+ * allocating. The arrays are borrowed for evaluation.
  */
 typedef struct ShadowSpillAdmissionTopology {
     uint32_t abi_version;
@@ -124,7 +126,8 @@ typedef struct ShadowSpillAdmissionTopology {
     uint64_t pool_capacity_bytes;
     uint64_t object_capacity_bytes;
     uint64_t minimum_alignment;
-    const uint64_t *task_workspace_bytes;
+    const uint32_t *task_workspace_offsets;
+    const uint64_t *task_workspace_extent_bytes;
     const uint32_t *fresh_output_offsets;
     const uint32_t *fresh_output_aliases;
     const uint32_t *replacement_offsets;

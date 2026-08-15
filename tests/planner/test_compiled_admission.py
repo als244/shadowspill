@@ -2,6 +2,21 @@ from __future__ import annotations
 
 import pytest
 
+from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
+    MemoryAction,
+    MemoryActionKind,
+    MemoryLocation,
+    MemorySchedule,
+    ObjectSpec,
+    Program,
+    ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    TaskProfile,
+    TaskSpec,
+)
 from shadowspill.planner import (
     AdmissionTopology,
     PressureFitOptions,
@@ -18,6 +33,7 @@ from shadowspill.pytorch.planning.admission import (
     replay_admission,
     simulation_admission_from_replay,
 )
+from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._compiled import compile_simulation_template
 from tests.planner._examples import (
     training_chain_config,
@@ -47,7 +63,7 @@ def _causal_topology() -> AdmissionTopology:
         96,
         96,
         1,
-        tuple(TaskAdmissionSpec(task.task_id, 0) for task in program.tasks),
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
 
 
@@ -95,9 +111,15 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
         1,
         tuple(
             TaskAdmissionSpec(
-                task.task_id,
-                profiles[task.profile_id].workspace_bytes,
-                tuple(dict.fromkeys(object_alias[item] for item in task.outputs)),
+                task_id=task.task_id,
+                workspace_extents=(
+                    (profiles[task.profile_id].workspace_bytes,)
+                    if profiles[task.profile_id].workspace_bytes
+                    else ()
+                ),
+                fresh_output_aliases=tuple(
+                    dict.fromkeys(object_alias[item] for item in task.outputs)
+                ),
             )
             for task in program.tasks
         ),
@@ -114,3 +136,65 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
     assert result.simulation.device_peak("cuda_0").total_bytes > 224
     assert result.simulation.device_peak("cuda_0").total_bytes <= 512
     assert result.diagnostics.selected_makespan_ns == result.simulation.makespan_ns
+
+
+def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=tuple(
+            AliasGroupSpec(alias, "cuda_0", 32) for alias in ("a", "b", "c")
+        ),
+        objects=tuple(ObjectSpec(alias, alias, 0, 32) for alias in ("a", "b", "c")),
+        profiles=(TaskProfile("profile", 1, 64, "abi"),),
+        tasks=(
+            TaskSpec("release_middle", compute, "profile", inputs=("b",)),
+            TaskSpec(
+                "use_workspace",
+                compute,
+                "profile",
+                dependencies=("release_middle",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=tuple(
+            ResidencySpec(alias, MemoryLocation.DEVICE) for alias in ("a", "b", "c")
+        ),
+        actions=(MemoryAction("release_middle", "b", MemoryActionKind.RELEASE),),
+        final_residency=(
+            ResidencySpec("a", MemoryLocation.DEVICE),
+            ResidencySpec("c", MemoryLocation.DEVICE),
+        ),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=128,
+        host_capacity_bytes=1,
+        fetch_bandwidth_bytes_per_second=1,
+        evict_bandwidth_bytes_per_second=1,
+    )
+    template = compile_simulation_template(program, (), config)
+
+    def evaluate(extents: tuple[int, ...]):
+        topology = AdmissionTopology(
+            "cuda_0",
+            128,
+            128,
+            1,
+            (
+                TaskAdmissionSpec("release_middle"),
+                TaskAdmissionSpec("use_workspace", workspace_extents=extents),
+            ),
+        )
+        return evaluate_schedule_admission(
+            template,
+            compile_admission_topology(topology, template),
+            encode_schedule(schedule, template),
+        )
+
+    admitted = evaluate((32, 32))
+
+    assert admitted.peak_allocated_bytes == 128
+    with pytest.raises(ValueError, match="dynamic MemoryPool admission"):
+        evaluate((64,))

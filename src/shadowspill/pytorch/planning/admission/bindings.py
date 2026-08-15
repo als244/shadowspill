@@ -88,6 +88,7 @@ def build_admission_topology(
     execution_pool_bytes: int,
     object_capacity_bytes: int,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+    workspace_extents_by_compatibility: Mapping[str, tuple[int, ...]] | None = None,
     alignment: int = 256,
 ) -> AdmissionTopology:
     """Normalize executable output ownership into planner admission facts."""
@@ -104,6 +105,7 @@ def build_admission_topology(
         item.alias_group_id: item.size_bytes for item in program.alias_groups
     }
     profile_by_id = {item.profile_id: item for item in program.profiles}
+    profiled_extents = dict(workspace_extents_by_compatibility or {})
     bindings_by_task = dict(output_bindings or {})
     task_specs: list[TaskAdmissionSpec] = []
     for task in program.tasks:
@@ -133,17 +135,42 @@ def build_admission_topology(
             and alias_size[alias_id] != 0
         )
         replacement_bytes = sum(alias_size[item] for item in replacements)
-        profiled_workspace = profile_by_id[task.profile_id].workspace_bytes
+        profile = profile_by_id[task.profile_id]
+        profiled_workspace = profile.workspace_bytes
         if replacement_bytes > profiled_workspace:
             raise ValueError(
                 f"task {task.task_id} replacement bytes exceed its workspace "
                 f"charge: replacements={replacement_bytes}, "
                 f"workspace={profiled_workspace}"
             )
+        anonymous_workspace = profiled_workspace - replacement_bytes
+        workspace_extents = profiled_extents.get(profile.compatibility_digest)
+        if workspace_extents is None:
+            workspace_extents = (
+                () if anonymous_workspace == 0 else (anonymous_workspace,)
+            )
+        else:
+            measured_workspace = sum(workspace_extents)
+            if measured_workspace > anonymous_workspace:
+                raise ValueError(
+                    f"task {task.task_id} workspace extents exceed its "
+                    "anonymous workspace charge: "
+                    f"extents={measured_workspace}, "
+                    f"workspace={anonymous_workspace}"
+                )
+            # Functional mutation roots can have a charged physical extent
+            # larger than the persistent logical alias that replaces them.
+            # The profile charge includes that transition padding, while the
+            # persistent alias is admitted separately above. Keep the residual
+            # as one additional dynamic extent instead of collapsing the whole
+            # anonymous workspace into a contiguous lease.
+            residual = anonymous_workspace - measured_workspace
+            if residual:
+                workspace_extents = (*workspace_extents, residual)
         task_specs.append(
             TaskAdmissionSpec(
                 task_id=task.task_id,
-                workspace_bytes=profiled_workspace - replacement_bytes,
+                workspace_extents=workspace_extents,
                 fresh_output_aliases=fresh_aliases,
                 replacement_aliases=replacements,
                 storage_handoffs=handoffs,
