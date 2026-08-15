@@ -166,3 +166,57 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
     )
     assert len(admitted.layout.placements) == 1
     assert admitted.layout.placements[0].offset == 0
+
+
+def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(AliasGroupSpec("result", "cuda_0", 8),),
+        objects=(ObjectSpec("result_object", "result", 0, 8),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(TaskSpec("task", COMPUTE, "profile", outputs=("result_object",)),),
+    )
+    schedule = MemorySchedule(
+        (),
+        (),
+        (ResidencySpec("result", MemoryLocation.DEVICE),),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=8,
+        host_capacity_bytes=0,
+        fetch_bandwidth_bytes_per_second=1,
+        evict_bandwidth_bytes_per_second=1,
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        8,
+        8,
+        1,
+        (
+            TaskAdmissionSpec(
+                "task",
+                fresh_output_aliases=("result",),
+                allocation_steps=(
+                    TaskAllocationStep(
+                        0,
+                        TaskAllocationStepKind.ALLOCATE,
+                        8,
+                        output_alias_group_id="result",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    admitted = build_fixed_layout_admission(
+        _selected(program, schedule, config),
+        topology,
+        dynamic_alias_group_ids=frozenset({"result"}),
+    )
+
+    assert admitted.layout.fixed_slice_bytes == 0
+    assert admitted.layout.dynamic_reserve_bytes == 8
+    assert admitted.layout.required_bytes == 8
+    assert admitted.layout.dynamic_lease_ids == (0,)
+    assert admitted.layout.placements == ()

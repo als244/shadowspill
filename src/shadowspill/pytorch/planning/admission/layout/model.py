@@ -96,12 +96,15 @@ class FixedPhysicalLayout:
     schedule_digest: str
     topology_digest: str
     pool_capacity_bytes: int
+    fixed_slice_bytes: int
+    dynamic_reserve_bytes: int
     required_bytes: int
     placements: tuple[FixedLayoutPlacement, ...]
     reuse_dependencies: tuple[FixedLayoutReuse, ...]
     initial_alias_leases: tuple[tuple[str, int], ...]
     task_allocation_leases: tuple[tuple[str, int, int], ...]
     action_destination_leases: tuple[tuple[int, int], ...]
+    dynamic_lease_ids: tuple[int, ...] = ()
 
     @property
     def slack_bytes(self) -> int:
@@ -124,6 +127,9 @@ class FixedPhysicalLayout:
             ],
             "placements": [item.to_dict() for item in self.placements],
             "pool_capacity_bytes": self.pool_capacity_bytes,
+            "fixed_slice_bytes": self.fixed_slice_bytes,
+            "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
+            "dynamic_lease_ids": list(self.dynamic_lease_ids),
             "program_digest": self.program_digest,
             "required_bytes": self.required_bytes,
             "reuse_dependencies": [item.to_dict() for item in self.reuse_dependencies],

@@ -10,7 +10,7 @@ from shadowspill.simulator import (
     simulate,
 )
 
-from ..admission_replay import _AdmissionScriptBuilder
+from ..admission_replay import AdmissionReplayPurpose, _AdmissionScriptBuilder
 from .dependencies import (
     recover_reuse_dependencies,
     simulator_reuse_dependencies,
@@ -20,6 +20,7 @@ from .model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
     FixedPhysicalLayout,
+    LeaseLifetime,
 )
 from .placement import place_lifetimes
 
@@ -27,8 +28,17 @@ from .placement import place_lifetimes
 def build_fixed_layout_admission(
     selected: PressureFitResult,
     topology: AdmissionTopology,
+    *,
+    dynamic_alias_group_ids: frozenset[str] = frozenset(),
 ) -> FixedLayoutAdmission:
-    """Build, causally certify, and re-simulate one exact physical layout."""
+    """Build, causally certify, and re-simulate one physical layout.
+
+    Caller-owned outputs are deliberately excluded from the reusable fixed
+    slice.  Their leases remain ordinary dynamic pool allocations so a caller
+    may retain an output across later invocations without aliasing a planned
+    address.  ``dynamic_alias_group_ids`` must therefore contain only terminal
+    caller-owned aliases; all schedule-managed storage remains fixed.
+    """
 
     topology.validate(selected.program)
     builder = _AdmissionScriptBuilder(
@@ -44,7 +54,19 @@ def build_fixed_layout_admission(
         selected.schedule,
         selected.simulation,
     )
-    placements, required_bytes = place_lifetimes(lifetimes)
+    dynamic_lifetimes = tuple(
+        item
+        for item in lifetimes
+        if item.alias_group_id in dynamic_alias_group_ids
+    )
+    _validate_dynamic_lifetimes(dynamic_lifetimes)
+    dynamic_lease_ids = frozenset(item.lease_id for item in dynamic_lifetimes)
+    fixed_lifetimes = tuple(
+        item for item in lifetimes if item.lease_id not in dynamic_lease_ids
+    )
+    placements, fixed_slice_bytes = place_lifetimes(fixed_lifetimes)
+    dynamic_reserve_bytes = sum(item.bytes for item in dynamic_lifetimes)
+    required_bytes = fixed_slice_bytes + dynamic_reserve_bytes
     if required_bytes > topology.pool_capacity_bytes:
         raise FixedLayoutInfeasibleError(
             required_bytes,
@@ -56,6 +78,8 @@ def build_fixed_layout_admission(
         schedule_digest=selected.schedule.digest,
         topology_digest=topology.digest,
         pool_capacity_bytes=topology.pool_capacity_bytes,
+        fixed_slice_bytes=fixed_slice_bytes,
+        dynamic_reserve_bytes=dynamic_reserve_bytes,
         required_bytes=required_bytes,
         placements=placements,
         reuse_dependencies=dependencies,
@@ -69,6 +93,7 @@ def build_fixed_layout_admission(
         action_destination_leases=tuple(
             sorted(builder.action_destination_leases.items())
         ),
+        dynamic_lease_ids=tuple(sorted(dynamic_lease_ids)),
     )
     simulator_input = _simulation_input(selected, layout)
     return FixedLayoutAdmission(
@@ -82,6 +107,17 @@ def build_fixed_layout_admission(
             admission=simulator_input,
         ),
     )
+
+
+def _validate_dynamic_lifetimes(lifetimes: tuple[LeaseLifetime, ...]) -> None:
+    """Require the dynamic exception to be a terminal task output only."""
+
+    for item in lifetimes:
+        if item.purpose is not AdmissionReplayPurpose.TASK_OUTPUT:
+            raise ValueError(
+                "only terminal caller-owned task outputs may remain dynamic; "
+                f"lease {item.lease_id} has purpose {item.purpose.value!r}"
+            )
 
 
 def _simulation_input(
