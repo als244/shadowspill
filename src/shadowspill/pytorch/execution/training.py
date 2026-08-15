@@ -38,6 +38,7 @@ from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     current_optimizer_bindings,
     opaque_optimizer_outputs,
+    restore_optimizer_checkpoint_structure,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
@@ -665,20 +666,40 @@ class TrainingExecutor:
             self._restore_optimizer_host_only(exposed)
 
     def load_optimizer_state(self, value: Mapping[str, object]) -> bool:
-        """Load ordinary optimizer state, then adopt spillable CUDA tensors."""
+        """Restore optimizer metadata and write tensor bytes into spill storage."""
 
-        self._bridge.wait_idle()
-        self.optimizer.load_state_dict(copy.deepcopy(dict(value)))
-        current = self._current_optimizer_bindings()
-        planned = self._recurrent.lowered.optimizer_objects
-        present = {item.name for item in planned if item.name in current}
-        required_created = {item.name for item in planned if item.created_on_first_step}
-        if present and present != {item.name for item in planned}:
-            missing = sorted({item.name for item in planned} - present)
-            raise RuntimeError(
-                f"optimizer checkpoint has incomplete planned state: {missing}"
+        exposed = self._expose_optimizer_state_cpu()
+        initialized = False
+        try:
+            restored = restore_optimizer_checkpoint_structure(
+                dict(self._state.model.named_parameters()),
+                self.optimizer,
+                value,
             )
-        initialized = not required_created or required_created.issubset(present)
+            tensors = {item.name: item for item in restored.tensors}
+            current = self._current_optimizer_bindings()
+            planned = self._recurrent.lowered.optimizer_objects
+            present = {item.name for item in planned if item.name in current}
+            required_created = {
+                item.name for item in planned if item.created_on_first_step
+            }
+            if present and present != {item.name for item in planned}:
+                missing = sorted({item.name for item in planned} - present)
+                raise RuntimeError(
+                    f"optimizer checkpoint has incomplete planned state: {missing}"
+                )
+            initialized = not required_created or (
+                restored.initialized and required_created.issubset(present)
+            )
+            if initialized:
+                self._write_restored_optimizer_tensors(
+                    planned,
+                    current,
+                    tensors,
+                )
+        finally:
+            self._restore_optimizer_host_only(exposed)
+
         if not initialized:
             aliases = tuple(
                 self._bridge.alias_for_object(item.object_id) for item in planned
@@ -692,48 +713,38 @@ class TrainingExecutor:
             self._optimizer_state_initialized = False
             return False
 
-        bound: list[tuple[str, torch.Tensor, int]] = []
-        for item in planned:
-            tensor = current[item.name].tensor
-            if not tensor.is_cuda:
-                if tensor.device.type != "cpu":
-                    raise RuntimeError(
-                        f"spillable optimizer state {item.name!r} restored on "
-                        f"unsupported device {tensor.device.type}"
-                    )
-                layout = _TensorLayout(
-                    tuple(tensor.shape),
-                    tuple(tensor.stride()),
-                    int(tensor.storage_offset()),
-                    tensor.dtype,
-                )
-                owner = torch.empty(
-                    tensor.untyped_storage().nbytes(),
-                    dtype=torch.uint8,
-                    device=self._state.device,
-                )
-                destination = self._view(owner, layout)
-                destination.copy_(tensor)
-                tensor.data = destination
-            alias_id = self._bridge.alias_for_object(item.object_id)
-            binding = self._bridge.promote_output(alias_id, tensor)
-            self._bridge.rebind(tensor, alias_id, binding)
-            self._state.object_store[alias_id] = tensor
-            self._state.object_tensors[item.object_id] = tensor
-            self._state.generations[alias_id] = binding.generation
-            bound.append((alias_id, tensor, binding.generation))
-        actions: list[MemoryAction] = []
-        for alias_id, tensor, generation in bound:
-            self._bridge.dematerialize(tensor, alias_id, generation)
-            actions.append(
-                MemoryAction("task_000000", alias_id, MemoryActionKind.OFFLOAD)
-            )
-        self._bridge.submit_initial_actions(
-            tuple(actions), task_number=(1 << 58) + self._invocations
-        )
-        self._bridge.wait_idle()
         self._optimizer_state_initialized = True
         return True
+
+    def _write_restored_optimizer_tensors(
+        self,
+        planned: Sequence[Any],
+        current: Mapping[str, Any],
+        tensors: Mapping[str, Any],
+    ) -> None:
+        """Copy a checkpoint into existing spill-backed optimizer aliases."""
+
+        for name, restored in tensors.items():
+            destination = restored.destination
+            source = restored.source.detach()
+            if destination.device.type != "cpu":
+                raise RuntimeError(
+                    f"optimizer checkpoint destination {name!r} is not CPU exposed"
+                )
+            destination.copy_(source.to(device="cpu"))
+        written: set[str] = set()
+        for item in planned:
+            restored = tensors.get(item.name)
+            actual = current.get(item.name)
+            if restored is None or actual is None:
+                raise RuntimeError(
+                    f"optimizer checkpoint lacks planned tensor {item.name!r}"
+                )
+            alias_id = self._bridge.alias_for_object(item.object_id)
+            if alias_id in written:
+                continue
+            self._bridge.write_spill_tensor(alias_id, actual.tensor)
+            written.add(alias_id)
 
     def restore_optimizer_cpu(self) -> None:
         """Leave live optimizer state backed by ordinary CPU storage."""

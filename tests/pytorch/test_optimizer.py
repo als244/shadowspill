@@ -7,7 +7,10 @@ import torch
 
 from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.optimizer import capture as optimizer_module
-from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.optimizer import (
+    capture_optimizer,
+    restore_optimizer_checkpoint_structure,
+)
 from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
 
 
@@ -217,6 +220,48 @@ def test_optimizer_state_container_conversion_preserves_structure() -> None:
     torch.testing.assert_close(converted["list"][0], torch.full((2,), 2.0))
     assert converted["list"][1] == 3
     assert converted["tuple"][1] == "value"
+
+
+def test_optimizer_checkpoint_restore_preserves_tensor_objects() -> None:
+    parameter, optimizer = _initialized(torch.optim.AdamW)
+    checkpoint = copy.deepcopy(optimizer.state_dict())
+    state = optimizer.state[parameter]
+    tensor_ids = {
+        name: id(value)
+        for name, value in state.items()
+        if isinstance(value, torch.Tensor)
+    }
+    for value in state.values():
+        if isinstance(value, torch.Tensor):
+            value.zero_()
+    optimizer.param_groups[0]["lr"] = 0.25
+
+    restored = restore_optimizer_checkpoint_structure(
+        {"weight": parameter}, optimizer, checkpoint
+    )
+    for item in restored.tensors:
+        item.destination.copy_(item.source)
+
+    assert restored.initialized
+    assert optimizer.param_groups[0]["lr"] == checkpoint["param_groups"][0]["lr"]
+    for name, value in optimizer.state[parameter].items():
+        if isinstance(value, torch.Tensor):
+            assert id(value) == tensor_ids[name]
+            torch.testing.assert_close(
+                value,
+                checkpoint["state"][0][name],
+            )
+
+
+def test_optimizer_checkpoint_restore_rejects_incompatible_tensor() -> None:
+    parameter, optimizer = _initialized(torch.optim.AdamW)
+    checkpoint = copy.deepcopy(optimizer.state_dict())
+    checkpoint["state"][0]["exp_avg"] = torch.zeros(17)
+
+    with pytest.raises(RuntimeError, match="incompatible geometry"):
+        restore_optimizer_checkpoint_structure(
+            {"weight": parameter}, optimizer, checkpoint
+        )
 
 
 class _CustomOptimizer(torch.optim.Optimizer):
