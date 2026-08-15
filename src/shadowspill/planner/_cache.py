@@ -223,6 +223,7 @@ class PressureFitCache:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
+            admission_topology=admission,
         )
         self._record(key, program.digest, path, "read")
         return result

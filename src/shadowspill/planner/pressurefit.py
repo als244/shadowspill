@@ -776,6 +776,7 @@ def _finish_native_pressurefit(
     options: PressureFitOptions,
     contexts: tuple[_SelectionContext | _NativeSelectionContext, ...],
     results: tuple[NativeContextResult, ...],
+    admission: AdmissionTopology | None,
 ) -> PressureFitResult:
     diagnostics: list[CandidateDiagnostic] = []
     selected: tuple[int, int, NativeContextResult] | None = None
@@ -867,6 +868,7 @@ def _finish_native_pressurefit(
         selections=context.selections,
         simulation=simulation,
         diagnostics=public_diagnostics,
+        admission_topology=admission,
     )
 
 
@@ -969,6 +971,7 @@ def _pressurefit_once(
                 selected_options,
                 tuple(context for context, _result in valid_pairs),
                 tuple(result for _context, result in valid_pairs),
+                admission,
             )
         # Rebuild the rare all-infeasible case through the Python authority so
         # its field-specific diagnostic remains unchanged.
@@ -1011,6 +1014,7 @@ def _pressurefit_once(
             selected_options,
             contexts,
             native_results,
+            admission,
         )
     specs = _candidate_specs(contexts, selected_options)
     if progress is not None:
@@ -1096,6 +1100,7 @@ def _pressurefit_once(
         selections=best.spec.context.selections,
         simulation=final_simulation,
         diagnostics=diagnostics,
+        admission_topology=admission,
     )
 
 
@@ -1177,6 +1182,7 @@ def pressurefit(
                     admission_refinements=tuple(refinements),
                     effective_object_capacity_bytes=effective_capacity,
                 ),
+                admission_topology=admission,
             )
         except PressureFitInfeasibleError as error:
             if (

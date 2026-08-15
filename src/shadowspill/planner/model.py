@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from shadowspill.ir import (
     EntrypointSpec,
@@ -16,6 +17,9 @@ from shadowspill.ir import (
     ResidencySpec,
 )
 from shadowspill.simulator import SimulationConfig, SimulationResult
+
+if TYPE_CHECKING:
+    from .admission import AdmissionTopology
 
 
 class InitialPlacement(StrEnum):
@@ -175,6 +179,7 @@ class PressureFitResult:
     selections: tuple[RecomputationSelection, ...]
     simulation: SimulationResult
     diagnostics: PressureFitDiagnostics
+    admission_topology: AdmissionTopology | None = None
 
     def to_execution_plan(
         self,

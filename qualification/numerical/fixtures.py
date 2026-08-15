@@ -39,6 +39,11 @@ def pressurefit_fixture(
         "final_residency": [item.to_dict() for item in result.final_residency],
         "simulation_config": asdict(result.simulation_config),
         "options": asdict(result.options),
+        "admission": (
+            None
+            if result.admission_topology is None
+            else result.admission_topology.to_dict()
+        ),
     }
     expected = {
         "schedule": result.schedule.to_dict(),
@@ -47,7 +52,7 @@ def pressurefit_fixture(
         "diagnostics": asdict(result.diagnostics),
     }
     return {
-        "schema": "shadowspill.pressurefit_fixture/v1",
+        "schema": "shadowspill.pressurefit_fixture/v2",
         "role": role,
         "request_digest": _digest(request),
         "expected_digest": _digest(expected),

@@ -13,6 +13,7 @@ from typing import Any
 
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import (
+    AdmissionTopology,
     InitialPlacement,
     PressureFitOptions,
     PressureFitResult,
@@ -48,6 +49,7 @@ class ReplayRequest:
     final_residency: tuple[ResidencySpec, ...]
     config: SimulationConfig
     options: PressureFitOptions
+    admission: AdmissionTopology | None
 
 
 def _request(value: dict[str, Any]) -> ReplayRequest:
@@ -77,7 +79,13 @@ def _request(value: dict[str, Any]) -> ReplayRequest:
         max_repair_attempts=options_value["max_repair_attempts"],
         workers=options_value["workers"],
     )
-    return ReplayRequest(program, initial, final, config, options)
+    admission_value = request.get("admission")
+    admission = (
+        None
+        if admission_value is None
+        else AdmissionTopology.from_dict(admission_value)
+    )
+    return ReplayRequest(program, initial, final, config, options, admission)
 
 
 def _expected_value(result: PressureFitResult) -> dict[str, Any]:
@@ -92,7 +100,10 @@ def _expected_value(result: PressureFitResult) -> dict[str, Any]:
 def _run_suite(paths: tuple[Path, ...], repeats: int) -> dict[str, Any]:
     fixtures = [json.loads(path.read_text()) for path in paths]
     for path, fixture in zip(paths, fixtures, strict=True):
-        if fixture.get("schema") != "shadowspill.pressurefit_fixture/v1":
+        if fixture.get("schema") not in {
+            "shadowspill.pressurefit_fixture/v1",
+            "shadowspill.pressurefit_fixture/v2",
+        }:
             raise ValueError(f"unsupported PressureFit fixture: {path}")
     requests = [_request(value) for value in fixtures]
     request_digests = [value["request_digest"] for value in fixtures]
@@ -107,6 +118,7 @@ def _run_suite(paths: tuple[Path, ...], repeats: int) -> dict[str, Any]:
                 final_residency=request.final_residency,
                 config=request.config,
                 options=request.options,
+                admission=request.admission,
             )
             actual = _digest(_expected_value(result))
             if actual != fixture["expected_digest"]:
