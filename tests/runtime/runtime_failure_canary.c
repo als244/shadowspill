@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
 #include <pthread.h>
@@ -15,11 +16,27 @@ typedef struct WaitingAllocation {
     ShadowSpillRuntimeStatus status;
 } WaitingAllocation;
 
+typedef struct WaitingInput {
+    ShadowSpillRuntime *runtime;
+    ShadowSpillBackendStream stream;
+    uint64_t task_id;
+    ShadowSpillRuntimeStatus status;
+} WaitingInput;
+
 static void *allocate_while_pending(void *pointer) {
     WaitingAllocation *waiting = pointer;
     ShadowSpillAllocation allocation = {0};
     waiting->status = shadowspill_allocate(
         waiting->runtime, 128U, 1U, waiting->stream, &allocation
+    );
+    return NULL;
+}
+
+static void *acquire_unpublished_fetch(void *pointer) {
+    WaitingInput *waiting = pointer;
+    ShadowSpillObjectBinding binding = {0};
+    waiting->status = shadowspill_before_execution(
+        waiting->runtime, waiting->task_id, waiting->stream, &binding, 1U
     );
     return NULL;
 }
@@ -155,6 +172,102 @@ static int worker_failure(void) {
     shadowspill_runtime_destroy(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     (void)shadowspill_mock_destroy_compute_stream(mock, other_stream);
+    shadowspill_mock_backend_destroy(mock);
+    return result;
+}
+
+static int worker_failure_wakes_readiness_waiter(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .event_delay_nanoseconds = 1000000000U,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillRuntimeConfig config = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .execution_pool_bytes = 128U,
+        .spill_pool_bytes = 128U,
+        .minimum_alignment = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .backend = shadowspill_mock_backend_vtable(mock),
+    };
+    ShadowSpillBackendStream stream = {{0U, 0U}};
+    const ShadowSpillObjectDescription object = {
+        .object_id = 19U,
+        .size_bytes = 32U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillExecutionDescription trigger = {
+        .task_id = 90U,
+        .actions = &fetch,
+        .action_count = 1U,
+    };
+    const uint64_t input = object.object_id;
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 91U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    int result = 0;
+    if (shadowspill_runtime_create(&config, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &trigger) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_admit_execution(runtime, &consumer) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            runtime, trigger.task_id, stream, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(runtime, trigger.task_id, stream) !=
+            SHADOWSPILL_RUNTIME_OK) {
+        result = -1;
+        goto done;
+    }
+
+    WaitingInput waiting = {
+        .runtime = runtime,
+        .stream = stream,
+        .task_id = consumer.task_id,
+        .status = SHADOWSPILL_RUNTIME_INVALID_STATE,
+    };
+    pthread_t waiter;
+    if (pthread_create(&waiter, NULL, acquire_unpublished_fetch, &waiting) != 0) {
+        result = -1;
+        goto done;
+    }
+    const struct timespec settle = {.tv_nsec = 10000000L};
+    (void)nanosleep(&settle, NULL);
+    shadowspill_mock_fail_next_operation(mock);
+    struct timespec deadline = {0};
+    (void)clock_gettime(CLOCK_REALTIME, &deadline);
+    ++deadline.tv_sec;
+    if (pthread_timedjoin_np(waiter, NULL, &deadline) != 0) {
+        fprintf(stderr, "readiness waiter did not observe worker failure\n");
+        return -1;
+    }
+    ShadowSpillRuntimeFailure failure = {0};
+    if (waiting.status != SHADOWSPILL_RUNTIME_BACKEND_FAILURE ||
+        shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_BACKEND_FAILURE) {
+        result = -1;
+    }
+
+done:
+    shadowspill_runtime_destroy(runtime);
+    if (stream.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    }
     shadowspill_mock_backend_destroy(mock);
     return result;
 }
@@ -406,6 +519,7 @@ int main(void) {
     REQUIRE_FAILURE_CANARY(impossible_oom());
     REQUIRE_FAILURE_CANARY(fragmented_oom());
     REQUIRE_FAILURE_CANARY(worker_failure());
+    REQUIRE_FAILURE_CANARY(worker_failure_wakes_readiness_waiter());
     REQUIRE_FAILURE_CANARY(failed_task_retirement_recovery());
     REQUIRE_FAILURE_CANARY(failed_prefetch_reports_trigger_reservation_oom());
     return EXIT_SUCCESS;

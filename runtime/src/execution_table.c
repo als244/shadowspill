@@ -6,6 +6,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+static void wait_for_object_state_change(ShadowSpillObject *object) {
+    struct timespec deadline = {0};
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+        pthread_cond_wait(&object->state_changed, &object->lock);
+        return;
+    }
+    const uint64_t nanoseconds =
+        (uint64_t)deadline.tv_nsec + UINT64_C(1000000);
+    deadline.tv_sec += (time_t)(nanoseconds / UINT64_C(1000000000));
+    deadline.tv_nsec = (long)(nanoseconds % UINT64_C(1000000000));
+    (void)pthread_cond_timedwait(
+        &object->state_changed, &object->lock, &deadline
+    );
+}
 
 char *shadowspill_copy_action_trace_label(
     const ShadowSpillRuntimeAction *action,
@@ -514,7 +530,13 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
                     &runtime->actions.count, memory_order_acquire
                 )
             );
-            pthread_cond_wait(&object->state_changed, &object->lock);
+            /*
+             * Normal readiness publication wakes this condition directly.
+             * The bounded wait additionally guarantees that a failure latched
+             * for another object is observed even when no further transition
+             * can signal this particular object.
+             */
+            wait_for_object_state_change(object);
             status = shadowspill_current_status_locked(runtime);
         }
         ShadowSpillMemoryLease *lease = shadowspill_execution_location(runtime, object)->lease;
