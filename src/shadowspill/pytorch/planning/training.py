@@ -518,6 +518,10 @@ def build_training_programs(
                     digest: measurement.workspace_extent_bytes
                     for digest, measurement in measurements_by_profile.items()
                 },
+                allocation_traces_by_compatibility={
+                    digest: measurement.allocation_trace
+                    for digest, measurement in measurements_by_profile.items()
+                },
                 output_bindings=output_bindings_for_entrypoints(
                     lowered.program.tasks,
                     lowered.entrypoints,

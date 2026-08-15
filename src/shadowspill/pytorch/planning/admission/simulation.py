@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
-from shadowspill.runtime import AdmissionReplayOperationKind
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,
@@ -15,14 +14,6 @@ from .admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
     AdmissionReplayStep,
-)
-
-_ACQUIRE_OPERATIONS = frozenset(
-    {
-        AdmissionReplayOperationKind.ACQUIRE,
-        AdmissionReplayOperationKind.RESERVE,
-        AdmissionReplayOperationKind.ACQUIRE_RESERVED,
-    }
 )
 
 
@@ -44,7 +35,7 @@ def simulation_admission_from_replay(
         )
     device_id = program.devices[0].device_id
     task_ids = {item.task_id for item in tasks}
-    task_deltas = {item.task_id: [0, 0] for item in tasks}
+    task_sequences: dict[str, list[int]] = {item.task_id: [] for item in tasks}
     action_deltas = {index: [0, 0] for index in range(len(schedule.actions))}
     initial_bytes = 0
 
@@ -67,7 +58,7 @@ def simulation_admission_from_replay(
             AdmissionReplayPurpose.TASK_OUTPUT,
             AdmissionReplayPurpose.MUTATION_REPLACEMENT,
         }:
-            _add_task_delta(task_deltas, step, delta)
+            _append_task_delta(task_sequences, step, delta)
         elif step.purpose in {
             AdmissionReplayPurpose.RELEASE,
             AdmissionReplayPurpose.EVICTION,
@@ -91,6 +82,10 @@ def simulation_admission_from_replay(
         )
         for item in replay.dependencies
     )
+    task_deltas = {
+        task_id: _task_peak_deltas(deltas)
+        for task_id, deltas in task_sequences.items()
+    }
     result = SimulationAdmission(
         initial_physical_bytes=((device_id, initial_bytes),),
         device_capacity_bytes=(
@@ -112,7 +107,7 @@ def simulation_admission_from_replay(
     return result
 
 
-def _add_task_delta(
+def _append_task_delta(
     totals: dict[str, list[int]],
     step: AdmissionReplayStep,
     delta: int,
@@ -122,10 +117,18 @@ def _add_task_delta(
         raise ValueError(
             f"{step.purpose.value} operation lacks a selected task identity"
         )
-    boundary = (
-        0 if step.operation.kind in _ACQUIRE_OPERATIONS else 1
-    )
-    totals[task_id][boundary] += delta
+    totals[task_id].append(delta)
+
+
+def _task_peak_deltas(deltas: list[int]) -> list[int]:
+    """Collapse an intra-task allocation trace to simulator boundaries."""
+
+    current = 0
+    peak = 0
+    for delta in deltas:
+        current += delta
+        peak = max(peak, current)
+    return [peak, current - peak]
 
 
 def _add_action_delta(

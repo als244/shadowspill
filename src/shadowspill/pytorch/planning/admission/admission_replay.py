@@ -22,7 +22,12 @@ from shadowspill.ir import (
     RecomputationSelection,
     TaskSpec,
 )
-from shadowspill.planner import AdmissionTopology, StorageHandoff
+from shadowspill.planner import (
+    AdmissionTopology,
+    StorageHandoff,
+    TaskAdmissionSpec,
+    TaskAllocationStepKind,
+)
 from shadowspill.runtime import (
     AdmissionReplayOperation as PoolAdmissionOperation,
 )
@@ -213,34 +218,10 @@ class _AdmissionScriptBuilder:
         replacement_aliases = set(replacements)
         workspace_bytes = admission.workspace_bytes
         self.workspace_bytes_by_task.append((task.task_id, workspace_bytes))
-        workspace_leases = tuple(
-            self._acquire(
-                extent,
-                _LeaseProvenance(
-                    AdmissionReplayPurpose.TASK_WORKSPACE,
-                    task_id=task.task_id,
-                ),
-            )
-            for extent in admission.workspace_extents
+        workspace_leases, new_alias_leases = self._acquire_task_allocations(
+            task.task_id,
+            admission,
         )
-
-        new_alias_leases: dict[str, int] = {}
-        for alias_id in admission.fresh_output_aliases:
-            new_alias_leases[alias_id] = self._acquire_alias(
-                task.task_id, alias_id, AdmissionReplayPurpose.TASK_OUTPUT
-            )
-        for alias_id in replacements:
-            if self.alias_size[alias_id] == 0:
-                continue
-            if alias_id not in self.active_aliases:
-                raise ValueError(
-                    f"task {task.task_id} replaces nonresident alias {alias_id!r}"
-                )
-            new_alias_leases[alias_id] = self._acquire_alias(
-                task.task_id,
-                alias_id,
-                AdmissionReplayPurpose.MUTATION_REPLACEMENT,
-            )
 
         # The compiled task has now completed. Workspace is task-local, while
         # returned allocations become persistent object generations.
@@ -262,6 +243,86 @@ class _AdmissionScriptBuilder:
                     )
                 self.active_aliases[alias_id] = lease_id
         self._apply_actions(task.task_id)
+
+    def _acquire_task_allocations(
+        self,
+        task_id: str,
+        admission: TaskAdmissionSpec,
+    ) -> tuple[tuple[int, ...], dict[str, int]]:
+        allocation_steps = admission.allocation_steps
+        if not allocation_steps:
+            return self._acquire_synthetic_task_allocations(task_id, admission)
+        leases_by_ordinal: dict[int, int] = {}
+        output_leases: dict[str, int] = {}
+        replacement_aliases = set(admission.replacement_aliases)
+        for step in allocation_steps:
+            ordinal = step.allocation_ordinal
+            if step.kind is TaskAllocationStepKind.ALLOCATE:
+                alias_id = step.output_alias_group_id
+                purpose = (
+                    AdmissionReplayPurpose.MUTATION_REPLACEMENT
+                    if alias_id in replacement_aliases
+                    else AdmissionReplayPurpose.TASK_OUTPUT
+                    if alias_id is not None
+                    else AdmissionReplayPurpose.TASK_WORKSPACE
+                )
+                lease_id = self._acquire(
+                    step.charged_bytes,
+                    _LeaseProvenance(
+                        purpose,
+                        task_id=task_id,
+                        alias_group_id=alias_id,
+                    ),
+                )
+                leases_by_ordinal[ordinal] = lease_id
+                if alias_id is not None:
+                    output_leases[alias_id] = lease_id
+                continue
+            lease_id = leases_by_ordinal.pop(ordinal)
+            self._release(
+                lease_id,
+                _LeaseProvenance(
+                    AdmissionReplayPurpose.TASK_WORKSPACE,
+                    task_id=task_id,
+                ),
+            )
+        return (), output_leases
+
+    def _acquire_synthetic_task_allocations(
+        self,
+        task_id: str,
+        admission: TaskAdmissionSpec,
+    ) -> tuple[tuple[int, ...], dict[str, int]]:
+        """Retain a deterministic fallback for hand-authored neutral Programs."""
+
+        workspace_leases = tuple(
+            self._acquire(
+                extent,
+                _LeaseProvenance(
+                    AdmissionReplayPurpose.TASK_WORKSPACE,
+                    task_id=task_id,
+                ),
+            )
+            for extent in admission.workspace_extents
+        )
+        output_leases: dict[str, int] = {}
+        for alias_id in admission.fresh_output_aliases:
+            output_leases[alias_id] = self._acquire_alias(
+                task_id, alias_id, AdmissionReplayPurpose.TASK_OUTPUT
+            )
+        for alias_id in admission.replacement_aliases:
+            if self.alias_size[alias_id] == 0:
+                continue
+            if alias_id not in self.active_aliases:
+                raise ValueError(
+                    f"task {task_id} replaces nonresident alias {alias_id!r}"
+                )
+            output_leases[alias_id] = self._acquire_alias(
+                task_id,
+                alias_id,
+                AdmissionReplayPurpose.MUTATION_REPLACEMENT,
+            )
+        return workspace_leases, output_leases
 
     def _validate_task_inputs(self, task: TaskSpec) -> None:
         required = dict.fromkeys(

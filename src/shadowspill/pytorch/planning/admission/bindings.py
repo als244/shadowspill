@@ -6,7 +6,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from shadowspill.ir import Program, TaskSpec
-from shadowspill.planner import AdmissionTopology, StorageHandoff, TaskAdmissionSpec
+from shadowspill.planner import (
+    AdmissionTopology,
+    StorageHandoff,
+    TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+)
+from shadowspill.pytorch.profiling import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
 
 from ...lowering.forward import TaskEntrypoint
 from ...lowering.training import TrainingTaskEntrypoint
@@ -89,6 +99,10 @@ def build_admission_topology(
     object_capacity_bytes: int,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
     workspace_extents_by_compatibility: Mapping[str, tuple[int, ...]] | None = None,
+    allocation_traces_by_compatibility: Mapping[
+        str, tuple[TaskAllocationEvent, ...]
+    ]
+    | None = None,
     alignment: int = 256,
 ) -> AdmissionTopology:
     """Normalize executable output ownership into planner admission facts."""
@@ -106,13 +120,16 @@ def build_admission_topology(
     }
     profile_by_id = {item.profile_id: item for item in program.profiles}
     profiled_extents = dict(workspace_extents_by_compatibility or {})
+    profiled_traces = dict(allocation_traces_by_compatibility or {})
     bindings_by_task = dict(output_bindings or {})
     task_specs: list[TaskAdmissionSpec] = []
     for task in program.tasks:
         bindings = bindings_by_task.get(task.task_id, ())
         replacements = tuple(
             dict.fromkeys(
-                item.alias_group_id for item in bindings if item.replacement
+                item.alias_group_id
+                for item in bindings
+                if item.replacement and alias_size[item.alias_group_id] != 0
             )
         )
         handoffs = tuple(
@@ -179,6 +196,12 @@ def build_admission_topology(
                 fresh_output_aliases=fresh_aliases,
                 replacement_aliases=replacements,
                 storage_handoffs=handoffs,
+                allocation_steps=_task_allocation_steps(
+                    task.task_id,
+                    profiled_traces.get(profile.compatibility_digest),
+                    bindings,
+                    persistent_aliases=set(fresh_aliases) | set(replacements),
+                ),
             )
         )
     topology = AdmissionTopology(
@@ -190,6 +213,78 @@ def build_admission_topology(
     )
     topology.validate(program)
     return topology
+
+
+def _task_allocation_steps(
+    task_id: str,
+    trace: tuple[TaskAllocationEvent, ...] | None,
+    bindings: tuple[TaskOutputBinding, ...],
+    *,
+    persistent_aliases: set[str],
+) -> tuple[TaskAllocationStep, ...]:
+    """Project one physical profile without making it a runtime ABI.
+
+    The profiled order is used only by offline dynamic-pool admission.  Output
+    leaves that do not become Program objects are released at task completion;
+    persistent output allocations remain live for ownership publication.
+    """
+
+    if trace is None:
+        return ()
+    alias_by_leaf = {item.leaf_index: item.alias_group_id for item in bindings}
+    live: dict[int, str | None] = {}
+    steps: list[TaskAllocationStep] = []
+    observed_aliases: set[str] = set()
+    for event in trace:
+        ordinal = event.allocation_ordinal
+        if event.operation is TaskAllocationOperation.ALLOCATE:
+            aliases = {
+                alias_by_leaf[leaf]
+                for leaf in event.output_leaf_indices
+                if leaf in alias_by_leaf
+            }
+            if len(aliases) > 1:
+                raise ValueError(
+                    f"task {task_id} allocation {ordinal} backs distinct "
+                    f"persistent aliases {sorted(aliases)!r}"
+                )
+            alias_id = next(iter(aliases), None)
+            if alias_id is not None:
+                observed_aliases.add(alias_id)
+            live[ordinal] = alias_id
+            steps.append(
+                TaskAllocationStep(
+                    ordinal,
+                    TaskAllocationStepKind.ALLOCATE,
+                    event.charged_bytes,
+                    alias_id,
+                )
+            )
+            continue
+        if ordinal not in live:
+            raise ValueError(
+                f"task {task_id} allocation trace releases unknown ordinal "
+                f"{ordinal}"
+            )
+        del live[ordinal]
+        steps.append(TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE))
+    missing = persistent_aliases - observed_aliases
+    unexpected = observed_aliases - persistent_aliases
+    if missing or unexpected:
+        raise ValueError(
+            f"task {task_id} physical output bindings disagree with Program "
+            f"ownership: missing={sorted(missing)!r}, "
+            f"unexpected={sorted(unexpected)!r}"
+        )
+    # The profiler intentionally omits logical frees for returned tensors.
+    # Unselected returned leaves are ordinary task-local allocations and end
+    # at the task boundary; declared Program outputs remain live.
+    steps.extend(
+        TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE)
+        for ordinal, alias_id in live.items()
+        if alias_id is None
+    )
+    return tuple(steps)
 
 
 def _unclassified_workspace_extents(
