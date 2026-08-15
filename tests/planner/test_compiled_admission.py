@@ -100,11 +100,83 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
     assert compiled.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
 
 
+def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(
+            AliasGroupSpec("released", "cuda_0", 64),
+            AliasGroupSpec("fetched", "cuda_0", 64),
+        ),
+        objects=(
+            ObjectSpec("released_object", "released", 0, 64),
+            ObjectSpec("fetched_object", "fetched", 0, 64),
+        ),
+        profiles=(TaskProfile("profile", 1, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "boundary",
+                compute,
+                "profile",
+                inputs=("released_object",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(
+            ResidencySpec("released", MemoryLocation.DEVICE),
+            ResidencySpec("fetched", MemoryLocation.HOST),
+        ),
+        actions=(
+            MemoryAction("boundary", "released", MemoryActionKind.RELEASE),
+            MemoryAction("boundary", "fetched", MemoryActionKind.PREFETCH),
+        ),
+        final_residency=(ResidencySpec("fetched", MemoryLocation.DEVICE),),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=64,
+        host_capacity_bytes=128,
+        fetch_bandwidth_bytes_per_second=1,
+        evict_bandwidth_bytes_per_second=1,
+    )
+    template = compile_simulation_template(program, (), config)
+    topology = AdmissionTopology(
+        "cuda_0",
+        64,
+        64,
+        1,
+        (TaskAdmissionSpec("boundary"),),
+    )
+
+    compiled = evaluate_schedule_admission(
+        template,
+        compile_admission_topology(topology, template),
+        encode_schedule(schedule, template),
+    )
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=64,
+        topology=topology,
+        alignment=1,
+    )
+    reference = simulation_admission_from_replay(
+        replay,
+        program,
+        schedule,
+        device_capacity_bytes=64,
+    )
+
+    assert compiled.decision_digest == replay.pool.decision_digest
+    assert compiled.simulation_admission == reference
+    assert compiled.peak_allocated_bytes == replay.pool.peak_allocated_bytes
+    assert compiled.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
+
+
 def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> None:
     program = training_chain_program(2)
-    object_alias = {
-        item.object_id: item.alias_group_id for item in program.objects
-    }
+    object_alias = {item.object_id: item.alias_group_id for item in program.objects}
     profiles = {item.profile_id: item for item in program.profiles}
     topology = AdmissionTopology(
         "cuda_0",
@@ -315,7 +387,10 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         item.task_id: (item.start_bytes, item.completion_bytes)
         for item in admitted.simulation_admission.task_deltas
     }
-    assert task_deltas["ordered_task"] == (16, -10)
+    # All three allocations causally reuse ranges retired by release_holes.
+    # The bytes remain physically charged across that task boundary, so the
+    # successor adds no new physical capacity at task start.
+    assert task_deltas["ordered_task"] == (0, -10)
     with pytest.raises(ValueError, match="dynamic MemoryPool admission"):
         evaluate(
             TaskAdmissionSpec(

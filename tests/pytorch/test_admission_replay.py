@@ -15,12 +15,19 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.planner import (
+    AdmissionTopology,
+    TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+)
 from shadowspill.pytorch.planning.admission.admission_replay import (
     AdmissionReplayPurpose,
     OwnershipTransitionKind,
     replay_admission,
 )
 from shadowspill.pytorch.planning.admission.bindings import TaskOutputBinding
+from shadowspill.runtime import AdmissionReplayOperationKind
 from tests.planner._examples import COMPUTE, DEVICE
 
 
@@ -83,6 +90,114 @@ def test_admission_replay_reserves_workspace_for_complete_task_interval() -> Non
     assert AdmissionReplayPurpose.TASK_OUTPUT in purposes
 
 
+def test_task_local_reuse_preserves_one_physical_lease() -> None:
+    program = _program(
+        (),
+        (),
+        (TaskSpec("task", COMPUTE, "profile"),),
+        workspace_bytes=32,
+    )
+    schedule = MemorySchedule((), (), ())
+    topology = AdmissionTopology(
+        "cuda_0",
+        32,
+        32,
+        1,
+        (
+            TaskAdmissionSpec(
+                "task",
+                workspace_extents=(32,),
+                allocation_steps=(
+                    TaskAllocationStep(
+                        0,
+                        TaskAllocationStepKind.ALLOCATE,
+                        32,
+                    ),
+                    TaskAllocationStep(0, TaskAllocationStepKind.RELEASE),
+                    TaskAllocationStep(
+                        1,
+                        TaskAllocationStepKind.ALLOCATE,
+                        32,
+                        reuses_allocation_ordinal=0,
+                    ),
+                    TaskAllocationStep(1, TaskAllocationStepKind.RELEASE),
+                ),
+            ),
+        ),
+    )
+
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=32,
+        topology=topology,
+        alignment=1,
+    )
+
+    assert replay.pool.peak_allocated_bytes == 32
+    assert replay.pool.final_allocated_bytes == 0
+    assert tuple(step.operation.kind for step in replay.operations) == (
+        AdmissionReplayOperationKind.ACQUIRE,
+        AdmissionReplayOperationKind.BEGIN_RETIREMENT,
+        AdmissionReplayOperationKind.COMPLETE_RETIREMENT,
+    )
+
+
+def test_after_task_fetch_reserves_task_released_range_causally() -> None:
+    program = _program(
+        (
+            AliasGroupSpec("released", "cuda_0", 64),
+            AliasGroupSpec("fetched", "cuda_0", 64),
+        ),
+        (
+            ObjectSpec("released_object", "released", 0, 64),
+            ObjectSpec("fetched_object", "fetched", 0, 64),
+        ),
+        (
+            TaskSpec(
+                "boundary",
+                COMPUTE,
+                "profile",
+                inputs=("released_object",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        (
+            ResidencySpec("released", MemoryLocation.DEVICE),
+            ResidencySpec("fetched", MemoryLocation.HOST),
+        ),
+        (
+            MemoryAction("boundary", "released", MemoryActionKind.RELEASE),
+            MemoryAction("boundary", "fetched", MemoryActionKind.PREFETCH),
+        ),
+        (ResidencySpec("fetched", MemoryLocation.DEVICE),),
+    )
+
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=64,
+        alignment=1,
+    )
+
+    assert replay.pool.peak_allocated_bytes == 64
+    assert replay.pool.final_allocated_bytes == 64
+    assert len(replay.dependencies) == 1
+    dependency = replay.dependencies[0]
+    assert dependency.predecessor_purpose is AdmissionReplayPurpose.RELEASE
+    assert dependency.predecessor_task_id == "boundary"
+    assert dependency.predecessor_action_index == 0
+    assert dependency.successor_action_index == 1
+    reservation = next(
+        decision
+        for step, decision in zip(replay.operations, replay.pool.decisions, strict=True)
+        if step.purpose is AdmissionReplayPurpose.FETCH_DESTINATION
+        and step.operation.kind is AdmissionReplayOperationKind.RESERVE
+    )
+    assert reservation.physical_bytes_delta == 0
+
+
 def test_admission_replay_emits_causal_eviction_to_fetch_dependency() -> None:
     program = _program(
         (AliasGroupSpec("state", "cuda_0", 96, retain_spill_copy=True),),
@@ -127,9 +242,7 @@ def test_admission_replay_emits_causal_eviction_to_fetch_dependency() -> None:
     assert dependency.successor_action_index == 1
     fetch_reservation = next(
         decision
-        for step, decision in zip(
-            replay.operations, replay.pool.decisions, strict=True
-        )
+        for step, decision in zip(replay.operations, replay.pool.decisions, strict=True)
         if step.purpose is AdmissionReplayPurpose.FETCH_DESTINATION
         and decision.requested_bytes
     )
@@ -161,9 +274,7 @@ def test_admission_replay_replaces_mutation_without_double_charging() -> None:
         program,
         schedule,
         execution_pool_bytes=144,
-        output_bindings={
-            "update": (TaskOutputBinding(0, "weight", replacement=True),)
-        },
+        output_bindings={"update": (TaskOutputBinding(0, "weight", replacement=True),)},
         alignment=1,
     )
 
@@ -172,6 +283,15 @@ def test_admission_replay_replaces_mutation_without_double_charging() -> None:
     assert replay.pool.final_allocated_bytes == 64
     assert replay.ownership_transitions[0].kind is (
         OwnershipTransitionKind.MUTATION_REPLACEMENT
+    )
+    task_retirements = {
+        step.purpose: step.operation.dependency_id
+        for step in replay.operations
+        if step.operation.kind is AdmissionReplayOperationKind.BEGIN_RETIREMENT
+    }
+    assert (
+        task_retirements[AdmissionReplayPurpose.TASK_WORKSPACE]
+        == (task_retirements[AdmissionReplayPurpose.MUTATION_REPLACEMENT])
     )
 
 
@@ -242,9 +362,7 @@ def test_admission_replay_physical_decisions_ignore_task_timing() -> None:
     )
 
     first = replay_admission(base, schedule, execution_pool_bytes=64, alignment=1)
-    second = replay_admission(
-        slower, schedule, execution_pool_bytes=64, alignment=1
-    )
+    second = replay_admission(slower, schedule, execution_pool_bytes=64, alignment=1)
 
     assert first.pool.decision_digest == second.pool.decision_digest
     assert first.pool.decisions == second.pool.decisions

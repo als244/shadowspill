@@ -137,12 +137,10 @@ def encode_schedule(
 
     return EncodedDenseSchedule(
         action_trigger_tasks=tuple(
-            simulation.task_index[item.trigger_task_id]
-            for item in schedule.actions
+            simulation.task_index[item.trigger_task_id] for item in schedule.actions
         ),
         action_aliases=tuple(
-            simulation.alias_index[item.alias_group_id]
-            for item in schedule.actions
+            simulation.alias_index[item.alias_group_id] for item in schedule.actions
         ),
         action_kinds=tuple(_ACTION_KIND[item.kind] for item in schedule.actions),
         initial_aliases=tuple(
@@ -181,12 +179,10 @@ def compile_admission_topology(
         ) from exc
     alias_index = simulation.alias_index
     fresh_rows = tuple(
-        tuple(alias_index[item] for item in task.fresh_output_aliases)
-        for task in tasks
+        tuple(alias_index[item] for item in task.fresh_output_aliases) for task in tasks
     )
     replacement_rows = tuple(
-        tuple(alias_index[item] for item in task.replacement_aliases)
-        for task in tasks
+        tuple(alias_index[item] for item in task.replacement_aliases) for task in tasks
     )
     handoff_source_rows = tuple(
         tuple(alias_index[item.source_alias_group_id] for item in task.storage_handoffs)
@@ -287,8 +283,11 @@ def _compile_allocation_rows(
         row: list[tuple[int, int, int, int]] = []
         for step in steps:
             if step.kind is TaskAllocationStepKind.ALLOCATE:
-                slot = next_slot
-                next_slot += 1
+                if step.reuses_allocation_ordinal is None:
+                    slot = next_slot
+                    next_slot += 1
+                else:
+                    slot = slot_by_ordinal[step.reuses_allocation_ordinal]
                 slot_by_ordinal[step.allocation_ordinal] = slot
             else:
                 slot = slot_by_ordinal[step.allocation_ordinal]

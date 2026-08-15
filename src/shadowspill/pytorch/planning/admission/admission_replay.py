@@ -91,8 +91,9 @@ class CausalAdmissionDependency:
     dependency_id: int
     predecessor_lease_id: int
     predecessor_task_id: str
-    predecessor_alias_group_id: str
-    predecessor_action_index: int
+    predecessor_purpose: AdmissionReplayPurpose
+    predecessor_alias_group_id: str | None
+    predecessor_action_index: int | None
     successor_lease_id: int
     successor_task_id: str | None
     successor_alias_group_id: str | None
@@ -122,12 +123,10 @@ class _LeaseProvenance:
 
 
 @dataclass(frozen=True, slots=True)
-class _PendingEviction:
+class _PendingRetirement:
     lease_id: int
     dependency_id: int
-    task_id: str
-    alias_group_id: str
-    action_index: int
+    provenance: _LeaseProvenance
 
 
 class _AdmissionScriptBuilder:
@@ -156,7 +155,8 @@ class _AdmissionScriptBuilder:
         self.ownership_transitions: list[OwnershipTransition] = []
         self.active_aliases: dict[str, int] = {}
         self.lease_provenance: dict[int, _LeaseProvenance] = {}
-        self.pending_evictions: list[_PendingEviction] = []
+        self.pending_retirements: list[_PendingRetirement] = []
+        self.task_completion_dependencies: dict[str, int] = {}
         self.handoff_releases: set[tuple[str, str]] = set()
         self.workspace_bytes_by_task: list[tuple[str, int]] = []
         self.next_lease_id = 0
@@ -167,7 +167,7 @@ class _AdmissionScriptBuilder:
     ) -> tuple[
         tuple[AdmissionReplayStep, ...],
         tuple[OwnershipTransition, ...],
-        tuple[_PendingEviction, ...],
+        tuple[_PendingRetirement, ...],
         tuple[str, ...],
         tuple[tuple[str, int], ...],
         int,
@@ -176,12 +176,12 @@ class _AdmissionScriptBuilder:
         self._acquire_initial_objects()
         for task in self.tasks:
             self._apply_task(task)
-        self._complete_pending_evictions()
+        self._complete_pending_retirements()
         self._validate_final_execution_residency()
         return (
             tuple(self.operations),
             tuple(self.ownership_transitions),
-            tuple(self.pending_evictions),
+            tuple(self.pending_retirements),
             tuple(sorted(self.active_aliases)),
             tuple(self.workspace_bytes_by_task),
             self.next_lease_id,
@@ -223,10 +223,10 @@ class _AdmissionScriptBuilder:
             admission,
         )
 
-        # The compiled task has now completed. Workspace is task-local, while
-        # returned allocations become persistent object generations.
+        # Logical frees remain physically pending behind the task-completion
+        # fence while after_task publishes objects and reserves actions.
         for workspace_lease in workspace_leases:
-            self._release(
+            self._begin_task_retirement(
                 workspace_lease,
                 _LeaseProvenance(
                     AdmissionReplayPurpose.TASK_WORKSPACE,
@@ -253,7 +253,14 @@ class _AdmissionScriptBuilder:
         if not allocation_steps:
             return self._acquire_synthetic_task_allocations(task_id, admission)
         leases_by_ordinal: dict[int, int] = {}
+        reusable_leases: dict[int, int] = {}
         output_leases: dict[str, int] = {}
+        terminal_leases: list[int] = []
+        reused_ordinals = {
+            step.reuses_allocation_ordinal
+            for step in allocation_steps
+            if step.reuses_allocation_ordinal is not None
+        }
         replacement_aliases = set(admission.replacement_aliases)
         for step in allocation_steps:
             ordinal = step.allocation_ordinal
@@ -266,27 +273,31 @@ class _AdmissionScriptBuilder:
                     if alias_id is not None
                     else AdmissionReplayPurpose.TASK_WORKSPACE
                 )
-                lease_id = self._acquire(
-                    step.charged_bytes,
-                    _LeaseProvenance(
-                        purpose,
-                        task_id=task_id,
-                        alias_group_id=alias_id,
-                    ),
+                provenance = _LeaseProvenance(
+                    purpose,
+                    task_id=task_id,
+                    alias_group_id=alias_id,
                 )
+                if step.reuses_allocation_ordinal is None:
+                    lease_id = self._acquire_task(step.charged_bytes, provenance)
+                else:
+                    lease_id = reusable_leases.pop(step.reuses_allocation_ordinal)
+                    self.lease_provenance[lease_id] = provenance
                 leases_by_ordinal[ordinal] = lease_id
                 if alias_id is not None:
                     output_leases[alias_id] = lease_id
                 continue
             lease_id = leases_by_ordinal.pop(ordinal)
-            self._release(
-                lease_id,
-                _LeaseProvenance(
-                    AdmissionReplayPurpose.TASK_WORKSPACE,
-                    task_id=task_id,
-                ),
+            if ordinal in reused_ordinals:
+                reusable_leases[ordinal] = lease_id
+            else:
+                terminal_leases.append(lease_id)
+        if reusable_leases:
+            raise ValueError(
+                f"task {task_id} allocation trace leaves unused reuse sources "
+                f"{sorted(reusable_leases)}"
             )
-        return (), output_leases
+        return tuple(terminal_leases), output_leases
 
     def _acquire_synthetic_task_allocations(
         self,
@@ -296,7 +307,7 @@ class _AdmissionScriptBuilder:
         """Retain a deterministic fallback for hand-authored neutral Programs."""
 
         workspace_leases = tuple(
-            self._acquire(
+            self._acquire_task(
                 extent,
                 _LeaseProvenance(
                     AdmissionReplayPurpose.TASK_WORKSPACE,
@@ -335,8 +346,7 @@ class _AdmissionScriptBuilder:
         missing = sorted(
             alias_id
             for alias_id in required
-            if self.alias_size[alias_id] != 0
-            and alias_id not in self.active_aliases
+            if self.alias_size[alias_id] != 0 and alias_id not in self.active_aliases
         )
         if missing:
             raise ValueError(
@@ -349,7 +359,7 @@ class _AdmissionScriptBuilder:
         alias_id: str,
         purpose: AdmissionReplayPurpose,
     ) -> int:
-        return self._acquire(
+        return self._acquire_task(
             self.alias_size[alias_id],
             _LeaseProvenance(purpose, task_id=task_id, alias_group_id=alias_id),
         )
@@ -398,7 +408,7 @@ class _AdmissionScriptBuilder:
                 continue
             old_lease = self.active_aliases[alias_id]
             new_lease = new_alias_leases[alias_id]
-            self._release(
+            self._begin_task_retirement(
                 old_lease,
                 _LeaseProvenance(
                     AdmissionReplayPurpose.MUTATION_REPLACEMENT,
@@ -425,7 +435,7 @@ class _AdmissionScriptBuilder:
                 if (task_id, alias_id) in self.handoff_releases:
                     continue
                 lease_id = self._remove_active_alias(task_id, alias_id, action)
-                self._release(
+                self._begin_task_retirement(
                     lease_id,
                     _LeaseProvenance(
                         AdmissionReplayPurpose.RELEASE,
@@ -449,13 +459,16 @@ class _AdmissionScriptBuilder:
                     dependency_id=dependency_id,
                     dependency_expected=True,
                 )
-                self.pending_evictions.append(
-                    _PendingEviction(
+                self.pending_retirements.append(
+                    _PendingRetirement(
                         lease_id,
                         dependency_id,
-                        task_id,
-                        alias_id,
-                        action_index,
+                        _LeaseProvenance(
+                            AdmissionReplayPurpose.EVICTION,
+                            task_id=task_id,
+                            alias_group_id=alias_id,
+                            action_index=action_index,
+                        ),
                     )
                 )
             else:
@@ -485,21 +498,26 @@ class _AdmissionScriptBuilder:
             return self.active_aliases.pop(alias_id)
         except KeyError as exc:
             raise ValueError(
-                f"task {task_id} {action.kind.value}s nonresident alias "
-                f"{alias_id!r}"
+                f"task {task_id} {action.kind.value}s nonresident alias {alias_id!r}"
             ) from exc
 
-    def _complete_pending_evictions(self) -> None:
-        for pending in self.pending_evictions:
+    def _complete_pending_retirements(self) -> None:
+        for pending in self.pending_retirements:
+            provenance = pending.provenance
+            completion = (
+                _LeaseProvenance(
+                    AdmissionReplayPurpose.TERMINAL_COMPLETION,
+                    task_id=provenance.task_id,
+                    alias_group_id=provenance.alias_group_id,
+                    action_index=provenance.action_index,
+                )
+                if provenance.purpose is AdmissionReplayPurpose.EVICTION
+                else provenance
+            )
             self._append(
                 pending.lease_id,
                 AdmissionReplayOperationKind.COMPLETE_RETIREMENT,
-                _LeaseProvenance(
-                    AdmissionReplayPurpose.TERMINAL_COMPLETION,
-                    task_id=pending.task_id,
-                    alias_group_id=pending.alias_group_id,
-                    action_index=pending.action_index,
-                ),
+                completion,
                 dependency_id=pending.dependency_id,
             )
 
@@ -532,8 +550,40 @@ class _AdmissionScriptBuilder:
         )
         return lease_id
 
-    def _release(self, lease_id: int, provenance: _LeaseProvenance) -> None:
-        self._append(lease_id, AdmissionReplayOperationKind.RELEASE, provenance)
+    def _acquire_task(self, bytes_: int, provenance: _LeaseProvenance) -> int:
+        """Acquire memory used immediately by the current compute stream."""
+
+        lease_id = self._new_lease_id(provenance)
+        self._append(
+            lease_id,
+            AdmissionReplayOperationKind.ACQUIRE,
+            provenance,
+            bytes_=bytes_,
+            alignment=self.alignment,
+        )
+        return lease_id
+
+    def _begin_task_retirement(
+        self,
+        lease_id: int,
+        provenance: _LeaseProvenance,
+    ) -> None:
+        task_id = provenance.task_id
+        if task_id is None:
+            raise ValueError("task retirement lacks its task identity")
+        dependency_id = self.task_completion_dependencies.get(task_id)
+        if dependency_id is None:
+            dependency_id = self._new_dependency_id()
+            self.task_completion_dependencies[task_id] = dependency_id
+        self._append(
+            lease_id,
+            AdmissionReplayOperationKind.BEGIN_RETIREMENT,
+            provenance,
+            dependency_id=dependency_id,
+        )
+        self.pending_retirements.append(
+            _PendingRetirement(lease_id, dependency_id, provenance)
+        )
 
     def _new_lease_id(self, provenance: _LeaseProvenance) -> int:
         lease_id = self.next_lease_id
@@ -617,7 +667,7 @@ def replay_admission(
     (
         annotated_operations,
         ownership_transitions,
-        pending_evictions,
+        pending_retirements,
         final_aliases,
         workspace_bytes_by_task,
         lease_count,
@@ -631,7 +681,7 @@ def replay_admission(
         dependency_count=dependency_count,
         minimum_alignment=selected_topology.minimum_alignment,
     )
-    pending_by_lease = {item.lease_id: item for item in pending_evictions}
+    pending_by_lease = {item.lease_id: item for item in pending_retirements}
     provenance_by_lease = builder.lease_provenance
     dependencies = tuple(
         _resolve_dependency(
@@ -647,6 +697,7 @@ def replay_admission(
         selections,
         annotated_operations,
         ownership_transitions,
+        selected_topology.digest,
         pool.decision_digest,
     )
     return AdmissionReplay(
@@ -663,17 +714,18 @@ def replay_admission(
 def _resolve_dependency(
     dependency: AdmissionReuseDependency,
     *,
-    pending_by_lease: Mapping[int, _PendingEviction],
+    pending_by_lease: Mapping[int, _PendingRetirement],
     provenance_by_lease: Mapping[int, _LeaseProvenance],
 ) -> CausalAdmissionDependency:
     predecessor_lease_id = dependency.predecessor_lease_id
     successor_lease_id = dependency.successor_lease_id
-    predecessor = pending_by_lease[predecessor_lease_id]
+    predecessor = pending_by_lease[predecessor_lease_id].provenance
     successor = provenance_by_lease[successor_lease_id]
     return CausalAdmissionDependency(
         dependency_id=dependency.dependency_id,
         predecessor_lease_id=predecessor_lease_id,
-        predecessor_task_id=predecessor.task_id,
+        predecessor_task_id=predecessor.task_id or "",
+        predecessor_purpose=predecessor.purpose,
         predecessor_alias_group_id=predecessor.alias_group_id,
         predecessor_action_index=predecessor.action_index,
         successor_lease_id=successor_lease_id,
@@ -690,6 +742,7 @@ def _compatibility_digest(
     selections: tuple[RecomputationSelection, ...],
     operations: tuple[AdmissionReplayStep, ...],
     transitions: tuple[OwnershipTransition, ...],
+    topology_digest: str,
     decision_digest: int,
 ) -> str:
     payload = {
@@ -723,6 +776,7 @@ def _compatibility_digest(
             }
             for item in transitions
         ],
+        "topology": topology_digest,
         "decision_digest": decision_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))

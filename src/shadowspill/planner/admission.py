@@ -37,6 +37,7 @@ class TaskAllocationStep:
     kind: TaskAllocationStepKind
     charged_bytes: int = 0
     output_alias_group_id: str | None = None
+    reuses_allocation_ordinal: int | None = None
 
     def __post_init__(self) -> None:
         if self.allocation_ordinal < 0:
@@ -48,7 +49,16 @@ class TaskAllocationStep:
                 raise ValueError("task allocation bytes must be positive")
             if self.output_alias_group_id == "":
                 raise ValueError("task allocation output alias must be non-empty")
-        elif self.charged_bytes != 0 or self.output_alias_group_id is not None:
+            if self.reuses_allocation_ordinal is not None and (
+                self.reuses_allocation_ordinal < 0
+                or self.reuses_allocation_ordinal == self.allocation_ordinal
+            ):
+                raise ValueError("task allocation reuse ordinal is invalid")
+        elif (
+            self.charged_bytes != 0
+            or self.output_alias_group_id is not None
+            or self.reuses_allocation_ordinal is not None
+        ):
             raise ValueError("task release carries allocation-only fields")
 
     def to_dict(self) -> dict[str, object]:
@@ -57,6 +67,7 @@ class TaskAllocationStep:
             "charged_bytes": self.charged_bytes,
             "kind": self.kind.value,
             "output_alias_group_id": self.output_alias_group_id,
+            "reuses_allocation_ordinal": self.reuses_allocation_ordinal,
         }
 
     @classmethod
@@ -71,12 +82,14 @@ class TaskAllocationStep:
                 data.get("kind"),
                 f"{path}.kind",
             ),
-            charged_bytes=_integer(
-                data.get("charged_bytes"), f"{path}.charged_bytes"
-            ),
+            charged_bytes=_integer(data.get("charged_bytes"), f"{path}.charged_bytes"),
             output_alias_group_id=_optional_string(
                 data.get("output_alias_group_id"),
                 f"{path}.output_alias_group_id",
+            ),
+            reuses_allocation_ordinal=_optional_integer(
+                data.get("reuses_allocation_ordinal"),
+                f"{path}.reuses_allocation_ordinal",
             ),
         )
 
@@ -166,14 +179,33 @@ class TaskAdmissionSpec:
         if not self.allocation_steps:
             return
         live: set[int] = set()
+        allocations: dict[int, TaskAllocationStep] = {}
+        retired: set[int] = set()
+        reused: set[int] = set()
         output_aliases: set[str] = set()
         for step in self.allocation_steps:
             ordinal = step.allocation_ordinal
             if step.kind is TaskAllocationStepKind.ALLOCATE:
-                if ordinal in live:
+                if ordinal in allocations:
                     raise ValueError(
                         "task allocation trace allocates one ordinal twice"
                     )
+                source = step.reuses_allocation_ordinal
+                if source is not None:
+                    if source not in retired:
+                        raise ValueError(
+                            "task allocation trace reuses a non-retired ordinal"
+                        )
+                    if source in reused:
+                        raise ValueError(
+                            "task allocation trace reuses one ordinal twice"
+                        )
+                    reused.add(source)
+                    if allocations[source].charged_bytes != step.charged_bytes:
+                        raise ValueError(
+                            "task allocation trace reuse changes charged bytes"
+                        )
+                allocations[ordinal] = step
                 live.add(ordinal)
                 if step.output_alias_group_id is not None:
                     if step.output_alias_group_id in output_aliases:
@@ -185,6 +217,7 @@ class TaskAdmissionSpec:
             if ordinal not in live:
                 raise ValueError("task allocation trace releases an unknown ordinal")
             live.remove(ordinal)
+            retired.add(ordinal)
         expected_outputs = set(self.fresh_output_aliases) | set(
             self.replacement_aliases
         )
@@ -243,9 +276,7 @@ class TaskAdmissionSpec:
                 )
             ),
             allocation_steps=tuple(
-                TaskAllocationStep.from_value(
-                    item, f"{path}.allocation_steps[{index}]"
-                )
+                TaskAllocationStep.from_value(item, f"{path}.allocation_steps[{index}]")
                 for index, item in enumerate(
                     _list(data.get("allocation_steps"), f"{path}.allocation_steps")
                 )
@@ -376,9 +407,7 @@ class AdmissionTopology:
 
 
 def _mapping(value: object, path: str) -> dict[str, object]:
-    if not isinstance(value, dict) or any(
-        not isinstance(key, str) for key in value
-    ):
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise ValueError(f"{path}: expected an object")
     return value
 
@@ -405,6 +434,12 @@ def _optional_string(value: object, path: str) -> str | None:
     if value is None:
         return None
     return _string(value, path)
+
+
+def _optional_integer(value: object, path: str) -> int | None:
+    if value is None:
+        return None
+    return _integer(value, path)
 
 
 def _integer_tuple(value: object, path: str) -> tuple[int, ...]:

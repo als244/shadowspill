@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
+from shadowspill.ir import MemorySchedule, Program, RecomputationSelection, TaskSpec
+from shadowspill.runtime import AdmissionReplayOperationKind
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,
@@ -14,6 +15,7 @@ from .admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
     AdmissionReplayStep,
+    CausalAdmissionDependency,
 )
 
 
@@ -40,12 +42,8 @@ def simulation_admission_from_replay(
     initial_bytes = 0
 
     if len(replay.operations) != len(replay.pool.decisions):
-        raise ValueError(
-            "AdmissionReplay operation and decision counts do not match"
-        )
-    for step, decision in zip(
-        replay.operations, replay.pool.decisions, strict=True
-    ):
+        raise ValueError("AdmissionReplay operation and decision counts do not match")
+    for step, decision in zip(replay.operations, replay.pool.decisions, strict=True):
         if decision.operation_index != step.operation.sequence:
             raise ValueError(
                 "AdmissionReplay decision order does not match its operations"
@@ -64,27 +62,28 @@ def simulation_admission_from_replay(
             AdmissionReplayPurpose.EVICTION,
             AdmissionReplayPurpose.FETCH_DESTINATION,
         }:
-            _add_action_delta(action_deltas, step, delta, completion=False)
+            _add_action_delta(
+                action_deltas,
+                step,
+                delta,
+                completion=(
+                    step.operation.kind
+                    is AdmissionReplayOperationKind.COMPLETE_RETIREMENT
+                ),
+            )
         elif step.purpose is AdmissionReplayPurpose.TERMINAL_COMPLETION:
             _add_action_delta(action_deltas, step, delta, completion=True)
         else:  # pragma: no cover - enum exhaustiveness guard
             raise ValueError(f"unsupported admission purpose {step.purpose!r}")
 
+    _validate_implicit_task_dependencies(replay, tasks, schedule)
     dependencies = tuple(
-        MemoryReuseDependency(
-            item.predecessor_action_index,
-            successor_action_index=item.successor_action_index,
-        )
-        if item.successor_action_index is not None
-        else MemoryReuseDependency(
-            item.predecessor_action_index,
-            successor_task_id=item.successor_task_id,
-        )
+        _simulation_dependency(item)
         for item in replay.dependencies
+        if item.predecessor_purpose is AdmissionReplayPurpose.EVICTION
     )
     task_deltas = {
-        task_id: _task_peak_deltas(deltas)
-        for task_id, deltas in task_sequences.items()
+        task_id: _task_peak_deltas(deltas) for task_id, deltas in task_sequences.items()
     }
     result = SimulationAdmission(
         initial_physical_bytes=((device_id, initial_bytes),),
@@ -105,6 +104,55 @@ def simulation_admission_from_replay(
     )
     _validate_projection(replay, result, task_ids, len(schedule.actions))
     return result
+
+
+def _validate_implicit_task_dependencies(
+    replay: AdmissionReplay,
+    tasks: tuple[TaskSpec, ...],
+    schedule: MemorySchedule,
+) -> None:
+    task_order = {task.task_id: index for index, task in enumerate(tasks)}
+    action_task_order = tuple(
+        task_order[action.trigger_task_id] for action in schedule.actions
+    )
+    for dependency in replay.dependencies:
+        if dependency.predecessor_purpose is AdmissionReplayPurpose.EVICTION:
+            continue
+        try:
+            predecessor = task_order[dependency.predecessor_task_id]
+        except KeyError as exc:
+            raise ValueError(
+                "admission dependency predecessor task is unknown"
+            ) from exc
+        if dependency.successor_action_index is not None:
+            successor = action_task_order[dependency.successor_action_index]
+        elif dependency.successor_task_id is not None:
+            successor = task_order[dependency.successor_task_id]
+        else:
+            raise ValueError("admission dependency lacks its successor")
+        if successor < predecessor:
+            raise ValueError(
+                "task-completion memory reuse points backward in execution order"
+            )
+
+
+def _simulation_dependency(
+    dependency: CausalAdmissionDependency,
+) -> MemoryReuseDependency:
+    # Keep this helper narrow: task-completion predecessors are already
+    # ordered by the compute stream and need no extra simulator edge.
+    predecessor = dependency.predecessor_action_index
+    if predecessor is None:
+        raise ValueError("simulator dependency lacks its eviction action")
+    if dependency.successor_action_index is not None:
+        return MemoryReuseDependency(
+            predecessor,
+            successor_action_index=dependency.successor_action_index,
+        )
+    successor_task = dependency.successor_task_id
+    if successor_task is None:
+        raise ValueError("simulator dependency lacks its successor")
+    return MemoryReuseDependency(predecessor, successor_task_id=successor_task)
 
 
 def _append_task_delta(
@@ -155,12 +203,10 @@ def _validate_projection(
     initial = sum(value for _, value in admission.initial_physical_bytes)
     net = initial
     net += sum(
-        item.start_bytes + item.completion_bytes
-        for item in admission.task_deltas
+        item.start_bytes + item.completion_bytes for item in admission.task_deltas
     )
     net += sum(
-        item.trigger_bytes + item.completion_bytes
-        for item in admission.action_deltas
+        item.trigger_bytes + item.completion_bytes for item in admission.action_deltas
     )
     if net != replay.pool.final_allocated_bytes:
         raise ValueError(

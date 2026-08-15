@@ -258,6 +258,7 @@ def _task_allocation_steps(
                     TaskAllocationStepKind.ALLOCATE,
                     event.charged_bytes,
                     alias_id,
+                    event.reuses_ordinal,
                 )
             )
             continue

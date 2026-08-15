@@ -19,11 +19,12 @@ typedef struct ShadowSpillAdmissionAnnotation {
     uint8_t boundary;
 } ShadowSpillAdmissionAnnotation;
 
-typedef struct ShadowSpillPendingEviction {
+typedef struct ShadowSpillPendingRetirement {
     uint64_t lease_id;
     uint64_t dependency_id;
-    uint32_t action_index;
-} ShadowSpillPendingEviction;
+    uint32_t completion_index;
+    uint8_t completion_boundary;
+} ShadowSpillPendingRetirement;
 
 typedef struct ShadowSpillCandidateAdmissionWorkspace {
     ShadowSpillAdmissionReplayOperation *operations;
@@ -38,13 +39,15 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     uint64_t *active_alias_leases;
     uint64_t *new_alias_leases;
     uint64_t *task_allocation_leases;
+    uint8_t *task_allocation_live;
     uint32_t *lease_aliases;
     uint64_t *repair_candidate_starts;
     uint64_t *repair_blocked_prefix;
     uint32_t *repair_unremovable_prefix;
     uint32_t *predecessor_actions;
+    uint32_t *predecessor_tasks;
     uint8_t *handoff_sources;
-    ShadowSpillPendingEviction *pending_evictions;
+    ShadowSpillPendingRetirement *pending_retirements;
 
     int64_t *task_start_deltas;
     int64_t *task_completion_deltas;
@@ -54,6 +57,7 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     uint32_t *reuse_successor_tasks;
     uint32_t *reuse_successor_actions;
     uint32_t action_capacity;
+    uint32_t projected_reuse_count;
     ShadowSpillSimulationDevice physical_device;
 
     ShadowSpillAdmissionReplayWorkspace *replay;
