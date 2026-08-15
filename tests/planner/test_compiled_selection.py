@@ -29,7 +29,7 @@ def test_compiled_selector_matches_python_policy_ordering() -> None:
         config=config,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
-            prefetch_rules=("latest-safe",),
+            prefetch_rules=("demand",),
             evaluate_coalesced=False,
         ),
     )

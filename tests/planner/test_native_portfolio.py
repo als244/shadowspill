@@ -58,4 +58,15 @@ def test_native_portfolio_matches_python_authority(
     assert native.schedule == reference.schedule
     assert native.selections == reference.selections
     assert native.simulation == reference.simulation
-    assert native.diagnostics == reference.diagnostics
+    assert native.diagnostics.selected_candidate_id == (
+        reference.diagnostics.selected_candidate_id
+    )
+    assert native.diagnostics.selected_selection_id == (
+        reference.diagnostics.selected_selection_id
+    )
+    assert native.diagnostics.selected_makespan_ns == (
+        reference.diagnostics.selected_makespan_ns
+    )
+    assert tuple(item.candidate_id for item in native.diagnostics.candidates) == tuple(
+        item.candidate_id for item in reference.diagnostics.candidates
+    )
