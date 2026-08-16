@@ -15,6 +15,7 @@ from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitResult,
+    PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
 )
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
@@ -85,6 +86,7 @@ from .common import (
     estimate_spill_reservation,
     fixed_execution_bytes,
     public_infeasible_plan_error,
+    public_search_exhausted_error,
     validate_budgets,
     validate_cpu_model,
     workspace_reserve,
@@ -381,6 +383,8 @@ def pressurefit_forward_program(
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
+        except PressureFitSearchExhaustedError as error:
+            raise public_search_exhausted_error(error) from error
     with timer.measure("pressurefit_simulation"):
         try:
             return resolve_fixed_layout_selection(
@@ -400,6 +404,8 @@ def pressurefit_forward_program(
             )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
+        except PressureFitSearchExhaustedError as error:
+            raise public_search_exhausted_error(error) from error
         except FixedLayoutInfeasibleError as error:
             raise AdmissionError(f"fixed slab admission failed: {error}") from error
 

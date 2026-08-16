@@ -9,7 +9,10 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.planner import PressureFitInfeasibleError
+from shadowspill.planner import (
+    PressureFitInfeasibleError,
+    PressureFitSearchExhaustedError,
+)
 from shadowspill.pytorch.profiling import (
     ProfilingResult,
     TaskMeasurement,
@@ -18,7 +21,12 @@ from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
-from ..contracts import AdmissionError, PlanInfeasibleError, PlanningError
+from ..contracts import (
+    AdmissionError,
+    PlanInfeasibleError,
+    PlanningError,
+    PlanSearchExhaustedError,
+)
 from ..runtime_adapter import PlanMemory
 
 _MIB = 1 << 20
@@ -281,6 +289,31 @@ def public_infeasible_plan_error(
     )
 
 
+def public_search_exhausted_error(
+    error: PressureFitSearchExhaustedError,
+) -> PlanSearchExhaustedError:
+    """Distinguish an evaluation ceiling from proof of plan infeasibility."""
+
+    exhausted = tuple(
+        item for item in error.diagnostics if item.status == "exhausted"
+    )
+    largest_repairs = max(
+        (item.repair_attempts for item in exhausted),
+        default=0,
+    )
+    return PlanSearchExhaustedError(
+        "\n".join(
+            (
+                "ShadowSpill planning stopped at its bounded repair ceiling",
+                f"exhausted_candidates: {len(exhausted)}",
+                f"largest_repair_count: {largest_repairs}",
+                "detail: no exhausted candidate was classified as physically "
+                "infeasible",
+            )
+        )
+    )
+
+
 def round_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
@@ -290,6 +323,7 @@ __all__ = [
     "build_simulation_config",
     "estimate_spill_reservation",
     "public_infeasible_plan_error",
+    "public_search_exhausted_error",
     "simulation_capacity",
     "validate_budgets",
     "validate_cpu_model",

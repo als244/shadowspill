@@ -11,6 +11,7 @@ from .contracts import (
     ObjectiveResult,
     PlanInfeasibleError,
     PlanningError,
+    PlanSearchExhaustedError,
     ProfilingError,
     TensorSpec,
 )
@@ -87,6 +88,7 @@ __all__ = [
     "PlanPhaseTiming",
     "PlanProfilingMetadata",
     "PlanReport",
+    "PlanSearchExhaustedError",
     "PlanStorageRoot",
     "PlanTaskStage",
     "PlanUniqueStage",

@@ -75,6 +75,10 @@ class PlanInfeasibleError(AdmissionError):
         self.capacity_bytes = capacity_bytes
 
 
+class PlanSearchExhaustedError(PlanningError):
+    """Raised when a bounded planner search stops without a proof either way."""
+
+
 class InputGuardError(ValueError):
     """Raised before mutation when runtime inputs differ from the template."""
 

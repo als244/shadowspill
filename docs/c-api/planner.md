@@ -44,7 +44,10 @@ selecting a caller-materialized candidate portfolio.
 ## Ownership and thread safety
 
 - Call `shadowspill_planner_abi_version()` before submitting records. The
-  current ABI is version 5.
+  current ABI is version 10.
+- Candidate status `SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED` means a bounded
+  monotonic repair search reached its configured ceiling. It is not proof that
+  the candidate is physically infeasible.
 - Candidate arrays, simulation programs, and every array reachable from a
   simulation program are borrowed only for the call.
 - `candidate_results` is optional caller-owned storage and, when supplied,

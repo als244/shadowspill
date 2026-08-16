@@ -9,7 +9,7 @@ from pathlib import Path
 from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 9
+ABI_VERSION = 10
 NO_INDEX = (1 << 32) - 1
 
 

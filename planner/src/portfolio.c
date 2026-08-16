@@ -1430,6 +1430,14 @@ static int add_repair_pressure(
     return 1;
 }
 
+static int simulation_failure_may_be_repairable(
+    ShadowSpillSimulationStatus status
+) {
+    return status == SHADOWSPILL_SIMULATION_INITIAL_DEVICE_CAPACITY ||
+        status == SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY ||
+        status == SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY;
+}
+
 static int admission_failure_boundary(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillDenseSchedule *schedule,
@@ -2127,6 +2135,10 @@ static int evaluate_candidate(
                 admission_error_annotation,
                 diagnostic
             );
+            if (diagnostic->repair_attempts >=
+                portfolio_options->max_repair_attempts) {
+                diagnostic->status = SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
+            }
             return 0;
         }
         if (simulation_status == SHADOWSPILL_SIMULATION_OK) {
@@ -2198,7 +2210,12 @@ static int evaluate_candidate(
                 continue;
             }
         }
-        diagnostic->status = SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+        diagnostic->status =
+            diagnostic->repair_attempts >=
+                portfolio_options->max_repair_attempts &&
+            simulation_failure_may_be_repairable(simulation_status)
+            ? SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED
+            : SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
         copy_simulation_error(diagnostic, &simulation);
         return 0;
     }

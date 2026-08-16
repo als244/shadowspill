@@ -46,6 +46,10 @@ DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
+def test_default_repair_budget_covers_deep_monotonic_repairs() -> None:
+    assert PressureFitOptions().max_repair_attempts == 64
+
+
 def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     initial, final = exact_capacity_residency()
     result = pressurefit(

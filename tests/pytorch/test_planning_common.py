@@ -7,11 +7,16 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.planner import PressureFitInfeasibleError
+from shadowspill.planner import (
+    CandidateDiagnostic,
+    PressureFitInfeasibleError,
+    PressureFitSearchExhaustedError,
+)
 from shadowspill.pytorch import (
     AdmissionError,
     PlanInfeasibleError,
     PlanningError,
+    PlanSearchExhaustedError,
     TensorSpec,
 )
 from shadowspill.pytorch.materialization import representative_cpu_inputs
@@ -20,6 +25,7 @@ from shadowspill.pytorch.planning.common import (
     PlanningTimer,
     estimate_spill_reservation,
     public_infeasible_plan_error,
+    public_search_exhausted_error,
     simulation_capacity,
     validate_budgets,
     validate_cpu_model,
@@ -110,6 +116,28 @@ def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
     assert public.capacity_bytes == 100
     assert "could not construct a feasible memory schedule" in str(public)
     assert "boundary_task: task_000017" in str(public)
+
+
+def test_pressurefit_search_exhaustion_is_not_reported_as_infeasibility() -> None:
+    internal = PressureFitSearchExhaustedError(
+        "bounded search stopped",
+        diagnostics=(
+            CandidateDiagnostic(
+                candidate_id="tight/latest-safe",
+                selection_id="selection_0",
+                status="exhausted",
+                failure_kind="repair_budget_exhausted",
+                repair_attempts=25,
+            ),
+        ),
+    )
+
+    public = public_search_exhausted_error(internal)
+
+    assert isinstance(public, PlanSearchExhaustedError)
+    assert not isinstance(public, AdmissionError)
+    assert "exhausted_candidates: 1" in str(public)
+    assert "largest_repair_count: 25" in str(public)
 
 
 def test_workspace_and_capacity_helpers_are_explicit() -> None:

@@ -101,6 +101,9 @@ specific source:
   capacity/residency constraint that prevents any valid schedule and retains
   its machine-readable fields. Irreducible task-capacity failures are detected
   by feasibility preflight before PressureFit candidate search begins;
+- `PlanSearchExhaustedError` reports that a bounded planner search stopped
+  before proving feasibility or infeasibility; it is deliberately not an
+  `AdmissionError`;
 - `PlanningError` remains the common planning base and directly reports
   non-resource signature and optimizer-contract errors; and
 - `RuntimeExecutionError` carries structured allocator diagnostics for

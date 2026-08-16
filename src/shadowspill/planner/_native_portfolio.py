@@ -175,6 +175,40 @@ def decode_candidate_diagnostic(
             failure_detail=detail,
             repair_attempts=value.repair_attempts,
         )
+    if value.status == 5:
+        if value.simulation_status == 0:
+            device_id = simulation.device_ids[value.error_device]
+            last_result = (
+                "dynamic MemoryPool admission cannot place a compatible "
+                f"range: device={device_id!r}, "
+                f"capacity={value.error_capacity_bytes}, "
+                f"used={value.error_used_bytes}, "
+                f"request={value.error_requested_bytes}, "
+                f"additional_slack={value.error_required_bytes}"
+            )
+        else:
+            last_result = simulation_failure_detail(
+                value.simulation_status,
+                time_ns=value.error_time_ns,
+                error_device=value.error_device,
+                error_location=value.error_location,
+                capacity_bytes=value.error_capacity_bytes,
+                used_bytes=value.error_used_bytes,
+                requested_bytes=value.error_requested_bytes,
+                device_ids=simulation.device_ids,
+            )
+        return CandidateDiagnostic(
+            candidate_id=value.candidate_id,
+            selection_id=selection_id,
+            status="exhausted",
+            failure_kind="repair_budget_exhausted",
+            failure_detail=(
+                "candidate repair budget exhausted after "
+                f"{value.repair_attempts} monotonic repairs; last result: "
+                f"{last_result}"
+            ),
+            repair_attempts=value.repair_attempts,
+        )
     if value.status != 2:
         raise RuntimeError(
             f"compiled PressureFit candidate {value.candidate_id!r} "

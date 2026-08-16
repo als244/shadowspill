@@ -20,6 +20,7 @@ from shadowspill.ir import (
 from shadowspill.planner import (
     AdmissionTopology,
     PressureFitOptions,
+    PressureFitSearchExhaustedError,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -548,6 +549,29 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         1,
         tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
+
+    with pytest.raises(PressureFitSearchExhaustedError) as exhausted:
+        pressurefit(
+            program,
+            initial_residency=initial,
+            config=config,
+            admission=topology,
+            options=PressureFitOptions(
+                residency_strategies=("tight-stall",),
+                prefetch_rules=("latest-safe",),
+                evaluate_coalesced=False,
+                max_repair_attempts=1,
+                workers=1,
+            ),
+        )
+    exhausted_candidates = tuple(
+        item
+        for item in exhausted.value.diagnostics
+        if item.status == "exhausted"
+    )
+    assert len(exhausted_candidates) == 1
+    assert exhausted_candidates[0].failure_kind == "repair_budget_exhausted"
+    assert exhausted_candidates[0].repair_attempts == 1
 
     result = pressurefit(
         program,

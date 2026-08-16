@@ -69,6 +69,7 @@ from .model import (
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitResult,
+    PressureFitSearchExhaustedError,
 )
 
 _ADMISSION_RESERVE_GRANULARITY_BYTES = 2 << 20
@@ -388,6 +389,23 @@ def _failure_diagnostic(
     )
 
 
+def _repair_exhausted_diagnostic(
+    spec: _CandidateSpec,
+    error: SimulationInfeasibleError,
+    repairs: int,
+) -> CandidateDiagnostic:
+    return _failure_diagnostic(
+        spec,
+        status="exhausted",
+        kind="repair_budget_exhausted",
+        detail=(
+            f"candidate repair budget exhausted after {repairs} monotonic "
+            f"repairs; last simulator result: {error}"
+        ),
+        repairs=repairs,
+    )
+
+
 def _evaluate_candidate(
     spec: _CandidateSpec,
     config: SimulationConfig,
@@ -522,6 +540,14 @@ def _evaluate_candidate(
                         repairs += 1
                         restart_reduction = True
                         break
+                elif (
+                    _delay_prefetch(facts, schedule, error) is not None
+                    or _repair_pressure(facts, error) is not None
+                ):
+                    return _CandidateOutcome(
+                        spec,
+                        _repair_exhausted_diagnostic(spec, error, repairs),
+                    )
                 return _CandidateOutcome(
                     spec,
                     _failure_diagnostic(
@@ -808,6 +834,12 @@ def _finish_native_pressurefit(
 
     if selected is None:
         frozen = tuple(diagnostics)
+        if any(item.status == "exhausted" for item in frozen):
+            raise PressureFitSearchExhaustedError(
+                "PressureFit exhausted its bounded candidate-repair budget "
+                "before proving a feasible schedule",
+                diagnostics=frozen,
+            )
         first = frozen[0] if frozen else None
         physical_slack = tuple(
             candidate.error_required_bytes
@@ -1058,6 +1090,12 @@ def _pressurefit_once(
     )
     if not valid:
         failure_diagnostics = tuple(outcome.diagnostic for outcome in outcomes)
+        if any(item.status == "exhausted" for item in failure_diagnostics):
+            raise PressureFitSearchExhaustedError(
+                "PressureFit exhausted its bounded candidate-repair budget "
+                "before proving a feasible schedule",
+                diagnostics=failure_diagnostics,
+            )
         first = failure_diagnostics[0] if failure_diagnostics else None
         raise PressureFitInfeasibleError(
             "no simulator-valid PressureFit candidate satisfied the declared "

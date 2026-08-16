@@ -15,6 +15,7 @@ from .model import (
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitResult,
+    PressureFitSearchExhaustedError,
 )
 from .pressurefit import pressurefit, validate_schedule_feasibility
 
@@ -27,6 +28,7 @@ __all__ = [
     "PressureFitInfeasibleError",
     "PressureFitOptions",
     "PressureFitResult",
+    "PressureFitSearchExhaustedError",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

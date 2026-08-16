@@ -54,7 +54,7 @@ class PressureFitOptions:
         "demand",
     )
     evaluate_coalesced: bool = True
-    max_repair_attempts: int = 16
+    max_repair_attempts: int = 64
     workers: int = 0
 
     def __post_init__(self) -> None:
@@ -166,6 +166,24 @@ class PressureFitInfeasibleError(ValueError):
         self.diagnostics = diagnostics
 
 
+class PressureFitSearchExhaustedError(RuntimeError):
+    """A bounded candidate search stopped before proving feasibility.
+
+    This is deliberately distinct from ``PressureFitInfeasibleError``.  A
+    repairable candidate that reaches its evaluation ceiling has not proved
+    that no legal schedule exists.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: tuple[CandidateDiagnostic, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
 @dataclass(frozen=True, slots=True)
 class PressureFitResult:
     """Selected logical schedule plus exact simulator evidence."""
@@ -247,4 +265,5 @@ __all__ = [
     "PressureFitInfeasibleError",
     "PressureFitOptions",
     "PressureFitResult",
+    "PressureFitSearchExhaustedError",
 ]
