@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
@@ -65,9 +67,7 @@ class ProgramCaseIdentity:
                 self.tokens_per_microbatch // self.sequence_length
             ),
             "accumulation_steps": self.accumulation_steps,
-            "tokens_per_step": (
-                self.tokens_per_microbatch * self.accumulation_steps
-            ),
+            "tokens_per_step": (self.tokens_per_microbatch * self.accumulation_steps),
         }
 
     @classmethod
@@ -141,13 +141,8 @@ def save_step_program(
     payload = program.to_json()
     artifact_digest = _text_digest(payload)
     directory = (
-        root
-        / "cases"
-        / identity.case_name
-        / identity.geometry_name
-        / program.digest
+        root / "cases" / identity.case_name / identity.geometry_name / program.digest
     )
-    directory.mkdir(parents=True, exist_ok=True)
     program_path = directory / "step_program.json"
     manifest_path = directory / "manifest.json"
     manifest = {
@@ -167,9 +162,13 @@ def save_step_program(
         payload=payload,
         manifest=manifest,
     ):
-        _atomic_text(program_path, _pretty_json(payload))
-        _atomic_json(manifest_path, manifest)
-    (directory / "evaluations").mkdir(exist_ok=True)
+        _commit_immutable_directory(
+            directory,
+            artifact_name="step_program.json",
+            payload=_pretty_json(payload),
+            manifest=manifest,
+            child_directories=("evaluations",),
+        )
     return SavedProgramCase(
         directory.resolve(), identity, program.digest, artifact_digest
     )
@@ -184,9 +183,7 @@ def load_step_program(path: Path) -> tuple[SavedProgramCase, StepProgram]:
         raise ValueError("case manifest has an unsupported schema")
     identity = ProgramCaseIdentity.from_value(manifest.get("identity"))
     artifact = _mapping(manifest.get("step_program"), "case.step_program")
-    program_path = directory / _string(
-        artifact.get("path"), "case.step_program.path"
-    )
+    program_path = directory / _string(artifact.get("path"), "case.step_program.path")
     payload = program_path.read_text()
     expected_artifact = _string(
         artifact.get("artifact_sha256"), "case.step_program.artifact_sha256"
@@ -228,17 +225,13 @@ def save_annotated_plan(
     directory = (
         case.directory
         / "evaluations"
-        / (
-            f"execution-{budgets.execution_bytes}_"
-            f"spill-{budgets.spill_bytes}"
-        )
+        / (f"execution-{budgets.execution_bytes}_spill-{budgets.spill_bytes}")
         / (
             f"fetch-{bandwidths.fetch_bytes_per_second}_"
             f"evict-{bandwidths.evict_bytes_per_second}"
         )
         / plan.digest
     )
-    directory.mkdir(parents=True, exist_ok=True)
     payload = plan.to_json()
     artifact_digest = _text_digest(payload)
     plan_path = directory / "annotated_program_plan.json"
@@ -262,8 +255,12 @@ def save_annotated_plan(
         payload=payload,
         manifest=manifest,
     ):
-        _atomic_text(plan_path, _pretty_json(payload))
-        _atomic_json(manifest_path, manifest)
+        _commit_immutable_directory(
+            directory,
+            artifact_name="annotated_program_plan.json",
+            payload=_pretty_json(payload),
+            manifest=manifest,
+        )
     return directory.resolve()
 
 
@@ -369,6 +366,44 @@ def _existing_artifact_is_identical(
             f"{artifact_path.parent}"
         )
     return True
+
+
+def _commit_immutable_directory(
+    directory: Path,
+    *,
+    artifact_name: str,
+    payload: str,
+    manifest: Mapping[str, object],
+    child_directories: tuple[str, ...] = (),
+) -> None:
+    """Publish a complete immutable artifact directory with one rename."""
+
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{directory.name}.staging-", dir=directory.parent)
+    )
+    try:
+        _atomic_text(staging / artifact_name, payload)
+        _atomic_json(staging / "manifest.json", manifest)
+        for name in child_directories:
+            (staging / name).mkdir()
+        try:
+            os.rename(staging, directory)
+        except OSError as error:
+            if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                raise
+            if not _existing_artifact_is_identical(
+                directory / artifact_name,
+                directory / "manifest.json",
+                payload=payload,
+                manifest=manifest,
+            ):
+                raise RuntimeError(
+                    "immutable artifact race was not identical"
+                ) from error
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def _mapping(value: object, path: str) -> dict[str, Any]:

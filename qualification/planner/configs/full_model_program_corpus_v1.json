@@ -1,0 +1,56 @@
+{
+  "schema": "shadowspill.program_corpus_collection/v1",
+  "name": "full-model-program-corpus-v1",
+  "seed": 20260816,
+  "expected_programs": 168,
+  "case_timeout_seconds": 3600,
+  "max_attempts": 3,
+  "geometry": {
+    "tokens_per_microbatch": [4096, 8192, 16384, 32768, 65536],
+    "sequence_lengths": [1024, 8192, 16384, 32768],
+    "accumulation_steps": [1, 2, 4, 8]
+  },
+  "models": [
+    {
+      "name": "mlops-llama3-8b",
+      "family": "llama3",
+      "implementation": "mlops",
+      "preset": "throughput",
+      "geometry": null,
+      "head_scratch_bytes": null
+    },
+    {
+      "name": "mlops-qwen35-9b",
+      "family": "qwen35",
+      "implementation": "mlops",
+      "preset": "throughput",
+      "geometry": null,
+      "head_scratch_bytes": null
+    },
+    {
+      "name": "mlops-olmoe-7b",
+      "family": "olmoe",
+      "implementation": "mlops",
+      "preset": "throughput",
+      "geometry": null,
+      "head_scratch_bytes": null
+    }
+  ],
+  "runtime": {
+    "execution_pool_capacity": "30GiB",
+    "spill_pool_capacity": "112GiB",
+    "execution_budget": "30GiB",
+    "spill_budget": "100GiB",
+    "dynamic_scratch_reserve": null,
+    "execution_device": null
+  },
+  "planning": {
+    "optimizer_ordering": "stage_interleaved",
+    "allocation_probe_seeds": 1,
+    "allocation_probe_repetitions": 2,
+    "save_plan": true,
+    "force_fresh": false,
+    "overwrite_plan": false,
+    "implementation_revision": null
+  }
+}
