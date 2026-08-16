@@ -1,5 +1,9 @@
 # Program corpus collection
 
+This is the input-building half of the planner qualification pipeline. The
+sibling `../frontier_collection/` package consumes these saved Programs without
+repeating capture, compilation, or profiling.
+
 The collector captures reusable `StepProgram` artifacts and stops before
 PressureFit. A strict JSON configuration specifies registered models, packed
 data-geometry axes, runtime capacities, and profiling behavior.
