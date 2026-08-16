@@ -275,12 +275,26 @@ class RuntimeBridge:
             dependencies=dependencies if layout.dependencies else None,
             dependency_count=len(layout.dependencies),
         )
-        self._require(
+        status = int(
             self.library.shadowspill_pytorch_admit_fixed_layout(
                 ctypes.byref(description)
-            ),
-            "admit fixed physical layout",
+            )
         )
+        if status != 0:
+            runtime = self.statistics().runtime
+            raise RuntimeExecutionError(
+                "admit fixed physical layout failed: "
+                f"status={status}, requested_slice={layout.slice_bytes}, "
+                f"allocated={int(runtime.allocated_bytes)}, "
+                f"free={int(runtime.free_bytes)}, "
+                f"free_prefix={int(runtime.free_prefix_bytes)}, "
+                "largest_free_range="
+                f"{int(runtime.largest_free_range_bytes)}, "
+                "external_fragmentation="
+                f"{int(runtime.external_fragmentation_bytes)}, "
+                f"live_allocations={int(runtime.live_allocations)}, "
+                f"pool_capacity={int(runtime.execution_pool_bytes)}"
+            )
         self._fixed_layout_installed = True
 
     def admit_initial_actions(

@@ -44,6 +44,11 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
 )
+from shadowspill.pytorch.runtime_adapter.failures import (
+    allocator_oom_error,
+    generic_runtime_error,
+    read_allocator_failure,
+)
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
@@ -1093,6 +1098,15 @@ class TrainingExecutor:
                 replacement_aliases=processed.replacement_aliases,
             )
         except RuntimeError as error:
+            diagnostics = read_allocator_failure(
+                self._bridge.library,
+                "after_task storage publication",
+                task=record.identity,
+            )
+            if diagnostics is not None:
+                if diagnostics.is_allocator_oom:
+                    raise allocator_oom_error(diagnostics) from error
+                raise generic_runtime_error(diagnostics) from error
             raise RuntimeError(
                 "after_task storage publication failed for "
                 f"execution_{record.execution_ordinal:06d} "
