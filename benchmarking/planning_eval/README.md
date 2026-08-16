@@ -40,6 +40,14 @@ retry. The controller advances to the next point/Program and preserves the
 failure evidence. Use `--resume` only when intentionally continuing an existing
 baseline.
 
+Resume uses the same launch command plus `--resume`. It locates the exact
+incomplete baseline from the config and corpus identities, validates every
+terminal point, and starts at the first pending point. If the repository
+revision changed, automatic resume is allowed only for a narrow, recorded set
+of controller/journaling/summary changes; any planner, runtime, simulator, or
+planner-input change is rejected. Resume commands and source compatibility are
+appended to `resume-commands.log` and `resume-history.jsonl`.
+
 ## Result layout
 
 ```text

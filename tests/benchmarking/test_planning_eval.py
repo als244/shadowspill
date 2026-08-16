@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmarking.planning_eval.cli import _find_resume_baseline
 from benchmarking.planning_eval.config import (
     BandwidthScale,
     FrontierConfig,
@@ -330,3 +331,50 @@ def test_worker_output_is_streamed_to_worker_main_log_and_stdout(
     assert "[1/1] example | POINT START point=one" in captured.out
     assert "[1/1] example | POINT SUCCESS point=one" in captured.out
     assert "\n\n[1/1] example | POINT SUCCESS point=one" in captured.out
+
+
+def test_resume_discovers_one_compatible_incomplete_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "results"
+    prior = output / "frontier__old__clean__cfg-config"
+    prior.mkdir(parents=True)
+    atomic_json(
+        prior / "manifest.json",
+        {
+            "config_digest": "config",
+            "corpus": {"manifest_digest": "corpus"},
+            "repository": {"head": "a" * 40, "dirty": False},
+        },
+    )
+    atomic_json(prior / "summary.json", {"pending_points": 10})
+    expected = {
+        "recorded_head": "a" * 40,
+        "resume_head": "b" * 40,
+        "changed_files": ["benchmarking/planning_eval/summary.py"],
+        "classification": "harness_only",
+    }
+    monkeypatch.setattr(
+        "benchmarking.planning_eval.cli.compatible_resume_provenance",
+        lambda _current, _recorded: expected,
+    )
+    provenance = RepositoryProvenance(
+        _REPOSITORY,
+        "b" * 40,
+        "",
+        "",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    )
+
+    path, compatibility = _find_resume_baseline(
+        output,
+        baseline_id="frontier__new__clean__cfg-config",
+        config_digest="config",
+        corpus_digest="corpus",
+        provenance=provenance,
+        enabled=True,
+    )
+
+    assert path == prior
+    assert compatibility == expected

@@ -37,6 +37,48 @@ class BaselinePaths:
     patch_path: Path
 
     @classmethod
+    def open_existing(
+        cls,
+        directory: Path,
+        *,
+        config: FrontierConfig,
+        corpus_digest: str,
+    ) -> BaselinePaths:
+        """Open and validate one immutable baseline selected for resume."""
+
+        result = cls._from_directory(directory.expanduser().resolve())
+        if not result.directory.is_dir():
+            raise ValueError(f"resume baseline does not exist: {result.directory}")
+        if _canonical(read_object(result.config_path)) != _canonical(config.to_dict()):
+            raise ValueError("resume baseline configuration changed")
+        manifest = read_object(result.manifest_path)
+        if manifest.get("baseline_id") != result.directory.name:
+            raise ValueError("resume baseline identity is invalid")
+        if manifest.get("config_digest") != config.digest:
+            raise ValueError("resume baseline config digest changed")
+        corpus = manifest.get("corpus")
+        if (
+            not isinstance(corpus, dict)
+            or corpus.get("manifest_digest") != corpus_digest
+        ):
+            raise ValueError("resume baseline corpus digest changed")
+        return result
+
+    @classmethod
+    def _from_directory(cls, directory: Path) -> BaselinePaths:
+        return cls(
+            directory=directory,
+            cases_directory=directory / "cases",
+            config_path=directory / "config.json",
+            manifest_path=directory / "manifest.json",
+            summary_path=directory / "summary.json",
+            csv_path=directory / "frontier.csv",
+            jsonl_path=directory / "frontier.jsonl",
+            log_path=directory / "collection.log",
+            patch_path=directory / "planner.patch",
+        )
+
+    @classmethod
     def initialize(
         cls,
         output_root: Path,
@@ -49,17 +91,7 @@ class BaselinePaths:
         cases: tuple[CorpusProgramCase, ...],
     ) -> BaselinePaths:
         directory = output_root.expanduser().resolve() / baseline_id
-        result = cls(
-            directory=directory,
-            cases_directory=directory / "cases",
-            config_path=directory / "config.json",
-            manifest_path=directory / "manifest.json",
-            summary_path=directory / "summary.json",
-            csv_path=directory / "frontier.csv",
-            jsonl_path=directory / "frontier.jsonl",
-            log_path=directory / "collection.log",
-            patch_path=directory / "planner.patch",
-        )
+        result = cls._from_directory(directory)
         result.cases_directory.mkdir(parents=True, exist_ok=True)
         manifest = {
             "schema": _BASELINE_SCHEMA,

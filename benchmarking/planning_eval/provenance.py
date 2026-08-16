@@ -10,6 +10,19 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+_HARNESS_ONLY_RESUME_PATHS = frozenset(
+    {
+        "benchmarking/planning_eval/README.md",
+        "benchmarking/planning_eval/cli.py",
+        "benchmarking/planning_eval/controller.py",
+        "benchmarking/planning_eval/process.py",
+        "benchmarking/planning_eval/provenance.py",
+        "benchmarking/planning_eval/storage.py",
+        "benchmarking/planning_eval/summary.py",
+        "tests/benchmarking/test_planning_eval.py",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RepositoryProvenance:
@@ -68,6 +81,50 @@ def environment_provenance() -> dict[str, object]:
     }
 
 
+def compatible_resume_provenance(
+    current: RepositoryProvenance,
+    recorded: object,
+) -> dict[str, object]:
+    """Prove that an older baseline differs only in orchestration evidence."""
+
+    if not isinstance(recorded, dict):
+        raise ValueError("baseline repository provenance is invalid")
+    previous_head = recorded.get("head")
+    previous_dirty = recorded.get("dirty")
+    if not isinstance(previous_head, str) or len(previous_head) != 40:
+        raise ValueError("baseline repository head is invalid")
+    if previous_dirty is not False:
+        raise ValueError("automatic cross-revision resume requires a clean baseline")
+    if current.dirty:
+        raise ValueError("automatic cross-revision resume requires a clean worktree")
+    if not _is_ancestor(current.repository_root, previous_head, current.head):
+        raise ValueError("baseline revision is not an ancestor of the current revision")
+    changed = tuple(
+        sorted(
+            item
+            for item in _git(
+                current.repository_root,
+                "diff",
+                "--name-only",
+                f"{previous_head}..{current.head}",
+            ).splitlines()
+            if item
+        )
+    )
+    unsafe = tuple(item for item in changed if item not in _HARNESS_ONLY_RESUME_PATHS)
+    if unsafe:
+        raise ValueError(
+            "planner-affecting files changed since the baseline: "
+            + ", ".join(unsafe)
+        )
+    return {
+        "recorded_head": previous_head,
+        "resume_head": current.head,
+        "changed_files": list(changed),
+        "classification": "harness_only",
+    }
+
+
 def _git(root: Path, *arguments: str) -> str:
     completed = subprocess.run(
         ("git", *arguments),
@@ -77,6 +134,17 @@ def _git(root: Path, *arguments: str) -> str:
         text=True,
     )
     return completed.stdout
+
+
+def _is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    completed = subprocess.run(
+        ("git", "merge-base", "--is-ancestor", ancestor, descendant),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0
 
 
 def _reject_untracked_runtime_sources(status: str) -> None:
@@ -96,5 +164,6 @@ def _reject_untracked_runtime_sources(status: str) -> None:
 __all__ = [
     "RepositoryProvenance",
     "capture_repository_provenance",
+    "compatible_resume_provenance",
     "environment_provenance",
 ]

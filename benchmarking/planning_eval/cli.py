@@ -11,13 +11,23 @@ from pathlib import Path
 
 from .config import load_frontier_config
 from .controller import ControllerOptions, run_frontier_collection
-from .provenance import capture_repository_provenance
+from .provenance import (
+    RepositoryProvenance,
+    capture_repository_provenance,
+    compatible_resume_provenance,
+)
 from .source import (
     CorpusProgramCase,
     corpus_manifest_digest,
     discover_program_cases,
 )
-from .storage import BaselinePaths, atomic_text
+from .storage import (
+    BaselinePaths,
+    append_log,
+    atomic_text,
+    read_object,
+    utc_now,
+)
 
 
 def main() -> int:
@@ -36,11 +46,22 @@ def main() -> int:
         limit=arguments.limit,
     )
     provenance = capture_repository_provenance(repository_root)
+    corpus_digest = corpus_manifest_digest(cases)
     baseline_id = provenance.baseline_id(config.name, config.digest)
+    resume_directory, resume_provenance = _find_resume_baseline(
+        arguments.output_dir,
+        baseline_id=baseline_id,
+        config_digest=config.digest,
+        corpus_digest=corpus_digest,
+        provenance=provenance,
+        enabled=arguments.resume,
+    )
+    if resume_directory is not None:
+        baseline_id = resume_directory.name
     matrix = {
         "baseline_id": baseline_id,
         "config_digest": config.digest,
-        "corpus_manifest_digest": corpus_manifest_digest(cases),
+        "corpus_manifest_digest": corpus_digest,
         "total_programs": len(cases),
         "selected_programs": len(selected),
         "points_per_program": config.expected_points_per_program,
@@ -48,19 +69,29 @@ def main() -> int:
         "selected_points": len(selected) * config.expected_points_per_program,
         "global_transfer_bandwidths": config.transfer_bandwidths.to_dict(),
         "selected_case_ids": [case.case_id for case in selected],
+        "resume": arguments.resume,
+        "resume_provenance": resume_provenance,
     }
     print(json.dumps(matrix, indent=2, sort_keys=True), flush=True)
     if arguments.dry_run:
         return 0
-    paths = BaselinePaths.initialize(
-        arguments.output_dir,
-        baseline_id=baseline_id,
-        config=config,
-        provenance=provenance,
-        corpus_root=arguments.corpus_dir,
-        corpus_digest=corpus_manifest_digest(cases),
-        cases=cases,
-    )
+    if resume_directory is None:
+        paths = BaselinePaths.initialize(
+            arguments.output_dir,
+            baseline_id=baseline_id,
+            config=config,
+            provenance=provenance,
+            corpus_root=arguments.corpus_dir,
+            corpus_digest=corpus_digest,
+            cases=cases,
+        )
+    else:
+        paths = BaselinePaths.open_existing(
+            resume_directory,
+            config=config,
+            corpus_digest=corpus_digest,
+        )
+        _record_resume(paths, provenance, resume_provenance)
     launch_path = paths.directory / "launch-command.txt"
     if not launch_path.exists():
         atomic_text(
@@ -154,6 +185,98 @@ def _select_cases(
     if not selected:
         raise ValueError("no Program cases remain after filtering")
     return selected
+
+
+def _find_resume_baseline(
+    output_root: Path,
+    *,
+    baseline_id: str,
+    config_digest: str,
+    corpus_digest: str,
+    provenance: RepositoryProvenance,
+    enabled: bool,
+) -> tuple[Path | None, dict[str, object] | None]:
+    if not enabled:
+        return None, None
+    output = output_root.expanduser().resolve()
+    exact = output / baseline_id
+    if exact.is_dir():
+        return exact, {
+            "recorded_head": provenance.head,
+            "resume_head": provenance.head,
+            "changed_files": [],
+            "classification": "exact_source",
+        }
+    matches: list[tuple[Path, dict[str, object]]] = []
+    rejected: list[str] = []
+    for directory in sorted(output.glob("*")):
+        manifest_path = directory / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+        manifest = read_object(manifest_path)
+        corpus = manifest.get("corpus")
+        if manifest.get("config_digest") != config_digest:
+            continue
+        if (
+            not isinstance(corpus, dict)
+            or corpus.get("manifest_digest") != corpus_digest
+        ):
+            continue
+        summary_path = directory / "summary.json"
+        if summary_path.is_file():
+            pending = read_object(summary_path).get("pending_points")
+            if pending == 0:
+                continue
+        try:
+            compatibility = compatible_resume_provenance(
+                provenance,
+                manifest.get("repository"),
+            )
+        except ValueError as error:
+            rejected.append(f"{directory.name}: {error}")
+        else:
+            matches.append((directory, compatibility))
+    if len(matches) > 1:
+        raise ValueError(
+            "--resume matched multiple compatible baselines: "
+            + ", ".join(path.name for path, _ in matches)
+        )
+    if matches:
+        return matches[0]
+    if rejected:
+        raise ValueError(
+            "--resume found matching but source-incompatible baselines: "
+            + "; ".join(rejected)
+        )
+    return None, None
+
+
+def _record_resume(
+    paths: BaselinePaths,
+    provenance: RepositoryProvenance,
+    compatibility: dict[str, object] | None,
+) -> None:
+    command = shlex.join(
+        [
+            sys.executable,
+            "-m",
+            "benchmarking.planning_eval.evaluate",
+            *sys.argv[1:],
+        ]
+    )
+    record = {
+        "schema": "shadowspill.pressurefit_frontier_resume/v1",
+        "started_at": utc_now(),
+        "baseline_id": paths.directory.name,
+        "repository": provenance.to_dict(),
+        "compatibility": compatibility,
+        "command": command,
+    }
+    append_log(
+        paths.directory / "resume-history.jsonl",
+        json.dumps(record, sort_keys=True, separators=(",", ":")),
+    )
+    append_log(paths.directory / "resume-commands.log", command)
 
 
 __all__ = ["main"]
