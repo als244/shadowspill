@@ -27,5 +27,12 @@ compile_commands.json
 
 # Qualification output is reproducible and intentionally local.
 /qualification/results/
+
+# Benchmark inputs, compiler caches, and evaluation outputs are reproducible
+# local data. Their layouts and launch configurations remain tracked.
+/benchmarking/datasets/input_programs/
+/benchmarking/program_collection/planning_caches/
+/benchmarking/program_collection/results/
+/benchmarking/planning_eval/results/
 *.nsys-rep
 *.sqlite

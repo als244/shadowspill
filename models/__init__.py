@@ -1,1 +1,1 @@
-"""Reference model families used only for ShadowSpill qualification."""
+"""Reference model families used by ShadowSpill tests and benchmarks."""

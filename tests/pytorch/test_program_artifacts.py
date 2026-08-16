@@ -6,11 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from qualification.planner.corpus import (
-    ProgramCaseIdentity,
+from benchmarking.planning_eval.plan_artifacts import (
     load_annotated_plan,
-    load_step_program,
     save_annotated_plan,
+)
+from benchmarking.program_collection.corpus import (
+    ProgramCaseIdentity,
+    load_step_program,
     save_step_program,
 )
 from shadowspill.ir import (
@@ -212,17 +214,31 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
         planning_cachedir=tmp_path / "planning-cache",
         verbose=False,
     )
-    selection_directory = save_annotated_plan(loaded_case, selected)
+    selection_directory = save_annotated_plan(
+        loaded_case,
+        selected,
+        output_root=tmp_path / "evaluations",
+    )
     restored = load_annotated_plan(selection_directory)
+    external_directory = save_annotated_plan(
+        loaded_case,
+        selected,
+        step_program=loaded_program,
+        output_root=tmp_path / "external-evaluations",
+    )
+    external = load_annotated_plan(external_directory)
     repeated_directory = save_annotated_plan(
         loaded_case,
         replace(selected, wall_time_ns=selected.wall_time_ns + 1),
         step_program=loaded_program,
+        output_root=tmp_path / "evaluations",
     )
     repeated = load_annotated_plan(repeated_directory)
 
     assert loaded_program.digest == step_program.digest
     assert restored.digest == selected.digest
+    assert external.digest == selected.digest
+    assert tmp_path / "external-evaluations" in external_directory.parents
     assert repeated.digest == selected.digest
     assert repeated.wall_time_ns == selected.wall_time_ns + 1
     assert repeated_directory != selection_directory
