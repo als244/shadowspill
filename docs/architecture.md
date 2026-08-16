@@ -75,7 +75,18 @@ stateful planning coordinator:
 
 ```text
 pytorch/
-├── api.py             public plan_forward()/plan_step() orchestration
+├── api.py             public callable and reusable-Program orchestration
+├── program.py         small public reusable-artifact export surface
+├── program_inputs.py  budgets, bandwidths, and PressureFitProgram
+├── step_program.py    complete reusable pre-PressureFit artifact
+├── annotated_plan.py  selected schedule/admission/simulation artifact
+├── program_serialization/ strict, format-specific artifact serialization
+│   ├── common.py             canonical JSON and validation primitives
+│   ├── simulation_config.py  simulator configuration
+│   ├── simulation_admission.py physical capacity and reuse dependencies
+│   ├── simulation_result.py simulator intervals, peaks, and timelines
+│   ├── pressurefit.py        planner options and selection diagnostics
+│   └── physical_layout.py    fixed-layout certificate decoding
 ├── callables.py       lifecycle-owning planned callable objects
 ├── contracts.py       public errors and input/objective value contracts
 ├── guards.py          fixed-shape input signature validation
@@ -130,6 +141,7 @@ pytorch/planning/
 ├── artifacts.py   immutable values passed between planning phases
 ├── forward.py     forward capture → profile → Program → PressureFit composition
 ├── training.py    training capture → profile → Program → PressureFit composition
+├── program_selection.py saved Program → PressureFit → physical certificate
 ├── repositories.py typed artifact-repository construction
 ├── admission/
 │   ├── physical.py physical-cap checks and pool sealing

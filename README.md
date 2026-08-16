@@ -62,7 +62,7 @@ train_step = plan_step(
     runtime=runtime,
     execution="device",
     spill="spill",
-    planning_cachedir="/mnt/planning-cache/shadowspill",
+    planning_cachedir="/local-fast-storage/shadowspill-cache",
     profiling_metadata=[
         {"sequence_lengths": [4096]},
         {"sequence_lengths": [512] * 8},

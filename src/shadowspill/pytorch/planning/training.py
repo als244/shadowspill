@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -62,6 +63,7 @@ from shadowspill.pytorch.state.optimizer import (
     release_optimizer_state_from_plan,
     relocate_optimizer_state_for_plan,
 )
+from shadowspill.simulator import SimulationConfig
 
 from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
@@ -71,7 +73,7 @@ from ..contracts import (
     ObjectiveResult,
     PlanningError,
 )
-from ..diagnostics import PlanReport
+from ..diagnostics import PlanProfilingMetadata, PlanReport
 from ..execution import TrainingExecutor
 from ..graph_pairs import (
     PartitionedTrainingCapture,
@@ -90,6 +92,7 @@ from ..materialization import representative_cpu_inputs
 from ..partition import (
     PartitionSpec,
 )
+from ..program import PressureFitProgram, StepProgram
 from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
 from .admission import (
     FixedLayoutInfeasibleError,
@@ -352,6 +355,7 @@ def materialize_training_state(
         return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
     except BaseException as error:
         if state is not None:
+
             def rollback_partial_materialization() -> None:
                 _restore_training_ownership(
                     model,
@@ -879,9 +883,7 @@ def admit_training_plan(
                 ),
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None
-                    or bool(
-                        materialized.optimizer_capture.preinitialized_state_names
-                    )
+                    or bool(materialized.optimizer_capture.preinitialized_state_names)
                 ),
                 optimizer_state_was_lazy=bool(
                     materialized.optimizer_capture.created_state_names
@@ -1148,6 +1150,243 @@ def _rollback_training_failure(
     raise error
 
 
+def make_training_program(
+    model: nn.Module,
+    *,
+    objective: Callable[..., torch.Tensor | ObjectiveResult],
+    opt: Callable[[Any], torch.optim.Optimizer],
+    example_inputs: Sequence[Sequence[Any]],
+    memory: PlanMemory,
+    partition: PartitionSpec,
+    optimizer_ordering: Literal["stage_interleaved", "tail"],
+    verbose: bool,
+    planning_cache: PlanningCache,
+    profiling_metadata: Sequence[object] | None,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
+) -> StepProgram:
+    """Build and release one self-contained pre-PressureFit step artifact."""
+
+    started = time.perf_counter_ns()
+    timer = PlanningTimer(verbose=verbose)
+    artifacts = open_artifact_repositories(planning_cache)
+    captured = capture_training_graphs(
+        model,
+        objective=objective,
+        opt=opt,
+        example_inputs=example_inputs,
+        memory=memory,
+        partition=partition,
+        profiling_metadata=profiling_metadata,
+        artifact_cache=artifacts,
+        timer=timer,
+    )
+    materialized = materialize_training_state(
+        model,
+        captured,
+        opt=opt,
+        runtime=memory.runtime,
+        spill_pool=memory.spill.name,
+        timer=timer,
+    )
+    try:
+        profiled = profile_training_tasks(
+            captured,
+            materialized,
+            allocation_probe_seeds=allocation_probe_seeds,
+            allocation_probe_repetitions=allocation_probe_repetitions,
+            artifact_cache=artifacts,
+            timer=timer,
+        )
+        captured = replace(captured, partitioned=profiled.partitioned)
+        programs = build_training_programs(
+            captured,
+            materialized,
+            profiled,
+            memory=memory,
+            optimizer_ordering=optimizer_ordering,
+            timer=timer,
+        )
+        _release_program_build_executables(profiled, captured.installed, timer)
+        result = _public_step_program(
+            captured,
+            profiled,
+            programs,
+            memory=memory,
+            optimizer_ordering=optimizer_ordering,
+            artifact_cache=artifacts,
+            timer=timer,
+            started=started,
+        )
+    except BaseException as error:
+        _rollback_training_failure(
+            memory.runtime,
+            error,
+            lambda: rollback_training_materialization(model, materialized),
+            operation="build training Program",
+        )
+    try:
+        rollback_training_materialization(model, materialized)
+    except BaseException as error:
+        _rollback_training_failure(
+            memory.runtime,
+            error,
+            lambda: None,
+            operation="release training Program build state",
+        )
+    return result
+
+
+def _release_program_build_executables(
+    profiled: TrainingProfileArtifacts,
+    installed: InstalledAllocator,
+    timer: PlanningTimer,
+) -> None:
+    """Release profiler-owned callables before returning framework-neutral IR."""
+
+    with timer.measure("compilation"):
+        profiled.profiler.discard_compiled_tasks()
+        installed.library.shadowspill_pytorch_allocator_wait_idle()
+        validate_dynamic_execution_reservation(
+            installed,
+            reserved_bytes=(
+                installed.fixed_execution_bytes + profiled.profiles.fixed_slab_bytes
+            ),
+        )
+    timer.attribute_compilation_and_profiling(profiled.profiler)
+
+
+def _public_step_program(
+    captured: TrainingCaptureArtifacts,
+    profiled: TrainingProfileArtifacts,
+    programs: TrainingProgramArtifacts,
+    *,
+    memory: PlanMemory,
+    optimizer_ordering: str,
+    artifact_cache: PlanningArtifactRepositories,
+    timer: PlanningTimer,
+    started: int,
+) -> StepProgram:
+    """Archive Programs and publish only stable, serializable planning facts."""
+
+    with timer.measure("program_archival"):
+        artifact_cache.store.archive_program(programs.recurrent.program)
+        if programs.initial.program.digest != programs.recurrent.program.digest:
+            artifact_cache.store.archive_program(programs.initial.program)
+    scratch_reserve = dynamic_scratch_reserve_bytes(
+        programs.measurements_by_profile,
+        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
+    )
+    recurrent = _pressurefit_program_artifact(
+        "recurrent",
+        programs.recurrent,
+        programs.recurrent_admission,
+        programs.simulation_config,
+        source_execution_budget_bytes=memory.execution_budget,
+        maximum_execution_budget_bytes=(
+            memory.execution.physical_capacity or memory.execution.capacity
+        ),
+        maximum_spill_budget_bytes=memory.spill.capacity,
+        dynamic_scratch_reserve_bytes_=scratch_reserve,
+    )
+    needs_initial = any(
+        item.created_on_first_step for item in programs.initial.optimizer_objects
+    )
+    initial = (
+        _pressurefit_program_artifact(
+            "initial",
+            programs.initial,
+            programs.initial_admission,
+            programs.simulation_config,
+            source_execution_budget_bytes=memory.execution_budget,
+            maximum_execution_budget_bytes=(
+                memory.execution.physical_capacity or memory.execution.capacity
+            ),
+            maximum_spill_budget_bytes=memory.spill.capacity,
+            dynamic_scratch_reserve_bytes_=scratch_reserve,
+        )
+        if needs_initial
+        else None
+    )
+    elapsed = time.perf_counter_ns() - started
+    return StepProgram(
+        recurrent=recurrent,
+        initial=initial,
+        optimizer_ordering=optimizer_ordering,
+        signature_digests=tuple(item.digest for item in captured.signatures),
+        profiling_metadata=tuple(
+            PlanProfilingMetadata(index, item.digest, item.canonical_json)
+            for index, item in enumerate(captured.workloads)
+        ),
+        phase_timings_ns=_program_phase_timings(timer, elapsed),
+        cache_directories=artifact_cache.store.diagnostics(),
+        cache_artifacts=cache_artifacts(artifact_cache.store),
+        transfer_capabilities_json=json.dumps(
+            memory.transfers.as_dict(), sort_keys=True, separators=(",", ":")
+        ),
+        unique_profile_count=profiled.profiles.unique_keys,
+        captured_stage_count=sum(len(item.stages) for item in captured.partitioned),
+    )
+
+
+def _pressurefit_program_artifact(
+    role: Literal["initial", "recurrent"],
+    lowered: LoweredTrainingProgram,
+    admission: AdmissionTopology,
+    simulation_config: SimulationConfig,
+    *,
+    source_execution_budget_bytes: int,
+    maximum_execution_budget_bytes: int,
+    maximum_spill_budget_bytes: int,
+    dynamic_scratch_reserve_bytes_: int,
+) -> PressureFitProgram:
+    device = simulation_config.devices[0]
+    fixed_bytes = source_execution_budget_bytes - admission.pool_capacity_bytes
+    object_reserve = admission.pool_capacity_bytes - device.capacity_bytes
+    return PressureFitProgram(
+        role=role,
+        program=lowered.program,
+        initial_residency=lowered.initial_residency,
+        final_residency=lowered.final_residency,
+        simulation_config=simulation_config,
+        admission_topology=admission,
+        source_execution_budget_bytes=source_execution_budget_bytes,
+        maximum_execution_budget_bytes=maximum_execution_budget_bytes,
+        maximum_spill_budget_bytes=maximum_spill_budget_bytes,
+        fixed_execution_bytes=fixed_bytes,
+        object_reserve_bytes=object_reserve,
+        dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes_,
+    )
+
+
+def _program_phase_timings(
+    timer: PlanningTimer,
+    elapsed: int,
+) -> tuple[tuple[str, int], ...]:
+    """Return non-overlapping pre-PressureFit phases plus reconciled total wall."""
+
+    nested_capture = any(
+        name
+        in {
+            "objective_export",
+            "export_archival",
+            "stage_partition_aot",
+            "storage_layout_lowering",
+        }
+        for name, _duration in timer.values
+    )
+    phases = tuple(
+        (name, duration)
+        for name, duration in timer.values
+        if not (nested_capture and name == "capture_lowering")
+    )
+    if sum(duration for _name, duration in phases) > elapsed:
+        raise RuntimeError(
+            "Program construction phase intervals overlap: measured time exceeds wall"
+        )
+    return (*phases, ("total", elapsed))
+
+
 def build_training(
     model: nn.Module,
     *,
@@ -1245,9 +1484,7 @@ def _training_task_inventory(
     optimizer_capture: OptimizerCapture,
 ) -> _TrainingTaskInventory:
     compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
-    profile_by_key: dict[
-        tuple[str, str | None, str | None], OptimizerTaskArtifact
-    ] = {}
+    profile_by_key: dict[tuple[str, str | None, str | None], OptimizerTaskArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:
@@ -1308,9 +1545,7 @@ def _build_training_admissions(
     memory: PlanMemory,
     timer: PlanningTimer,
 ) -> tuple[SelectedAdmission, ...]:
-    pairs = [
-        (programs.recurrent, selections.recurrent)
-    ]
+    pairs = [(programs.recurrent, selections.recurrent)]
     if selections.initial is not None:
         pairs.append((programs.initial, selections.initial))
     with timer.measure("slab_admission"):

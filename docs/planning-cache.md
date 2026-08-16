@@ -11,7 +11,7 @@ model = relocate_model_state(
 train_step = plan_step(
     model,
     ...,
-    planning_cachedir="/mnt/planning-cache/shadowspill",
+    planning_cachedir="/local-fast-storage/shadowspill-cache",
 )
 ```
 
@@ -19,6 +19,10 @@ The directory can contain artifacts for multiple models, input geometries,
 workload classes, budgets, software revisions, and devices. Leaf artifacts
 are content addressed; readable names under `plans/` are indexes, not cache
 identities.
+
+Use a low-latency local filesystem for the active compiler/planning cache.
+Network storage is suitable for copying completed immutable artifacts, but its
+metadata and synchronization latency should not sit on the planning path.
 
 ## Layout
 

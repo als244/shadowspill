@@ -473,10 +473,69 @@ special-case operation libraries.
 
 ## Composable planning boundaries
 
-`plan_forward()` and `plan_step()` are convenience compositions. Advanced
-tools can call the same typed boundaries from `shadowspill.pytorch.planning`
-when they already own the corresponding resolved `PlanMemory` and artifact
-cache:
+`plan_forward()` and `plan_step()` are convenience compositions. Training tools
+that want to sweep memory budgets or transfer bandwidths can stop immediately
+before PressureFit through the public artifact API:
+
+```python
+from pathlib import Path
+
+from shadowspill.pytorch import (
+    StepProgram,
+    TransferBandwidths,
+    make_step_program,
+    pressurefit_program,
+)
+
+step_program = make_step_program(
+    model,
+    objective=objective,
+    opt=optimizer_factory,
+    example_inputs=example_microbatches,
+    runtime=runtime,
+    execution="device",
+    spill="spill",
+    planning_cachedir="/local-fast-storage/shadowspill-cache",
+    profiling_metadata=profiling_metadata,
+)
+Path("step_program.json").write_text(step_program.to_json())
+
+# Reloading and selection may happen in another process with no model/runtime.
+saved = StepProgram.from_json(Path("step_program.json").read_text())
+annotated = pressurefit_program(
+    saved.recurrent,
+    execution_budget=16 << 30,
+    spill_budget=100 << 30,
+    transfer_bandwidths=TransferBandwidths(
+        fetch_bytes_per_second=25_000_000_000,
+        evict_bytes_per_second=25_000_000_000,
+        provenance="concurrent runtime calibration",
+    ),
+    planning_cachedir="/local-fast-storage/shadowspill-cache",
+)
+Path("annotated_program_plan.json").write_text(annotated.to_json())
+```
+
+`StepProgram` contains the complete recurrent and optional initial Program,
+residency, graph-pair/profile inventory, admission topology, capacity contract,
+simulator inputs, profiling metadata, phase timings, and cache lineage. Its
+content digest excludes volatile phase timings and cache paths/access status.
+
+`AnnotatedProgramPlan` contains the selected variants and ordered actions,
+physical admission certificate, simulator result, diagnostics, and planning
+wall evidence. It is a general planning artifact: `memory_budgets` and
+`transfer_bandwidths` are independent first-class values, not fields hidden
+inside a benchmark wrapper. Its plan digest excludes cache-hit and elapsed-wall
+evidence. Both artifact types provide validating `to_json()` / `from_json()`
+round trips.
+
+The returned artifacts contain no process-local compiled callable. Planning
+tooling can therefore store and sweep them safely, while ordinary execution
+still uses `plan_step()` to publish a runtime callable.
+
+Lower-level tools can call the same typed boundaries from
+`shadowspill.pytorch.planning` when they already own the corresponding resolved
+`PlanMemory` and artifact cache:
 
 ```python
 from shadowspill.pytorch.planning import (
@@ -527,10 +586,9 @@ Every boundary returns an immutable artifact sufficient for the next one.
 `rollback_training_materialization()` explicitly restores spill-backed CPU
 bindings if an advanced caller stops after optimizer materialization.
 
-PressureFit itself remains framework neutral. A caller that only wants to
-sweep planner capacity starts from `planned.plan_report.program` and
-`planned.plan_report.pressurefit_result`; it does not need a runtime allocation,
-PyTorch capture, compilation, or profiling call.
+PressureFit itself remains framework neutral. Once `make_step_program()` has
+returned, a caller can sweep `pressurefit_program(saved.recurrent, ...)`
+without a runtime allocation, PyTorch capture, compilation, or profiling call.
 
 Compiled task entrypoints execute with dispatcher autograd disabled. Training
 already contains the explicit AOTAutograd forward/backward programs, and

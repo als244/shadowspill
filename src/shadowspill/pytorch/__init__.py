@@ -1,6 +1,6 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
-from .api import plan_forward, plan_step
+from .api import make_step_program, plan_forward, plan_step, pressurefit_program
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
     AdmissionError,
@@ -42,6 +42,13 @@ from .diagnostics import (
     StepTimingSummary,
 )
 from .partition import PartitionPolicy, PartitionSpec
+from .program import (
+    AnnotatedProgramPlan,
+    MemoryBudgets,
+    PressureFitProgram,
+    StepProgram,
+    TransferBandwidths,
+)
 from .runtime_adapter import (
     ExecutionTaskIdentity,
     MemoryPool,
@@ -61,12 +68,14 @@ from .state import (
 
 __all__ = [
     "AdmissionError",
+    "AnnotatedProgramPlan",
     "CaptureError",
     "CompilationError",
     "DiagnosticsHandle",
     "ExecutionTaskIdentity",
     "ExecutionTiming",
     "InputGuardError",
+    "MemoryBudgets",
     "MemoryPool",
     "ObjectiveError",
     "ObjectiveResult",
@@ -95,6 +104,7 @@ __all__ = [
     "PlannedForward",
     "PlannedTrainStep",
     "PlanningError",
+    "PressureFitProgram",
     "ProfilingError",
     "Runtime",
     "RuntimeConfigurationError",
@@ -102,15 +112,19 @@ __all__ = [
     "RuntimeFailureDiagnostics",
     "SimulatorTransferComparison",
     "StepDiagnostics",
+    "StepProgram",
     "StepResult",
     "StepTimingSummary",
     "TensorSpec",
+    "TransferBandwidths",
     "TransferCapabilities",
     "TransferProfile",
     "externalize_model_state",
     "externalize_optimizer_state",
+    "make_step_program",
     "plan_forward",
     "plan_step",
+    "pressurefit_program",
     "relocate_model_state",
     "relocate_optimizer_state",
 ]

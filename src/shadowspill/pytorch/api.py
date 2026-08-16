@@ -10,9 +10,16 @@ from typing import Any, Literal, NoReturn
 import torch
 import torch.nn as nn
 
+from shadowspill.planner import PressureFitOptions
 from shadowspill.pytorch.cache import PlanningCache
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
+from shadowspill.pytorch.program import (
+    AnnotatedProgramPlan,
+    PressureFitProgram,
+    StepProgram,
+    TransferBandwidths,
+)
 from shadowspill.pytorch.runtime_adapter import Runtime
 from shadowspill.pytorch.state.model import require_model_state_for_plan
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
@@ -285,7 +292,139 @@ def plan_step(
         )
 
 
+def make_step_program(
+    model: nn.Module,
+    *,
+    objective: Any,
+    opt: Any,
+    example_inputs: Sequence[Sequence[Any]],
+    runtime: Runtime,
+    execution: str,
+    spill: str,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    dynamic_scratch_reserve_bytes: int | None = None,
+    execution_device: int | str | torch.device | None = None,
+    partition: PartitionSpec = "auto",
+    optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    verbose: bool = True,
+    planning_cachedir: str | os.PathLike[str] | None = None,
+    profiling_metadata: Sequence[object] | None = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
+    save_plan: bool = True,
+    force_fresh: bool = False,
+    overwrite_plan: bool = False,
+    implementation_revision: str | None = None,
+) -> StepProgram:
+    """Capture, profile, and lower a reusable step without running PressureFit.
+
+    The returned :class:`StepProgram` is a fully self-contained JSON boundary.
+    It can be passed to :func:`pressurefit_program` repeatedly with different
+    budgets and transfer bandwidths. Temporary compilation/materialization
+    state is released before this function returns; no runtime callable remains
+    active.
+    """
+
+    from .planning.training import make_training_program
+
+    require_model_state_for_plan(model, runtime=runtime, pool=spill)
+    planning_started = False
+    try:
+        memory = runtime._resolve_plan(
+            execution=execution,
+            spill=spill,
+            execution_budget=execution_budget,
+            spill_budget=spill_budget,
+            dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
+            execution_device=execution_device,
+        )
+        planning_started = True
+        cache = PlanningCache.resolve(
+            planning_cachedir,
+            save_plan=save_plan,
+            force_fresh=force_fresh,
+            overwrite_plan=overwrite_plan,
+            implementation_revision=implementation_revision,
+        )
+        with cache.activate_pytorch():
+            result = make_training_program(
+                model,
+                objective=objective,
+                opt=opt,
+                example_inputs=example_inputs,
+                memory=memory,
+                partition=partition,
+                optimizer_ordering=optimizer_ordering,
+                verbose=verbose,
+                planning_cache=cache,
+                profiling_metadata=profiling_metadata,
+                allocation_probe_seeds=allocation_probe_seeds,
+                allocation_probe_repetitions=allocation_probe_repetitions,
+            )
+        try:
+            runtime._abort_plan()
+        finally:
+            planning_started = False
+        restore_persistent_object_ids(runtime)
+        return result
+    except BaseException as error:
+        _surface_failed_plan(
+            runtime,
+            planning_started=planning_started,
+            operation="make training step Program",
+            error=error,
+        )
+
+
+def pressurefit_program(
+    program: PressureFitProgram,
+    *,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
+    options: PressureFitOptions | None = None,
+    planning_cachedir: str | os.PathLike[str] | None = None,
+    verbose: bool = True,
+    save_plan: bool = True,
+    force_fresh: bool = False,
+    overwrite_plan: bool = False,
+    implementation_revision: str | None = None,
+) -> AnnotatedProgramPlan:
+    """Run recomputation, PressureFit, simulation, and physical admission.
+
+    ``program`` is normally ``make_step_program(...).recurrent`` or the value
+    reconstructed by :meth:`PressureFitProgram.from_value`. This operation is
+    model- and runtime-independent and may be repeated for a budget/bandwidth
+    frontier without capture, compilation, or profiling.
+    """
+
+    from .planning.program_selection import select_program
+
+    if options is not None and not isinstance(options, PressureFitOptions):
+        raise TypeError("options must be PressureFitOptions or None")
+    cache = PlanningCache.resolve(
+        planning_cachedir,
+        save_plan=save_plan,
+        force_fresh=force_fresh,
+        overwrite_plan=overwrite_plan,
+        implementation_revision=implementation_revision,
+    )
+    cache.initialize()
+    return select_program(
+        program,
+        execution_budget_bytes=execution_budget,
+        spill_budget_bytes=spill_budget,
+        transfer_bandwidths=transfer_bandwidths,
+        options=options,
+        planning_cache=cache,
+        verbose=verbose,
+    )
+
+
 __all__ = [
+    "make_step_program",
     "plan_forward",
     "plan_step",
+    "pressurefit_program",
 ]
