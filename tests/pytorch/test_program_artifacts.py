@@ -127,9 +127,34 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     assert restored.memory_budgets == MemoryBudgets(224, 1_024)
     assert restored.transfer_bandwidths == transfer_bandwidths
     assert restored.digest == selected.digest
+    assert selected.pressurefit_wall_time_ns > 0
+    assert selected.physical_admission_wall_time_ns > 0
+    assert (
+        selected.pressurefit_wall_time_ns
+        + selected.physical_admission_wall_time_ns
+        + selected.orchestration_wall_time_ns
+        == selected.wall_time_ns
+    )
+    assert restored.pressurefit_wall_time_ns == selected.pressurefit_wall_time_ns
+    assert (
+        restored.physical_admission_wall_time_ns
+        == selected.physical_admission_wall_time_ns
+    )
+    assert encoded["timing"]["total_wall_time_ns"] == selected.wall_time_ns
+    assert len(encoded["timing"]["refinement_attempts"]) == len(selected.attempts)
     assert not selected.pressurefit_cache_hit
     assert cached.pressurefit_cache_hit
     assert cached.digest == selected.digest
+
+    legacy = dict(encoded)
+    legacy["timing"] = {
+        "pressurefit_and_admission_wall_time_ns": selected.wall_time_ns
+    }
+    restored_legacy = AnnotatedProgramPlan.from_dict(legacy)
+    assert restored_legacy.digest == selected.digest
+    assert restored_legacy.wall_time_ns == selected.wall_time_ns
+    assert restored_legacy.pressurefit_wall_time_ns == 0
+    assert restored_legacy.physical_admission_wall_time_ns == 0
 
 
 def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:

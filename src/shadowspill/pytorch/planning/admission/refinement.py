@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
@@ -31,6 +32,8 @@ class FixedLayoutAttempt:
     required_bytes: int
     pool_capacity_bytes: int
     accepted: bool
+    pressurefit_wall_time_ns: int = 0
+    physical_admission_wall_time_ns: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,18 @@ class FixedLayoutSelection:
             self.original_object_capacity_bytes
             - self.topology.object_capacity_bytes
         )
+
+    @property
+    def pressurefit_wall_time_ns(self) -> int:
+        """Cumulative PressureFit/cache-resolution time across refinements."""
+
+        return sum(item.pressurefit_wall_time_ns for item in self.attempts)
+
+    @property
+    def physical_admission_wall_time_ns(self) -> int:
+        """Cumulative physical-layout construction time across refinements."""
+
+        return sum(item.physical_admission_wall_time_ns for item in self.attempts)
 
 
 def resolve_fixed_layout_selection(
@@ -89,7 +104,10 @@ def resolve_fixed_layout_selection(
         # builder below is the sole physical-placement authority for this
         # strategy; prefiltering through dynamic-pool admission would discard
         # schedules that are feasible under certified fixed placement.
+        pressurefit_started = time.perf_counter_ns()
         selected = resolve(requested_config)
+        pressurefit_wall_time_ns = time.perf_counter_ns() - pressurefit_started
+        admission_started = time.perf_counter_ns()
         effective_topology = replace(
             topology,
             object_capacity_bytes=_effective_object_capacity(
@@ -110,6 +128,9 @@ def resolve_fixed_layout_selection(
                 scratch_reserve_bytes=scratch_reserve_bytes,
             )
         except FixedLayoutInfeasibleError as error:
+            physical_admission_wall_time_ns = (
+                time.perf_counter_ns() - admission_started
+            )
             last_error = error
             attempts.append(
                 FixedLayoutAttempt(
@@ -118,6 +139,8 @@ def resolve_fixed_layout_selection(
                     error.required_bytes,
                     error.capacity_bytes,
                     False,
+                    pressurefit_wall_time_ns,
+                    physical_admission_wall_time_ns,
                 )
             )
             if progress is not None:
@@ -129,6 +152,7 @@ def resolve_fixed_layout_selection(
                     f"requested_reduction={reduction}"
                 )
             continue
+        physical_admission_wall_time_ns = time.perf_counter_ns() - admission_started
         attempts.append(
             FixedLayoutAttempt(
                 requested_capacity,
@@ -136,6 +160,8 @@ def resolve_fixed_layout_selection(
                 admitted.layout.required_bytes,
                 admitted.layout.pool_capacity_bytes,
                 True,
+                pressurefit_wall_time_ns,
+                physical_admission_wall_time_ns,
             )
         )
         if progress is not None:
