@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
@@ -23,6 +22,7 @@ from shadowspill.pytorch.runtime_adapter.trace import (
 )
 from shadowspill.simulator import TransferInterval
 
+from ._mapping import FrozenMapping
 from .execution import (
     AllocatorTrace,
     ExecutionTiming,
@@ -54,7 +54,7 @@ def collect_step_diagnostics(
     _validate_completed_timing(timing)
     evidence = _resolve_trace_evidence(timing, bridge)
     tasks, phase_seconds = _build_task_timings(timing, evidence)
-    tasks_by_execution_id = MappingProxyType(
+    tasks_by_execution_id = FrozenMapping(
         {item.execution_task_id: item for item in tasks}
     )
     execution_timing = _build_execution_timing(timing, tasks, phase_seconds)
@@ -130,7 +130,7 @@ def _build_task_timings(
         phase_seconds[result.phase] = (
             phase_seconds.get(result.phase, 0.0) + result.gpu_duration_seconds
         )
-    return tuple(tasks), MappingProxyType(phase_seconds)
+    return tuple(tasks), phase_seconds
 
 
 def _build_task_timing(
@@ -258,7 +258,7 @@ def _build_execution_timing(
         host_initial_actions_seconds=timing.host_initial_actions_ns / 1e9,
         trace_setup_seconds=timing.trace_setup_ns / 1e9,
         phase_gpu_seconds=tuple(sorted(phase_seconds.items())),
-        tasks=MappingProxyType({item.execution_task_id: item for item in tasks}),
+        tasks=FrozenMapping({item.execution_task_id: item for item in tasks}),
     )
 
 
@@ -327,7 +327,7 @@ def _build_transfer_comparison(
 ) -> Mapping[str, SimulatorTransferComparison]:
     simulation = timing.simulation
     if simulation is None or not simulation.transfer_intervals:
-        return MappingProxyType({})
+        return FrozenMapping({})
     scheduled_events = tuple(
         item for item in events if item.task_id in selected_task_numbers
     )
@@ -414,7 +414,7 @@ def _build_transfer_comparison(
                 - (interval.end_ns - interval.start_ns) / 1e9
             ),
         )
-    return MappingProxyType(result)
+    return FrozenMapping(result)
 
 
 def _transfer_events_by_direction(
@@ -525,7 +525,7 @@ def _build_simulator_comparison(
         raise RuntimeError(f"simulator evidence omitted selected tasks: {missing!r}")
     simulated_origin_ns = min(intervals[item.task_id].start_ns for item in tasks)
     real_origin_seconds = min(item.gpu_start_seconds for item in tasks)
-    return MappingProxyType(
+    return FrozenMapping(
         {
             item.execution_task_id: SimulatorTaskComparison(
                 execution_task_id=item.execution_task_id,

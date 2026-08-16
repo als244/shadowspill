@@ -370,6 +370,11 @@ the authoritative leak indicators. Resolving diagnostics drains the progress
 service so terminal transfers are included; this synchronization happens only
 because the caller explicitly requested and resolved a trace.
 
+`StepDiagnostics` and all of its nested public mappings are immutable and
+round-trip through `torch.save()` / `torch.load(..., weights_only=False)`.
+Qualification tooling can therefore retain the typed diagnostic artifact
+directly instead of converting it to a mutable dictionary first.
+
 ## Fixed input contract
 
 `TensorSpec` describes storage-free shape, stride, dtype, layout, and gradient
