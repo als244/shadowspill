@@ -15,6 +15,7 @@ from shadowspill.pytorch import (
     TensorSpec,
 )
 from shadowspill.pytorch.materialization import representative_cpu_inputs
+from shadowspill.pytorch.planning.admission.physical import physical_admission
 from shadowspill.pytorch.planning.common import (
     PlanningTimer,
     estimate_spill_reservation,
@@ -133,6 +134,32 @@ def test_workspace_and_capacity_helpers_are_explicit() -> None:
     assert captured.value.kind == "analytic_capacity"
     assert captured.value.required_bytes == 1
     assert captured.value.capacity_bytes == 0
+
+
+def test_plan_reservation_can_be_smaller_than_runtime_spill_pool() -> None:
+    memory = SimpleNamespace(
+        execution=SimpleNamespace(physical_capacity=200),
+        execution_budget=180,
+        spill_budget=100,
+    )
+    installed = SimpleNamespace(
+        admission=SimpleNamespace(
+            context_bytes=10,
+            provider_headroom_bytes=10,
+            spill_pool_bytes=112,
+        )
+    )
+
+    admission = physical_admission(
+        memory,  # type: ignore[arg-type]
+        installed,  # type: ignore[arg-type]
+        workspace_reserve=20,
+        predicted_host_peak_bytes=90,
+        predicted_fragmentation_bytes=8,
+    )
+
+    assert admission.host_budget_bytes == 100
+    assert admission.host_reservation_bytes == 90
 
 
 def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:

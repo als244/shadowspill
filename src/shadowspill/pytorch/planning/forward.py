@@ -433,6 +433,7 @@ def admit_forward_plan(
         memory,
         captured.installed,
         workspace_reserve=program.workspace_reserve,
+        predicted_host_peak_bytes=selected.simulation.host_peak_bytes,
         predicted_fragmentation_bytes=(
             selected_admission.predicted_fragmentation_bytes
         ),
