@@ -863,6 +863,17 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         shadowspill_current_task_allocation_is_scratch(runtime);
     const uint64_t task_invocation =
         shadowspill_current_task_invocation(runtime);
+    /*
+     * Keep large, short-lived framework values at the high end of an
+     * unsealed pool while small provider state grows from the low end.  A
+     * provider cache retained by an isolated profiling task then occupies a
+     * compact prefix instead of pinning a tiny range behind a multi-gigabyte
+     * representative input.  Fixed-layout allocations bypass this policy.
+     */
+    const ShadowSpillMemoryPlacement dynamic_placement =
+        bytes >= (UINT64_C(64) << 20U)
+        ? SHADOWSPILL_MEMORY_BEST_FIT_HIGH
+        : SHADOWSPILL_MEMORY_BEST_FIT_LOW;
     const ShadowSpillFixedPlacementDescription *fixed_placement =
         shadowspill_fixed_layout_find_placement(
             runtime,
@@ -924,7 +935,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 bytes,
                 alignment,
                 0,
-                SHADOWSPILL_MEMORY_BEST_FIT_LOW,
+                dynamic_placement,
                 task_id,
                 &record
             );

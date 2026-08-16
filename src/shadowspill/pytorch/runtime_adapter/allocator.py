@@ -138,7 +138,11 @@ def install_allocator(
     )
     _validate_physical_usage(library, device_budget_bytes)
     cuda.memory.change_current_allocator(allocator)
-    fixed_execution_bytes = _initialize_provider_state(library, admission)
+    fixed_execution_bytes = _initialize_provider_state(
+        library,
+        admission,
+        device_ordinal=device_ordinal,
+    )
     _installed = InstalledAllocator(
         library,
         allocator,
@@ -152,6 +156,8 @@ def install_allocator(
 def _initialize_provider_state(
     library: Any,
     admission: PhysicalAdmission,
+    *,
+    device_ordinal: int,
 ) -> int:
     """Create persistent PyTorch CUDA provider state before plan admission.
 
@@ -175,7 +181,29 @@ def _initialize_provider_state(
         raise AllocatorInstallError(
             "this PyTorch build lacks the required CUDA provider initializer"
         )
+    torch.cuda.set_device(device_ordinal)
     get_handle()
+
+    # Merely obtaining the handle does not force cuBLAS to create its retained
+    # workspace.  If its first GEMM runs later while a large profiling input is
+    # live, that small persistent allocation can split the otherwise empty
+    # slab and prevent a large fixed-layout arena from being reserved despite
+    # ample aggregate capacity.  Exercise the provider now, while the pool is
+    # empty, so its retained state has deterministic low-address placement.
+    device = torch.device("cuda", device_ordinal)
+    shape = (2048, 2048)
+    left = torch.empty(shape, dtype=torch.bfloat16, device=device)
+    right = torch.empty(shape, dtype=torch.bfloat16, device=device)
+    output = torch.empty(shape, dtype=torch.bfloat16, device=device)
+    try:
+        torch.mm(left, right, out=output)
+        torch.cuda.current_stream(device_ordinal).synchronize()
+    finally:
+        del output
+        del right
+        del left
+        torch.cuda.current_stream(device_ordinal).synchronize()
+
     status = int(library.shadowspill_pytorch_allocator_wait_idle())
     if status != 0:
         raise AllocatorInstallError(
