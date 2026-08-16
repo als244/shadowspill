@@ -314,7 +314,16 @@ def seed_residency(
         device_id: boundary_bytes(facts, seed, -1, device_id)
         for device_id in facts.object_capacity_by_device
     }
-    initial_capacity = initial_capacity_by_device or facts.object_capacity_by_device
+    requested_initial_capacity = (
+        initial_capacity_by_device or facts.object_capacity_by_device
+    )
+    initial_capacity = {
+        device_id: min(
+            requested_initial_capacity[device_id],
+            facts.object_capacity_by_boundary[device_id][0],
+        )
+        for device_id in facts.object_capacity_by_device
+    }
     anchors = list(facts.anchors)
     spans = list(seed.spans)
     for alias in candidates:
@@ -470,9 +479,10 @@ def strategy_object_capacity(
     facts: PlanningFacts,
     device_id: str,
     strategy: str,
+    boundary: int,
 ) -> int:
     del strategy
-    return facts.object_capacity_by_device[device_id]
+    return facts.object_capacity_by_boundary[device_id][boundary + 1]
 
 
 def reduce_pressure(
@@ -504,7 +514,12 @@ def reduce_pressure(
             for device_id in facts.object_capacity_by_device:
                 used = pressure[device_id][boundary + 1]
                 used += additions.get((device_id, boundary), 0)
-                capacity = strategy_object_capacity(facts, device_id, strategy)
+                capacity = strategy_object_capacity(
+                    facts,
+                    device_id,
+                    strategy,
+                    boundary,
+                )
                 if used <= capacity:
                     continue
                 excess = used - capacity
@@ -529,12 +544,17 @@ def reduce_pressure(
             raise PressureFitInfeasibleError(
                 f"no legal residency cut can relieve {used} bytes at "
                 f"boundary {boundary} on {device_id!r}; capacity is "
-                f"{facts.object_capacity_by_device[device_id]}",
+                f"{strategy_object_capacity(facts, device_id, strategy, boundary)}",
                 kind="analytic_capacity",
                 device_id=device_id,
                 boundary_task_id=task_id,
                 required_bytes=used,
-                capacity_bytes=facts.object_capacity_by_device[device_id],
+                capacity_bytes=strategy_object_capacity(
+                    facts,
+                    device_id,
+                    strategy,
+                    boundary,
+                ),
             )
 
         def score(cut: Cut) -> tuple[int, ...]:
@@ -595,7 +615,7 @@ def extend_interval_entries(
             added = 0 if reserved else facts.alias_sizes[alias]
             if (
                 pressure[device_id][candidate_start + 1] + added
-                <= facts.object_capacity_by_device[device_id]
+                <= facts.object_capacity_by_boundary[device_id][candidate_start + 1]
             ):
                 current = proposed
                 pressure[device_id][candidate_start + 1] += added
@@ -644,8 +664,9 @@ def assert_required_floor(facts: PlanningFacts) -> None:
 
     pressure = _required_floor_pressure(facts)
     for boundary in range(-1, facts.last_boundary + 1):
-        for device_id, capacity in facts.object_capacity_by_device.items():
+        for device_id in facts.object_capacity_by_device:
             required = pressure[device_id][boundary + 1]
+            capacity = facts.object_capacity_by_boundary[device_id][boundary + 1]
             if required > capacity:
                 task_index = boundary + 1
                 task_id = (

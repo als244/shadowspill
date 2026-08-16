@@ -37,6 +37,7 @@ class PlanningFacts:
     input_tasks: tuple[tuple[int, ...], ...]
     first_input_tasks: tuple[int, ...]
     object_capacity_by_device: dict[str, int]
+    object_capacity_by_boundary: dict[str, tuple[int, ...]]
     task_ideal_end_ns: tuple[int, ...]
 
     @property
@@ -176,24 +177,32 @@ def build_facts(
                         f"input alias {alias_id!r} has no initial residency"
                     )
 
-    max_workspace: dict[str, int] = {device_id: 0 for device_id in program_devices}
-    for task in tasks:
+    object_capacity = {
+        device_id: device.capacity_bytes for device_id, device in configured.items()
+    }
+    boundary_capacity = {
+        device_id: [device.capacity_bytes] * (len(tasks) + 1)
+        for device_id, device in configured.items()
+    }
+    for task_index_, task in enumerate(tasks):
         workspace = profile_by_id[task.profile_id].workspace_bytes
         device_id = task.resource.device_id
-        max_workspace[device_id] = max(max_workspace[device_id], workspace)
-    object_capacity: dict[str, int] = {}
-    for device_id, device in configured.items():
-        workspace = max_workspace[device_id]
-        if workspace > device.capacity_bytes:
+        capacity = object_capacity[device_id]
+        if workspace > capacity:
             raise PressureFitInfeasibleError(
                 f"task workspace {workspace} exceeds capacity "
-                f"{device.capacity_bytes} on {device_id!r}",
+                f"{capacity} on {device_id!r}",
                 kind="workspace_capacity",
                 device_id=device_id,
+                boundary_task_id=task.task_id,
                 required_bytes=workspace,
-                capacity_bytes=device.capacity_bytes,
+                capacity_bytes=capacity,
             )
-        object_capacity[device_id] = device.capacity_bytes - workspace
+        # Boundary ``task_index_ - 1`` is the point at which this task's
+        # inputs, fresh outputs, and anonymous workspace must coexist.  Do
+        # not subtract the largest workspace globally: workspace belonging
+        # to another sequential task is not live at this boundary.
+        boundary_capacity[device_id][task_index_] = capacity - workspace
 
     return PlanningFacts(
         program=program,
@@ -221,6 +230,10 @@ def build_facts(
             for values in accesses
         ),
         object_capacity_by_device=object_capacity,
+        object_capacity_by_boundary={
+            device_id: tuple(values)
+            for device_id, values in boundary_capacity.items()
+        },
         task_ideal_end_ns=tuple(ideal_end),
     )
 

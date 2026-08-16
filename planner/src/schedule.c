@@ -1,3 +1,4 @@
+#include "internal.h"
 #include "portfolio_internal.h"
 
 #include <limits.h>
@@ -525,7 +526,11 @@ int shadowspill_extend_interval_entries(
                     ? 0U
                     : problem->alias_size_bytes[alias];
                 if (pressure[position] + added >
-                    problem->device_capacity_bytes[device]) {
+                    shadowspill_boundary_capacity(
+                        problem,
+                        device,
+                        candidate_cell
+                    )) {
                     break;
                 }
                 resident[cell(alias, facts->boundary_count, candidate_cell)] = 1U;
@@ -858,7 +863,11 @@ static int clamp_triggers_to_fit(
         for (uint32_t boundary = 0U; boundary < facts->task_count; ++boundary) {
             uint64_t used_position =
                 (uint64_t)device * facts->boundary_count + boundary + 1U;
-            while (used[used_position] > problem->device_capacity_bytes[device]) {
+            while (used[used_position] > shadowspill_boundary_capacity(
+                    problem,
+                    device,
+                    boundary + 1U
+                )) {
                 uint32_t selected_reload = first_active_reload(
                     active,
                     word_count,

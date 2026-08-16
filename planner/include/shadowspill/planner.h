@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 8U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 9U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -49,6 +49,8 @@ typedef struct ShadowSpillResidencyProblem {
     const uint64_t *evict_runtime_ns;
     const uint64_t *task_ideal_end_ns;
     const uint64_t *device_capacity_bytes;
+    /* Maximum task-object pressure at each [device][boundary] cell. */
+    const uint64_t *boundary_capacity_bytes;
     const uint32_t *device_priority;
 } ShadowSpillResidencyProblem;
 

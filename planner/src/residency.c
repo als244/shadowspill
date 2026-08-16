@@ -892,6 +892,7 @@ static int valid_problem(
         problem->first_input_task != NULL && problem->fetch_runtime_ns != NULL &&
         problem->evict_runtime_ns != NULL && problem->task_ideal_end_ns != NULL &&
         problem->device_capacity_bytes != NULL &&
+        problem->boundary_capacity_bytes != NULL &&
         problem->device_priority != NULL && options->seed_resident != NULL &&
         options->seed_breaks != NULL && options->extra_pressure_bytes != NULL &&
         result->resident != NULL && result->breaks != NULL &&
@@ -1072,7 +1073,11 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                     (uint64_t)device * problem->boundary_count + boundary;
                 uint64_t used = pressure[position] +
                     options->extra_pressure_bytes[position];
-                uint64_t capacity = problem->device_capacity_bytes[device];
+                uint64_t capacity = shadowspill_boundary_capacity(
+                    problem,
+                    device,
+                    boundary
+                );
                 if (used <= capacity) {
                     continue;
                 }
@@ -1119,7 +1124,11 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
             result->error_boundary = boundary_value;
             result->required_bytes = selected_used;
             result->capacity_bytes =
-                problem->device_capacity_bytes[selected_device];
+                shadowspill_boundary_capacity(
+                    problem,
+                    selected_device,
+                    selected_boundary
+                );
             return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
         }
         uint32_t alias = chosen.alias;

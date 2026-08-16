@@ -114,4 +114,73 @@ def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
         pressurefit(program, initial_residency=(), config=config(122))
 
     assert caught.value.kind == "workspace_capacity"
+    assert caught.value.boundary_task_id == "workspace"
     assert caught.value.required_bytes == 123
+
+
+def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
+    resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
+        objects=(ObjectSpec("state", "state_storage", 0, 80),),
+        profiles=(
+            TaskProfile("workspace_profile", 10, 60, "workspace_abi"),
+            TaskProfile("object_profile", 10, 0, "object_abi"),
+        ),
+        tasks=(
+            TaskSpec("workspace_only", resource, "workspace_profile"),
+            TaskSpec(
+                "objects_only",
+                resource,
+                "object_profile",
+                inputs=("state",),
+            ),
+        ),
+    )
+    initial = (ResidencySpec("state_storage", MemoryLocation.HOST),)
+    selected_config = config(100)
+
+    validate_schedule_feasibility(
+        program,
+        initial_residency=initial,
+        config=selected_config,
+    )
+    result = pressurefit(
+        program,
+        initial_residency=initial,
+        config=selected_config,
+    )
+
+    assert result.simulation.device_peaks[0].total_bytes <= 100
+
+
+def test_same_task_workspace_and_objects_remain_jointly_required() -> None:
+    resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    program = Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
+        objects=(ObjectSpec("state", "state_storage", 0, 80),),
+        profiles=(TaskProfile("profile", 10, 30, "abi"),),
+        tasks=(
+            TaskSpec(
+                "oversized_task",
+                resource,
+                "profile",
+                inputs=("state",),
+            ),
+        ),
+    )
+    initial = (ResidencySpec("state_storage", MemoryLocation.DEVICE),)
+
+    with pytest.raises(PressureFitInfeasibleError) as caught:
+        validate_schedule_feasibility(
+            program,
+            initial_residency=initial,
+            config=config(100),
+        )
+
+    assert caught.value.kind == "required_capacity"
+    assert caught.value.boundary_task_id == "oversized_task"
+    assert caught.value.required_bytes == 80
+    assert caught.value.capacity_bytes == 70

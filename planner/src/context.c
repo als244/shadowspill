@@ -1,4 +1,4 @@
-#include <shadowspill/planner.h>
+#include "internal.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -22,6 +22,7 @@ typedef struct PreparedContext {
     uint64_t *evict_runtime_ns;
     uint64_t *task_ideal_end_ns;
     uint64_t *device_capacity_bytes;
+    uint64_t *boundary_capacity_bytes;
     uint8_t *seed_resident;
     uint8_t *seed_breaks;
 
@@ -165,6 +166,7 @@ static void prepared_context_destroy(PreparedContext *prepared) {
     free(prepared->evict_runtime_ns);
     free(prepared->task_ideal_end_ns);
     free(prepared->device_capacity_bytes);
+    free(prepared->boundary_capacity_bytes);
     free(prepared->seed_resident);
     free(prepared->seed_breaks);
     free(prepared->first_access_task);
@@ -267,6 +269,10 @@ static int allocate_prepared_buffers(
         program->device_count,
         sizeof(*prepared->device_capacity_bytes)
     );
+    prepared->boundary_capacity_bytes = calloc(
+        pressure_cells,
+        sizeof(*prepared->boundary_capacity_bytes)
+    );
     prepared->seed_resident = calloc(cells, sizeof(*prepared->seed_resident));
     prepared->seed_breaks = calloc(cells, sizeof(*prepared->seed_breaks));
     prepared->first_access_task = malloc(
@@ -296,6 +302,7 @@ static int allocate_prepared_buffers(
         prepared->evict_runtime_ns == NULL ||
         prepared->task_ideal_end_ns == NULL ||
         prepared->device_capacity_bytes == NULL ||
+        prepared->boundary_capacity_bytes == NULL ||
         prepared->seed_resident == NULL || prepared->seed_breaks == NULL ||
         prepared->first_access_task == NULL || prepared->produced == NULL ||
         prepared->seen_input == NULL || prepared->charged_anchors == NULL ||
@@ -395,12 +402,9 @@ static ShadowSpillPlannerStatus derive_task_facts(
         return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
     }
 
-    uint64_t *max_workspace = calloc(
-        program->device_count,
-        sizeof(*max_workspace)
-    );
-    if (max_workspace == NULL) {
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    for (uint32_t device = 0U; device < program->device_count; ++device) {
+        prepared->device_capacity_bytes[device] =
+            program->devices[device].capacity_bytes;
     }
     uint64_t ideal_end = 0U;
     ShadowSpillPlannerStatus status = SHADOWSPILL_PLANNER_OK;
@@ -412,9 +416,9 @@ static ShadowSpillPlannerStatus derive_task_facts(
             break;
         }
         prepared->task_ideal_end_ns[task] = ideal_end;
-        if (program->task_workspace_bytes[task] > max_workspace[device]) {
-            max_workspace[device] = program->task_workspace_bytes[task];
-        }
+        prepared->boundary_capacity_bytes[
+            (uint64_t)device * boundary_count + task
+        ] = program->task_workspace_bytes[task];
 
         uint32_t input_start = program->input_offsets[task];
         uint32_t input_end = program->input_offsets[task + 1U];
@@ -487,18 +491,28 @@ static ShadowSpillPlannerStatus derive_task_facts(
         }
     }
 
-    if (status == SHADOWSPILL_PLANNER_OK) {
-        for (uint32_t device = 0U; device < program->device_count; ++device) {
-            if (max_workspace[device] > program->devices[device].capacity_bytes) {
-                status = SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
-                break;
+    return status;
+}
+
+static ShadowSpillPlannerStatus finalize_boundary_capacities(
+    const ShadowSpillSimulationProgram *program,
+    PreparedContext *prepared
+) {
+    const uint32_t boundary_count = program->task_count + 1U;
+    for (uint32_t device = 0U; device < program->device_count; ++device) {
+        const uint64_t capacity = prepared->device_capacity_bytes[device];
+        for (uint32_t boundary = 0U; boundary < boundary_count; ++boundary) {
+            const uint64_t position =
+                (uint64_t)device * boundary_count + boundary;
+            const uint64_t workspace =
+                prepared->boundary_capacity_bytes[position];
+            if (workspace > capacity) {
+                return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
             }
-            prepared->device_capacity_bytes[device] =
-                program->devices[device].capacity_bytes - max_workspace[device];
+            prepared->boundary_capacity_bytes[position] = capacity - workspace;
         }
     }
-    free(max_workspace);
-    return status;
+    return SHADOWSPILL_PLANNER_OK;
 }
 
 static ShadowSpillPlannerStatus finalize_alias_facts(
@@ -602,7 +616,9 @@ static ShadowSpillPlannerStatus validate_required_floor(
             uint64_t required = prepared->required_bytes[
                 (size_t)device * boundary_count + position
             ];
-            if (required > prepared->device_capacity_bytes[device]) {
+            if (required > prepared->boundary_capacity_bytes[
+                    (uint64_t)device * boundary_count + position
+                ]) {
                 return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
             }
         }
@@ -733,7 +749,9 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
             free(initial_bytes);
             return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
         }
-        if (proposed > prepared->device_capacity_bytes[value->device]) {
+        if (proposed > prepared->boundary_capacity_bytes[
+                (uint64_t)value->device * (program->task_count + 1U)
+            ]) {
             continue;
         }
         size_t row = (size_t)value->alias * boundary_count;
@@ -786,6 +804,10 @@ static ShadowSpillPlannerStatus prepare_context(
         prepared->device_capacity_bytes[0] =
             source->admission->object_capacity_bytes;
     }
+    status = finalize_boundary_capacities(program, prepared);
+    if (status != SHADOWSPILL_PLANNER_OK) {
+        return status;
+    }
     status = finalize_alias_facts(program, prepared);
     if (status != SHADOWSPILL_PLANNER_OK) {
         return status;
@@ -822,6 +844,7 @@ static ShadowSpillPlannerStatus prepare_context(
         .evict_runtime_ns = prepared->evict_runtime_ns,
         .task_ideal_end_ns = prepared->task_ideal_end_ns,
         .device_capacity_bytes = prepared->device_capacity_bytes,
+        .boundary_capacity_bytes = prepared->boundary_capacity_bytes,
         .device_priority = source->device_priority,
     };
     prepared->context = (ShadowSpillPressureFitContext){

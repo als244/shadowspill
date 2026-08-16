@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "admission_internal.h"
+#include "internal.h"
 #include "portfolio_internal.h"
 #include "residency_internal.h"
 
@@ -1405,7 +1406,11 @@ static int add_repair_pressure(
     }
     uint64_t capacity = failure->error_capacity_bytes != 0U
         ? failure->error_capacity_bytes
-        : context->residency->device_capacity_bytes[failure->error_device];
+        : shadowspill_boundary_capacity(
+            context->residency,
+            failure->error_device,
+            (uint32_t)(boundary + 1)
+        );
     uint64_t total = failure->error_used_bytes;
     if (failure->error_requested_bytes > UINT64_MAX - total) {
         total = UINT64_MAX;
@@ -1582,8 +1587,11 @@ static int add_admission_repair_pressure(
     } else {
         current_pressure += workspace->extra_pressure[position];
     }
-    const uint64_t capacity =
-        context->residency->device_capacity_bytes[0U];
+    const uint64_t capacity = shadowspill_boundary_capacity(
+        context->residency,
+        0U,
+        pressure_index
+    );
     const uint64_t unused_capacity = current_pressure < capacity
         ? capacity - current_pressure
         : 0U;

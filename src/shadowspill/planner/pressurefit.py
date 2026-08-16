@@ -295,7 +295,9 @@ def _repair_pressure(
         boundary = task - 1 if error.kind == "task-device-capacity" else task
     used = error.used_bytes or 0
     requested = error.requested_bytes or 0
-    capacity = error.capacity_bytes or facts.object_capacity_by_device[device_id]
+    capacity = error.capacity_bytes or facts.object_capacity_by_boundary[device_id][
+        boundary + 1
+    ]
     excess = max(used + requested - capacity, 1)
     return (device_id, boundary), excess
 

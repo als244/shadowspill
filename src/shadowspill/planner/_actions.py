@@ -232,8 +232,9 @@ def _fit_clamped_triggers(
 
     while True:
         changed = False
-        for device_id, capacity in facts.object_capacity_by_device.items():
+        for device_id in facts.object_capacity_by_device:
             for boundary in range(0, facts.last_boundary + 1):
+                capacity = facts.object_capacity_by_boundary[device_id][boundary + 1]
                 if used[device_id][boundary + 1] <= capacity:
                     continue
                 movable = [

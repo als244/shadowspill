@@ -115,6 +115,7 @@ int main(void) {
     const uint64_t transfer_runtimes[] = {1U, 1U};
     const uint64_t task_ends[] = {10U, 20U};
     const uint64_t capacities[] = {64U};
+    const uint64_t boundary_capacities[] = {64U, 64U, 64U};
     const uint32_t priorities[] = {0U};
     const uint8_t seed_resident[] = {
         1U, 1U, 1U,
@@ -144,6 +145,7 @@ int main(void) {
         .evict_runtime_ns = transfer_runtimes,
         .task_ideal_end_ns = task_ends,
         .device_capacity_bytes = capacities,
+        .boundary_capacity_bytes = boundary_capacities,
         .device_priority = priorities,
     };
     const ShadowSpillResidencyOptions residency_options = {
@@ -199,6 +201,7 @@ int main(void) {
     const uint64_t context_transfer_runtime[] = {1U};
     const uint64_t context_task_end[] = {10U};
     const uint64_t context_capacity[] = {64U};
+    const uint64_t context_boundary_capacity[] = {64U, 64U};
     const uint32_t context_priority[] = {0U};
     const uint8_t context_seed_resident[] = {1U, 0U};
     const uint8_t context_seed_breaks[] = {0U, 0U};
@@ -222,6 +225,7 @@ int main(void) {
         .evict_runtime_ns = context_transfer_runtime,
         .task_ideal_end_ns = context_task_end,
         .device_capacity_bytes = context_capacity,
+        .boundary_capacity_bytes = context_boundary_capacity,
         .device_priority = context_priority,
     };
     const uint64_t context_alias_version[] = {0U};

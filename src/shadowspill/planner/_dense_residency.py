@@ -157,6 +157,16 @@ def compile_residency_template(
             [facts.object_capacity_by_device[value] for value in device_ids],
         )
     )
+    boundary_capacities = keep(
+        _array(
+            ctypes.c_uint64,
+            [
+                facts.object_capacity_by_boundary[device_id][boundary]
+                for device_id in device_ids
+                for boundary in range(boundary_count)
+            ],
+        )
+    )
     priorities = keep(
         _array(
             ctypes.c_uint32,
@@ -190,6 +200,7 @@ def compile_residency_template(
         evict_runtime_ns=evict_buffer,
         task_ideal_end_ns=task_ends,
         device_capacity_bytes=capacities,
+        boundary_capacity_bytes=boundary_capacities,
         device_priority=priorities,
     )
     return CompiledResidencyTemplate(

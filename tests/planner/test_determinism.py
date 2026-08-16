@@ -145,7 +145,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
             device_id = facts.alias_devices[alias]
             if (
                 boundary_bytes(facts, proposed, candidate_start, device_id)
-                <= facts.object_capacity_by_device[device_id]
+                <= facts.object_capacity_by_boundary[device_id][candidate_start + 1]
             ):
                 scalar = proposed
                 continue
