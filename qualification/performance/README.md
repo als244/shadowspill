@@ -21,6 +21,15 @@ python -m qualification.performance.run llama3 mlops \
   --force-fresh
 ```
 
+Run the complete five-cell matrix with:
+
+```bash
+python -m qualification.performance.matrix \
+  --output-directory qualification/results/full_model \
+  --force-fresh \
+  --keep-going
+```
+
 The default protocol checkpoints the planned callable, performs and diagnoses
 one warm step, restores the checkpoint, then measures three groups of four
 steps. Planning, compilation, warmup, and restore are outside timed execution.

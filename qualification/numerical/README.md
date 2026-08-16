@@ -42,5 +42,5 @@ diagnostics. Frontend capture, profiling, physical admission, ExecutionPlan
 construction, and outer `plan_step()` timing are intentionally excluded.
 
 For repeatable matrices and configurable/custom model cases, use
-`python -m verification.run_model_correctness`; its README documents model
-configuration, data geometry, factory, and case-option arguments.
+`python -m qualification.numerical.matrix`; the parent
+[`qualification/README.md`](../README.md) documents the launcher.

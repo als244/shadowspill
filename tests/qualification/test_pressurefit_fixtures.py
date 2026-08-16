@@ -9,6 +9,7 @@ from qualification.numerical.fixtures import (
     pressurefit_fixture,
     write_pressurefit_fixtures,
 )
+from qualification.planning.benchmark import _run_suite
 from shadowspill.planner import (
     PressureFitOptions,
     PressureFitResult,
@@ -29,7 +30,6 @@ from tests.simulator.test_admission_accounting import (
 from tests.simulator.test_admission_accounting import (
     _schedule as causal_schedule,
 )
-from verification.benchmark_pressurefit import _run_suite
 
 
 def _result() -> PressureFitResult:

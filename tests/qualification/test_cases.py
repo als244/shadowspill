@@ -1,4 +1,4 @@
-"""Tests for configurable and external verification cases."""
+"""Tests for configurable and external qualification cases."""
 
 from __future__ import annotations
 

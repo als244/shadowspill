@@ -110,6 +110,6 @@ Nsight ranges follow the documented namespace:
 - `shadowspill.runtime.wait_event` identifies stream dependency insertion.
 
 The Phase-5 qualification trace is reproducibly checked with
-`qualification/check_cuda_trace.py`. It requires one conventional slab
+`qualification/diagnostics/nsys_validate.py`. It requires one conventional slab
 allocation, one pinned arena, real bidirectional copy overlap with compute, no
 VMM entry point, and no device/context-wide synchronization.

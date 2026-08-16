@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from qualification.performance import manifests
-from verification.run_full_model_qualification import (
+from models.full_model import manifests
+from qualification.performance.matrix import (
     _active_planning_phases,
     _termination_signal,
 )

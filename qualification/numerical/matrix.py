@@ -250,7 +250,7 @@ def main() -> int:
     parser.add_argument(
         "--case-factory",
         metavar="MODULE:FUNCTION",
-        help="verification-case factory for custom model names",
+        help="qualification-case factory for custom model names",
     )
     parser.add_argument(
         "--case-option",

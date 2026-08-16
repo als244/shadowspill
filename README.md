@@ -174,4 +174,5 @@ See [the architecture](docs/architecture.md),
 [the PyTorch API](docs/pytorch-frontend.md),
 [the planning cache](docs/planning-cache.md),
 [memory-budget semantics](docs/memory-budget-semantics.md), and the
-[development plan](docs/development-plan.md).
+[development plan](docs/development-plan.md). Historical root-cause reports are
+indexed separately under [engineering investigations](docs/investigations/README.md).

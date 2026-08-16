@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 
-from .matrix import ProgramRequest
-from .models import (
+from models.full_model import (
     FullModelCase,
     build_case,
     manifest_for,
 )
+
+from .matrix import ProgramRequest
 
 
 def build_program_case(request: ProgramRequest) -> FullModelCase:

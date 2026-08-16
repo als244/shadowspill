@@ -195,7 +195,7 @@ def _profiling_metadata(
 ) -> list[object]:
     """Return explicit value-sensitive workload classes for task profiling.
 
-    The built-in verification cases place packed sequence lengths in the third
+    The built-in qualification cases place packed sequence lengths in the third
     microbatch position.  Custom cases can provide an arbitrary JSON list with
     ``--profiling-metadata`` instead of relying on that convenience.
     """
@@ -1070,7 +1070,7 @@ def main() -> int:
     parser.add_argument(
         "--case-factory",
         metavar="MODULE:FUNCTION",
-        help="factory for a model not in the built-in verification registry",
+        help="factory for a model not in the built-in qualification registry",
     )
     parser.add_argument(
         "--case-option",

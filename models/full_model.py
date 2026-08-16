@@ -1,4 +1,4 @@
-"""Versioned full-model workload manifests and deterministic case construction."""
+"""Shared full-model manifests and deterministic workload construction."""
 
 from __future__ import annotations
 

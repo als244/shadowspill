@@ -1,1 +1,0 @@
-"""Verification-tool tests."""

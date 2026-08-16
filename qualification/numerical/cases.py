@@ -21,6 +21,10 @@ from models.mlops import (
 from models.mlops import (
     Qwen35 as MlopsQwen35,
 )
+from models.providers import (
+    ModelImplementation,
+    implementation_context,
+)
 from models.pytorch import (
     Llama3 as PyTorchLlama3,
 )
@@ -34,10 +38,6 @@ from models.pytorch import (
 )
 from models.pytorch import (
     Qwen35 as PyTorchQwen35,
-)
-from qualification.model_providers import (
-    ModelImplementation,
-    implementation_context,
 )
 
 _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
@@ -107,7 +107,7 @@ def build_case(
         factory = getattr(importlib.import_module(module_name), attribute)
         if not callable(factory):
             raise TypeError(
-                f"verification case factory is not callable: {case_factory}"
+                f"qualification case factory is not callable: {case_factory}"
             )
         case = factory(
             model_name=family,
@@ -129,7 +129,7 @@ def build_case(
         missing = [name for name in required if not hasattr(case, name)]
         if missing:
             raise TypeError(
-                f"verification case factory {case_factory} omitted: "
+                f"qualification case factory {case_factory} omitted: "
                 + ", ".join(missing)
             )
         return cast(NumericalCase, case)

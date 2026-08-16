@@ -17,7 +17,8 @@ from typing import Any, cast
 
 import torch
 
-from qualification.model_providers import ModelImplementation
+from models.full_model import FullModelManifest, build_case, manifest_for
+from models.providers import ModelImplementation
 from qualification.model_state import externalize_case_model, relocate_case_model
 from qualification.numerical.fixtures import write_pressurefit_fixtures
 from qualification.runtime_evidence import (
@@ -30,8 +31,6 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-
-from .cases import FullModelManifest, build_case, manifest_for
 
 _MINIMUM_HISTORICAL_RATIO = 0.95
 _MAXIMUM_SIMULATOR_ERROR = 0.05

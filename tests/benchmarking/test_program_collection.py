@@ -26,7 +26,6 @@ from benchmarking.program_collection.matrix import (
     ProgramRequest,
     expand_program_requests,
 )
-from benchmarking.program_collection.smoke_program_artifacts import _fixture
 from benchmarking.program_collection.state import (
     CollectionPaths,
     begin_attempt,
@@ -34,6 +33,7 @@ from benchmarking.program_collection.state import (
     finish_attempt,
     load_case_status,
 )
+from tests.benchmarking._fixtures import _fixture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 _FULL_CONFIG = (

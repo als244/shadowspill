@@ -6,8 +6,8 @@ import argparse
 
 import pytest
 
+from qualification.numerical.matrix import _budget_overrides, _parse_bytes
 from qualification.numerical.run import _case_identity
-from verification.run_model_correctness import _budget_overrides, _parse_bytes
 
 
 @pytest.mark.parametrize(

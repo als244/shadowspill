@@ -42,7 +42,7 @@ from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
     save_step_program,
 )
-from benchmarking.program_collection.smoke_program_artifacts import _fixture
+from tests.benchmarking._fixtures import _fixture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
 _CONFIG = (

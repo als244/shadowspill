@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from qualification.performance import manifests
+from models.full_model import manifests
 
 _PLAN_PROGRESS = re.compile(
     r"^\[shadowspill\.plan \+\s*[0-9.]+s\]\s+"

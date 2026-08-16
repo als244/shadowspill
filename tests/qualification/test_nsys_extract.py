@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from qualification.extract_execution_trace import extract_trace
+from qualification.diagnostics.nsys_extract import extract_trace
 
 
 def _create_trace(path: Path) -> None:
