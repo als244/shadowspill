@@ -230,7 +230,9 @@ def _recover_active_point(
     final = recover_running_attempt(
         directory,
         request,
+        case=case,
         max_attempts=config.max_point_attempts,
+        elapsed_seconds=outcome.active_point_elapsed_seconds or 0.0,
         error=error,
     )
     disposition = "FINAL" if final else "RETRY"

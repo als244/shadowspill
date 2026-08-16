@@ -29,12 +29,14 @@ from benchmarking.planning_eval.source import (
 )
 from benchmarking.planning_eval.storage import (
     BaselinePaths,
+    atomic_json,
     begin_point_attempt,
     finish_point_attempt,
     initialize_point,
     point_complete,
     recover_running_attempt,
 )
+from benchmarking.planning_eval.summary import write_frontier_summary
 from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
     save_step_program,
@@ -162,7 +164,9 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
     assert not recover_running_attempt(
         directory,
         request,
+        case=case,
         max_attempts=2,
+        elapsed_seconds=1.0,
         error={"type": "NativeCrash", "message": "signal 11"},
     )
     second = begin_point_attempt(directory, request)
@@ -177,6 +181,118 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         final=True,
     )
     assert point_complete(directory, request)
+
+
+def test_timeout_recovery_writes_summarizable_canonical_evidence(
+    tmp_path: Path,
+) -> None:
+    corpus_root = tmp_path / "corpus"
+    saved = save_step_program(
+        corpus_root,
+        identity=ProgramCaseIdentity("qwen35", "mlops", 4096, 1024, 8),
+        program=_fixture(),
+    )
+    case = CorpusProgramCase(
+        saved.directory,
+        saved.identity,
+        saved.program_digest,
+        saved.artifact_digest,
+    )
+    config = FrontierConfig(
+        name="timeout-frontier",
+        expected_programs=1,
+        expected_points_per_program=1,
+        program_role="recurrent",
+        point_timeout_seconds=300,
+        max_point_attempts=1,
+        max_worker_restarts_per_program=2,
+        pressurefit_cache_mode="cold",
+        transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
+        grids=(
+            FrontierGrid(
+                "main",
+                (16 << 30,),
+                (112 << 30,),
+                (BandwidthScale(1, 2),),
+            ),
+        ),
+    )
+    provenance = RepositoryProvenance(
+        _REPOSITORY,
+        "a" * 40,
+        "",
+        "",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    )
+    paths = BaselinePaths.initialize(
+        tmp_path / "frontiers",
+        baseline_id="timeout-baseline",
+        config=config,
+        provenance=provenance,
+        corpus_root=corpus_root,
+        corpus_digest=corpus_manifest_digest((case,)),
+        cases=(case,),
+    )
+    atomic_json(
+        paths.case_directory(case) / "case.json",
+        {"case": case.to_dict()},
+    )
+    request = expand_frontier_points(
+        _fixture().recurrent,
+        config.grids,
+        transfer_baseline=config.transfer_bandwidths,
+    )[0]
+    directory = initialize_point(paths, case, request)
+    begin_point_attempt(directory, request)
+    assert recover_running_attempt(
+        directory,
+        request,
+        case=case,
+        max_attempts=1,
+        elapsed_seconds=300.25,
+        error={"type": "FrontierPointTimeout", "message": "timed out"},
+    )
+
+    point = json.loads((directory / "point.json").read_text())
+    assert point["case"]["case_id"] == case.case_id
+    assert point["request"] == request.to_dict()
+    assert point["timing"]["attempt_elapsed_seconds"] == 300.25
+    summary = write_frontier_summary(
+        paths,
+        expected_programs=1,
+        expected_points_per_program=1,
+    )
+    assert summary["status_counts"] == {"error": 1}
+    assert summary["observed_transfer_bandwidth_combinations"] == [
+        {"fetch_bytes_per_second": 50, "evict_bytes_per_second": 40}
+    ]
+
+    # Controller timeouts produced this reduced v1 record before the recovery
+    # path was fixed.  The summary remains able to index an interrupted
+    # baseline by validating its immutable request/case sidecars.
+    (directory / "point.json").write_text(
+        json.dumps(
+            {
+                "schema": "shadowspill.pressurefit_frontier_point/v1",
+                "request_digest": request.digest,
+                "point_id": request.point_id,
+                "status": "error",
+                "error": {
+                    "type": "FrontierPointTimeout",
+                    "message": "timed out",
+                },
+            }
+        )
+    )
+    legacy_summary = write_frontier_summary(
+        paths,
+        expected_programs=1,
+        expected_points_per_program=1,
+    )
+    assert legacy_summary["status_counts"] == {"error": 1}
+    assert legacy_summary["observed_transfer_bandwidth_combinations"] == [
+        {"fetch_bytes_per_second": 50, "evict_bytes_per_second": 40}
+    ]
 
 
 def test_worker_output_is_streamed_to_worker_main_log_and_stdout(

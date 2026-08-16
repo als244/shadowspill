@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .matrix import FrontierPointRequest
 from .storage import BaselinePaths, atomic_json, atomic_text, read_object, utc_now
 
 _CSV_FIELDS = (
@@ -89,8 +90,15 @@ def write_frontier_summary(
 
     point_paths = tuple(sorted(paths.cases_directory.glob("*/points/*/point.json")))
     points = tuple(read_object(path) for path in point_paths)
+    requests = tuple(
+        _point_request(path, point)
+        for path, point in zip(point_paths, points, strict=True)
+    )
     rows = tuple(
-        _csv_row(path, point) for path, point in zip(point_paths, points, strict=True)
+        _csv_row(path, point, request)
+        for path, point, request in zip(
+            point_paths, points, requests, strict=True
+        )
     )
     atomic_text(
         paths.jsonl_path,
@@ -100,11 +108,8 @@ def write_frontier_summary(
     statuses = Counter(str(item.get("status", "invalid")) for item in points)
     transfer_pairs = sorted(
         {
-            (
-                int(_request(item)["fetch_bytes_per_second"]),
-                int(_request(item)["evict_bytes_per_second"]),
-            )
-            for item in points
+            (_bandwidth(request, "fetch"), _bandwidth(request, "evict"))
+            for request in requests
         }
     )
     expected_points = expected_programs * expected_points_per_program
@@ -136,11 +141,14 @@ def write_frontier_summary(
     return summary
 
 
-def _csv_row(path: Path, point: dict[str, Any]) -> dict[str, object]:
-    case = _mapping(point.get("case"))
+def _csv_row(
+    path: Path,
+    point: dict[str, Any],
+    request: dict[str, Any],
+) -> dict[str, object]:
+    case = _point_case(path, point)
     identity = _mapping(case.get("identity"))
     geometry = _mapping(case.get("data_geometry"))
-    request = _mapping(point.get("request"))
     budgets = _mapping(request.get("memory_budgets"))
     bandwidth = _mapping(request.get("transfer_bandwidths"))
     result = _mapping(point.get("result"))
@@ -275,9 +283,39 @@ def _csv_row(path: Path, point: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def _request(point: dict[str, Any]) -> dict[str, Any]:
+def _point_request(path: Path, point: dict[str, Any]) -> dict[str, Any]:
+    """Read canonical request data, including pre-fix timeout evidence."""
+
     request = _mapping(point.get("request"))
-    return _mapping(request.get("transfer_bandwidths"))
+    if not request:
+        request = read_object(path.parent / "request.json")
+    expected_digest = point.get("request_digest")
+    actual = FrontierPointRequest.from_value(request)
+    if actual.digest != expected_digest:
+        raise ValueError(f"frontier point request changed at {path}")
+    return request
+
+
+def _point_case(path: Path, point: dict[str, Any]) -> dict[str, Any]:
+    """Read canonical case data, including pre-fix timeout evidence."""
+
+    case = _mapping(point.get("case"))
+    if case:
+        return case
+    case_record = read_object(path.parents[2] / "case.json")
+    case = _mapping(case_record.get("case"))
+    if not case:
+        raise ValueError(f"frontier point has no case identity at {path}")
+    return case
+
+
+def _bandwidth(request: dict[str, Any], direction: str) -> int:
+    bandwidths = _mapping(request.get("transfer_bandwidths"))
+    key = f"{direction}_bytes_per_second"
+    value = bandwidths.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"frontier point has invalid {key}")
+    return value
 
 
 def _write_csv(path: Path, rows: tuple[dict[str, object], ...]) -> None:

@@ -22,6 +22,7 @@ class WorkerProcessOutcome:
     elapsed_seconds: float
     timed_out_point_id: str | None
     active_point: tuple[str, str] | None
+    active_point_elapsed_seconds: float | None
 
 
 def execute_case_worker(
@@ -102,11 +103,13 @@ def execute_case_worker(
                     _write_line(log, collection_log, console_prefix, remaining)
             log.flush()
             collection_log.flush()
+    final_active = read_active_point(case_run_directory)
     return WorkerProcessOutcome(
         return_code,
         time.perf_counter() - started,
         timed_out_point_id,
-        read_active_point(case_run_directory),
+        final_active,
+        None if final_active is None else time.perf_counter() - active_started,
     )
 
 

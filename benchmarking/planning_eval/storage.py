@@ -231,12 +231,19 @@ def finish_point_attempt(
     if final:
         if evidence is None:
             raise ValueError("a final point requires evidence")
+        final_evidence = dict(evidence)
+        recorded_request = final_evidence.get("request")
+        if recorded_request is not None and _canonical(recorded_request) != _canonical(
+            request.to_dict()
+        ):
+            raise ValueError("point evidence request differs from its journal")
+        final_evidence["request"] = request.to_dict()
         point = {
             "schema": _POINT_SCHEMA,
             "request_digest": request.digest,
             "point_id": request.point_id,
             "status": status_name,
-            **dict(evidence),
+            **final_evidence,
         }
         atomic_json(directory / "point.json", point)
         status["status"] = status_name
@@ -249,7 +256,9 @@ def recover_running_attempt(
     directory: Path,
     request: FrontierPointRequest,
     *,
+    case: CorpusProgramCase,
     max_attempts: int,
+    elapsed_seconds: float,
     error: Mapping[str, object],
 ) -> bool:
     """Close a worker-killed attempt; return whether the point is now final."""
@@ -266,14 +275,25 @@ def recover_running_attempt(
         return point_complete(directory, request)
     attempt = int(current["attempt"])
     final = attempt >= max_attempts
+    completed_at = utc_now()
+    evidence = {
+        "case": case.to_dict(),
+        "request": request.to_dict(),
+        "timing": {
+            "started_at": current.get("started_at"),
+            "completed_at": completed_at,
+            "attempt_elapsed_seconds": elapsed_seconds,
+        },
+        "error": dict(error),
+    }
     finish_point_attempt(
         directory,
         request,
         attempt=attempt,
         status_name="error",
-        elapsed_seconds=0.0,
+        elapsed_seconds=elapsed_seconds,
         error=error,
-        evidence={"error": dict(error)} if final else None,
+        evidence=evidence if final else None,
         final=final,
     )
     return final
