@@ -18,6 +18,7 @@ from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
+    ProfileKey,
     ProfileRepository,
     TaskAllocationABI,
     TaskAllocationEvent,
@@ -25,6 +26,30 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
     profile_unique_artifacts,
 )
+
+
+def test_allocation_probe_matrix_is_part_of_profile_identity() -> None:
+    environment = _environment()
+    first = ProfileKey(
+        "a" * 64,
+        environment,
+        allocation_probe_seeds=1,
+        allocation_probe_repetitions=2,
+    )
+    more_seeds = ProfileKey(
+        "a" * 64,
+        environment,
+        allocation_probe_seeds=3,
+        allocation_probe_repetitions=2,
+    )
+    more_repetitions = ProfileKey(
+        "a" * 64,
+        environment,
+        allocation_probe_seeds=1,
+        allocation_probe_repetitions=4,
+    )
+
+    assert len({first.digest, more_seeds.digest, more_repetitions.digest}) == 3
 
 
 class _Repeated(nn.Module):

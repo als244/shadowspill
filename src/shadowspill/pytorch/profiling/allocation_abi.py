@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 
-_TASK_ALLOCATION_ABI_SCHEMA = "shadowspill.task_allocation_abi/v2"
+_TASK_ALLOCATION_ABI_SCHEMA = "shadowspill.task_allocation_abi/v3"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -124,6 +124,7 @@ class TaskAllocationABIStep:
     output_leaf_indices: tuple[int, ...] = ()
     mutation_input_positions: tuple[int, ...] = ()
     persistent_after_task: bool = False
+    required: bool = False
 
     def __post_init__(self) -> None:
         if self.operation_index < 0 or self.allocation_ordinal < 0:
@@ -142,8 +143,16 @@ class TaskAllocationABIStep:
             self.output_leaf_indices
             or self.mutation_input_positions
             or self.persistent_after_task
+            or self.required
         ):
             raise ValueError("task allocation ABI free carries allocation-only fields")
+        if self.required and not (
+            self.output_leaf_indices or self.mutation_input_positions
+        ):
+            raise ValueError(
+                "required task allocation ABI storage must publish an output "
+                "or mutation"
+            )
 
     def identity(self) -> dict[str, object]:
         return {
@@ -156,6 +165,7 @@ class TaskAllocationABIStep:
             "output_leaf_indices": list(self.output_leaf_indices),
             "mutation_input_positions": list(self.mutation_input_positions),
             "persistent_after_task": self.persistent_after_task,
+            "required": self.required,
         }
 
     @classmethod
@@ -177,6 +187,7 @@ class TaskAllocationABIStep:
                     int(item) for item in value["mutation_input_positions"]
                 ),
                 persistent_after_task=bool(value["persistent_after_task"]),
+                required=bool(value["required"]),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task allocation ABI step is invalid") from exc
@@ -299,6 +310,483 @@ class TaskAllocationABI:
         return cls(steps, digest)
 
 
+@dataclass(frozen=True, slots=True)
+class TaskAllocationPathObservation:
+    """One repeated representative-input allocation-path probe."""
+
+    probe_index: int
+    repetition: int
+    compatibility_digest: str
+    operation_count: int
+    allocation_count: int
+    scratch_allocation_count: int
+    scratch_maximum_requested_bytes: int
+    scratch_maximum_charged_bytes: int
+    scratch_peak_requested_bytes: int
+    scratch_peak_charged_bytes: int
+    scratch_terminal_charged_bytes: int
+
+    def __post_init__(self) -> None:
+        values = (
+            self.probe_index,
+            self.repetition,
+            self.operation_count,
+            self.allocation_count,
+            self.scratch_allocation_count,
+            self.scratch_maximum_requested_bytes,
+            self.scratch_maximum_charged_bytes,
+            self.scratch_peak_requested_bytes,
+            self.scratch_peak_charged_bytes,
+            self.scratch_terminal_charged_bytes,
+        )
+        if any(value < 0 for value in values):
+            raise ValueError("task allocation path fields must be non-negative")
+        if len(self.compatibility_digest) != 64:
+            raise ValueError("task allocation path digest must be SHA-256")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "probe_index": self.probe_index,
+            "repetition": self.repetition,
+            "compatibility_digest": self.compatibility_digest,
+            "operation_count": self.operation_count,
+            "allocation_count": self.allocation_count,
+            "scratch_allocation_count": self.scratch_allocation_count,
+            "scratch_maximum_requested_bytes": (
+                self.scratch_maximum_requested_bytes
+            ),
+            "scratch_maximum_charged_bytes": self.scratch_maximum_charged_bytes,
+            "scratch_peak_requested_bytes": self.scratch_peak_requested_bytes,
+            "scratch_peak_charged_bytes": self.scratch_peak_charged_bytes,
+            "scratch_terminal_charged_bytes": self.scratch_terminal_charged_bytes,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> TaskAllocationPathObservation:
+        if not isinstance(value, dict):
+            raise ValueError("task allocation path observation must be an object")
+        try:
+            return cls(
+                probe_index=int(value["probe_index"]),
+                repetition=int(value["repetition"]),
+                compatibility_digest=str(value["compatibility_digest"]),
+                operation_count=int(value["operation_count"]),
+                allocation_count=int(value["allocation_count"]),
+                scratch_allocation_count=int(value["scratch_allocation_count"]),
+                scratch_maximum_requested_bytes=int(
+                    value["scratch_maximum_requested_bytes"]
+                ),
+                scratch_maximum_charged_bytes=int(
+                    value["scratch_maximum_charged_bytes"]
+                ),
+                scratch_peak_requested_bytes=int(
+                    value["scratch_peak_requested_bytes"]
+                ),
+                scratch_peak_charged_bytes=int(
+                    value["scratch_peak_charged_bytes"]
+                ),
+                scratch_terminal_charged_bytes=int(
+                    value["scratch_terminal_charged_bytes"]
+                ),
+            )
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                "task allocation path observation has an invalid schema"
+            ) from exc
+
+
+def compare_allocation_path(
+    reference: TaskAllocationABI,
+    observed: TaskAllocationABI,
+    *,
+    probe_index: int,
+    repetition: int,
+    operation_alignment: Sequence[tuple[int, int]] | None = None,
+) -> TaskAllocationPathObservation:
+    """Reconcile one observed path against an optional fixed-core ABI."""
+
+    if operation_alignment is not None:
+        return _compare_aligned_allocation_path(
+            reference,
+            observed,
+            probe_index=probe_index,
+            repetition=repetition,
+            operation_alignment=operation_alignment,
+        )
+
+    core_states = [0] * _allocation_count(reference.steps)
+    actual_to_core: dict[int, int | None] = {}
+    scratch_live: dict[int, tuple[int, int]] = {}
+    scratch_live_requested = 0
+    scratch_live_charged = 0
+    scratch_peak_requested = 0
+    scratch_peak_charged = 0
+    scratch_maximum_requested = 0
+    scratch_maximum_charged = 0
+    scratch_count = 0
+    core_index = 0
+
+    for actual in observed.steps:
+        if actual.operation is TaskAllocationOperation.ALLOCATE:
+            match, skipped = _find_core_allocation(
+                reference.steps,
+                core_states,
+                start=core_index,
+                actual=actual,
+            )
+            if match is not None:
+                for ordinal in skipped:
+                    core_states[ordinal] = 2
+                core_states[match.allocation_ordinal] = 1
+                actual_to_core[actual.allocation_ordinal] = match.allocation_ordinal
+                core_index = match.operation_index + 1
+                continue
+            if actual.required:
+                raise ValueError(
+                    "framework-visible allocation is absent from the fixed core: "
+                    f"probe={probe_index}, repetition={repetition}, "
+                    f"operation={actual.operation_index}, "
+                    f"requested={actual.requested_bytes}, "
+                    f"charged={actual.charged_bytes}"
+                )
+            actual_to_core[actual.allocation_ordinal] = None
+            scratch_live[actual.allocation_ordinal] = (
+                actual.requested_bytes,
+                actual.charged_bytes,
+            )
+            scratch_live_requested += actual.requested_bytes
+            scratch_live_charged += actual.charged_bytes
+            scratch_peak_requested = max(
+                scratch_peak_requested, scratch_live_requested
+            )
+            scratch_peak_charged = max(scratch_peak_charged, scratch_live_charged)
+            scratch_maximum_requested = max(
+                scratch_maximum_requested, actual.requested_bytes
+            )
+            scratch_maximum_charged = max(
+                scratch_maximum_charged, actual.charged_bytes
+            )
+            scratch_count += 1
+            continue
+
+        mapped = actual_to_core.get(actual.allocation_ordinal)
+        if actual.allocation_ordinal not in actual_to_core:
+            raise ValueError("observed allocation path frees an unknown allocation")
+        if mapped is None:
+            requested, charged = scratch_live.pop(actual.allocation_ordinal)
+            scratch_live_requested -= requested
+            scratch_live_charged -= charged
+            continue
+        core_index = _skip_omitted_core_frees(
+            reference.steps, core_states, core_index
+        )
+        if core_index >= len(reference.steps):
+            raise ValueError("observed allocation path has an extra core free")
+        expected = reference.steps[core_index]
+        if (
+            expected.operation is not TaskAllocationOperation.FREE
+            or expected.allocation_ordinal != mapped
+            or not _same_geometry(expected, actual)
+        ):
+            raise ValueError(
+                "observed allocation path changes fixed-core free ordering: "
+                f"probe={probe_index}, repetition={repetition}, "
+                f"operation={actual.operation_index}, "
+                f"mapped_core_ordinal={mapped}, "
+                f"expected_core_operation={expected.operation_index}, "
+                f"expected_core_ordinal={expected.allocation_ordinal}, "
+                f"actual_ordinal={actual.allocation_ordinal}, "
+                f"expected_geometry=({expected.requested_bytes},"
+                f"{expected.charged_bytes},{expected.alignment_bytes}), "
+                f"actual_geometry=({actual.requested_bytes},"
+                f"{actual.charged_bytes},{actual.alignment_bytes})"
+            )
+        core_index += 1
+
+    core_index = _finish_optional_core(
+        reference.steps, core_states, core_index
+    )
+    if core_index != len(reference.steps):
+        expected = reference.steps[core_index]
+        raise ValueError(
+            "observed allocation path omits required fixed-core behavior: "
+            f"probe={probe_index}, repetition={repetition}, "
+            f"core_operation={expected.operation_index}"
+        )
+    return TaskAllocationPathObservation(
+        probe_index=probe_index,
+        repetition=repetition,
+        compatibility_digest=observed.compatibility_digest,
+        operation_count=len(observed.steps),
+        allocation_count=_allocation_count(observed.steps),
+        scratch_allocation_count=scratch_count,
+        scratch_maximum_requested_bytes=scratch_maximum_requested,
+        scratch_maximum_charged_bytes=scratch_maximum_charged,
+        scratch_peak_requested_bytes=scratch_peak_requested,
+        scratch_peak_charged_bytes=scratch_peak_charged,
+        scratch_terminal_charged_bytes=scratch_live_charged,
+    )
+
+
+def _compare_aligned_allocation_path(
+    reference: TaskAllocationABI,
+    observed: TaskAllocationABI,
+    *,
+    probe_index: int,
+    repetition: int,
+    operation_alignment: Sequence[tuple[int, int]],
+) -> TaskAllocationPathObservation:
+    """Classify scratch and omissions from one proven full-path alignment."""
+
+    reference_to_observed = dict(operation_alignment)
+    observed_to_reference = {
+        observed_index: reference_index
+        for reference_index, observed_index in operation_alignment
+    }
+    if len(reference_to_observed) != len(operation_alignment) or len(
+        observed_to_reference
+    ) != len(operation_alignment):
+        raise ValueError("allocation operation alignment is not one-to-one")
+
+    reference_operations = {
+        step.operation_index: step for step in reference.steps
+    }
+    observed_operations = {step.operation_index: step for step in observed.steps}
+    previous_reference = -1
+    previous_observed = -1
+    for reference_index, observed_index in operation_alignment:
+        if reference_index <= previous_reference or observed_index <= previous_observed:
+            raise ValueError("allocation operation alignment is not monotonic")
+        try:
+            expected = reference_operations[reference_index]
+            actual = observed_operations[observed_index]
+        except KeyError as error:
+            raise ValueError(
+                "allocation operation alignment is out of range"
+            ) from error
+        if not _same_operation(expected, actual):
+            raise ValueError(
+                "allocation operation alignment changes operation identity"
+            )
+        previous_reference = reference_index
+        previous_observed = observed_index
+
+    reference_lifetimes = _operation_lifetimes(reference.steps)
+    observed_lifetimes = _operation_lifetimes(observed.steps)
+    for ordinal, (allocation_index, free_index) in reference_lifetimes.items():
+        matched_allocation = reference_to_observed.get(allocation_index)
+        matched_free = (
+            None if free_index is None else reference_to_observed.get(free_index)
+        )
+        allocation = reference.steps[allocation_index]
+        if matched_allocation is None:
+            if allocation.required:
+                raise ValueError(
+                    "observed allocation path omits required fixed-core behavior: "
+                    f"probe={probe_index}, repetition={repetition}, "
+                    f"core_operation={allocation_index}"
+                )
+            if matched_free is not None:
+                raise ValueError(
+                    "fixed-core lifetime has only its free operation matched"
+                )
+            continue
+        actual_allocation = observed.steps[matched_allocation]
+        actual_lifetime = observed_lifetimes[actual_allocation.allocation_ordinal]
+        if (free_index is None) != (actual_lifetime[1] is None):
+            raise ValueError("matched allocation changes terminal ownership")
+        if free_index is not None and (
+            matched_free is None or matched_free != actual_lifetime[1]
+        ):
+            raise ValueError(
+                "observed allocation path changes fixed-core lifetime ordering: "
+                f"probe={probe_index}, repetition={repetition}, "
+                f"core_ordinal={ordinal}, observed_ordinal="
+                f"{actual_allocation.allocation_ordinal}"
+            )
+
+    scratch_ordinals: set[int] = set()
+    for ordinal, (allocation_index, free_index) in observed_lifetimes.items():
+        matched_allocation = observed_to_reference.get(allocation_index)
+        matched_free = (
+            None if free_index is None else observed_to_reference.get(free_index)
+        )
+        allocation = observed.steps[allocation_index]
+        if matched_allocation is not None:
+            if free_index is not None and matched_free is None:
+                raise ValueError(
+                    "matched core lifetime has an unmatched free operation"
+                )
+            continue
+        if allocation.required:
+            raise ValueError(
+                "framework-visible allocation is absent from the fixed core: "
+                f"probe={probe_index}, repetition={repetition}, "
+                f"operation={allocation.operation_index}, "
+                f"requested={allocation.requested_bytes}, "
+                f"charged={allocation.charged_bytes}"
+            )
+        if matched_free is not None:
+            raise ValueError("scratch lifetime has a core-matched free operation")
+        scratch_ordinals.add(ordinal)
+
+    scratch_live_requested = 0
+    scratch_live_charged = 0
+    scratch_peak_requested = 0
+    scratch_peak_charged = 0
+    scratch_maximum_requested = 0
+    scratch_maximum_charged = 0
+    for step in observed.steps:
+        if step.allocation_ordinal not in scratch_ordinals:
+            continue
+        if step.operation is TaskAllocationOperation.ALLOCATE:
+            scratch_live_requested += step.requested_bytes
+            scratch_live_charged += step.charged_bytes
+            scratch_peak_requested = max(
+                scratch_peak_requested, scratch_live_requested
+            )
+            scratch_peak_charged = max(scratch_peak_charged, scratch_live_charged)
+            scratch_maximum_requested = max(
+                scratch_maximum_requested, step.requested_bytes
+            )
+            scratch_maximum_charged = max(
+                scratch_maximum_charged, step.charged_bytes
+            )
+        else:
+            scratch_live_requested -= step.requested_bytes
+            scratch_live_charged -= step.charged_bytes
+
+    return TaskAllocationPathObservation(
+        probe_index=probe_index,
+        repetition=repetition,
+        compatibility_digest=observed.compatibility_digest,
+        operation_count=len(observed.steps),
+        allocation_count=_allocation_count(observed.steps),
+        scratch_allocation_count=len(scratch_ordinals),
+        scratch_maximum_requested_bytes=scratch_maximum_requested,
+        scratch_maximum_charged_bytes=scratch_maximum_charged,
+        scratch_peak_requested_bytes=scratch_peak_requested,
+        scratch_peak_charged_bytes=scratch_peak_charged,
+        scratch_terminal_charged_bytes=scratch_live_charged,
+    )
+
+
+def _operation_lifetimes(
+    steps: Sequence[TaskAllocationABIStep],
+) -> dict[int, tuple[int, int | None]]:
+    allocations: dict[int, int] = {}
+    frees: dict[int, int] = {}
+    for step in steps:
+        if step.operation is TaskAllocationOperation.ALLOCATE:
+            allocations[step.allocation_ordinal] = step.operation_index
+        else:
+            frees[step.allocation_ordinal] = step.operation_index
+    return {
+        ordinal: (operation_index, frees.get(ordinal))
+        for ordinal, operation_index in allocations.items()
+    }
+
+
+def _same_operation(
+    left: TaskAllocationABIStep,
+    right: TaskAllocationABIStep,
+) -> bool:
+    return (
+        left.operation is right.operation
+        and left.requested_bytes == right.requested_bytes
+        and left.charged_bytes == right.charged_bytes
+        and left.alignment_bytes == right.alignment_bytes
+        and left.output_leaf_indices == right.output_leaf_indices
+        and left.mutation_input_positions == right.mutation_input_positions
+        and left.persistent_after_task == right.persistent_after_task
+        and left.required == right.required
+    )
+
+
+def _allocation_count(steps: Sequence[TaskAllocationABIStep]) -> int:
+    return sum(
+        step.operation is TaskAllocationOperation.ALLOCATE for step in steps
+    )
+
+
+def _same_geometry(
+    left: TaskAllocationABIStep,
+    right: TaskAllocationABIStep,
+) -> bool:
+    return (
+        left.operation is right.operation
+        and left.requested_bytes == right.requested_bytes
+        and left.charged_bytes == right.charged_bytes
+        and left.alignment_bytes == right.alignment_bytes
+        and left.required == right.required
+    )
+
+
+def _find_core_allocation(
+    steps: Sequence[TaskAllocationABIStep],
+    states: list[int],
+    *,
+    start: int,
+    actual: TaskAllocationABIStep,
+) -> tuple[TaskAllocationABIStep | None, tuple[int, ...]]:
+    skipped: list[int] = []
+    skipped_set: set[int] = set()
+    scan = start
+    while scan < len(steps):
+        candidate = steps[scan]
+        if candidate.operation is TaskAllocationOperation.ALLOCATE:
+            if _same_geometry(candidate, actual):
+                return candidate, tuple(skipped)
+            if candidate.required:
+                return None, ()
+            skipped.append(candidate.allocation_ordinal)
+            skipped_set.add(candidate.allocation_ordinal)
+            scan += 1
+            continue
+        ordinal = candidate.allocation_ordinal
+        if states[ordinal] == 2 or ordinal in skipped_set:
+            scan += 1
+            continue
+        return None, ()
+    return None, ()
+
+
+def _skip_omitted_core_frees(
+    steps: Sequence[TaskAllocationABIStep],
+    states: list[int],
+    start: int,
+) -> int:
+    index = start
+    while index < len(steps):
+        step = steps[index]
+        if (
+            step.operation is TaskAllocationOperation.FREE
+            and states[step.allocation_ordinal] == 2
+        ):
+            index += 1
+            continue
+        break
+    return index
+
+
+def _finish_optional_core(
+    steps: Sequence[TaskAllocationABIStep],
+    states: list[int],
+    start: int,
+) -> int:
+    index = start
+    while index < len(steps):
+        index = _skip_omitted_core_frees(steps, states, index)
+        if index >= len(steps):
+            return index
+        step = steps[index]
+        if step.operation is not TaskAllocationOperation.ALLOCATE or step.required:
+            return index
+        states[step.allocation_ordinal] = 2
+        index += 1
+    return index
+
+
 def _abi_step(
     operation_index: int,
     event: TaskAllocationEvent,
@@ -323,6 +811,10 @@ def _abi_step(
         persistent_after_task=(
             event.operation is TaskAllocationOperation.ALLOCATE
             and event.allocation_ordinal not in freed_ordinals
+        ),
+        required=(
+            event.operation is TaskAllocationOperation.ALLOCATE
+            and bool(leaves or mutations)
         ),
     )
 
@@ -380,4 +872,6 @@ __all__ = [
     "TaskAllocationABIStep",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
+    "TaskAllocationPathObservation",
+    "compare_allocation_path",
 ]

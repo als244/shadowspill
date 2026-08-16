@@ -10,14 +10,31 @@ typedef struct ShadowSpillTaskScope {
     const ShadowSpillExecutionRecord *execution;
     uint64_t invocation;
     uint64_t operation_index;
-    uint64_t allocation_ordinal;
+    uint64_t allocation_sequence;
+    uint64_t pending_core_ordinal;
+    uint8_t pending_is_scratch;
+    uint8_t pending_allocation;
+    uint8_t *allocation_states;
+    uint32_t allocation_state_count;
+    uint32_t allocation_state_capacity;
     uint64_t live_requested_bytes;
     uint64_t live_charged_bytes;
     uint64_t peak_requested_bytes;
     uint64_t peak_charged_bytes;
     uint64_t allocation_count;
     uint64_t free_count;
+    uint64_t scratch_live_requested_bytes;
+    uint64_t scratch_live_charged_bytes;
+    uint64_t scratch_peak_charged_bytes;
+    uint64_t scratch_allocation_count;
 } ShadowSpillTaskScope;
+
+enum {
+    SHADOWSPILL_TASK_ALLOCATION_UNSEEN = 0U,
+    SHADOWSPILL_TASK_ALLOCATION_MATCHED = 1U,
+    SHADOWSPILL_TASK_ALLOCATION_OMITTED = 2U,
+    SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE = 3U,
+};
 
 static _Thread_local ShadowSpillTaskScope task_scope = {
     .runtime = NULL,
@@ -35,8 +52,24 @@ uint64_t shadowspill_current_task_allocation_ordinal(
     ShadowSpillRuntime *runtime
 ) {
     return task_scope.runtime == runtime && task_scope.execution != NULL
-        ? task_scope.allocation_ordinal
+        ? task_scope.allocation_sequence
         : SHADOWSPILL_RUNTIME_NO_ID;
+}
+
+uint64_t shadowspill_current_task_core_allocation_ordinal(
+    ShadowSpillRuntime *runtime
+) {
+    return task_scope.runtime == runtime && task_scope.execution != NULL &&
+            task_scope.pending_allocation && !task_scope.pending_is_scratch
+        ? task_scope.pending_core_ordinal
+        : SHADOWSPILL_RUNTIME_NO_ID;
+}
+
+int shadowspill_current_task_allocation_is_scratch(
+    ShadowSpillRuntime *runtime
+) {
+    return task_scope.runtime == runtime && task_scope.execution != NULL &&
+        task_scope.pending_allocation && task_scope.pending_is_scratch;
 }
 
 uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime) {
@@ -57,13 +90,40 @@ int shadowspill_enter_task_scope(
     task_scope.execution = NULL;
     task_scope.invocation = 0U;
     task_scope.operation_index = 0U;
-    task_scope.allocation_ordinal = 0U;
+    task_scope.allocation_sequence = 0U;
+    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    task_scope.pending_is_scratch = 0U;
+    task_scope.pending_allocation = 0U;
+    task_scope.allocation_state_count = 0U;
     task_scope.live_requested_bytes = 0U;
     task_scope.live_charged_bytes = 0U;
     task_scope.peak_requested_bytes = 0U;
     task_scope.peak_charged_bytes = 0U;
     task_scope.allocation_count = 0U;
     task_scope.free_count = 0U;
+    task_scope.scratch_live_requested_bytes = 0U;
+    task_scope.scratch_live_charged_bytes = 0U;
+    task_scope.scratch_peak_charged_bytes = 0U;
+    task_scope.scratch_allocation_count = 0U;
+    return 0;
+}
+
+static int prepare_allocation_matcher(
+    const ShadowSpillExecutionRecord *record
+) {
+    const uint32_t count = record->allocation_abi_allocation_count;
+    if (count > task_scope.allocation_state_capacity) {
+        uint8_t *states = realloc(task_scope.allocation_states, count);
+        if (states == NULL) {
+            return -1;
+        }
+        task_scope.allocation_states = states;
+        task_scope.allocation_state_capacity = count;
+    }
+    if (count != 0U) {
+        memset(task_scope.allocation_states, 0, count);
+    }
+    task_scope.allocation_state_count = count;
     return 0;
 }
 
@@ -120,12 +180,114 @@ int shadowspill_enter_execution_scope(
         return -1;
     }
     task_scope.execution = record;
+    if (prepare_allocation_matcher(record) != 0) {
+        shadowspill_leave_task_scope(runtime);
+        return -1;
+    }
     task_scope.invocation = atomic_fetch_add_explicit(
         &((ShadowSpillExecutionRecord *)record)->invocation_count,
         1U,
         memory_order_acq_rel
     ) + 1U;
     return 0;
+}
+
+static int allocation_geometry_matches(
+    const ShadowSpillTaskAllocationABIStep *step,
+    uint64_t requested_bytes,
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
+) {
+    return step != NULL &&
+        step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
+        step->requested_bytes == requested_bytes &&
+        step->charged_bytes == charged_bytes &&
+        step->alignment_bytes == alignment_bytes;
+}
+
+static void skip_omitted_free_operations(void) {
+    for (;;) {
+        const ShadowSpillTaskAllocationABIStep *step =
+            expected_allocation_step();
+        if (step == NULL ||
+            step->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
+            step->allocation_ordinal >= task_scope.allocation_state_count ||
+            task_scope.allocation_states[step->allocation_ordinal] !=
+                SHADOWSPILL_TASK_ALLOCATION_OMITTED) {
+            return;
+        }
+        ++task_scope.operation_index;
+    }
+}
+
+static void classify_task_allocation(
+    uint64_t requested_bytes,
+    uint64_t charged_bytes,
+    uint64_t alignment_bytes
+) {
+    task_scope.pending_allocation = 1U;
+    task_scope.pending_is_scratch = 1U;
+    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    skip_omitted_free_operations();
+    const uint64_t start = task_scope.operation_index;
+    uint64_t scan = start;
+    while (scan < task_scope.execution->allocation_abi_step_count) {
+        const ShadowSpillTaskAllocationABIStep *step =
+            &task_scope.execution->allocation_abi_steps[scan];
+        if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
+            if (allocation_geometry_matches(
+                    step, requested_bytes, charged_bytes, alignment_bytes
+                )) {
+                for (uint64_t index = start; index < scan; ++index) {
+                    const ShadowSpillTaskAllocationABIStep *skipped =
+                        &task_scope.execution->allocation_abi_steps[index];
+                    if (skipped->operation ==
+                            SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
+                        skipped->allocation_ordinal <
+                            task_scope.allocation_state_count &&
+                        task_scope.allocation_states[
+                            skipped->allocation_ordinal
+                        ] == SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE) {
+                        task_scope.allocation_states[
+                            skipped->allocation_ordinal
+                        ] = SHADOWSPILL_TASK_ALLOCATION_OMITTED;
+                    }
+                }
+                task_scope.operation_index = scan;
+                task_scope.pending_is_scratch = 0U;
+                task_scope.pending_core_ordinal = step->allocation_ordinal;
+                return;
+            }
+            if (step->required) {
+                break;
+            }
+            if (step->allocation_ordinal < task_scope.allocation_state_count) {
+                task_scope.allocation_states[step->allocation_ordinal] =
+                    SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE;
+            }
+            ++scan;
+            continue;
+        }
+        if (step->allocation_ordinal >= task_scope.allocation_state_count ||
+            (task_scope.allocation_states[step->allocation_ordinal] !=
+                 SHADOWSPILL_TASK_ALLOCATION_OMITTED &&
+             task_scope.allocation_states[step->allocation_ordinal] !=
+                 SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE)) {
+            break;
+        }
+        ++scan;
+    }
+    for (uint64_t index = start; index < scan; ++index) {
+        const ShadowSpillTaskAllocationABIStep *candidate =
+            &task_scope.execution->allocation_abi_steps[index];
+        if (candidate->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
+            candidate->allocation_ordinal < task_scope.allocation_state_count &&
+            task_scope.allocation_states[candidate->allocation_ordinal] ==
+                SHADOWSPILL_TASK_ALLOCATION_OMIT_CANDIDATE) {
+            task_scope.allocation_states[candidate->allocation_ordinal] =
+                SHADOWSPILL_TASK_ALLOCATION_UNSEEN;
+        }
+    }
 }
 
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
@@ -173,18 +335,22 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
     if (!record->enforce_allocation_abi) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    const ShadowSpillTaskAllocationABIStep *expected =
-        expected_allocation_step();
-    if (expected == NULL ||
-        expected->operation != SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
-        expected->allocation_ordinal != task_scope.allocation_ordinal ||
-        expected->requested_bytes != requested_bytes ||
-        expected->charged_bytes != charged_bytes ||
-        expected->alignment_bytes != alignment_bytes) {
+    if (task_scope.pending_allocation) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    classify_task_allocation(requested_bytes, charged_bytes, alignment_bytes);
+    if (task_scope.pending_is_scratch &&
+        (record->dynamic_scratch_live_limit_bytes == 0U ||
+         (record->dynamic_scratch_maximum_allocation_bytes != 0U &&
+          charged_bytes >
+              record->dynamic_scratch_maximum_allocation_bytes) ||
+         task_scope.scratch_live_charged_bytes + charged_bytes >
+             record->dynamic_scratch_live_limit_bytes)) {
+        task_scope.pending_allocation = 0U;
         return latch_allocation_abi_mismatch(
             runtime,
             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
-            task_scope.allocation_ordinal,
+            task_scope.allocation_sequence,
             requested_bytes,
             charged_bytes,
             alignment_bytes
@@ -201,7 +367,24 @@ uint64_t shadowspill_commit_task_allocation(
     if (task_scope.runtime != runtime || task_scope.execution == NULL) {
         return SHADOWSPILL_RUNTIME_NO_ID;
     }
-    const uint64_t allocation_ordinal = task_scope.allocation_ordinal++;
+    const uint64_t allocation_sequence = task_scope.allocation_sequence++;
+    if (task_scope.pending_allocation && task_scope.pending_is_scratch) {
+        task_scope.scratch_live_requested_bytes += requested_bytes;
+        task_scope.scratch_live_charged_bytes += charged_bytes;
+        if (task_scope.scratch_live_charged_bytes >
+            task_scope.scratch_peak_charged_bytes) {
+            task_scope.scratch_peak_charged_bytes =
+                task_scope.scratch_live_charged_bytes;
+        }
+        ++task_scope.scratch_allocation_count;
+    } else if (task_scope.pending_allocation) {
+        if (task_scope.pending_core_ordinal <
+            task_scope.allocation_state_count) {
+            task_scope.allocation_states[task_scope.pending_core_ordinal] =
+                SHADOWSPILL_TASK_ALLOCATION_MATCHED;
+        }
+        ++task_scope.operation_index;
+    }
     task_scope.live_requested_bytes += requested_bytes;
     task_scope.live_charged_bytes += charged_bytes;
     if (task_scope.live_requested_bytes > task_scope.peak_requested_bytes) {
@@ -211,10 +394,10 @@ uint64_t shadowspill_commit_task_allocation(
         task_scope.peak_charged_bytes = task_scope.live_charged_bytes;
     }
     ++task_scope.allocation_count;
-    if (task_scope.execution->enforce_allocation_abi) {
-        ++task_scope.operation_index;
-    }
-    return allocation_ordinal;
+    task_scope.pending_allocation = 0U;
+    task_scope.pending_is_scratch = 0U;
+    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    return allocation_sequence;
 }
 
 ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
@@ -222,6 +405,7 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     uint64_t origin_task_id,
     uint64_t origin_task_invocation,
     uint64_t allocation_ordinal,
+    int allocation_is_scratch,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
     uint64_t alignment_bytes
@@ -231,7 +415,9 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
         task_scope.invocation != origin_task_invocation) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    if (task_scope.execution->enforce_allocation_abi) {
+    if (task_scope.execution->enforce_allocation_abi &&
+        !allocation_is_scratch) {
+        skip_omitted_free_operations();
         const ShadowSpillTaskAllocationABIStep *expected =
             expected_allocation_step();
         if (expected == NULL ||
@@ -250,6 +436,18 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
             );
         }
         ++task_scope.operation_index;
+    }
+    if (allocation_is_scratch) {
+        if (requested_bytes <= task_scope.scratch_live_requested_bytes) {
+            task_scope.scratch_live_requested_bytes -= requested_bytes;
+        } else {
+            task_scope.scratch_live_requested_bytes = 0U;
+        }
+        if (charged_bytes <= task_scope.scratch_live_charged_bytes) {
+            task_scope.scratch_live_charged_bytes -= charged_bytes;
+        } else {
+            task_scope.scratch_live_charged_bytes = 0U;
+        }
     }
     if (requested_bytes <= task_scope.live_requested_bytes) {
         task_scope.live_requested_bytes -= requested_bytes;
@@ -272,6 +470,23 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
         !task_scope.execution->enforce_allocation_abi) {
         return SHADOWSPILL_RUNTIME_OK;
     }
+    for (;;) {
+        skip_omitted_free_operations();
+        const ShadowSpillTaskAllocationABIStep *expected =
+            expected_allocation_step();
+        if (expected == NULL) {
+            return SHADOWSPILL_RUNTIME_OK;
+        }
+        if (expected->operation != SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
+            expected->required) {
+            break;
+        }
+        if (expected->allocation_ordinal < task_scope.allocation_state_count) {
+            task_scope.allocation_states[expected->allocation_ordinal] =
+                SHADOWSPILL_TASK_ALLOCATION_OMITTED;
+        }
+        ++task_scope.operation_index;
+    }
     if (task_scope.operation_index ==
         task_scope.execution->allocation_abi_step_count) {
         return SHADOWSPILL_RUNTIME_OK;
@@ -293,13 +508,21 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.execution = NULL;
         task_scope.invocation = 0U;
         task_scope.operation_index = 0U;
-        task_scope.allocation_ordinal = 0U;
+        task_scope.allocation_sequence = 0U;
+        task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+        task_scope.pending_is_scratch = 0U;
+        task_scope.pending_allocation = 0U;
+        task_scope.allocation_state_count = 0U;
         task_scope.live_requested_bytes = 0U;
         task_scope.live_charged_bytes = 0U;
         task_scope.peak_requested_bytes = 0U;
         task_scope.peak_charged_bytes = 0U;
         task_scope.allocation_count = 0U;
         task_scope.free_count = 0U;
+        task_scope.scratch_live_requested_bytes = 0U;
+        task_scope.scratch_live_charged_bytes = 0U;
+        task_scope.scratch_peak_charged_bytes = 0U;
+        task_scope.scratch_allocation_count = 0U;
     }
 }
 

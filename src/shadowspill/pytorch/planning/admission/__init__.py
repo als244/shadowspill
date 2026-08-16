@@ -31,6 +31,7 @@ from .selection import (
     admit_selected_schedule,
     build_fixed_selected_admission,
     build_selected_admission,
+    dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
 )
 from .simulation import simulation_admission_from_replay
@@ -57,6 +58,7 @@ __all__ = [
     "build_fixed_layout_admission",
     "build_fixed_selected_admission",
     "build_selected_admission",
+    "dynamic_scratch_reserve_bytes",
     "output_bindings_for_entrypoints",
     "physical_admission",
     "project_runtime_fixed_layout",

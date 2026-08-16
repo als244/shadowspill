@@ -23,6 +23,7 @@ namespace {
     }
     C10_THROW_ERROR(Error, message);
 #else
+    (void)status;
     throw std::runtime_error(message);
 #endif
 }

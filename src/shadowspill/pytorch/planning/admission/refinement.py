@@ -64,6 +64,7 @@ def resolve_fixed_layout_selection(
     topology: AdmissionTopology,
     resolve: Callable[[SimulationConfig], CachedPressureFitResult],
     *,
+    scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
 ) -> FixedLayoutSelection:
     """Select the highest-capacity PressureFit result with a valid layout.
@@ -106,6 +107,7 @@ def resolve_fixed_layout_selection(
                 selected.result,
                 effective_topology,
                 dynamic_alias_group_ids=dynamic_aliases,
+                scratch_reserve_bytes=scratch_reserve_bytes,
             )
         except FixedLayoutInfeasibleError as error:
             last_error = error
@@ -142,6 +144,7 @@ def resolve_fixed_layout_selection(
                 f"{effective_topology.object_capacity_bytes}: "
                 f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
                 f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
+                f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
                 f"slack={admitted.layout.slack_bytes}, "
                 f"total_reduction="
                 f"{original_capacity - effective_topology.object_capacity_bytes}"

@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 35
-RUNTIME_ABI_VERSION: Final = 27
+ADAPTER_ABI_VERSION: Final = 36
+RUNTIME_ABI_VERSION: Final = 28
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -331,6 +331,7 @@ class TaskAllocationABIStep(ctypes.Structure):
         ("charged_bytes", ctypes.c_uint64),
         ("alignment_bytes", ctypes.c_uint64),
         ("operation", ctypes.c_uint8),
+        ("required", ctypes.c_uint8),
     ]
 
 
@@ -350,6 +351,8 @@ class ExecutionDescription(ctypes.Structure):
         ("maximum_charged_allocation_bytes", ctypes.c_uint64),
         ("live_requested_allocation_limit_bytes", ctypes.c_uint64),
         ("live_charged_allocation_limit_bytes", ctypes.c_uint64),
+        ("dynamic_scratch_maximum_allocation_bytes", ctypes.c_uint64),
+        ("dynamic_scratch_live_limit_bytes", ctypes.c_uint64),
     ]
 
 

@@ -71,6 +71,7 @@ class ForwardProgramArtifacts:
     measurements: dict[str, TaskMeasurement]
     measurements_by_profile: dict[str, TaskMeasurement]
     workspace_reserve: int
+    dynamic_scratch_reserve_bytes: int
     simulation_config: SimulationConfig
     admission: AdmissionTopology
 
@@ -122,6 +123,7 @@ class TrainingProgramArtifacts:
     measurements: dict[ProfileMeasurementKey, TaskMeasurement]
     measurements_by_profile: dict[str, TaskMeasurement]
     workspace_reserve: int
+    dynamic_scratch_reserve_bytes: int
     simulation_config: SimulationConfig
     initial_admission: AdmissionTopology
     recurrent_admission: AdmissionTopology

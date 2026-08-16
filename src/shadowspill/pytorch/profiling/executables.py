@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import torch
 
@@ -22,14 +22,49 @@ from .inputs import (
 from .runner import ProfilableArtifact
 
 
+@dataclass(slots=True)
+class OccurrenceValueOwner:
+    """Explicitly own the disposable values for one profiling occurrence.
+
+    The owner is intentionally mutable even though ``ProfileExecutable`` is
+    immutable.  Releasing it invalidates the values through every Python frame
+    that still references the executable; a stale wrapper therefore cannot
+    accidentally extend CUDA-storage lifetime.
+    """
+
+    arguments: tuple[object, ...] = ()
+    summaries: tuple[RepresentativeInputSummary, ...] = ()
+    probe_index: int = 0
+
+    def release(self) -> None:
+        """Drop all value-bearing references immediately and idempotently."""
+
+        self.arguments = ()
+        self.summaries = ()
+        self.probe_index = 0
+
+
 @dataclass(frozen=True, slots=True)
 class ProfileExecutable:
-    """A compiled task paired with one profiling occurrence's values."""
+    """Immutable compiled code plus an explicit occurrence-value owner."""
 
     compiled: CompiledTask
     artifact: GraphArtifact
-    example_arguments: tuple[object, ...] = ()
-    representative_inputs: tuple[RepresentativeInputSummary, ...] = ()
+    occurrence_values: OccurrenceValueOwner = field(
+        default_factory=OccurrenceValueOwner
+    )
+
+    @property
+    def example_arguments(self) -> tuple[object, ...]:
+        return self.occurrence_values.arguments
+
+    @property
+    def representative_inputs(self) -> tuple[RepresentativeInputSummary, ...]:
+        return self.occurrence_values.summaries
+
+    @property
+    def representative_probe_index(self) -> int:
+        return self.occurrence_values.probe_index
 
     @property
     def function(self) -> Callable[..., object]:
@@ -120,23 +155,32 @@ class ProfileExecutableStore:
         self._items[digest] = executable
         return executable
 
-    def with_arguments(self, executable: ProfileExecutable) -> ProfileExecutable:
+    def with_arguments(
+        self,
+        executable: ProfileExecutable,
+        *,
+        probe_index: int = 0,
+    ) -> ProfileExecutable:
         """Materialize deterministic values for one structural occurrence."""
 
-        executable = self._with_arguments(executable)
+        executable = self._with_arguments(executable, probe_index=probe_index)
         self._items[executable.artifact.compatibility_digest] = executable
         return executable
 
-    def release_occurrence_values(self, executable: ProfileExecutable) -> None:
-        self._items[executable.artifact.compatibility_digest] = _without_arguments(
-            executable
-        )
+    def release_occurrence_values(
+        self, executable: ProfileExecutable
+    ) -> ProfileExecutable:
+        released = _without_arguments(executable)
+        self._items[executable.artifact.compatibility_digest] = released
+        return released
 
     def mark_warmed(self, digest: str) -> None:
         self._warmed.add(digest)
 
     def remove(self, digest: str) -> None:
-        self._items.pop(digest, None)
+        executable = self._items.pop(digest, None)
+        if executable is not None:
+            executable.occurrence_values.release()
         self._warmed.discard(digest)
 
     def take_selected(
@@ -165,16 +209,21 @@ class ProfileExecutableStore:
                 executable = self._compile(artifact)
             elif executable.artifact is not artifact:
                 executable = replace(executable, artifact=artifact)
-            if digest not in self._warmed:
-                if not executable.example_arguments:
-                    executable = self._with_arguments(executable)
-                warmup(executable, digest)
+            try:
+                if digest not in self._warmed:
+                    if not executable.example_arguments:
+                        executable = self._with_arguments(executable)
+                    warmup(executable, digest)
+            finally:
+                executable.occurrence_values.release()
             self._warmed.discard(digest)
             functions[digest] = executable.function
             manifests[digest] = executable.manifest
         return CompiledTaskSet(functions, manifests)
 
     def discard(self) -> None:
+        for executable in self._items.values():
+            executable.occurrence_values.release()
         self._items.clear()
         self._warmed.clear()
 
@@ -196,18 +245,30 @@ class ProfileExecutableStore:
             for name, duration in phases:
                 self._phase_totals[name] = self._phase_totals.get(name, 0) + duration
             self._phases_by_abi[artifact.compatibility_digest] = phases
+            occurrence_values = OccurrenceValueOwner(compiled.example_arguments)
+            compiled_without_values = replace(compiled, example_arguments=())
             return ProfileExecutable(
-                compiled,
+                compiled_without_values,
                 artifact,
-                example_arguments=compiled.example_arguments,
+                occurrence_values,
             )
         finally:
             self._compilation_wall_time_ns += time.perf_counter_ns() - started
 
-    def _with_arguments(self, executable: ProfileExecutable) -> ProfileExecutable:
+    def _with_arguments(
+        self,
+        executable: ProfileExecutable,
+        *,
+        probe_index: int = 0,
+    ) -> ProfileExecutable:
+        # Release the prior occurrence *before* constructing its successor.
+        # Because every stale executable frame shares this owner, no hidden
+        # Python reference can keep the prior argument storages alive.
+        executable.occurrence_values.release()
         representatives = materialize_representative_inputs(
             executable.artifact,
             device_ordinal=self._device_ordinal,
+            probe_index=probe_index,
             allocation_check=self._allocation_check,
         )
         arguments = tuple(
@@ -216,8 +277,11 @@ class ProfileExecutableStore:
         )
         return replace(
             executable,
-            example_arguments=arguments,
-            representative_inputs=representatives.summaries,
+            occurrence_values=OccurrenceValueOwner(
+                arguments,
+                representatives.summaries,
+                representatives.probe_index,
+            ),
         )
 
 
@@ -247,12 +311,8 @@ def _selected_graph_artifacts(
 
 
 def _without_arguments(executable: ProfileExecutable) -> ProfileExecutable:
-    return replace(
-        executable,
-        compiled=replace(executable.compiled, example_arguments=()),
-        example_arguments=(),
-        representative_inputs=(),
-    )
+    executable.occurrence_values.release()
+    return executable
 
 
 def _compilation_error(
@@ -271,4 +331,7 @@ def _compilation_error(
     )
 
 
-__all__ = ["ProfileExecutable", "ProfileExecutableStore"]
+__all__ = [
+    "ProfileExecutable",
+    "ProfileExecutableStore",
+]

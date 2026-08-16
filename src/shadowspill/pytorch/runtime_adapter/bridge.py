@@ -66,6 +66,9 @@ class TaskMemoryEnvelope:
     maximum_charged_allocation_bytes: int = 0
     live_requested_allocation_limit_bytes: int = 0
     live_charged_allocation_limit_bytes: int = 0
+    dynamic_scratch_maximum_allocation_bytes: int = 0
+    dynamic_scratch_live_limit_bytes: int = 0
+    allocation_path_digests: tuple[str, ...] = ()
     allocation_abi: TaskAllocationABI | None = None
 
     def __post_init__(self) -> None:
@@ -74,6 +77,8 @@ class TaskMemoryEnvelope:
             self.maximum_charged_allocation_bytes,
             self.live_requested_allocation_limit_bytes,
             self.live_charged_allocation_limit_bytes,
+            self.dynamic_scratch_maximum_allocation_bytes,
+            self.dynamic_scratch_live_limit_bytes,
         )
         if any(value < 0 for value in values):
             raise ValueError("task memory envelope bounds must be non-negative")
@@ -89,6 +94,14 @@ class TaskMemoryEnvelope:
             > self.live_charged_allocation_limit_bytes
         ):
             raise ValueError("charged allocation maximum exceeds live limit")
+        if (
+            self.dynamic_scratch_live_limit_bytes
+            and self.dynamic_scratch_maximum_allocation_bytes
+            > self.dynamic_scratch_live_limit_bytes
+        ):
+            raise ValueError("scratch allocation maximum exceeds scratch live limit")
+        if any(len(value) != 64 for value in self.allocation_path_digests):
+            raise ValueError("allocation path digests must be SHA-256")
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +426,7 @@ class RuntimeBridge:
                     charged_bytes=step.charged_bytes,
                     alignment_bytes=step.alignment_bytes,
                     operation=0 if step.operation.value == "allocate" else 1,
+                    required=step.required,
                 )
                 for step in abi_steps
             )
@@ -439,6 +453,12 @@ class RuntimeBridge:
             ),
             live_charged_allocation_limit_bytes=(
                 memory_envelope.live_charged_allocation_limit_bytes
+            ),
+            dynamic_scratch_maximum_allocation_bytes=(
+                memory_envelope.dynamic_scratch_maximum_allocation_bytes
+            ),
+            dynamic_scratch_live_limit_bytes=(
+                memory_envelope.dynamic_scratch_live_limit_bytes
             ),
         )
         return _ExecutionBuffers(

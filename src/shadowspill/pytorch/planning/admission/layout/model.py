@@ -113,6 +113,7 @@ class FixedPhysicalLayout:
     pool_capacity_bytes: int
     fixed_slice_bytes: int
     dynamic_reserve_bytes: int
+    scratch_reserve_bytes: int
     required_bytes: int
     placements: tuple[FixedLayoutPlacement, ...]
     reuse_dependencies: tuple[FixedLayoutReuse, ...]
@@ -148,6 +149,7 @@ class FixedPhysicalLayout:
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "fixed_slice_bytes": self.fixed_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
+            "scratch_reserve_bytes": self.scratch_reserve_bytes,
             "dynamic_lifetimes": [
                 item.to_dict() for item in self.dynamic_lifetimes
             ],
@@ -155,7 +157,7 @@ class FixedPhysicalLayout:
             "required_bytes": self.required_bytes,
             "reuse_dependencies": [item.to_dict() for item in self.reuse_dependencies],
             "schedule_digest": self.schedule_digest,
-            "schema": "shadowspill.fixed_physical_layout/v2",
+            "schema": "shadowspill.fixed_physical_layout/v3",
             "task_allocation_leases": [
                 {
                     "allocation_ordinal": ordinal,

@@ -42,6 +42,12 @@ void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {
     }
 }
 
+int shadowspill_event_lease_is_complete(const ShadowSpillEventLease *lease) {
+    return lease != NULL && atomic_load_explicit(
+        &lease->backend_complete, memory_order_acquire
+    ) != 0U;
+}
+
 int shadowspill_event_lease_release(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventLease *lease

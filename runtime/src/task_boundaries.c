@@ -336,7 +336,7 @@ static uint64_t count_task_retirements_locked(
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
             allocation->retirement_events == NULL &&
-            allocation->retirement_fence == NULL) {
+            allocation->retirement_event == NULL) {
             ++count;
         }
     }
@@ -344,34 +344,31 @@ static uint64_t count_task_retirements_locked(
     return count;
 }
 
-static ShadowSpillRuntimeStatus record_task_fence_locked(
+static ShadowSpillRuntimeStatus record_task_completion_event(
     ShadowSpillRuntime *runtime,
     ShadowSpillBackendStream compute_stream,
-    ShadowSpillTaskFence **result
+    ShadowSpillEventLease **result
 ) {
-    ShadowSpillTaskFence *fence = calloc(1U, sizeof(*fence));
-    if (fence == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
+    *result = NULL;
+    ShadowSpillEventLease *event = NULL;
     ShadowSpillRuntimeStatus status = shadowspill_event_lease_create_locked(
-        runtime, &fence->event
+        runtime, &event
     );
     if (status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
-            runtime->backend.context, fence->event->event, compute_stream
+            runtime->backend.context, event->event, compute_stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             compute_stream,
-            fence->event,
+            event,
             SHADOWSPILL_RUNTIME_NO_ID,
             SHADOWSPILL_RUNTIME_NO_ID
         ) != SHADOWSPILL_RUNTIME_OK) {
-        if (fence->event != NULL) {
-            (void)shadowspill_event_lease_release(runtime, fence->event);
+        if (event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, event);
         }
-        free(fence);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
-    *result = fence;
+    *result = event;
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -401,9 +398,13 @@ static void discard_action_batch_locked(
             }
         }
         pthread_cond_broadcast(&action->object->state_changed);
-        ShadowSpillTaskFence *fence = action->fence;
+        ShadowSpillEventLease *trigger_event = action->trigger_event;
+        action->trigger_event = NULL;
+        ShadowSpillObject *object = action->object;
+        const uint64_t task_id = action->task_id;
+        const uint64_t object_id = object->object_id;
+        const uint64_t allocation_id = object->allocation_id;
         if (action->admitted) {
-            ShadowSpillObject *object = action->object;
             if (shadowspill_object_reset_admitted_action_locked(
                     object, action
                 ) != 0) {
@@ -418,14 +419,25 @@ static void discard_action_batch_locked(
             }
             pthread_mutex_unlock(&object->lock);
         } else {
-            pthread_mutex_unlock(&action->object->lock);
-            shadowspill_object_release(action->object);
+            pthread_mutex_unlock(&object->lock);
+        }
+        if (shadowspill_event_lease_release(runtime, trigger_event) != 0) {
+            shadowspill_latch_task_failure(
+                runtime,
+                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                task_id,
+                object_id,
+                allocation_id,
+                0U
+            );
+        }
+        if (!action->admitted) {
+            shadowspill_object_release(object);
             if (action->owns_trace_label) {
                 free((void *)action->trace_label);
             }
             free(action);
         }
-        shadowspill_release_task_fence_locked(runtime, fence);
         action = next;
     }
     *batch = (ShadowSpillActionBatch){0};
@@ -434,7 +446,7 @@ static void discard_action_batch_locked(
 static ShadowSpillRuntimeStatus instantiate_actions_locked(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
-    ShadowSpillTaskFence *fence,
+    ShadowSpillEventLease *task_completion_event,
     ShadowSpillActionBatch *batch,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
@@ -475,8 +487,8 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         queued->activation_generation =
             shadowspill_current_task_invocation(runtime);
         queued->state = SHADOWSPILL_ACTION_QUEUED;
-        queued->fence = fence;
-        shadowspill_retain_task_fence(fence);
+        queued->trigger_event = task_completion_event;
+        shadowspill_event_lease_retain(task_completion_event);
         if (batch->tail == NULL) {
             batch->head = queued;
         } else {
@@ -502,7 +514,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
                     shadowspill_memory_pool_begin_retirement_locked(
                         source,
                         action->kind == SHADOWSPILL_RUNTIME_RELEASE
-                            ? fence->event
+                            ? task_completion_event
                             : NULL,
                         action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
                     );
@@ -536,7 +548,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
 static ShadowSpillRuntimeStatus attach_task_retirements_locked(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
-    ShadowSpillTaskFence *fence
+    ShadowSpillEventLease *task_completion_event
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
@@ -545,17 +557,17 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||
-            allocation->retirement_fence != NULL) {
+            allocation->retirement_event != NULL) {
             continue;
         }
-        allocation->retirement_fence = fence;
         if (shadowspill_memory_pool_publish_retirement_dependency_locked(
-                allocation, fence->event
+                allocation, task_completion_event
             ) != 0) {
             status = SHADOWSPILL_RUNTIME_INVALID_STATE;
             break;
         }
-        shadowspill_retain_task_fence(fence);
+        allocation->retirement_event = task_completion_event;
+        shadowspill_event_lease_retain(task_completion_event);
         status = shadowspill_retirement_enqueue_locked(runtime, allocation);
         if (status != SHADOWSPILL_RUNTIME_OK) {
             break;
@@ -632,7 +644,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     ShadowSpillBackendStream compute_stream
 ) {
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    ShadowSpillTaskFence *fence = NULL;
+    ShadowSpillEventLease *task_completion_event = NULL;
     ShadowSpillActionBatch batch = {0};
     uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -655,17 +667,19 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         : 0U;
     if (status == SHADOWSPILL_RUNTIME_OK &&
         (record->action_count != 0U || retirement_count != 0U)) {
-        status = record_task_fence_locked(runtime, compute_stream, &fence);
+        status = record_task_completion_event(
+            runtime, compute_stream, &task_completion_event
+        );
         if (status == SHADOWSPILL_RUNTIME_OK) {
             status = attach_task_retirements_locked(
-                runtime, record->task_id, fence
+                runtime, record->task_id, task_completion_event
             );
         }
         if (status == SHADOWSPILL_RUNTIME_OK) {
             status = instantiate_actions_locked(
                 runtime,
                 record,
-                fence,
+                task_completion_event,
                 &batch,
                 &failure_object_id,
                 &failure_allocation_id
@@ -677,15 +691,8 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         }
     }
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        if (fence != NULL) {
-            if (atomic_load_explicit(
-                    &fence->references, memory_order_acquire
-                ) == 0U) {
-                (void)shadowspill_event_lease_release(runtime, fence->event);
-                free(fence);
-            } else {
-                discard_action_batch_locked(runtime, &batch);
-            }
+        if (task_completion_event != NULL) {
+            discard_action_batch_locked(runtime, &batch);
         }
         shadowspill_latch_failure_locked(
             runtime,
@@ -701,7 +708,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
          */
         pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
         const ShadowSpillRuntimeStatus retirement_status =
-            shadowspill_fence_task_retirements_locked(
+            shadowspill_publish_task_retirement_event_locked(
                 runtime, record->task_id, compute_stream
             );
         pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
@@ -713,6 +720,20 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
                 SHADOWSPILL_RUNTIME_NO_ID,
                 0U
             );
+        }
+    }
+    if (task_completion_event != NULL && shadowspill_event_lease_release(
+            runtime, task_completion_event
+        ) != 0) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            failure_object_id,
+            failure_allocation_id,
+            0U
+        );
+        if (status == SHADOWSPILL_RUNTIME_OK) {
+            status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         }
     }
     shadowspill_append_trace_event_locked(
@@ -776,7 +797,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
          */
         pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
         const ShadowSpillRuntimeStatus retirement_status =
-            shadowspill_fence_task_retirements_locked(
+            shadowspill_publish_task_retirement_event_locked(
                 runtime, task_id, compute_stream
             );
         pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);

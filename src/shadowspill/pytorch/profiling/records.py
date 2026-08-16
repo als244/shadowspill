@@ -11,6 +11,7 @@ from shadowspill.pytorch.profiling.allocation_abi import (
     TaskAllocationABI,
     TaskAllocationEvent,
     TaskAllocationOperation,
+    TaskAllocationPathObservation,
 )
 from shadowspill.pytorch.profiling.inputs import (
     REPRESENTATIVE_VALUE_POLICY,
@@ -20,7 +21,7 @@ from shadowspill.pytorch.profiling.inputs import (
 # The opaque-optimizer artifact versions its own representative-gradient
 # construction contract.  That targeted identity change avoids invalidating
 # unrelated compiled-graph measurements.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v16"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v24"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +94,11 @@ class ProfileEnvironment:
 class TaskMeasurement:
     """Calibrated task time and allocator behavior for one structural ABI.
 
-    ``persistent_extent_bytes`` is a conservative slab reserve for bounded
-    provider or custom-operation state discovered by repeated-task auditing.
-    It is not part of the task-local workspace timeline.
+    ``persistent_extent_bytes`` is the incremental slab growth attributable to
+    bounded provider or custom-operation state first observed by this profile.
+    It excludes profiler-owned task arguments and task-local workspace.  Since
+    profiles run serially against one live provider inventory, a shared cache
+    allocation is charged only by the first structural ABI that creates it.
     """
 
     runtime_ns: int
@@ -114,6 +117,47 @@ class TaskMeasurement:
     timing_half_drift: float = 0.0
     timing_unstable: bool = False
     allocation_abi: TaskAllocationABI | None = None
+    allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = ()
+
+    @property
+    def dynamic_scratch_maximum_requested_bytes(self) -> int:
+        return max(
+            (
+                item.scratch_maximum_requested_bytes
+                for item in self.allocation_path_observations
+            ),
+            default=0,
+        )
+
+    @property
+    def dynamic_scratch_maximum_charged_bytes(self) -> int:
+        return max(
+            (
+                item.scratch_maximum_charged_bytes
+                for item in self.allocation_path_observations
+            ),
+            default=0,
+        )
+
+    @property
+    def dynamic_scratch_peak_requested_bytes(self) -> int:
+        return max(
+            (
+                item.scratch_peak_requested_bytes
+                for item in self.allocation_path_observations
+            ),
+            default=0,
+        )
+
+    @property
+    def dynamic_scratch_peak_charged_bytes(self) -> int:
+        return max(
+            (
+                item.scratch_peak_charged_bytes
+                for item in self.allocation_path_observations
+            ),
+            default=0,
+        )
 
     def __post_init__(self) -> None:
         values = (
@@ -259,6 +303,9 @@ class TaskMeasurement:
             "allocation_abi": (
                 None if self.allocation_abi is None else self.allocation_abi.to_dict()
             ),
+            "allocation_path_observations": [
+                item.to_dict() for item in self.allocation_path_observations
+            ],
         }
 
     @classmethod
@@ -302,6 +349,10 @@ class TaskMeasurement:
                     if value.get("allocation_abi") is None
                     else TaskAllocationABI.from_dict(value["allocation_abi"])
                 ),
+                allocation_path_observations=tuple(
+                    TaskAllocationPathObservation.from_dict(item)
+                    for item in value["allocation_path_observations"]
+                ),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("cached task measurement has an invalid schema") from exc
@@ -313,6 +364,14 @@ class ProfileKey:
     environment: ProfileEnvironment
     profiling_metadata_digest: str | None = None
     input_context_digest: str | None = None
+    allocation_probe_seeds: int = 1
+    allocation_probe_repetitions: int = 2
+
+    def __post_init__(self) -> None:
+        if self.allocation_probe_seeds < 1:
+            raise ValueError("allocation probe seed count must be positive")
+        if self.allocation_probe_repetitions < 2:
+            raise ValueError("allocation probe repetition count must be at least two")
 
     @property
     def digest(self) -> str:
@@ -323,6 +382,8 @@ class ProfileKey:
             "environment": self.environment.identity(),
             "profiling_metadata_digest": self.profiling_metadata_digest,
             "input_context_digest": self.input_context_digest,
+            "allocation_probe_seeds": self.allocation_probe_seeds,
+            "allocation_probe_repetitions": self.allocation_probe_repetitions,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
@@ -340,6 +401,8 @@ class ProfilingResult:
     key_digests: tuple[str, ...] = ()
     profiling_metadata_digests: tuple[str | None, ...] = ()
     input_context_digests: tuple[str | None, ...] = ()
+    allocation_probe_seeds: int = 1
+    allocation_probe_repetitions: int = 2
 
 
 __all__ = [

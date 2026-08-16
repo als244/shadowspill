@@ -37,7 +37,11 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
     summarize_task_workspace,
 )
 
-from .allocation_abi import TaskAllocationABI
+from .allocation_abi import (
+    TaskAllocationABI,
+    TaskAllocationPathObservation,
+)
+from .allocation_core import AllocationPathProbe, derive_core_allocation_path
 from .context import profile_input_context_digest
 from .executables import ProfileExecutable, ProfileExecutableStore
 from .records import TaskMeasurement, TaskOutputInputBinding
@@ -76,6 +80,15 @@ class _TimingObservation:
     half_drift: float
 
 
+@dataclass(frozen=True, slots=True)
+class _AllocationPathProbe:
+    probe_index: int
+    repetition: int
+    allocation_abi: TaskAllocationABI
+    output_input_bindings: tuple[TaskOutputInputBinding, ...]
+    workspace: TaskWorkspaceProfile
+
+
 class CudaTaskProfiler:
     """Warm and measure compiled tasks through an installed ShadowSpill slab."""
 
@@ -87,6 +100,8 @@ class CudaTaskProfiler:
         warmup_iterations: int = 3,
         sample_iterations: int = 5,
         telemetry_capacity: int = 65_536,
+        allocation_probe_seeds: int = 1,
+        allocation_probe_repetitions: int = 2,
     ) -> None:
         if warmup_iterations < 1:
             raise ValueError("task profiler requires at least one warmup")
@@ -94,11 +109,17 @@ class CudaTaskProfiler:
             raise ValueError("task profiler requires at least one sample")
         if telemetry_capacity < 1:
             raise ValueError("task profiler telemetry capacity must be positive")
+        if allocation_probe_seeds < 1 or allocation_probe_repetitions < 2:
+            raise ValueError(
+                "allocation paths require at least one seed and two repetitions"
+            )
         self._library = library
         self._device_ordinal = device_ordinal
         self._warmups = warmup_iterations
         self._samples = sample_iterations
         self._telemetry_capacity = telemetry_capacity
+        self._allocation_probe_seeds = allocation_probe_seeds
+        self._allocation_probe_repetitions = allocation_probe_repetitions
         self._next_task_id = 1 << 62
         self._executables = ProfileExecutableStore(
             device_ordinal=device_ordinal,
@@ -229,8 +250,7 @@ class CudaTaskProfiler:
         missing = tuple(
             position
             for position, item in enumerate(provenance[: pair.saved_value_count])
-            if item.role is TaskInputRole.CONTROL
-            and item.representative_value is None
+            if item.role is TaskInputRole.CONTROL and item.representative_value is None
         )
         if not missing:
             return pair
@@ -244,9 +264,7 @@ class CudaTaskProfiler:
             values = self._execute_saved_control_producer(pair)
             self._saved_control_values[key] = values
         rebound = tuple(
-            _bind_saved_control(item, values[position])
-            if position in missing
-            else item
+            _bind_saved_control(item, values[position]) if position in missing else item
             for position, item in enumerate(provenance)
         )
         backward = pair.backward.rebind_examples(
@@ -315,42 +333,128 @@ class CudaTaskProfiler:
     ) -> TaskMeasurement:
         """Measure a warmed no-argument task through the allocator boundary."""
 
+        owned_occurrence = (
+            executable if isinstance(executable, ProfileExecutable) else None
+        )
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
         phase_timings: list[tuple[str, int]] = []
-        self._condition_profile_device(stream, phase_timings)
-        persistent_baseline = self._requested_allocated_bytes()
-        persistent_high_water = self._warm_profile_provider(
-            executable,
-            stream,
-            baseline=persistent_baseline,
-            phase_timings=phase_timings,
+        try:
+            self._condition_profile_device(stream, phase_timings)
+            persistent_baseline = self._requested_allocated_bytes()
+            # Provider compilation, autotuning, and shape-keyed initialization
+            # are planning-time setup, not alternative task allocation paths.
+            # Warm them before varying representative input identities.
+            persistent_high_water = self._warm_profile_provider(
+                executable,
+                stream,
+                baseline=persistent_baseline,
+                phase_timings=phase_timings,
+            )
+            path_probes: tuple[_AllocationPathProbe, ...] = ()
+            if isinstance(executable, ProfileExecutable):
+                # Release A through its shared owner before materializing B.
+                # Even the caller's stale wrapper now observes an empty owner.
+                executable = self._executables.release_occurrence_values(executable)
+                stream.synchronize()
+                self._diagnose_allocator_idle(
+                    context="pre-probe representative input release"
+                )
+                executable, path_probes = self._probe_allocation_paths(
+                    executable,
+                    stream,
+                    phase_timings,
+                )
+                owned_occurrence = executable
+                stabilization_started = time.perf_counter_ns()
+                persistent_high_water = max(
+                    persistent_high_water,
+                    self._requested_allocated_bytes(),
+                )
+                persistent_high_water = self._await_stable_provider_state(
+                    executable,
+                    stream,
+                    persistent_high_water,
+                )
+                phase_timings.append(
+                    (
+                        "post_probe_stabilization",
+                        time.perf_counter_ns() - stabilization_started,
+                    )
+                )
+            timing = self._collect_timing_samples(executable, stream, phase_timings)
+            self._library.shadowspill_pytorch_allocator_wait_idle()
+            persistent_high_water = max(
+                persistent_high_water, self._requested_allocated_bytes()
+            )
+            (
+                workspace,
+                persistent_high_water,
+                allocation_abi,
+                path_observations,
+            ) = self._profile_workspace(
+                executable,
+                stream,
+                persistent_high_water=persistent_high_water,
+                path_probes=path_probes,
+                phase_timings=phase_timings,
+            )
+            fixed_extents = _persistent_profile_extents(workspace)
+            return _task_measurement(
+                executable,
+                execution_provider,
+                workspace,
+                timing,
+                fixed_extents,
+                phase_timings,
+                allocation_abi,
+                path_observations,
+            )
+        finally:
+            if owned_occurrence is not None:
+                self._executables.release_occurrence_values(owned_occurrence)
+
+    def _probe_allocation_paths(
+        self,
+        executable: ProfileExecutable,
+        stream: torch.cuda.Stream,
+        phase_timings: list[tuple[str, int]],
+    ) -> tuple[ProfileExecutable, tuple[_AllocationPathProbe, ...]]:
+        """Probe value/identity allocation paths after provider warmup."""
+
+        started = time.perf_counter_ns()
+        contract = executable.artifact.storage_contract
+        observations: list[_AllocationPathProbe] = []
+        try:
+            for probe_index in range(self._allocation_probe_seeds):
+                executable = self._executables.release_occurrence_values(executable)
+                stream.synchronize()
+                self._library.shadowspill_pytorch_allocator_wait_idle()
+                executable = self._executables.with_arguments(
+                    executable,
+                    probe_index=probe_index,
+                )
+                for repetition in range(self._allocation_probe_repetitions):
+                    measured = self._measure_workspace(executable, stream)
+                    observations.append(
+                        _AllocationPathProbe(
+                            probe_index,
+                            repetition,
+                            TaskAllocationABI.capture(
+                                measured.allocation_abi_trace,
+                                contract,
+                            ),
+                            measured.output_input_bindings,
+                            measured,
+                        )
+                    )
+        except BaseException:
+            self._executables.release_occurrence_values(executable)
+            raise
+        phase_timings.append(
+            ("allocation_path_probes", time.perf_counter_ns() - started)
         )
-        timing = self._collect_timing_samples(executable, stream, phase_timings)
-        self._library.shadowspill_pytorch_allocator_wait_idle()
-        persistent_high_water = max(
-            persistent_high_water, self._requested_allocated_bytes()
-        )
-        workspace, persistent_high_water, allocation_abi = self._profile_workspace(
-            executable,
-            stream,
-            persistent_high_water=persistent_high_water,
-            phase_timings=phase_timings,
-        )
-        fixed_extents = _persistent_profile_extents(
-            workspace,
-            baseline=persistent_baseline,
-            high_water=persistent_high_water,
-        )
-        return _task_measurement(
-            executable,
-            execution_provider,
-            workspace,
-            timing,
-            fixed_extents,
-            phase_timings,
-            allocation_abi,
-        )
+        return executable, tuple(observations)
 
     def _condition_profile_device(
         self,
@@ -435,8 +539,14 @@ class CudaTaskProfiler:
         stream: torch.cuda.Stream,
         *,
         persistent_high_water: int,
+        path_probes: tuple[_AllocationPathProbe, ...],
         phase_timings: list[tuple[str, int]],
-    ) -> tuple[TaskWorkspaceProfile, int, TaskAllocationABI]:
+    ) -> tuple[
+        TaskWorkspaceProfile,
+        int,
+        TaskAllocationABI,
+        tuple[TaskAllocationPathObservation, ...],
+    ]:
         started = time.perf_counter_ns()
         workspace, high_water = self._audit_workspace_retention(
             executable,
@@ -450,34 +560,41 @@ class CudaTaskProfiler:
             ("retention_audit", max(0, time.perf_counter_ns() - started - accounted))
         )
         abi_started = time.perf_counter_ns()
-        allocation_abi = self._validate_allocation_abi(
+        workspace, allocation_abi, path_observations = self._validate_allocation_abi(
             executable,
             stream,
             workspace,
+            path_probes=path_probes,
         )
         phase_timings.append(
             ("allocation_abi_validation", time.perf_counter_ns() - abi_started)
         )
-        return workspace, high_water, allocation_abi
+        return workspace, high_water, allocation_abi, path_observations
 
     def _validate_allocation_abi(
         self,
         executable: Callable[[], object],
         stream: torch.cuda.Stream,
         baseline: TaskWorkspaceProfile,
-    ) -> TaskAllocationABI:
-        """Require three independent pointer-free allocation traces to agree."""
+        *,
+        path_probes: tuple[_AllocationPathProbe, ...],
+    ) -> tuple[
+        TaskWorkspaceProfile,
+        TaskAllocationABI,
+        tuple[TaskAllocationPathObservation, ...],
+    ]:
+        """Derive one core from stable warm traces and the probe matrix."""
 
         contract = (
             executable.artifact.storage_contract
             if isinstance(executable, ProfileExecutable)
             else None
         )
-        expected = TaskAllocationABI.capture(
-            baseline.allocation_abi_trace, contract
-        )
+        expected = TaskAllocationABI.capture(baseline.allocation_abi_trace, contract)
+        warm_workspaces = [baseline]
         for repetition in range(2):
             observed = self._measure_workspace(executable, stream)
+            warm_workspaces.append(observed)
             candidate = TaskAllocationABI.capture(
                 observed.allocation_abi_trace, contract
             )
@@ -493,7 +610,50 @@ class CudaTaskProfiler:
                     "compiled task output/input storage bindings changed across "
                     f"independent profiling traces (repetition={repetition + 2})"
                 )
-        return expected
+        for probe in path_probes:
+            if probe.output_input_bindings != baseline.output_input_bindings:
+                raise AllocationTelemetryError(
+                    "compiled task output/input storage bindings changed across "
+                    "representative allocation-path probes "
+                    f"(probe={probe.probe_index}, repetition={probe.repetition})"
+                )
+        try:
+            derived = derive_core_allocation_path(
+                expected,
+                tuple(
+                    AllocationPathProbe(
+                        probe.probe_index,
+                        probe.repetition,
+                        probe.allocation_abi,
+                    )
+                    for probe in path_probes
+                ),
+                warmed_reference_repetitions=len(warm_workspaces),
+            )
+        except ValueError as error:
+            raise AllocationTelemetryError(
+                f"compiled task allocation paths cannot derive one fixed core: {error}"
+            ) from error
+        candidates = (*warm_workspaces, *(item.workspace for item in path_probes))
+        core_workspace = next(
+            (
+                item
+                for item in candidates
+                if TaskAllocationABI.capture(
+                    item.allocation_abi_trace,
+                    contract,
+                ).compatibility_digest
+                == derived.source_digest
+            ),
+            None,
+        )
+        if core_workspace is None:
+            raise AssertionError("derived allocation core has no source workspace")
+        return (
+            _conservative_core_workspace(core_workspace, candidates),
+            derived.allocation_abi,
+            derived.observations,
+        )
 
     def _invoke_profile_task(
         self,
@@ -830,11 +990,7 @@ class CudaTaskProfiler:
             persistent_high_water,
             self._requested_allocated_bytes(),
         )
-        fixed_extents = _persistent_profile_extents(
-            workspace,
-            baseline=persistent_baseline,
-            high_water=persistent_high_water,
-        )
+        fixed_extents = _persistent_profile_extents(workspace)
 
         def measured_callable() -> object:
             raise AssertionError("first-step profile callable is not retained")
@@ -934,6 +1090,7 @@ class CudaTaskProfiler:
         start_allocation_telemetry(self._library, capacity=self._telemetry_capacity)
         task_open = False
         output: object | None = None
+        primary_error: BaseException | None = None
         try:
             status = int(
                 self._library.shadowspill_pytorch_before_task(
@@ -967,12 +1124,20 @@ class CudaTaskProfiler:
                 raise CaptureError(f"profiling after_task failed with status {status}")
             stream.synchronize()
             self._library.shadowspill_pytorch_allocator_wait_idle()
-        except BaseException:
+        except BaseException as error:
+            primary_error = error
             if task_open:
                 self._library.shadowspill_pytorch_abort_task_range()
             raise
         finally:
-            stop_allocation_telemetry(self._library)
+            try:
+                stop_allocation_telemetry(self._library)
+            except BaseException as cleanup_error:
+                if primary_error is None:
+                    raise
+                primary_error.add_note(
+                    f"allocation telemetry cleanup also failed: {cleanup_error}"
+                )
         execution_wall = time.perf_counter_ns() - execution_started
         copy_started = time.perf_counter_ns()
         events = read_allocation_telemetry(self._library)
@@ -1119,18 +1284,46 @@ def _snapshot_saved_control(value: object) -> torch.Tensor:
 
 def _persistent_profile_extents(
     workspace: TaskWorkspaceProfile,
-    *,
-    baseline: int,
-    high_water: int,
 ) -> tuple[int, ...]:
-    # A shared provider cache may already be populated by another ABI. Keep at
-    # least this task's rotating live set so a cached profile is conservative.
-    fixed_bytes = max(
-        0,
-        high_water - baseline,
-        sum(workspace.persistent_extent_bytes),
+    """Return provider state proven by the task-local ownership trace.
+
+    Process-wide live-byte deltas are deliberately not an ownership signal:
+    compilation artifacts, representative inputs, and stream-pending
+    retirements can all survive across the sampling boundary.  The normalized
+    task trace has already excluded declared outputs and ordinary workspace;
+    only its still-live, otherwise-unbound allocations are provider state.
+    """
+
+    return workspace.persistent_extent_bytes
+
+
+def _conservative_core_workspace(
+    core: TaskWorkspaceProfile,
+    observations: Sequence[TaskWorkspaceProfile],
+) -> TaskWorkspaceProfile:
+    """Keep core ordering while charging the largest observed live-set peak."""
+
+    peak_source = max(
+        observations,
+        key=lambda item: (
+            item.peak_charged_bytes,
+            item.peak_requested_bytes,
+            len(item.allocation_abi_trace),
+        ),
     )
-    return () if fixed_bytes == 0 else (fixed_bytes,)
+    peak_requested = max(item.peak_requested_bytes for item in observations)
+    if (
+        core.peak_requested_bytes == peak_requested
+        and core.peak_charged_bytes == peak_source.peak_charged_bytes
+        and core.peak_extent_bytes == peak_source.peak_extent_bytes
+    ):
+        return core
+    return replace(
+        core,
+        peak_requested_bytes=peak_requested,
+        peak_charged_bytes=peak_source.peak_charged_bytes,
+        peak_extent_bytes=peak_source.peak_extent_bytes,
+    )
 
 
 def _task_measurement(
@@ -1141,6 +1334,7 @@ def _task_measurement(
     fixed_extents: tuple[int, ...],
     phase_timings: list[tuple[str, int]],
     allocation_abi: TaskAllocationABI,
+    allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = (),
 ) -> TaskMeasurement:
     variability = max(timing.relative_mad, timing.half_drift)
     return TaskMeasurement(
@@ -1166,4 +1360,5 @@ def _task_measurement(
         timing_half_drift=timing.half_drift,
         timing_unstable=variability > 0.03,
         allocation_abi=allocation_abi,
+        allocation_path_observations=allocation_path_observations,
     )

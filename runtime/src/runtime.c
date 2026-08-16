@@ -143,11 +143,11 @@ static void destroy_allocations(ShadowSpillRuntime *runtime) {
             free(event);
             event = event_next;
         }
-        if (allocation->retirement_fence != NULL) {
-            shadowspill_release_task_fence_locked(
-                runtime, allocation->retirement_fence
+        if (allocation->retirement_event != NULL) {
+            (void)shadowspill_event_lease_release(
+                runtime, allocation->retirement_event
             );
-            allocation->retirement_fence = NULL;
+            allocation->retirement_event = NULL;
         }
         free(allocation);
         allocation = next;
@@ -211,7 +211,10 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                 action->destination_lease = NULL;
             }
         }
-        shadowspill_release_task_fence_locked(runtime, action->fence);
+        (void)shadowspill_event_lease_release(
+            runtime, action->trigger_event
+        );
+        action->trigger_event = NULL;
         if (!action->admitted) {
             shadowspill_object_release(action->object);
             if (action->owns_trace_label) {
@@ -737,7 +740,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         if (!allocation->logical_freed || allocation->pointer == NULL) {
             continue;
         }
-        if (allocation->retirement_fence != NULL) {
+        if (allocation->retirement_event != NULL) {
             ++retirement_records_fenced;
         } else if (allocation->retirement_events != NULL) {
             ++retirement_records_evented;

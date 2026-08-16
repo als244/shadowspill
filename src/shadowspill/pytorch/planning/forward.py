@@ -66,6 +66,7 @@ from .admission import (
     SelectedAdmission,
     build_admission_topology,
     build_fixed_selected_admission,
+    dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
     physical_admission,
     project_runtime_fixed_layout,
@@ -219,6 +220,8 @@ def _capture_partitioned_forward(
 def profile_forward_tasks(
     captured: ForwardCaptureArtifacts,
     *,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ForwardProfileArtifacts:
@@ -227,6 +230,8 @@ def profile_forward_tasks(
     profiler = CudaTaskProfiler(
         captured.installed.library,
         device_ordinal=captured.device_ordinal,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
     )
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
@@ -259,6 +264,8 @@ def profile_forward_tasks(
             ),
             profiling_metadata_digests=(captured.workload.digest,)
             * len(captured.tasks),
+            allocation_probe_seeds=allocation_probe_seeds,
+            allocation_probe_repetitions=allocation_probe_repetitions,
         )
     with timer.measure("compilation"):
         compiled_tasks = profiler.take_compiled_tasks(
@@ -349,6 +356,7 @@ def build_forward_program(
         measurements=measurements,
         measurements_by_profile=measurements_by_profile,
         workspace_reserve=reserve,
+        dynamic_scratch_reserve_bytes=memory.dynamic_scratch_reserve_bytes,
         simulation_config=simulation_config,
         admission=admission,
     )
@@ -383,6 +391,10 @@ def pressurefit_forward_program(
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
                     config=config,
+                ),
+                scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
+                    program.measurements_by_profile,
+                    minimum_bytes=program.dynamic_scratch_reserve_bytes,
                 ),
                 progress=timer.progress,
             )
@@ -615,6 +627,8 @@ def build_forward(
     verbose: bool,
     planning_cache: PlanningCache,
     profiling_metadata: object,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""
 
@@ -630,7 +644,13 @@ def build_forward(
         artifact_cache=artifacts,
         timer=timer,
     )
-    profiled = profile_forward_tasks(captured, artifact_cache=artifacts, timer=timer)
+    profiled = profile_forward_tasks(
+        captured,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
+        artifact_cache=artifacts,
+        timer=timer,
+    )
     program = build_forward_program(captured, profiled, memory=memory, timer=timer)
     selected = pressurefit_forward_program(
         program,

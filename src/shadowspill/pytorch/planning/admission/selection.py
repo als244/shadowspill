@@ -185,6 +185,9 @@ def build_fixed_selected_admission(
             selected,
             measurements,
             output_bindings=output_bindings,
+            minimum_scratch_reserve_bytes=(
+                fixed_admission.layout.scratch_reserve_bytes
+            ),
         ),
         simulation_admission=fixed_admission.simulator_input,
         simulation=fixed_admission.simulation,
@@ -197,6 +200,7 @@ def _selected_task_envelopes(
     measurements: Mapping[str, TaskMeasurement],
     *,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+    minimum_scratch_reserve_bytes: int = 0,
 ) -> tuple[tuple[str, TaskMemoryEnvelope], ...]:
     profiles = {item.profile_id: item for item in selected.program.profiles}
     bindings_by_task = dict(output_bindings or {})
@@ -211,6 +215,7 @@ def _selected_task_envelopes(
                 retained_output_leaves=tuple(
                     item.leaf_index for item in bindings_by_task.get(task.task_id, ())
                 ),
+                minimum_scratch_reserve_bytes=minimum_scratch_reserve_bytes,
             ),
         )
         for task in selected.program.selected_tasks(selected.selections)
@@ -233,6 +238,7 @@ def _task_memory_envelope(
     measurement: TaskMeasurement,
     *,
     retained_output_leaves: tuple[int, ...] = (),
+    minimum_scratch_reserve_bytes: int = 0,
 ) -> TaskMemoryEnvelope:
     live: dict[int, tuple[int, int]] = {}
     live_requested = 0
@@ -260,11 +266,40 @@ def _task_memory_envelope(
         allocation_abi = allocation_abi.for_retained_output_leaves(
             retained_output_leaves
         )
+    scratch_peak_requested = max(
+        measurement.dynamic_scratch_peak_requested_bytes,
+        minimum_scratch_reserve_bytes,
+    )
+    scratch_peak_charged = max(
+        measurement.dynamic_scratch_peak_charged_bytes,
+        minimum_scratch_reserve_bytes,
+    )
     return TaskMemoryEnvelope(
-        maximum_requested_allocation_bytes=maximum_requested,
-        maximum_charged_allocation_bytes=maximum_charged,
-        live_requested_allocation_limit_bytes=_envelope_limit(peak_requested),
-        live_charged_allocation_limit_bytes=_envelope_limit(peak_charged),
+        maximum_requested_allocation_bytes=max(
+            maximum_requested,
+            measurement.dynamic_scratch_maximum_requested_bytes,
+            minimum_scratch_reserve_bytes,
+        ),
+        maximum_charged_allocation_bytes=max(
+            maximum_charged,
+            measurement.dynamic_scratch_maximum_charged_bytes,
+            minimum_scratch_reserve_bytes,
+        ),
+        live_requested_allocation_limit_bytes=_envelope_limit(
+            peak_requested + scratch_peak_requested
+        ),
+        live_charged_allocation_limit_bytes=_envelope_limit(
+            peak_charged + scratch_peak_charged
+        ),
+        dynamic_scratch_maximum_allocation_bytes=max(
+            measurement.dynamic_scratch_maximum_charged_bytes,
+            minimum_scratch_reserve_bytes,
+        ),
+        dynamic_scratch_live_limit_bytes=_envelope_limit(scratch_peak_charged),
+        allocation_path_digests=tuple(
+            item.compatibility_digest
+            for item in measurement.allocation_path_observations
+        ),
         allocation_abi=allocation_abi,
     )
 
@@ -277,11 +312,31 @@ def _envelope_limit(profiled_bytes: int) -> int:
     return ((with_headroom + two_mib - 1) // two_mib) * two_mib
 
 
+def dynamic_scratch_reserve_bytes(
+    measurements: Mapping[str, TaskMeasurement],
+    *,
+    minimum_bytes: int = 0,
+) -> int:
+    """Return one conservative reserve shared by sequential task probes."""
+
+    if minimum_bytes < 0:
+        raise ValueError("dynamic scratch minimum must be non-negative")
+    profiled = max(
+        (
+            _envelope_limit(item.dynamic_scratch_peak_charged_bytes)
+            for item in measurements.values()
+        ),
+        default=0,
+    )
+    return max(minimum_bytes, profiled)
+
+
 __all__ = [
     "SelectedAdmission",
     "TaskOutputBinding",
     "admit_selected_schedule",
     "build_fixed_selected_admission",
     "build_selected_admission",
+    "dynamic_scratch_reserve_bytes",
     "output_bindings_for_entrypoints",
 ]

@@ -188,6 +188,33 @@ def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
     assert envelope.live_charged_allocation_limit_bytes == 2 << 20
 
 
+def test_manual_scratch_reserve_expands_runtime_envelope() -> None:
+    measurement = TaskMeasurement(
+        10,
+        96,
+        96,
+        (96,),
+        (10,),
+        "unit-test",
+        (
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 96, 96),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 96, 96),
+        ),
+    )
+
+    envelope = _task_memory_envelope(
+        measurement,
+        minimum_scratch_reserve_bytes=8 << 20,
+    )
+
+    assert envelope.dynamic_scratch_maximum_allocation_bytes == 8 << 20
+    assert envelope.dynamic_scratch_live_limit_bytes == 10 << 20
+    assert envelope.maximum_requested_allocation_bytes == 8 << 20
+    assert envelope.maximum_charged_allocation_bytes == 8 << 20
+    assert envelope.live_requested_allocation_limit_bytes == 12 << 20
+    assert envelope.live_charged_allocation_limit_bytes == 12 << 20
+
+
 def test_task_envelope_specializes_persistent_output_ownership() -> None:
     output = TaskAllocationEvent(
         0,

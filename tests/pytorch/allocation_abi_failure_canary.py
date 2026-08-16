@@ -39,6 +39,7 @@ def main() -> int:
             charged_bytes=4096,
             alignment_bytes=256,
             operation=0,
+            required=1,
         )
     )
     description = ExecutionDescription(

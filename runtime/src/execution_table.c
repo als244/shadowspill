@@ -204,7 +204,11 @@ static int same_description(
         record->live_requested_allocation_limit_bytes !=
             description->live_requested_allocation_limit_bytes ||
         record->live_charged_allocation_limit_bytes !=
-            description->live_charged_allocation_limit_bytes) {
+            description->live_charged_allocation_limit_bytes ||
+        record->dynamic_scratch_maximum_allocation_bytes !=
+            description->dynamic_scratch_maximum_allocation_bytes ||
+        record->dynamic_scratch_live_limit_bytes !=
+            description->dynamic_scratch_live_limit_bytes) {
         return 0;
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
@@ -244,7 +248,8 @@ static int same_description(
             left->requested_bytes != right->requested_bytes ||
             left->charged_bytes != right->charged_bytes ||
             left->alignment_bytes != right->alignment_bytes ||
-            left->operation != right->operation) {
+            left->operation != right->operation ||
+            left->required != right->required) {
             return 0;
         }
     }
@@ -276,6 +281,10 @@ static ShadowSpillExecutionRecord *create_record(
         description->live_requested_allocation_limit_bytes;
     record->live_charged_allocation_limit_bytes =
         description->live_charged_allocation_limit_bytes;
+    record->dynamic_scratch_maximum_allocation_bytes =
+        description->dynamic_scratch_maximum_allocation_bytes;
+    record->dynamic_scratch_live_limit_bytes =
+        description->dynamic_scratch_live_limit_bytes;
     if (record->input_count != 0U) {
         record->inputs = calloc(record->input_count, sizeof(*record->inputs));
         record->unique_inputs = calloc(
@@ -322,6 +331,16 @@ static ShadowSpillExecutionRecord *create_record(
             record->allocation_abi_step_count *
                 sizeof(*record->allocation_abi_steps)
         );
+        for (uint32_t index = 0U;
+             index < record->allocation_abi_step_count;
+             ++index) {
+            const ShadowSpillTaskAllocationABIStep *step =
+                &record->allocation_abi_steps[index];
+            if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
+                record->allocation_abi_allocation_count =
+                    (uint32_t)(step->allocation_ordinal + 1U);
+            }
+        }
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
         ShadowSpillObject *object = shadowspill_object_table_acquire(
@@ -436,6 +455,7 @@ static int valid_allocation_abi(
             continue;
         }
         if (step->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
+            step->required ||
             step->allocation_ordinal >= next_ordinal ||
             allocations[step->allocation_ordinal] == NULL) {
             valid = 0;
@@ -474,7 +494,11 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
         (description->maximum_charged_allocation_bytes != 0U &&
          description->live_charged_allocation_limit_bytes != 0U &&
          description->maximum_charged_allocation_bytes >
-             description->live_charged_allocation_limit_bytes)) {
+             description->live_charged_allocation_limit_bytes) ||
+        (description->dynamic_scratch_maximum_allocation_bytes != 0U &&
+         description->dynamic_scratch_live_limit_bytes != 0U &&
+         description->dynamic_scratch_maximum_allocation_bytes >
+             description->dynamic_scratch_live_limit_bytes)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);

@@ -10,6 +10,7 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
     ShadowSpillEventLease **lease
 );
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease);
+int shadowspill_event_lease_is_complete(const ShadowSpillEventLease *lease);
 int shadowspill_event_lease_release(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventLease *lease

@@ -610,12 +610,14 @@ int shadowspill_memory_pool_find_release_frontier_locked(
         }
         frontier[candidate_count++] = lease;
     }
-    qsort(
-        frontier,
-        (size_t)candidate_count,
-        sizeof(*frontier),
-        release_sequence_compare
-    );
+    if (candidate_count > 1U) {
+        qsort(
+            frontier,
+            (size_t)candidate_count,
+            sizeof(*frontier),
+            release_sequence_compare
+        );
+    }
     int reserve_status = 1;
     for (uint64_t index = 0U; index < candidate_count; ++index) {
         ShadowSpillMemoryLease *lease = frontier[index];

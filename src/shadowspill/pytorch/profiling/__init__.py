@@ -1,6 +1,17 @@
 """Task-local profiling, representative values, metadata, and cache APIs."""
 
-from .allocation_abi import TaskAllocationABI, TaskAllocationABIStep
+from .allocation_abi import (
+    TaskAllocationABI,
+    TaskAllocationABIStep,
+    TaskAllocationPathObservation,
+    compare_allocation_path,
+)
+from .allocation_core import (
+    AllocationPathProbe,
+    AmbiguousAllocationPathError,
+    DerivedAllocationCore,
+    derive_core_allocation_path,
+)
 from .context import ProfileInputContext, profile_input_context_digest
 from .environment import profile_environment
 from .inputs import (
@@ -35,6 +46,9 @@ from .runner import ProfilableArtifact, profile_unique_artifacts
 __all__ = [
     "PROFILE_SCHEMA",
     "REPRESENTATIVE_VALUE_POLICY",
+    "AllocationPathProbe",
+    "AmbiguousAllocationPathError",
+    "DerivedAllocationCore",
     "PlanningArtifactRecorder",
     "ProfilableArtifact",
     "ProfileEnvironment",
@@ -50,9 +64,12 @@ __all__ = [
     "TaskAllocationABIStep",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
+    "TaskAllocationPathObservation",
     "TaskMeasurement",
     "TaskOutputInputBinding",
     "canonicalize_profiling_metadata",
+    "compare_allocation_path",
+    "derive_core_allocation_path",
     "materialize_representative_inputs",
     "profile_environment",
     "profile_input_context_digest",

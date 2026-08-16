@@ -310,7 +310,10 @@ def main() -> int:
                     runtime,
                     cache,
                     execution_budget=(
-                        (520 << 20) + runtime._installed.fixed_execution_bytes
+                        # Leave two MiB beyond the minimum workspace reserve.
+                        # Admission topology is valid, but the stage's
+                        # parameter/input floor cannot fit at preflight.
+                        (514 << 20) + runtime._installed.fixed_execution_bytes
                     ),
                 ),
                 text="could not construct a feasible memory schedule",

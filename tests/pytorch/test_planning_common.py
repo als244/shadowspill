@@ -128,6 +128,11 @@ def test_workspace_and_capacity_helpers_are_explicit() -> None:
     )
     with pytest.raises(AdmissionError, match="smaller"):
         simulation_capacity(1, 2, ())
+    with pytest.raises(PlanInfeasibleError, match="no capacity") as captured:
+        simulation_capacity(512 << 20, 512 << 20, ())
+    assert captured.value.kind == "analytic_capacity"
+    assert captured.value.required_bytes == 1
+    assert captured.value.capacity_bytes == 0
 
 
 def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:

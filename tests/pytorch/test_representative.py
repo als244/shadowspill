@@ -19,6 +19,16 @@ class _Add(nn.Module):
         return left + right
 
 
+class _ThreeInputs(nn.Module):
+    def forward(
+        self,
+        state: torch.Tensor,
+        activation: torch.Tensor,
+        control: torch.Tensor,
+    ) -> torch.Tensor:
+        return state + activation + control[0].to(state.dtype)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_representative_inputs_preserve_exact_alias_views() -> None:
     owner = torch.arange(32, dtype=torch.float32)
@@ -109,6 +119,45 @@ def test_missing_user_value_uses_explicit_deterministic_fallback() -> None:
     second = materialize_representative_inputs(artifact, device_ordinal=0)
     assert first.summaries[0].value_policy == "deterministic_normal_0_1"
     torch.testing.assert_close(first.arguments[0], second.arguments[0])
+
+
+def test_probe_seeds_change_only_synthetic_floating_values() -> None:
+    state = torch.randn(128)
+    activation = torch.empty(128)
+    control = torch.tensor([0, 32, 96], dtype=torch.int64)
+    artifact = GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_ThreeInputs()),
+        example_inputs=(state, activation, control),
+        input_provenance=(
+            TaskInputProvenance(
+                TaskInputRole.PARAMETER,
+                "weight",
+                representative_value=state,
+            ),
+            TaskInputProvenance(TaskInputRole.ACTIVATION, "activation"),
+            TaskInputProvenance(
+                TaskInputRole.CONTROL,
+                "sequence_offsets",
+                representative_value=control,
+            ),
+        ),
+    )
+
+    first = materialize_representative_inputs(
+        artifact, device_ordinal=0, probe_index=0
+    )
+    second = materialize_representative_inputs(
+        artifact, device_ordinal=0, probe_index=1
+    )
+    repeated = materialize_representative_inputs(
+        artifact, device_ordinal=0, probe_index=1
+    )
+
+    torch.testing.assert_close(first.arguments[0], second.arguments[0])
+    torch.testing.assert_close(first.arguments[2], second.arguments[2])
+    assert not torch.equal(first.arguments[1], second.arguments[1])
+    torch.testing.assert_close(second.arguments[1], repeated.arguments[1])
 
 
 def test_integer_task_input_requires_authentic_value() -> None:

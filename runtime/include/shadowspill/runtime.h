@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 27U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 28U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -155,6 +155,13 @@ typedef struct ShadowSpillTaskAllocationABIStep {
     uint64_t charged_bytes;
     uint64_t alignment_bytes;
     uint8_t operation;
+    /*
+     * Required allocations publish framework-visible output or mutation
+     * storage. Anonymous/provider operations are optional core observations:
+     * runtime insertions use bounded dynamic scratch and omissions are
+     * reconciled in order.
+     */
+    uint8_t required;
 } ShadowSpillTaskAllocationABIStep;
 
 typedef enum ShadowSpillFixedPlacementKind {
@@ -225,6 +232,12 @@ typedef struct ShadowSpillExecutionDescription {
     uint64_t maximum_charged_allocation_bytes;
     uint64_t live_requested_allocation_limit_bytes;
     uint64_t live_charged_allocation_limit_bytes;
+    /*
+     * Bounded dynamic storage for allocator operations absent from the fixed
+     * core ABI. Zero preserves strict exact-ABI behavior.
+     */
+    uint64_t dynamic_scratch_maximum_allocation_bytes;
+    uint64_t dynamic_scratch_live_limit_bytes;
 } ShadowSpillExecutionDescription;
 
 typedef struct ShadowSpillAllocationEvent {

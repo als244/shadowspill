@@ -199,7 +199,17 @@ def simulation_capacity(
     maximum_workspace = max(
         (item.workspace_charged_bytes for item in measurements), default=0
     )
-    return usable_slab - workspace_reserve_bytes_ + maximum_workspace
+    capacity = usable_slab - workspace_reserve_bytes_ + maximum_workspace
+    if capacity <= 0:
+        raise public_infeasible_plan_error(
+            PressureFitInfeasibleError(
+                "the admitted slab leaves no capacity for Program objects",
+                kind="analytic_capacity",
+                required_bytes=1,
+                capacity_bytes=max(0, capacity),
+            )
+        )
+    return capacity
 
 
 def fixed_execution_bytes(memory: PlanMemory, profiles: ProfilingResult) -> int:

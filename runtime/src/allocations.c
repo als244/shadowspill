@@ -175,55 +175,6 @@ static void free_stream_records(ShadowSpillStreamRecord *streams) {
     }
 }
 
-void shadowspill_release_task_fence_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence
-) {
-    if (fence == NULL || atomic_fetch_sub_explicit(
-            &fence->references, 1U, memory_order_acq_rel
-        ) != 1U) {
-        return;
-    }
-    if (shadowspill_event_lease_release(runtime, fence->event) != 0) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            0U
-        );
-    }
-    free(fence);
-}
-
-void shadowspill_retain_task_fence(ShadowSpillTaskFence *fence) {
-    if (fence != NULL) {
-        (void)atomic_fetch_add_explicit(
-            &fence->references, 1U, memory_order_relaxed
-        );
-    }
-}
-
-int shadowspill_task_fence_complete_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence,
-    int *complete
-) {
-    if (fence == NULL || complete == NULL) {
-        return -1;
-    }
-    (void)runtime;
-    *complete = atomic_load_explicit(
-        &fence->event->backend_complete, memory_order_acquire
-    ) != 0U;
-    if (*complete) {
-        atomic_store_explicit(
-            &fence->completion_known, 1U, memory_order_release
-        );
-    }
-    return 0;
-}
-
 ShadowSpillMemoryLease *shadowspill_find_execution_lease(
     ShadowSpillRuntime *runtime,
     uint64_t allocation_id
@@ -272,7 +223,7 @@ static int has_release_source(const ShadowSpillRuntime *runtime) {
     ) != 0U;
 }
 
-ShadowSpillRuntimeStatus shadowspill_fence_task_retirements_locked(
+ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream
@@ -283,52 +234,59 @@ ShadowSpillRuntimeStatus shadowspill_fence_task_retirements_locked(
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
             allocation->retirement_events == NULL &&
-            allocation->retirement_fence == NULL) {
+            allocation->retirement_event == NULL) {
             ++count;
         }
     }
     if (count == 0U) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    ShadowSpillTaskFence *fence = calloc(1U, sizeof(*fence));
-    const ShadowSpillRuntimeStatus event_status = fence == NULL
-        ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
-        : shadowspill_event_lease_create_locked(runtime, &fence->event);
+    ShadowSpillEventLease *task_completion_event = NULL;
+    const ShadowSpillRuntimeStatus event_status =
+        shadowspill_event_lease_create_locked(runtime, &task_completion_event);
     if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
-            runtime->backend.context, fence->event->event, stream
+            runtime->backend.context, task_completion_event->event, stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             stream,
-            fence->event,
+            task_completion_event,
             SHADOWSPILL_RUNTIME_NO_ID,
             SHADOWSPILL_RUNTIME_NO_ID
         ) != SHADOWSPILL_RUNTIME_OK) {
-        if (fence != NULL && fence->event != NULL) {
-            (void)shadowspill_event_lease_release(runtime, fence->event);
+        if (task_completion_event != NULL) {
+            (void)shadowspill_event_lease_release(
+                runtime, task_completion_event
+            );
         }
-        free(fence);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
+    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||
-            allocation->retirement_fence != NULL) {
+            allocation->retirement_event != NULL) {
             continue;
         }
-        allocation->retirement_fence = fence;
         if (shadowspill_memory_pool_publish_retirement_dependency_locked(
-                allocation, fence->event
+                allocation, task_completion_event
             ) != 0) {
-            return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            break;
         }
-        shadowspill_retain_task_fence(fence);
+        allocation->retirement_event = task_completion_event;
+        shadowspill_event_lease_retain(task_completion_event);
         const ShadowSpillRuntimeStatus enqueue_status =
             shadowspill_retirement_enqueue_locked(runtime, allocation);
         if (enqueue_status != SHADOWSPILL_RUNTIME_OK) {
-            return enqueue_status;
+            status = enqueue_status;
+            break;
         }
+    }
+    (void)shadowspill_event_lease_release(runtime, task_completion_event);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
     }
     pthread_cond_broadcast(&runtime->condition);
     return SHADOWSPILL_RUNTIME_OK;
@@ -346,7 +304,9 @@ static ShadowSpillMemoryLease *create_execution_record(
     atomic_init(&created->references, 1U);
     created->generation = runtime->next_generation++;
     created->origin_task_id = origin_task_id;
+    created->origin_task_allocation_sequence = SHADOWSPILL_RUNTIME_NO_ID;
     created->origin_task_allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    created->origin_task_allocation_is_scratch = 0U;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -640,14 +600,14 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
             continue;
         }
         const int task_local = candidate->retirement_events == NULL &&
-            candidate->retirement_fence == NULL &&
+            candidate->retirement_event == NULL &&
             candidate->release_task_id == origin_task_id &&
             origin_task_id != SHADOWSPILL_RUNTIME_NO_ID;
         if (exact_task_local_only && !task_local) {
             continue;
         }
         if (!task_local && candidate->retirement_events == NULL &&
-            candidate->retirement_fence == NULL) {
+            candidate->retirement_event == NULL) {
             continue;
         }
         int stream_compatible = 1;
@@ -764,11 +724,13 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         ) == 1U) {
         shadowspill_idle_notify(runtime);
     }
-    if (selected->retirement_fence != NULL) {
-        shadowspill_release_task_fence_locked(
-            runtime, selected->retirement_fence
-        );
-        selected->retirement_fence = NULL;
+    if (selected->retirement_event != NULL) {
+        if (shadowspill_event_lease_release(
+                runtime, selected->retirement_event
+            ) != 0) {
+            destroy_failed = 1;
+        }
+        selected->retirement_event = NULL;
     }
     if (destroy_failed) {
         shadowspill_latch_failure_locked(
@@ -896,7 +858,9 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
     }
     const uint64_t task_id = shadowspill_current_task_id(runtime);
     const uint64_t allocation_ordinal =
-        shadowspill_current_task_allocation_ordinal(runtime);
+        shadowspill_current_task_core_allocation_ordinal(runtime);
+    const int allocation_is_scratch =
+        shadowspill_current_task_allocation_is_scratch(runtime);
     const uint64_t task_invocation =
         shadowspill_current_task_invocation(runtime);
     const ShadowSpillFixedPlacementDescription *fixed_placement =
@@ -988,10 +952,13 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
                 .charged_bytes = record->charged_bytes,
                 .pointer = record->pointer,
             };
-            record->origin_task_allocation_ordinal =
+            record->origin_task_allocation_sequence =
                 shadowspill_commit_task_allocation(
-                runtime, record->requested_bytes, record->charged_bytes
-            );
+                    runtime, record->requested_bytes, record->charged_bytes
+                );
+            record->origin_task_allocation_ordinal = allocation_ordinal;
+            record->origin_task_allocation_is_scratch =
+                allocation_is_scratch ? 1U : 0U;
             record->origin_task_invocation = task_invocation;
             break;
         }
@@ -1010,7 +977,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
             break;
         }
         if (task_id != SHADOWSPILL_RUNTIME_NO_ID) {
-            status = shadowspill_fence_task_retirements_locked(
+            status = shadowspill_publish_task_retirement_event_locked(
                 runtime, task_id, stream
             );
             if (status != SHADOWSPILL_RUNTIME_OK) {
@@ -1266,6 +1233,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
             allocation->origin_task_id,
             allocation->origin_task_invocation,
             allocation->origin_task_allocation_ordinal,
+            allocation->origin_task_allocation_is_scratch,
             allocation->requested_bytes,
             allocation->charged_bytes,
             allocation->alignment_bytes
@@ -1305,6 +1273,7 @@ ShadowSpillRuntimeStatus shadowspill_free(
         allocation->origin_task_id,
         allocation->origin_task_invocation,
         allocation->origin_task_allocation_ordinal,
+        allocation->origin_task_allocation_is_scratch,
         allocation->requested_bytes,
         allocation->charged_bytes,
         allocation->alignment_bytes
@@ -1383,7 +1352,7 @@ void shadowspill_finalize_aborted_task_retirements(
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||
-            allocation->retirement_fence != NULL) {
+            allocation->retirement_event != NULL) {
             continue;
         }
         ShadowSpillEventRecord *events = NULL;

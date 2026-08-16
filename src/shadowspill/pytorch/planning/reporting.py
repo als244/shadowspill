@@ -146,6 +146,8 @@ def _forward_diagnostics(
         profile_unique_keys=profiles.unique_keys,
         profile_cache_hits=profiles.cache_hits,
         profile_cache_misses=profiles.cache_misses,
+        allocation_probe_seeds=profiles.allocation_probe_seeds,
+        allocation_probe_repetitions=profiles.allocation_probe_repetitions,
         captured_stage_count=captured_stage_count,
         aot_unique_stage_abis=aot_unique_stage_abis,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
@@ -205,6 +207,8 @@ def _forward_report(
         profile_unique_keys=profiles.unique_keys,
         profile_cache_hits=profiles.cache_hits,
         profile_cache_misses=profiles.cache_misses,
+        allocation_probe_seeds=profiles.allocation_probe_seeds,
+        allocation_probe_repetitions=profiles.allocation_probe_repetitions,
         profiling_provenance=tuple(
             dict.fromkeys(item.provenance for item in profiles.measurements)
         ),
@@ -222,6 +226,9 @@ def _forward_report(
         spill_pool=memory.spill.name,
         execution_budget_bytes=memory.execution_budget,
         spill_budget_bytes=memory.spill_budget,
+        requested_dynamic_scratch_reserve_bytes=(
+            memory.dynamic_scratch_reserve_bytes
+        ),
         execution_device=memory.execution_device,
         transfer_capabilities=memory.transfers,
     )
@@ -392,6 +399,11 @@ def publish_plan_report(
             "spill_pool": report.spill_pool,
             "execution_budget_bytes": report.execution_budget_bytes,
             "spill_budget_bytes": report.spill_budget_bytes,
+            "requested_dynamic_scratch_reserve_bytes": (
+                report.requested_dynamic_scratch_reserve_bytes
+            ),
+            "allocation_probe_seeds": report.allocation_probe_seeds,
+            "allocation_probe_repetitions": report.allocation_probe_repetitions,
             "execution_device": report.execution_device,
             "implementation_revision": cache.implementation_revision,
             "phase_timings_ns": [list(item) for item in report.phase_timings_ns],
@@ -448,6 +460,8 @@ def fixed_layout_diagnostic(
             envelope.maximum_charged_allocation_bytes,
             envelope.live_requested_allocation_limit_bytes,
             envelope.live_charged_allocation_limit_bytes,
+            envelope.dynamic_scratch_maximum_allocation_bytes,
+            envelope.dynamic_scratch_live_limit_bytes,
             (
                 None
                 if envelope.allocation_abi is None
@@ -458,6 +472,7 @@ def fixed_layout_diagnostic(
                 if envelope.allocation_abi is None
                 else len(envelope.allocation_abi.steps)
             ),
+            envelope.allocation_path_digests,
         )
         for task_id, envelope in admitted.task_envelopes
     )
@@ -474,6 +489,7 @@ def fixed_layout_diagnostic(
         object_capacity_reduction_bytes=selection.capacity_reduction_bytes,
         fixed_slice_bytes=layout.fixed_slice_bytes,
         dynamic_reserve_bytes=layout.dynamic_reserve_bytes,
+        scratch_reserve_bytes=layout.scratch_reserve_bytes,
         required_bytes=layout.required_bytes,
         slack_bytes=layout.slack_bytes,
         placement_count=len(layout.placements),

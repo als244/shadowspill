@@ -42,15 +42,17 @@ Public callables check at planning seal and lifecycle boundaries; supported
 fixed-shape task ABIs must have already exposed all direct provider growth
 during warmup.
 
-Every callback is non-throwing. Allocation failure returns null through the
-ordinary PyTorch allocation path and latches the first structured runtime
-failure for diagnostics. PyTorch 2.13 may return an unmaterialized nonzero
-tensor with a null `data_ptr()` from `torch.empty` after that callback instead
-of raising immediately. Public planning therefore checks the latched failure
-at task/API boundaries rather than assuming the construction call raised. Free
-and record-stream first resolve the exact live address and generation in the
-neutral allocator table; a missing address is a qualification failure rather
-than an ignored foreign allocation.
+The C callback remains the source of the structured first-failure ledger. The
+C++ PyTorch adapter checks its return value synchronously and throws before a
+failed nonzero request can become a null-backed tensor. No-progress and
+physical-cap failures become PyTorch `OutOfMemoryError`; task-allocation
+envelope or ABI violations become `RuntimeError`. Both include the active
+execution and semantic task identities plus the native pool geometry. The
+executor catches failures only long enough to abort the active native task;
+unrelated compiler, provider, and CUDA errors retain their original type and
+traceback. Free and record-stream first resolve the exact live address and
+generation in the neutral allocator table; a missing address is a
+qualification failure rather than an ignored foreign allocation.
 
 ## Storage rebinding
 

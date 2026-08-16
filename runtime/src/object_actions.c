@@ -124,7 +124,7 @@ int shadowspill_object_reset_admitted_action_locked(
     action->activation_generation = 0U;
     action->state = SHADOWSPILL_ACTION_QUEUED;
     action->destination_lease = NULL;
-    action->fence = NULL;
+    action->trigger_event = NULL;
     action->completion_event = NULL;
     action->dependency_event = NULL;
     action->owns_trace_label = 0U;

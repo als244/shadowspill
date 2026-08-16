@@ -145,6 +145,7 @@ class PlanMemory:
     spill: MemoryPool
     execution_budget: int
     spill_budget: int
+    dynamic_scratch_reserve_bytes: int
     execution_device: int
     transfers: TransferCapabilities
 
@@ -373,6 +374,7 @@ class Runtime:
         spill: str,
         execution_budget: int | None,
         spill_budget: int | None,
+        dynamic_scratch_reserve_bytes: int | None,
         execution_device: object | None,
     ) -> PlanMemory:
         with self._lock:
@@ -405,6 +407,10 @@ class Runtime:
                 execution_budget, execution_pool
             )
             resolved_spill = _resolve_budget(spill_budget, spill_pool, "spill_budget")
+            resolved_scratch = _resolve_dynamic_scratch_reserve(
+                dynamic_scratch_reserve_bytes,
+                execution_budget=resolved_execution,
+            )
             transfers = self._read_transfer_capabilities()
             fetch = transfers.route(spill, execution)
             evict = transfers.route(execution, spill)
@@ -423,6 +429,7 @@ class Runtime:
                 spill=spill_pool,
                 execution_budget=resolved_execution,
                 spill_budget=resolved_spill,
+                dynamic_scratch_reserve_bytes=resolved_scratch,
                 execution_device=resolved_device,
                 transfers=transfers,
             )
@@ -743,6 +750,27 @@ def _resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
     raise AdmissionError(
         f"execution_budget={value} exceeds pool {pool.name!r} physical capacity={limit}"
     )
+
+
+def _resolve_dynamic_scratch_reserve(
+    requested: int | None,
+    *,
+    execution_budget: int,
+) -> int:
+    """Validate an optional minimum for bounded task-path insertions."""
+
+    if requested is None:
+        return 0
+    if isinstance(requested, bool) or not isinstance(requested, int):
+        raise TypeError("dynamic_scratch_reserve_bytes must be an integer byte count")
+    if requested < 0:
+        raise AdmissionError("dynamic_scratch_reserve_bytes must be non-negative")
+    if requested > execution_budget:
+        raise AdmissionError(
+            "dynamic_scratch_reserve_bytes exceeds execution_budget: "
+            f"reserve={requested}, budget={execution_budget}"
+        )
+    return requested
 
 
 def _resolve_execution_device(value: object | None, pool: MemoryPool) -> int:

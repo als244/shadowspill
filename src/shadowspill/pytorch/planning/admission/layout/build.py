@@ -30,6 +30,7 @@ def build_fixed_layout_admission(
     topology: AdmissionTopology,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
+    scratch_reserve_bytes: int = 0,
 ) -> FixedLayoutAdmission:
     """Build, causally certify, and re-simulate one physical layout.
 
@@ -41,6 +42,8 @@ def build_fixed_layout_admission(
     """
 
     topology.validate(selected.program)
+    if scratch_reserve_bytes < 0:
+        raise ValueError("dynamic scratch reserve must be non-negative")
     builder = _AdmissionScriptBuilder(
         selected.program,
         selected.schedule,
@@ -67,7 +70,9 @@ def build_fixed_layout_admission(
     )
     placements, fixed_slice_bytes = place_lifetimes(fixed_lifetimes)
     dynamic_reserve_bytes = sum(item.bytes for item in dynamic_lifetimes)
-    required_bytes = fixed_slice_bytes + dynamic_reserve_bytes
+    required_bytes = (
+        fixed_slice_bytes + dynamic_reserve_bytes + scratch_reserve_bytes
+    )
     if required_bytes > topology.pool_capacity_bytes:
         raise FixedLayoutInfeasibleError(
             required_bytes,
@@ -81,6 +86,7 @@ def build_fixed_layout_admission(
         pool_capacity_bytes=topology.pool_capacity_bytes,
         fixed_slice_bytes=fixed_slice_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
+        scratch_reserve_bytes=scratch_reserve_bytes,
         required_bytes=required_bytes,
         placements=placements,
         reuse_dependencies=dependencies,

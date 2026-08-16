@@ -95,6 +95,7 @@ from .admission import (
     SelectedAdmission,
     build_admission_topology,
     build_fixed_selected_admission,
+    dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
     physical_admission,
     project_runtime_fixed_layout,
@@ -370,6 +371,8 @@ def profile_training_tasks(
     captured: TrainingCaptureArtifacts,
     materialized: TrainingMaterializationArtifacts,
     *,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
@@ -378,6 +381,8 @@ def profile_training_tasks(
     profiler = CudaTaskProfiler(
         captured.installed.library,
         device_ordinal=captured.device_ordinal,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
     )
     with timer.measure("saved_control_resolution"):
         partitioned = resolve_partitioned_saved_controls(
@@ -413,6 +418,8 @@ def profile_training_tasks(
         manifests,
         artifact_cache,
         timer,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
     )
     return TrainingProfileArtifacts(
         partitioned,
@@ -477,6 +484,9 @@ def _profile_training_inventory(
     manifests: ResolvedTaskManifests,
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
+    *,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
 ) -> ProfilingResult:
     with timer.measure("structural_profiling"):
         return profile_unique_artifacts(
@@ -493,6 +503,8 @@ def _profile_training_inventory(
                 f"structural profile {index}/{total} {state}: {digest[:12]}"
             ),
             profiling_metadata_digests=inventory.profile_metadata_digests,
+            allocation_probe_seeds=allocation_probe_seeds,
+            allocation_probe_repetitions=allocation_probe_repetitions,
         )
 
 
@@ -559,6 +571,7 @@ def build_training_programs(
         measurements=measurements,
         measurements_by_profile=measurements_by_profile,
         workspace_reserve=reserve,
+        dynamic_scratch_reserve_bytes=memory.dynamic_scratch_reserve_bytes,
         simulation_config=simulation_config,
         initial_admission=initial_admission,
         recurrent_admission=recurrent_admission,
@@ -694,6 +707,10 @@ def pressurefit_training_programs(
                     config=config,
                     progress=timer.progress,
                 ),
+                scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
+                    programs.measurements_by_profile,
+                    minimum_bytes=programs.dynamic_scratch_reserve_bytes,
+                ),
                 progress=timer.progress,
             )
             initial = (
@@ -706,6 +723,10 @@ def pressurefit_training_programs(
                         final_residency=programs.initial.final_residency,
                         config=config,
                         progress=timer.progress,
+                    ),
+                    scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
+                        programs.measurements_by_profile,
+                        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
                     ),
                     progress=timer.progress,
                 )
@@ -1131,6 +1152,8 @@ def build_training(
     verbose: bool,
     planning_cache: PlanningCache,
     profiling_metadata: Sequence[object] | None,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries."""
 
@@ -1160,6 +1183,8 @@ def build_training(
         profiled = profile_training_tasks(
             captured,
             materialized,
+            allocation_probe_seeds=allocation_probe_seeds,
+            allocation_probe_repetitions=allocation_probe_repetitions,
             artifact_cache=artifacts,
             timer=timer,
         )

@@ -16,7 +16,7 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.contracts import CaptureError
 
-REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v4"
+REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v5"
 
 _REFERENCE_ROLES = frozenset(
     {
@@ -90,6 +90,7 @@ class RepresentativeInputSet:
 
     structural_abi_key: str
     policy_version: str
+    probe_index: int
     arguments: tuple[object, ...]
     summaries: tuple[RepresentativeInputSummary, ...]
 
@@ -98,11 +99,14 @@ def materialize_representative_inputs(
     artifact: GraphArtifact,
     *,
     device_ordinal: int,
+    probe_index: int = 0,
     allocation_check: Callable[[str], None] | None = None,
 ) -> RepresentativeInputSet:
     """Materialize exact state/user values and deterministic anonymous values."""
 
     _validate_representative_artifact(artifact)
+    if probe_index < 0:
+        raise ValueError("representative input probe index must be non-negative")
     positions_by_group = _alias_group_positions(artifact)
     arguments: list[object | None] = [None] * len(artifact.example_arguments)
     summaries: list[RepresentativeInputSummary | None] = [None] * len(arguments)
@@ -112,6 +116,7 @@ def materialize_representative_inputs(
             group,
             positions,
             device_ordinal=device_ordinal,
+            probe_index=probe_index,
             allocation_check=allocation_check,
         ):
             arguments[position] = target
@@ -123,6 +128,7 @@ def materialize_representative_inputs(
     return RepresentativeInputSet(
         structural_abi_key=artifact.compatibility_digest,
         policy_version=REPRESENTATIVE_VALUE_POLICY,
+        probe_index=probe_index,
         arguments=tuple(value for value in arguments if value is not None),
         summaries=tuple(value for value in summaries if value is not None),
     )
@@ -148,6 +154,7 @@ def _materialize_alias_group(
     positions: list[int],
     *,
     device_ordinal: int,
+    probe_index: int,
     allocation_check: Callable[[str], None] | None,
 ) -> tuple[tuple[int, torch.Tensor, RepresentativeInputSummary], ...]:
     examples = tuple(artifact.example_arguments[position] for position in positions)
@@ -179,6 +186,7 @@ def _materialize_alias_group(
             provenance,
             structural_abi_key=artifact.compatibility_digest,
             position=position,
+            probe_index=probe_index,
         )
         target.requires_grad_(bool(example.requires_grad))
         values.append(
@@ -242,6 +250,7 @@ def _populate_value(
     *,
     structural_abi_key: str,
     position: int,
+    probe_index: int,
 ) -> str:
     reference = provenance.representative_value
     if reference is not None:
@@ -279,7 +288,7 @@ def _populate_value(
             "caller-supplied value",
         )
 
-    seed = _seed(structural_abi_key, position)
+    seed = _seed(structural_abi_key, position, probe_index)
     try:
         if target.is_floating_point():
             generator = torch.Generator(device=target.device).manual_seed(seed)
@@ -342,8 +351,11 @@ def _value_error(
     )
 
 
-def _seed(structural_abi_key: str, position: int) -> int:
-    encoded = f"{REPRESENTATIVE_VALUE_POLICY}:{structural_abi_key}:{position}".encode()
+def _seed(structural_abi_key: str, position: int, probe_index: int) -> int:
+    encoded = (
+        f"{REPRESENTATIVE_VALUE_POLICY}:{structural_abi_key}:"
+        f"{position}:{probe_index}"
+    ).encode()
     return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "little") & (
         (1 << 63) - 1
     )

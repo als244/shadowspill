@@ -115,8 +115,6 @@ typedef struct ShadowSpillMemoryPool {
     uint8_t initialized;
 } ShadowSpillMemoryPool;
 
-typedef struct ShadowSpillTaskFence ShadowSpillTaskFence;
-
 typedef enum ShadowSpillMemoryLeaseState {
     SHADOWSPILL_LEASE_FREE = 0,
     SHADOWSPILL_LEASE_IN_USE = 1,
@@ -137,7 +135,9 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t offset;
     uint64_t origin_task_id;
     uint64_t origin_task_invocation;
+    uint64_t origin_task_allocation_sequence;
     uint64_t origin_task_allocation_ordinal;
+    uint8_t origin_task_allocation_is_scratch;
     uint64_t release_task_id;
     uint64_t request_sequence;
     uint64_t release_sequence;
@@ -159,7 +159,7 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t handoff_tail_object_id;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
-    ShadowSpillTaskFence *retirement_fence;
+    ShadowSpillEventLease *retirement_event;
     uint64_t retirement_enqueued_generation;
     /*
      * A causal successor owns a future claim on this exact physical range.
@@ -210,7 +210,7 @@ typedef struct ShadowSpillRetirementRecord {
     uint64_t allocation_generation;
     ShadowSpillEventLease **events;
     uint32_t event_count;
-    ShadowSpillTaskFence *fence;
+    ShadowSpillEventLease *task_completion_event;
     struct ShadowSpillRetirementRecord *next;
 } ShadowSpillRetirementRecord;
 
@@ -284,14 +284,6 @@ typedef struct ShadowSpillObjectTable {
     uint64_t bucket_count;
 } ShadowSpillObjectTable;
 
-struct ShadowSpillTaskFence {
-    ShadowSpillEventLease *event;
-    _Atomic uint32_t references;
-    _Atomic uint8_t completion_known;
-    uint8_t last_query_complete;
-    uint64_t last_query_epoch;
-};
-
 typedef enum ShadowSpillQueuedActionState {
     SHADOWSPILL_ACTION_QUEUED = 0,
     SHADOWSPILL_ACTION_IN_FLIGHT = 1,
@@ -307,7 +299,7 @@ struct ShadowSpillQueuedAction {
     uint8_t state;
     ShadowSpillMemoryLease *destination_lease;
     ShadowSpillObject *object;
-    ShadowSpillTaskFence *fence;
+    ShadowSpillEventLease *trigger_event;
     ShadowSpillEventLease *completion_event;
     ShadowSpillEventLease *dependency_event;
     const char *trace_label;
@@ -385,11 +377,14 @@ typedef struct ShadowSpillExecutionRecord {
     uint32_t action_count;
     ShadowSpillTaskAllocationABIStep *allocation_abi_steps;
     uint32_t allocation_abi_step_count;
+    uint32_t allocation_abi_allocation_count;
     uint8_t enforce_allocation_abi;
     uint64_t maximum_requested_allocation_bytes;
     uint64_t maximum_charged_allocation_bytes;
     uint64_t live_requested_allocation_limit_bytes;
     uint64_t live_charged_allocation_limit_bytes;
+    uint64_t dynamic_scratch_maximum_allocation_bytes;
+    uint64_t dynamic_scratch_live_limit_bytes;
     _Atomic uint64_t invocation_count;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
@@ -841,17 +836,7 @@ void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 );
-void shadowspill_release_task_fence_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence
-);
-void shadowspill_retain_task_fence(ShadowSpillTaskFence *fence);
-int shadowspill_task_fence_complete_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillTaskFence *fence,
-    int *complete
-);
-ShadowSpillRuntimeStatus shadowspill_fence_task_retirements_locked(
+ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream
@@ -879,6 +864,14 @@ uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
 uint64_t shadowspill_current_task_allocation_ordinal(
     ShadowSpillRuntime *runtime
 );
+
+uint64_t shadowspill_current_task_core_allocation_ordinal(
+    ShadowSpillRuntime *runtime
+);
+
+int shadowspill_current_task_allocation_is_scratch(
+    ShadowSpillRuntime *runtime
+);
 uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
@@ -904,6 +897,7 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     uint64_t origin_task_id,
     uint64_t origin_task_invocation,
     uint64_t allocation_ordinal,
+    int allocation_is_scratch,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
     uint64_t alignment_bytes

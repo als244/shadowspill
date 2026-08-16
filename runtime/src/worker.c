@@ -91,65 +91,54 @@ static void complete_action(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
-    pthread_mutex_lock(&action->object->lock);
+    ShadowSpillObject *object = action->object;
+    pthread_mutex_lock(&object->lock);
     if (shadowspill_object_remove_action_locked(
-            action->object, action
+            object, action
         ) != 0) {
-        pthread_mutex_unlock(&action->object->lock);
+        pthread_mutex_unlock(&object->lock);
         latch_action_failure(
             runtime,
             action,
             SHADOWSPILL_RUNTIME_INVALID_STATE,
-            action->object->object_id,
-            action->object->allocation_id,
+            object->object_id,
+            object->allocation_id,
             0U
         );
         return;
     }
     action->state = SHADOWSPILL_ACTION_FINISHED;
     action->completed_generation = action->activation_generation;
-    pthread_mutex_unlock(&action->object->lock);
+    /*
+     * Detach every per-invocation event while the action's object lock still
+     * protects its published fields.  The old implementation released the
+     * trigger fence first and cleared the pointer later, leaving a window in
+     * which another reader could retain or query freed storage.
+     */
+    ShadowSpillEventLease *trigger_event = action->trigger_event;
+    ShadowSpillEventLease *completion_event = action->completion_event;
+    ShadowSpillEventLease *dependency_event = action->dependency_event;
+    const uint8_t had_completion_event = action->has_completion_event;
+    action->trigger_event = NULL;
+    action->completion_event = NULL;
+    action->dependency_event = NULL;
+    action->has_completion_event = 0U;
+    const uint64_t task_id = action->task_id;
+    const uint64_t object_id = object->object_id;
+    const uint64_t allocation_id = object->allocation_id;
+    const uint8_t kind = action->kind;
+    const uint8_t admitted = action->admitted;
+    pthread_mutex_unlock(&object->lock);
     pthread_mutex_lock(&runtime->actions.lock);
     unlink_action_locked(runtime, action);
     pthread_mutex_unlock(&runtime->actions.lock);
-    if (action->kind == SHADOWSPILL_RUNTIME_RELEASE ||
-        action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+    if (kind == SHADOWSPILL_RUNTIME_RELEASE ||
+        kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
         (void)atomic_fetch_sub_explicit(
             &runtime->pending_capacity_actions, 1U, memory_order_release
         );
     }
-    shadowspill_release_task_fence_locked(runtime, action->fence);
-    if (action->has_completion_event) {
-        if (shadowspill_event_lease_release(
-                runtime, action->completion_event
-            ) != 0) {
-            latch_action_failure(
-                runtime,
-                action,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                action->object->object_id,
-                action->object->allocation_id,
-                0U
-            );
-        }
-    }
-    if (action->dependency_event != NULL) {
-        if (shadowspill_event_lease_release(
-                runtime, action->dependency_event
-            ) != 0) {
-            latch_action_failure(
-                runtime,
-                action,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                action->object->object_id,
-                action->object->allocation_id,
-                0U
-            );
-        }
-        action->dependency_event = NULL;
-    }
-    if (action->admitted) {
-        ShadowSpillObject *object = action->object;
+    if (admitted) {
         pthread_mutex_lock(&object->lock);
         const int reset_status =
             shadowspill_object_reset_admitted_action_locked(object, action);
@@ -164,8 +153,27 @@ static void complete_action(
                 0U
             );
         }
-    } else {
-        shadowspill_object_release(action->object);
+    }
+    const int trigger_release_failed = shadowspill_event_lease_release(
+        runtime, trigger_event
+    ) != 0;
+    const int completion_release_failed = had_completion_event &&
+        shadowspill_event_lease_release(runtime, completion_event) != 0;
+    const int dependency_release_failed = dependency_event != NULL &&
+        shadowspill_event_lease_release(runtime, dependency_event) != 0;
+    if (trigger_release_failed || completion_release_failed ||
+        dependency_release_failed) {
+        shadowspill_latch_task_failure(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            task_id,
+            object_id,
+            allocation_id,
+            0U
+        );
+    }
+    if (!admitted) {
+        shadowspill_object_release(object);
         if (action->owns_trace_label) {
             free((void *)action->trace_label);
         }
@@ -354,6 +362,19 @@ static int dispatch_offload_locked(
         spill_lease_created = 1;
     }
     ShadowSpillMemoryLease *spill_lease = spill->lease;
+    ShadowSpillEventLease *trigger_event = action->trigger_event;
+    if (trigger_event == NULL) {
+        latch_action_failure(
+            runtime,
+            action,
+            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            object_id,
+            allocation_id,
+            bytes
+        );
+        return -1;
+    }
+    shadowspill_event_lease_retain(trigger_event);
     pthread_mutex_unlock(&object->lock);
 
     ShadowSpillEventLease *completion_event = NULL;
@@ -364,7 +385,7 @@ static int dispatch_offload_locked(
     if (!backend_failed && runtime->backend.wait_event(
             runtime->backend.context,
             runtime->evict_stream,
-            action->fence->event->event
+            trigger_event->event
         ) != 0) {
         backend_failed = 1;
     }
@@ -397,6 +418,9 @@ static int dispatch_offload_locked(
             backend_failed = 1;
         }
         pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    }
+    if (shadowspill_event_lease_release(runtime, trigger_event) != 0) {
+        backend_failed = 1;
     }
     pthread_mutex_lock(&object->lock);
     if (backend_failed || object->generation != object_generation ||
@@ -487,6 +511,19 @@ static int dispatch_prefetch_locked(
         return -1;
     }
     action->destination_lease = NULL;
+    ShadowSpillEventLease *trigger_event = action->trigger_event;
+    if (trigger_event == NULL) {
+        latch_action_failure(
+            runtime,
+            action,
+            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            object_id,
+            allocation->allocation_id,
+            bytes
+        );
+        return -1;
+    }
+    shadowspill_event_lease_retain(trigger_event);
     pthread_mutex_unlock(&object->lock);
     ShadowSpillEventLease *completion_event = NULL;
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
@@ -496,7 +533,7 @@ static int dispatch_prefetch_locked(
     if (!backend_failed && runtime->backend.wait_event(
             runtime->backend.context,
             runtime->fetch_stream,
-            action->fence->event->event
+            trigger_event->event
         ) != 0) {
         backend_failed = 1;
     }
@@ -529,6 +566,9 @@ static int dispatch_prefetch_locked(
             backend_failed = 1;
         }
         pthread_mutex_unlock(&shadowspill_spill_pool(runtime)->lock);
+    }
+    if (shadowspill_event_lease_release(runtime, trigger_event) != 0) {
+        backend_failed = 1;
     }
     pthread_mutex_lock(&object->lock);
     if (backend_failed || object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
@@ -607,10 +647,7 @@ static int handle_action(
     }
     if (action->state == SHADOWSPILL_ACTION_QUEUED) {
             if (action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
-                int complete = 0;
-                if (shadowspill_task_fence_complete_locked(
-                        runtime, action->fence, &complete
-                    ) != 0) {
+                if (action->trigger_event == NULL) {
                     latch_action_failure(
                         runtime,
                         action,
@@ -622,6 +659,9 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
+                const int complete = shadowspill_event_lease_is_complete(
+                    action->trigger_event
+                );
                 if (complete) {
                     if (!shadowspill_memory_pool_try_lock_reclamation(
                             shadowspill_execution_pool(runtime)
@@ -753,10 +793,7 @@ static int handle_action(
                     return 0;
                 }
                 /* Capacity is owned; transfer dispatch still obeys the task. */
-                int trigger_complete = 0;
-                if (shadowspill_task_fence_complete_locked(
-                        runtime, action->fence, &trigger_complete
-                    ) != 0) {
+                if (action->trigger_event == NULL) {
                     latch_action_failure(
                         runtime,
                         action,
@@ -768,6 +805,8 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
+                const int trigger_complete =
+                    shadowspill_event_lease_is_complete(action->trigger_event);
                 if (!trigger_complete) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;

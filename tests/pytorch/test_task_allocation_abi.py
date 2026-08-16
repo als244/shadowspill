@@ -14,6 +14,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationABIStep,
     TaskAllocationEvent,
     TaskAllocationOperation,
+    compare_allocation_path,
 )
 
 
@@ -188,3 +189,73 @@ def test_task_allocation_abi_specializes_returned_output_ownership() -> None:
     assert retained.steps[0].persistent_after_task
     assert retained.steps[0].output_leaf_indices == (0, 1)
     assert retained.compatibility_digest != profiled.compatibility_digest
+
+
+def test_allocation_path_reconciles_multiple_insertions_and_omissions() -> None:
+    reference = TaskAllocationABI.capture(
+        (
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 16, 16),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 16, 16),
+            TaskAllocationEvent(1, TaskAllocationOperation.ALLOCATE, 32, 32),
+            TaskAllocationEvent(1, TaskAllocationOperation.FREE, 32, 32),
+            TaskAllocationEvent(2, TaskAllocationOperation.ALLOCATE, 64, 64),
+            TaskAllocationEvent(2, TaskAllocationOperation.FREE, 64, 64),
+            TaskAllocationEvent(
+                3,
+                TaskAllocationOperation.ALLOCATE,
+                48,
+                48,
+                output_leaf_indices=(0,),
+                output_view_offsets=(0,),
+            ),
+        )
+    )
+    observed = TaskAllocationABI.capture(
+        (
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 8, 8),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 8, 8),
+            TaskAllocationEvent(1, TaskAllocationOperation.ALLOCATE, 32, 32),
+            TaskAllocationEvent(1, TaskAllocationOperation.FREE, 32, 32),
+            TaskAllocationEvent(2, TaskAllocationOperation.ALLOCATE, 12, 12),
+            TaskAllocationEvent(2, TaskAllocationOperation.FREE, 12, 12),
+            TaskAllocationEvent(
+                3,
+                TaskAllocationOperation.ALLOCATE,
+                48,
+                48,
+                output_leaf_indices=(0,),
+                output_view_offsets=(0,),
+            ),
+        )
+    )
+
+    path = compare_allocation_path(
+        reference,
+        observed,
+        probe_index=2,
+        repetition=1,
+    )
+
+    assert path.scratch_allocation_count == 2
+    assert path.scratch_maximum_charged_bytes == 12
+    assert path.scratch_peak_charged_bytes == 12
+    assert path.scratch_terminal_charged_bytes == 0
+
+
+def test_allocation_path_rejects_unknown_framework_output() -> None:
+    reference = TaskAllocationABI.capture(())
+    observed = TaskAllocationABI.capture(
+        (
+            TaskAllocationEvent(
+                0,
+                TaskAllocationOperation.ALLOCATE,
+                32,
+                32,
+                output_leaf_indices=(0,),
+                output_view_offsets=(0,),
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="framework-visible allocation"):
+        compare_allocation_path(reference, observed, probe_index=0, repetition=0)

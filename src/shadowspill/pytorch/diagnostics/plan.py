@@ -523,8 +523,11 @@ class PlanTaskMemoryEnvelope:
     maximum_charged_allocation_bytes: int
     live_requested_allocation_limit_bytes: int
     live_charged_allocation_limit_bytes: int
+    dynamic_scratch_maximum_allocation_bytes: int
+    dynamic_scratch_live_limit_bytes: int
     allocation_abi_digest: str | None
     allocation_abi_operation_count: int
+    allocation_path_digests: tuple[str, ...]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -541,8 +544,15 @@ class PlanTaskMemoryEnvelope:
             "live_charged_allocation_limit_bytes": (
                 self.live_charged_allocation_limit_bytes
             ),
+            "dynamic_scratch_maximum_allocation_bytes": (
+                self.dynamic_scratch_maximum_allocation_bytes
+            ),
+            "dynamic_scratch_live_limit_bytes": (
+                self.dynamic_scratch_live_limit_bytes
+            ),
             "allocation_abi_digest": self.allocation_abi_digest,
             "allocation_abi_operation_count": self.allocation_abi_operation_count,
+            "allocation_path_digests": list(self.allocation_path_digests),
         }
 
 
@@ -582,6 +592,7 @@ class PlanPhysicalLayout:
     object_capacity_reduction_bytes: int
     fixed_slice_bytes: int
     dynamic_reserve_bytes: int
+    scratch_reserve_bytes: int
     required_bytes: int
     slack_bytes: int
     placement_count: int
@@ -607,6 +618,7 @@ class PlanPhysicalLayout:
             ),
             "fixed_slice_bytes": self.fixed_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
+            "scratch_reserve_bytes": self.scratch_reserve_bytes,
             "required_bytes": self.required_bytes,
             "slack_bytes": self.slack_bytes,
             "placement_count": self.placement_count,
@@ -635,6 +647,8 @@ class PlanDiagnostics:
     profile_unique_keys: int
     profile_cache_hits: int
     profile_cache_misses: int
+    allocation_probe_seeds: int
+    allocation_probe_repetitions: int
     captured_stage_count: int
     aot_unique_stage_abis: int
     aot_graph_pair_cache_hits: int
@@ -667,6 +681,10 @@ class PlanDiagnostics:
                 "unique_keys": self.profile_unique_keys,
                 "cache_hits": self.profile_cache_hits,
                 "cache_misses": self.profile_cache_misses,
+                "allocation_probe_seeds": self.allocation_probe_seeds,
+                "allocation_probe_repetitions": (
+                    self.allocation_probe_repetitions
+                ),
             },
             "compiler": {
                 "phases": [
@@ -780,6 +798,8 @@ class PlanReport:
     profile_unique_keys: int
     profile_cache_hits: int
     profile_cache_misses: int
+    allocation_probe_seeds: int
+    allocation_probe_repetitions: int
     profiling_provenance: tuple[str, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
     diagnostics: PlanDiagnostics
@@ -787,6 +807,7 @@ class PlanReport:
     spill_pool: str
     execution_budget_bytes: int
     spill_budget_bytes: int
+    requested_dynamic_scratch_reserve_bytes: int
     execution_device: int
     transfer_capabilities: TransferCapabilities
     optimizer_ordering: str | None = None

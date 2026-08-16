@@ -485,6 +485,8 @@ def test_output_allocation_lookup_is_exact() -> None:
         ({"warmup_iterations": 0}, "warmup"),
         ({"sample_iterations": 0}, "sample"),
         ({"telemetry_capacity": 0}, "capacity"),
+        ({"allocation_probe_seeds": 0}, "allocation paths"),
+        ({"allocation_probe_repetitions": 1}, "allocation paths"),
     ],
 )
 def test_profiler_rejects_empty_calibration(
@@ -503,7 +505,9 @@ def test_retention_audit_accepts_a_stable_live_byte_baseline(
     workspace = SimpleNamespace(persistent_extent_bytes=(32,))
     measurements = iter((100, 132, 132, 132))
     monkeypatch.setattr(
-        profiler, "_requested_allocated_bytes", lambda: next(measurements)
+        profiler,
+        "_requested_allocated_bytes",
+        lambda: next(measurements),
     )
     monkeypatch.setattr(
         profiler, "_measure_workspace", lambda executable, stream: workspace
@@ -526,7 +530,9 @@ def test_retention_audit_rejects_unbounded_growth(
     workspace = SimpleNamespace(persistent_extent_bytes=(32,))
     measurements = iter((100, 132, 164, 196))
     monkeypatch.setattr(
-        profiler, "_requested_allocated_bytes", lambda: next(measurements)
+        profiler,
+        "_requested_allocated_bytes",
+        lambda: next(measurements),
     )
     monkeypatch.setattr(
         profiler, "_measure_workspace", lambda executable, stream: workspace
@@ -662,10 +668,17 @@ def test_measurement_releases_cuda_examples_between_structural_abis(
     profiler = CudaTaskProfiler(
         object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
+    stale_frames: list[object] = []
+
+    def measure_and_retain_wrapper(executable: object, **options: object) -> object:
+        del options
+        stale_frames.append(executable)
+        return measurement
+
     monkeypatch.setattr(
         profiler,
         "_measure_callable",
-        lambda executable, **options: measurement,
+        measure_and_retain_wrapper,
     )
 
     observed = profiler.measure(artifact)
@@ -675,4 +688,6 @@ def test_measurement_releases_cuda_examples_between_structural_abis(
     examples.clear()
     gc.collect()
     assert example_reference() is None
+    assert stale_frames
+    assert not stale_frames[0].example_arguments  # type: ignore[attr-defined]
     assert profiler._compiled(artifact).example_arguments == ()

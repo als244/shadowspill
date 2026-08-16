@@ -95,11 +95,14 @@ def plan_forward(
     spill: str,
     execution_budget: int | None = None,
     spill_budget: int | None = None,
+    dynamic_scratch_reserve_bytes: int | None = None,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     verbose: bool = True,
     planning_cachedir: str | os.PathLike[str] | None = None,
     profiling_metadata: object = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
     save_plan: bool = True,
     force_fresh: bool = False,
     overwrite_plan: bool = False,
@@ -126,6 +129,15 @@ def plan_forward(
     ``partition`` accepts ``"auto"``, ``"whole"``, or a
     :class:`PartitionPolicy`. Partitioning only creates ordered stage
     occurrences; it does not choose training graph-pair alternatives.
+
+    ``dynamic_scratch_reserve_bytes`` optionally raises the physical reserve
+    for bounded allocation-path insertions above the automatically profiled
+    requirement. It never reduces the measured reserve.
+
+    ``allocation_probe_seeds`` controls independent randomized activation
+    probes per structural ABI. ``allocation_probe_repetitions`` repeats each
+    seed identically to expose first-use allocation paths. The defaults are
+    one seed and two repetitions.
     """
 
     from .planning.forward import build_forward
@@ -142,6 +154,7 @@ def plan_forward(
             spill=spill,
             execution_budget=execution_budget,
             spill_budget=spill_budget,
+            dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
         )
         planning_started = True
@@ -161,6 +174,8 @@ def plan_forward(
                 verbose=verbose,
                 planning_cache=cache,
                 profiling_metadata=profiling_metadata,
+                allocation_probe_seeds=allocation_probe_seeds,
+                allocation_probe_repetitions=allocation_probe_repetitions,
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -182,12 +197,15 @@ def plan_step(
     spill: str,
     execution_budget: int | None = None,
     spill_budget: int | None = None,
+    dynamic_scratch_reserve_bytes: int | None = None,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
     planning_cachedir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
     save_plan: bool = True,
     force_fresh: bool = False,
     overwrite_plan: bool = False,
@@ -210,6 +228,12 @@ def plan_step(
     ``partition`` uses the same stage-only policy contract as forward
     planning. A later graph-pair phase independently shares differentiation
     portfolios across structurally equivalent stage occurrences.
+
+    ``dynamic_scratch_reserve_bytes`` has the same minimum-reserve semantics
+    as :func:`plan_forward`.
+
+    Allocation-path probe settings have the same semantics and defaults as
+    :func:`plan_forward`.
     """
 
     from .planning.training import build_training
@@ -226,6 +250,7 @@ def plan_step(
             spill=spill,
             execution_budget=execution_budget,
             spill_budget=spill_budget,
+            dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
         )
         planning_started = True
@@ -248,6 +273,8 @@ def plan_step(
                 verbose=verbose,
                 planning_cache=cache,
                 profiling_metadata=profiling_metadata,
+                allocation_probe_seeds=allocation_probe_seeds,
+                allocation_probe_repetitions=allocation_probe_repetitions,
             )
     except BaseException as error:
         _surface_failed_plan(

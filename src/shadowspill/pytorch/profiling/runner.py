@@ -33,6 +33,8 @@ def profile_unique_artifacts(
     validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None = None,
     progress: Callable[[int, int, str, str], None] | None = None,
     profiling_metadata_digests: Sequence[str | None] | None = None,
+    allocation_probe_seeds: int = 1,
+    allocation_probe_repetitions: int = 2,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
 
@@ -44,7 +46,13 @@ def profile_unique_artifacts(
         representatives,
         position_keys,
         input_contexts,
-    ) = _index_profile_keys(sequence, metadata, environment)
+    ) = _index_profile_keys(
+        sequence,
+        metadata,
+        environment,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
+    )
     measurements, hits, misses = _measure_unique_keys(
         keys,
         positions,
@@ -63,6 +71,8 @@ def profile_unique_artifacts(
         measurements,
         hits,
         misses,
+        allocation_probe_seeds,
+        allocation_probe_repetitions,
     )
 
 
@@ -83,6 +93,9 @@ def _index_profile_keys(
     artifacts: tuple[ProfilableArtifact, ...],
     metadata: tuple[str | None, ...],
     environment: ProfileEnvironment,
+    *,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
 ) -> tuple[
     dict[str, ProfileKey],
     dict[str, list[int]],
@@ -104,6 +117,8 @@ def _index_profile_keys(
             environment,
             metadata_digest,
             input_context,
+            allocation_probe_seeds,
+            allocation_probe_repetitions,
         )
         keys[key.digest] = key
         position_keys.append(key.digest)
@@ -199,6 +214,8 @@ def _build_profiling_result(
     measurements: dict[str, TaskMeasurement],
     hits: int,
     misses: int,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
 ) -> ProfilingResult:
     by_position: list[TaskMeasurement | None] = [None] * len(position_keys)
     persistent_by_graph: dict[str, int] = {}
@@ -222,6 +239,8 @@ def _build_profiling_result(
         key_digests=position_keys,
         profiling_metadata_digests=metadata,
         input_context_digests=input_contexts,
+        allocation_probe_seeds=allocation_probe_seeds,
+        allocation_probe_repetitions=allocation_probe_repetitions,
     )
 
 

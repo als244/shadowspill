@@ -964,6 +964,96 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
     return failed ? -1 : 0;
 }
 
+static int shared_task_completion_event_survives_action_reuse(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    enum { OBJECT_COUNT = 8, INVOCATION_COUNT = 250 };
+    ShadowSpillObjectDescription objects[OBJECT_COUNT] = {{0}};
+    ShadowSpillRuntimeAction evictions[OBJECT_COUNT] = {{0}};
+    ShadowSpillRuntimeAction fetches[OBJECT_COUNT] = {{0}};
+    ShadowSpillAllocation allocations[OBJECT_COUNT] = {{0}};
+    int failed = 0;
+    for (uint32_t index = 0U; index < OBJECT_COUNT; ++index) {
+        const uint64_t object_id = 300U + index;
+        objects[index] = (ShadowSpillObjectDescription){
+            .object_id = object_id,
+            .size_bytes = 8U,
+        };
+        evictions[index] = (ShadowSpillRuntimeAction){
+            .object_id = object_id,
+            .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        };
+        fetches[index] = (ShadowSpillRuntimeAction){
+            .object_id = object_id,
+            .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        };
+        failed = failed || shadowspill_register_object(
+                fixture.runtime, &objects[index]
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
+                fixture.runtime,
+                objects[index].size_bytes,
+                1U,
+                fixture.compute,
+                &allocations[index]
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
+                fixture.runtime,
+                object_id,
+                allocations[index].allocation_id
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    const ShadowSpillExecutionDescription evict_task = {
+        .task_id = 301U,
+        .actions = evictions,
+        .action_count = OBJECT_COUNT,
+    };
+    const ShadowSpillExecutionDescription fetch_task = {
+        .task_id = 302U,
+        .actions = fetches,
+        .action_count = OBJECT_COUNT,
+    };
+    failed = failed || shadowspill_admit_execution(
+            fixture.runtime, &evict_task
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            fixture.runtime, &fetch_task
+        ) != SHADOWSPILL_RUNTIME_OK;
+    for (uint32_t invocation = 0U;
+         !failed && invocation < INVOCATION_COUNT;
+         ++invocation) {
+        failed = shadowspill_before_execution(
+                fixture.runtime,
+                evict_task.task_id,
+                fixture.compute,
+                NULL,
+                0U
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+                fixture.runtime, evict_task.task_id, fixture.compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+                fixture.runtime,
+                fetch_task.task_id,
+                fixture.compute,
+                NULL,
+                0U
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+                fixture.runtime, fetch_task.task_id, fixture.compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+                fixture.runtime
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_runtime_statistics(
+            fixture.runtime, &statistics
+        ) != SHADOWSPILL_RUNTIME_OK || statistics.evict_transfers !=
+            (uint64_t)OBJECT_COUNT * INVOCATION_COUNT ||
+        statistics.fetch_transfers !=
+            (uint64_t)OBJECT_COUNT * INVOCATION_COUNT ||
+        statistics.queued_actions != 0U ||
+        statistics.pending_retirements != 0U;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
 static int admitted_task_allocates_dynamic_ranges(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
@@ -1254,6 +1344,7 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
         .charged_bytes = 32U,
         .alignment_bytes = 1U,
         .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        .required = 1U,
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 56U,
@@ -1310,6 +1401,7 @@ static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
         .charged_bytes = 32U,
         .alignment_bytes = 1U,
         .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        .required = 1U,
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 56U,
@@ -1399,6 +1491,76 @@ static int admitted_task_rejects_incomplete_allocation_abi(void) {
         failure.task_allocation_expected_operation !=
             SHADOWSPILL_TASK_ALLOCATION_FREE ||
         failure.task_allocation_actual_operation != UINT8_MAX;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
+}
+
+static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillTaskAllocationABIStep steps[] = {
+        {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
+        {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {1U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
+        {1U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {2U, 64U, 64U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
+        {2U, 64U, 64U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
+        {3U, 48U, 48U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
+    };
+    const ShadowSpillExecutionDescription execution = {
+        .task_id = 58U,
+        .allocation_abi_steps = steps,
+        .allocation_abi_step_count =
+            (uint32_t)(sizeof(steps) / sizeof(steps[0])),
+        .enforce_allocation_abi = 1U,
+        .maximum_requested_allocation_bytes = 64U,
+        .maximum_charged_allocation_bytes = 64U,
+        .live_requested_allocation_limit_bytes = 128U,
+        .live_charged_allocation_limit_bytes = 128U,
+        .dynamic_scratch_maximum_allocation_bytes = 16U,
+        .dynamic_scratch_live_limit_bytes = 16U,
+    };
+    ShadowSpillAllocation inserted_first = {0};
+    ShadowSpillAllocation matched = {0};
+    ShadowSpillAllocation inserted_second = {0};
+    ShadowSpillAllocation required = {0};
+    int failed = shadowspill_admit_execution(
+            fixture.runtime, &execution
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_execution(
+            fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 8U, 1U, fixture.compute, &inserted_first
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, inserted_first.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 32U, 1U, fixture.compute, &matched
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, matched.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 12U, 1U, fixture.compute, &inserted_second
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, inserted_second.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocate(
+            fixture.runtime, 48U, 1U, fixture.compute, &required
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_after_execution(
+            fixture.runtime, execution.task_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_free(
+            fixture.runtime, required.allocation_id, fixture.compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(fixture.runtime) !=
+            SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
@@ -2138,6 +2300,7 @@ int main(void) {
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());
     REQUIRE_CANARY(caller_handoff_preserves_recurrent_object_identity());
+    REQUIRE_CANARY(shared_task_completion_event_survives_action_reuse());
     REQUIRE_CANARY(admitted_task_allocates_dynamic_ranges());
     REQUIRE_CANARY(admitted_reuse_reacquires_retired_dynamic_range());
     REQUIRE_CANARY(admitted_allocation_without_progress_reports_no_progress());
@@ -2147,6 +2310,7 @@ int main(void) {
     REQUIRE_CANARY(delayed_free_is_not_charged_to_later_task_invocation());
     REQUIRE_CANARY(admitted_task_rejects_allocation_abi_geometry_mismatch());
     REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_abi());
+    REQUIRE_CANARY(admitted_task_reconciles_ordered_scratch_and_omissions());
     REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());

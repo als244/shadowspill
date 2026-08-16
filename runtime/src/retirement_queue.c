@@ -35,7 +35,17 @@ static void destroy_retirement_record(
         record->event_count,
         record->allocation->allocation_id
     );
-    shadowspill_release_task_fence_locked(runtime, record->fence);
+    if (shadowspill_event_lease_release(
+            runtime, record->task_completion_event
+        ) != 0) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            record->allocation->allocation_id,
+            0U
+        );
+    }
     free(record);
 }
 
@@ -81,7 +91,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
     if (runtime == NULL || allocation == NULL ||
         !allocation->logical_freed || allocation->pointer == NULL ||
         (allocation->retirement_events == NULL &&
-         allocation->retirement_fence == NULL)) {
+         allocation->retirement_event == NULL)) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     if (allocation->retirement_enqueued_generation == allocation->generation) {
@@ -115,8 +125,8 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
     record->allocation_generation = allocation->generation;
     record->events = events;
     record->event_count = event_count;
-    record->fence = allocation->retirement_fence;
-    shadowspill_retain_task_fence(record->fence);
+    record->task_completion_event = allocation->retirement_event;
+    shadowspill_event_lease_retain(record->task_completion_event);
 
     ShadowSpillRetirementQueue *queue = &runtime->retirements;
     pthread_mutex_lock(&queue->lock);
@@ -135,9 +145,8 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
 }
 
 static int retirement_complete(const ShadowSpillRetirementRecord *record) {
-    if (record->fence != NULL && atomic_load_explicit(
-            &record->fence->event->backend_complete, memory_order_acquire
-        ) == 0U) {
+    if (record->task_completion_event != NULL &&
+        !shadowspill_event_lease_is_complete(record->task_completion_event)) {
         return 0;
     }
     for (uint32_t index = 0U; index < record->event_count; ++index) {
@@ -154,7 +163,7 @@ static int retirement_complete(const ShadowSpillRetirementRecord *record) {
 static void release_owned_retirement_requirements(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventRecord *events,
-    ShadowSpillTaskFence *fence,
+    ShadowSpillEventLease *task_completion_event,
     uint64_t allocation_id
 ) {
     while (events != NULL) {
@@ -171,7 +180,17 @@ static void release_owned_retirement_requirements(
         free(events);
         events = next;
     }
-    shadowspill_release_task_fence_locked(runtime, fence);
+    if (shadowspill_event_lease_release(
+            runtime, task_completion_event
+        ) != 0) {
+        shadowspill_latch_failure_locked(
+            runtime,
+            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            allocation_id,
+            0U
+        );
+    }
 }
 
 static void append_retry(
@@ -233,7 +252,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             break;
         }
         ShadowSpillEventRecord *owned_events = NULL;
-        ShadowSpillTaskFence *owned_fence = NULL;
+        ShadowSpillEventLease *owned_task_completion_event = NULL;
         int released = 0;
         ShadowSpillMemoryLease *allocation = record->allocation;
         if (allocation->generation == record->allocation_generation &&
@@ -241,9 +260,9 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             allocation->retirement_enqueued_generation ==
                 record->allocation_generation) {
             owned_events = allocation->retirement_events;
-            owned_fence = allocation->retirement_fence;
+            owned_task_completion_event = allocation->retirement_event;
             allocation->retirement_events = NULL;
-            allocation->retirement_fence = NULL;
+            allocation->retirement_event = NULL;
             shadowspill_append_trace_event_locked(
                 runtime,
                 SHADOWSPILL_TRACE_RETIREMENT_COMPLETED,
@@ -262,7 +281,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
         release_owned_retirement_requirements(
             runtime,
             owned_events,
-            owned_fence,
+            owned_task_completion_event,
             record->allocation->allocation_id
         );
         if (released && atomic_fetch_sub_explicit(
