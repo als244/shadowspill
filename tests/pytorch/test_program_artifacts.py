@@ -185,8 +185,18 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     )
     selection_directory = save_annotated_plan(loaded_case, selected)
     restored = load_annotated_plan(selection_directory)
+    repeated_directory = save_annotated_plan(
+        loaded_case,
+        replace(selected, wall_time_ns=selected.wall_time_ns + 1),
+        step_program=loaded_program,
+    )
+    repeated = load_annotated_plan(repeated_directory)
 
     assert loaded_program.digest == step_program.digest
     assert restored.digest == selected.digest
+    assert repeated.digest == selected.digest
+    assert repeated.wall_time_ns == selected.wall_time_ns + 1
+    assert repeated_directory != selection_directory
+    assert selection_directory.parent == repeated_directory.parent
     assert "execution-224_spill-1024" in str(selection_directory)
     assert "fetch-1000000_evict-2000000" in str(selection_directory)

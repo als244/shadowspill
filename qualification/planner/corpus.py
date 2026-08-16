@@ -209,19 +209,32 @@ def save_annotated_plan(
     plan: AnnotatedProgramPlan,
     *,
     metadata: Mapping[str, object] | None = None,
+    step_program: StepProgram | None = None,
 ) -> Path:
-    """Save one selected plan under independent budget and bandwidth axes."""
+    """Save one selected plan under independent budget and bandwidth axes.
 
-    saved_case, step_program = load_step_program(case.directory)
-    if saved_case != case:
-        raise ValueError("saved Program case identity changed on disk")
-    program_digests = {step_program.recurrent.program.digest}
-    if step_program.initial is not None:
-        program_digests.add(step_program.initial.program.digest)
+    Long frontier workers may pass the already integrity-checked
+    ``step_program`` to avoid reparsing a large Program artifact for every
+    budget point. Omitting it retains the self-validating standalone API.
+    """
+
+    if step_program is None:
+        saved_case, selected_step_program = load_step_program(case.directory)
+        if saved_case != case:
+            raise ValueError("saved Program case identity changed on disk")
+    else:
+        selected_step_program = step_program
+        if selected_step_program.digest != case.program_digest:
+            raise ValueError("provided StepProgram does not match the saved case")
+    program_digests = {selected_step_program.recurrent.program.digest}
+    if selected_step_program.initial is not None:
+        program_digests.add(selected_step_program.initial.program.digest)
     if plan.program.program.digest not in program_digests:
         raise ValueError("annotated plan does not belong to the saved StepProgram")
     budgets = plan.memory_budgets
     bandwidths = plan.transfer_bandwidths
+    payload = plan.to_json()
+    artifact_digest = _text_digest(payload)
     directory = (
         case.directory
         / "evaluations"
@@ -231,9 +244,8 @@ def save_annotated_plan(
             f"evict-{bandwidths.evict_bytes_per_second}"
         )
         / plan.digest
+        / f"artifact-{artifact_digest}"
     )
-    payload = plan.to_json()
-    artifact_digest = _text_digest(payload)
     plan_path = directory / "annotated_program_plan.json"
     manifest_path = directory / "manifest.json"
     manifest = {
