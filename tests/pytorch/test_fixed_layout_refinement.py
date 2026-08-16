@@ -5,9 +5,11 @@ from dataclasses import replace
 from shadowspill.ir import MemorySchedule, Program, TaskProfile, TaskSpec
 from shadowspill.planner import (
     AdmissionTopology,
+    CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
+    RecomputationContextDiagnostics,
     TaskAdmissionSpec,
 )
 from shadowspill.planner._cache import CachedPressureFitResult
@@ -45,12 +47,25 @@ def _selection(
             (),
             simulation,
             PressureFitDiagnostics(
-                "candidate",
-                "selection",
-                1,
-                1,
-                simulation.makespan_ns,
-                (),
+                selected_candidate_id="candidate",
+                selected_selection_id="selection",
+                selected_makespan_ns=simulation.makespan_ns,
+                recomputation_contexts=(
+                    RecomputationContextDiagnostics(
+                        selection_id="selection",
+                        choices=(),
+                        selected_candidate_id="candidate",
+                        selected_makespan_ns=simulation.makespan_ns,
+                        candidate_evaluations=(
+                            CandidateDiagnostic(
+                                candidate_id="candidate",
+                                selection_id="selection",
+                                status="valid",
+                                makespan_ns=simulation.makespan_ns,
+                            ),
+                        ),
+                    ),
+                ),
                 effective_object_capacity_bytes=effective_capacity,
             ),
         ),
@@ -94,18 +109,20 @@ def test_refinement_uses_pressurefit_effective_capacity() -> None:
     assert selected.original_object_capacity_bytes == capacity
     assert selected.topology.object_capacity_bytes == effective
     assert selected.capacity_reduction_bytes == 384 << 20
-    assert selected.attempts == (
-        refinement.FixedLayoutAttempt(
-            capacity,
-            effective,
-            0,
-            capacity,
-            True,
-        ),
-    )
+    assert len(selected.attempts) == 1
+    attempt = selected.attempts[0]
+    assert (
+        attempt.requested_object_capacity_bytes,
+        attempt.effective_object_capacity_bytes,
+        attempt.required_bytes,
+        attempt.pool_capacity_bytes,
+        attempt.accepted,
+    ) == (capacity, effective, 0, capacity, True)
+    assert attempt.pressurefit_wall_time_ns > 0
+    assert attempt.physical_admission_wall_time_ns > 0
 
 
-def test_refinement_retries_in_128_mib_steps(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_refinement_retries_in_256_mib_steps(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     capacity = 2 << 30
     calls: list[int] = []
     original = refinement.build_fixed_layout_admission  # type: ignore[attr-defined]
@@ -124,9 +141,9 @@ def test_refinement_retries_in_128_mib_steps(monkeypatch) -> None:  # type: igno
         lambda config: _selection(config),
     )
 
-    assert calls == [capacity, capacity - (128 << 20)]
+    assert calls == [capacity, capacity - (256 << 20)]
     assert tuple(item.accepted for item in selected.attempts) == (False, True)
-    assert selected.capacity_reduction_bytes == 128 << 20
+    assert selected.capacity_reduction_bytes == 256 << 20
 
 
 def test_refinement_switches_to_512_mib_steps_after_one_gib() -> None:
@@ -134,8 +151,8 @@ def test_refinement_switches_to_512_mib_steps_after_one_gib() -> None:
 
     reductions = refinement._capacity_reductions(capacity)
 
-    assert reductions[:9] == tuple(index * (128 << 20) for index in range(9))
-    assert reductions[9:12] == (1536 << 20, 2048 << 20, 2560 << 20)
+    assert reductions[:5] == tuple(index * (256 << 20) for index in range(5))
+    assert reductions[5:8] == (1536 << 20, 2048 << 20, 2560 << 20)
 
 
 def test_refinement_rejects_invalid_effective_capacity() -> None:

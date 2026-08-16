@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +15,11 @@ from shadowspill.planner._native_portfolio import (
     decode_schedule,
     evaluate_program_context_compiled,
 )
-from shadowspill.planner.model import InitialPlacement, PressureFitOptions
+from shadowspill.planner.model import (
+    InitialPlacement,
+    PressureFitDiagnostics,
+    PressureFitOptions,
+)
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._compiled import (
     CompiledSimulationTemplate,
@@ -81,20 +84,21 @@ def _verify_frozen_selection(
     selection: dict[str, Any],
     template: CompiledSimulationTemplate,
 ) -> dict[str, object]:
-    diagnostics = selection["diagnostics"]
-    selection_id = diagnostics["selected_selection_id"]
-    expected_candidates = tuple(
-        item
-        for item in diagnostics["candidates"]
-        if item["selection_id"] == selection_id
+    diagnostics = PressureFitDiagnostics.from_value(
+        selection["diagnostics"], "selection.diagnostics"
     )
+    selection_id = diagnostics.selected_selection_id
+    expected_context = next(
+        item
+        for item in diagnostics.recomputation_contexts
+        if item.selection_id == selection_id
+    )
+    expected_candidates = expected_context.candidate_evaluations
     actual_candidates = tuple(
-        asdict(
-            decode_candidate_diagnostic(
-                item,
-                selection_id=selection_id,
-                simulation=template,
-            )
+        decode_candidate_diagnostic(
+            item,
+            selection_id=selection_id,
+            simulation=template,
         )
         for item in result.candidates
     )
@@ -109,7 +113,8 @@ def _verify_frozen_selection(
         for index, (actual, expected) in enumerate(
             zip(actual_candidates, expected_candidates, strict=True)
         )
-        if actual != expected
+        if _without_work_times(actual.to_dict())
+        != _without_work_times(expected.to_dict())
     )
     schedule_equal = (
         result.selected_schedule is not None
@@ -133,19 +138,22 @@ def _summary(result: NativeContextResult, wall_seconds: float) -> dict[str, obje
         "wall_seconds": wall_seconds,
         "candidate_count": len(result.candidates),
         "valid_candidate_count": sum(item.status == 0 for item in result.candidates),
-        "repair_attempts": sum(item.repair_attempts for item in result.candidates),
+        "repairs": result.repairs.to_dict(),
+        "work": result.work.to_dict(),
         "selected_candidate_index": result.selected_candidate_index,
         "selected_makespan_ns": result.selected_makespan_ns,
-        "residency_cache_hits": result.residency_cache_hits,
-        "residency_cache_misses": result.residency_cache_misses,
-        "schedule_emissions": result.schedule_emissions,
-        "schedule_cache_hits": result.schedule_cache_hits,
-        "simulation_calls": result.simulation_calls,
-        "simulation_cache_hits": result.simulation_cache_hits,
-        "residency_time_ns": result.residency_time_ns,
-        "schedule_time_ns": result.schedule_time_ns,
-        "simulation_time_ns": result.simulation_time_ns,
-        "digest_time_ns": result.digest_time_ns,
+    }
+
+
+def _without_work_times(value: object) -> object:
+    if isinstance(value, list):
+        return [_without_work_times(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _without_work_times(item)
+        for key, item in value.items()
+        if not key.endswith("_time_ns")
     }
 
 

@@ -85,7 +85,7 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
 
     fixture = pressurefit_fixture(result, role="recurrent")
 
-    assert fixture["schema"] == "shadowspill.pressurefit_fixture/v2"
+    assert fixture["schema"] == "shadowspill.pressurefit_fixture/v3"
     assert fixture["request"]["admission"] == admission.to_dict()  # type: ignore[index]
     write_pressurefit_fixtures(results=(result,), directory=tmp_path)
     replay = _run_suite((tmp_path / "recurrent.json",), repeats=1)

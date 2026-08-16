@@ -37,8 +37,31 @@ _CSV_FIELDS = (
     "evict_bytes",
     "device_peak_bytes",
     "host_peak_bytes",
-    "candidate_count",
-    "valid_candidate_count",
+    "recomputation_context_count",
+    "valid_recomputation_context_count",
+    "candidate_policy_count",
+    "candidate_evaluation_count",
+    "valid_candidate_evaluation_count",
+    "repair_attempt_count",
+    "pressure_boundary_repair_attempt_count",
+    "residency_evaluations",
+    "residency_cache_hits",
+    "schedule_emissions",
+    "schedule_cache_hits",
+    "simulation_requests",
+    "simulation_search_calls",
+    "simulation_cache_hits",
+    "simulation_result_materialization_calls",
+    "simulation_total_calls",
+    "admission_search_calls",
+    "admission_result_materialization_calls",
+    "admission_total_calls",
+    "pressurefit_context_work_time_ns",
+    "residency_work_time_ns",
+    "schedule_work_time_ns",
+    "simulation_work_time_ns",
+    "admission_work_time_ns",
+    "digest_work_time_ns",
     "action_count",
     "admission_refinement_count",
     "layout_required_bytes",
@@ -126,6 +149,16 @@ def _csv_row(path: Path, point: dict[str, Any]) -> dict[str, object]:
     evict = _mapping(transfers.get("evict"))
     throughput = _mapping(result.get("throughput"))
     selection = _mapping(result.get("selection"))
+    pressurefit = _mapping(selection.get("pressurefit_diagnostics"))
+    pressurefit_summary = _mapping(pressurefit.get("summary"))
+    pressurefit_repairs = _mapping(pressurefit.get("repairs"))
+    pressurefit_work = _mapping(pressurefit.get("work"))
+    evaluation_work = _mapping(pressurefit_work.get("evaluation"))
+    residency_work = _mapping(pressurefit_work.get("residency"))
+    schedule_work = _mapping(pressurefit_work.get("schedule"))
+    simulation_work = _mapping(pressurefit_work.get("simulation"))
+    admission_work = _mapping(pressurefit_work.get("admission"))
+    digest_work = _mapping(pressurefit_work.get("digest"))
     schedule = _mapping(result.get("schedule"))
     admission = _mapping(result.get("physical_admission"))
     plan = _mapping(result.get("annotated_plan"))
@@ -163,8 +196,55 @@ def _csv_row(path: Path, point: dict[str, Any]) -> dict[str, object]:
             "total_bytes"
         ),
         "host_peak_bytes": simulation.get("host_peak_bytes"),
-        "candidate_count": selection.get("candidate_count"),
-        "valid_candidate_count": selection.get("valid_candidate_count"),
+        "recomputation_context_count": pressurefit_summary.get(
+            "recomputation_context_count"
+        ),
+        "valid_recomputation_context_count": pressurefit_summary.get(
+            "valid_recomputation_context_count"
+        ),
+        "candidate_policy_count": pressurefit_summary.get(
+            "candidate_policy_count"
+        ),
+        "candidate_evaluation_count": pressurefit_summary.get(
+            "candidate_evaluation_count"
+        ),
+        "valid_candidate_evaluation_count": pressurefit_summary.get(
+            "valid_candidate_evaluation_count"
+        ),
+        "repair_attempt_count": pressurefit_repairs.get("total_attempts"),
+        "pressure_boundary_repair_attempt_count": pressurefit_repairs.get(
+            "pressure_boundary_attempts"
+        ),
+        "residency_evaluations": residency_work.get("evaluations"),
+        "residency_cache_hits": residency_work.get("cache_hits"),
+        "schedule_emissions": schedule_work.get("emissions"),
+        "schedule_cache_hits": schedule_work.get("cache_hits"),
+        "simulation_requests": simulation_work.get("requests"),
+        "simulation_search_calls": simulation_work.get("search_calls"),
+        "simulation_cache_hits": simulation_work.get("cache_hits"),
+        "simulation_result_materialization_calls": simulation_work.get(
+            "result_materialization_calls"
+        ),
+        "simulation_total_calls": simulation_work.get("total_calls"),
+        "admission_search_calls": admission_work.get("search_calls"),
+        "admission_result_materialization_calls": admission_work.get(
+            "result_materialization_calls"
+        ),
+        "admission_total_calls": admission_work.get("total_calls"),
+        "pressurefit_context_work_time_ns": evaluation_work.get(
+            "summed_wall_time_ns"
+        ),
+        "residency_work_time_ns": residency_work.get("summed_work_time_ns"),
+        "schedule_work_time_ns": schedule_work.get("summed_work_time_ns"),
+        "simulation_work_time_ns": (
+            int(simulation_work.get("summed_work_time_ns") or 0)
+            + int(simulation_work.get("result_materialization_time_ns") or 0)
+        ),
+        "admission_work_time_ns": (
+            int(admission_work.get("summed_work_time_ns") or 0)
+            + int(admission_work.get("result_materialization_time_ns") or 0)
+        ),
+        "digest_work_time_ns": digest_work.get("summed_work_time_ns"),
         "action_count": schedule.get("action_count"),
         "admission_refinement_count": len(
             _list(admission.get("admission_refinements"))

@@ -291,6 +291,10 @@ int main(void) {
         ) != SHADOWSPILL_PLANNER_OK ||
         context_result.candidate_count != 1U ||
         context_result.selected_candidate_index != 0U ||
+        context_result.work.simulation_calls != 1U ||
+        context_result.work.schedule_emissions != 1U ||
+        context_result.candidates[0].work.simulation_calls != 1U ||
+        context_result.candidates[0].work.schedule_emissions != 1U ||
         context_result.selected_schedule.action_count != 1U ||
         context_result.selected_schedule.action_kinds[0] !=
             SHADOWSPILL_MEMORY_RELEASE) {
@@ -314,6 +318,10 @@ int main(void) {
         ) != SHADOWSPILL_PLANNER_OK ||
         program_context_result.candidate_count != 1U ||
         program_context_result.selected_candidate_index != 0U ||
+        program_context_result.work.simulation_calls != 1U ||
+        program_context_result.work.schedule_emissions != 1U ||
+        program_context_result.candidates[0].work.simulation_calls != 1U ||
+        program_context_result.candidates[0].work.schedule_emissions != 1U ||
         program_context_result.selected_schedule.action_count != 1U ||
         program_context_result.selected_schedule.action_kinds[0] !=
             SHADOWSPILL_MEMORY_RELEASE) {

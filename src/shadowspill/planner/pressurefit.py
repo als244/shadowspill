@@ -62,6 +62,12 @@ from ._residency import (
     seed_residency,
 )
 from .admission import AdmissionTopology
+from .diagnostics import (
+    PressureFitRepairDiagnostics,
+    PressureFitWorkDiagnostics,
+    RecomputationChoiceDiagnostic,
+    RecomputationContextDiagnostics,
+)
 from .model import (
     AdmissionRefinement,
     CandidateDiagnostic,
@@ -377,7 +383,8 @@ def _failure_diagnostic(
     status: str,
     kind: str,
     detail: str,
-    repairs: int = 0,
+    repairs: PressureFitRepairDiagnostics | None = None,
+    work: PressureFitWorkDiagnostics | None = None,
 ) -> CandidateDiagnostic:
     return CandidateDiagnostic(
         candidate_id=spec.candidate_id,
@@ -385,24 +392,28 @@ def _failure_diagnostic(
         status=status,
         failure_kind=kind,
         failure_detail=detail,
-        repair_attempts=repairs,
+        repairs=repairs or PressureFitRepairDiagnostics(),
+        work=work or PressureFitWorkDiagnostics(),
     )
 
 
 def _repair_exhausted_diagnostic(
     spec: _CandidateSpec,
     error: SimulationInfeasibleError,
-    repairs: int,
+    repairs: PressureFitRepairDiagnostics,
+    work: PressureFitWorkDiagnostics,
 ) -> CandidateDiagnostic:
     return _failure_diagnostic(
         spec,
         status="exhausted",
         kind="repair_budget_exhausted",
         detail=(
-            f"candidate repair budget exhausted after {repairs} monotonic "
+            "candidate repair budget exhausted after "
+            f"{repairs.total_attempts} monotonic "
             f"repairs; last simulator result: {error}"
         ),
         repairs=repairs,
+        work=work,
     )
 
 
@@ -414,7 +425,45 @@ def _evaluate_candidate(
     facts = spec.context.facts
     seed = spec.context.seed
     extra_pressure: dict[tuple[str, int], int] = {}
-    repairs = 0
+    candidate_started = time.perf_counter_ns()
+    residency_cache_hits = 0
+    residency_cache_misses = 0
+    schedule_emissions = 0
+    schedule_cache_hits = 0
+    simulation_calls = 0
+    simulation_cache_hits = 0
+    residency_time_ns = 0
+    schedule_time_ns = 0
+    simulation_time_ns = 0
+    digest_time_ns = 0
+    simulation_prefetch_delay_attempts = 0
+    simulation_pressure_boundary_attempts = 0
+
+    def repairs_value() -> PressureFitRepairDiagnostics:
+        return PressureFitRepairDiagnostics(
+            simulation_prefetch_delay_attempts=(
+                simulation_prefetch_delay_attempts
+            ),
+            simulation_pressure_boundary_attempts=(
+                simulation_pressure_boundary_attempts
+            ),
+        )
+
+    def work_value() -> PressureFitWorkDiagnostics:
+        return PressureFitWorkDiagnostics(
+            evaluation_time_ns=time.perf_counter_ns() - candidate_started,
+            residency_cache_hits=residency_cache_hits,
+            residency_cache_misses=residency_cache_misses,
+            schedule_emissions=schedule_emissions,
+            schedule_cache_hits=schedule_cache_hits,
+            simulation_calls=simulation_calls,
+            simulation_cache_hits=simulation_cache_hits,
+            residency_time_ns=residency_time_ns,
+            schedule_time_ns=schedule_time_ns,
+            simulation_time_ns=simulation_time_ns,
+            digest_time_ns=digest_time_ns,
+        )
+
     while True:
         try:
             pressure_key = tuple(
@@ -426,6 +475,8 @@ def _evaluate_candidate(
             residency_key = (spec.strategy, pressure_key)
             residency = spec.context.residency_plans.get(residency_key)
             if residency is None:
+                residency_cache_misses += 1
+                residency_started = time.perf_counter_ns()
                 if spec.context.compiled_residency is not None:
                     residency = reduce_residency_compiled(
                         spec.context.compiled_residency,
@@ -442,7 +493,10 @@ def _evaluate_candidate(
                         extra_pressure=extra_pressure,
                         score_cache=spec.context.cut_scores,
                     )
+                residency_time_ns += time.perf_counter_ns() - residency_started
                 spec.context.residency_plans[residency_key] = residency
+            else:
+                residency_cache_hits += 1
             if spec.prefetch_rule == "interval-entry":
                 extended = spec.context.interval_plans.get(residency_key)
                 if extended is None:
@@ -458,6 +512,7 @@ def _evaluate_candidate(
             )
             schedule = spec.context.schedule_cache.get(schedule_key)
             if schedule is None:
+                schedule_started = time.perf_counter_ns()
                 schedule = emit_schedule(
                     facts,
                     config,
@@ -466,7 +521,11 @@ def _evaluate_candidate(
                     coalesced=spec.coalesced,
                     prefetch_headroom=prefetch_headroom,
                 )
+                schedule_time_ns += time.perf_counter_ns() - schedule_started
+                schedule_emissions += 1
                 spec.context.schedule_cache[schedule_key] = schedule
+            else:
+                schedule_cache_hits += 1
         except PressureFitInfeasibleError as error:
             return _CandidateOutcome(
                 spec,
@@ -475,7 +534,8 @@ def _evaluate_candidate(
                     status="infeasible",
                     kind=error.kind,
                     detail=str(error),
-                    repairs=repairs,
+                    repairs=repairs_value(),
+                    work=work_value(),
                 ),
             )
         except ValidationError as error:
@@ -486,7 +546,8 @@ def _evaluate_candidate(
                     status="invalid",
                     kind="schedule_validation",
                     detail=str(error),
-                    repairs=repairs,
+                    repairs=repairs_value(),
+                    work=work_value(),
                 ),
             )
         restart_reduction = False
@@ -494,8 +555,10 @@ def _evaluate_candidate(
             try:
                 cached_simulation = spec.context.simulation_cache.get(schedule)
                 if isinstance(cached_simulation, _CachedSimulationFailure):
+                    simulation_cache_hits += 1
                     raise cached_simulation.to_error()
                 if cached_simulation is None:
+                    simulation_started = time.perf_counter_ns()
                     try:
                         cached_simulation = (
                             simulate_compiled_template_summary(
@@ -509,20 +572,28 @@ def _evaluate_candidate(
                                 selections=facts.selections,
                                 config=config,
                             )
-                        )
+                            )
                     except SimulationInfeasibleError as error:
+                        simulation_time_ns += (
+                            time.perf_counter_ns() - simulation_started
+                        )
+                        simulation_calls += 1
                         spec.context.simulation_cache[schedule] = (
                             _CachedSimulationFailure.from_error(error)
                         )
                         raise
+                    simulation_time_ns += time.perf_counter_ns() - simulation_started
+                    simulation_calls += 1
                     spec.context.simulation_cache[schedule] = cached_simulation
+                else:
+                    simulation_cache_hits += 1
                 simulation = cached_simulation
             except SimulationInfeasibleError as error:
-                if repairs < options.max_repair_attempts:
+                if repairs_value().total_attempts < options.max_repair_attempts:
                     delayed = _delay_prefetch(facts, schedule, error)
                     if delayed is not None and delayed != schedule:
                         schedule = delayed
-                        repairs += 1
+                        simulation_prefetch_delay_attempts += 1
                         continue
                     repair = _repair_pressure(facts, error)
                     if repair is not None:
@@ -537,7 +608,7 @@ def _evaluate_candidate(
                         extra_pressure[boundary] = (
                             extra_pressure.get(boundary, 0) + extra
                         )
-                        repairs += 1
+                        simulation_pressure_boundary_attempts += 1
                         restart_reduction = True
                         break
                 elif (
@@ -546,7 +617,9 @@ def _evaluate_candidate(
                 ):
                     return _CandidateOutcome(
                         spec,
-                        _repair_exhausted_diagnostic(spec, error, repairs),
+                        _repair_exhausted_diagnostic(
+                            spec, error, repairs_value(), work_value()
+                        ),
                     )
                 return _CandidateOutcome(
                     spec,
@@ -555,12 +628,16 @@ def _evaluate_candidate(
                         status="infeasible",
                         kind=error.kind,
                         detail=str(error),
-                        repairs=repairs,
+                        repairs=repairs_value(),
+                        work=work_value(),
                     ),
                 )
             break
         if restart_reduction:
             continue
+        digest_started = time.perf_counter_ns()
+        schedule_digest = schedule.digest
+        digest_time_ns += time.perf_counter_ns() - digest_started
         return _CandidateOutcome(
             spec,
             CandidateDiagnostic(
@@ -568,8 +645,9 @@ def _evaluate_candidate(
                 selection_id=spec.context.selection_id,
                 status="valid",
                 makespan_ns=simulation.makespan_ns,
-                schedule_digest=schedule.digest,
-                repair_attempts=repairs,
+                schedule_digest=schedule_digest,
+                repairs=repairs_value(),
+                work=work_value(),
             ),
             schedule,
             simulation,
@@ -806,14 +884,13 @@ def _finish_native_pressurefit(
     results: tuple[NativeContextResult, ...],
     admission: AdmissionTopology | None,
 ) -> PressureFitResult:
-    diagnostics: list[CandidateDiagnostic] = []
+    recomputation_contexts: list[RecomputationContextDiagnostics] = []
     selected: tuple[int, int, NativeContextResult] | None = None
-    valid_count = 0
     for context_index, (context, result) in enumerate(
         zip(contexts, results, strict=True)
     ):
         assert context.compiled_template is not None
-        diagnostics.extend(
+        candidates = tuple(
             decode_candidate_diagnostic(
                 candidate,
                 selection_id=context.selection_id,
@@ -821,7 +898,32 @@ def _finish_native_pressurefit(
             )
             for candidate in result.candidates
         )
-        valid_count += sum(candidate.status == 0 for candidate in result.candidates)
+        selected_candidate = (
+            None
+            if result.selected_candidate_index is None
+            else candidates[result.selected_candidate_index]
+        )
+        recomputation_contexts.append(
+            RecomputationContextDiagnostics(
+                selection_id=context.selection_id,
+                choices=tuple(
+                    RecomputationChoiceDiagnostic(item.group_id, item.option_id)
+                    for item in context.selections
+                ),
+                selected_candidate_id=(
+                    None
+                    if selected_candidate is None
+                    else selected_candidate.candidate_id
+                ),
+                selected_makespan_ns=(
+                    None
+                    if selected_candidate is None
+                    else selected_candidate.makespan_ns
+                ),
+                candidate_evaluations=candidates,
+                work=result.work,
+            )
+        )
         if result.selected_candidate_index is None:
             continue
         assert result.selected_makespan_ns is not None
@@ -833,7 +935,11 @@ def _finish_native_pressurefit(
             selected = (key[0], key[1], result)
 
     if selected is None:
-        frozen = tuple(diagnostics)
+        frozen = tuple(
+            candidate
+            for context in recomputation_contexts
+            for candidate in context.candidate_evaluations
+        )
         if any(item.status == "exhausted" for item in frozen):
             raise PressureFitSearchExhaustedError(
                 "PressureFit exhausted its bounded candidate-repair budget "
@@ -868,29 +974,44 @@ def _finish_native_pressurefit(
     assert dense_schedule is not None
     assert context.compiled_template is not None
     schedule = decode_schedule(dense_schedule, context.compiled_template)
-    simulation_admission = (
-        evaluate_schedule_admission(
+    result_admission_calls = 0
+    result_admission_time_ns = 0
+    simulation_admission = None
+    if (
+        isinstance(context, _NativeSelectionContext)
+        and context.compiled_admission is not None
+    ):
+        admission_started = time.perf_counter_ns()
+        simulation_admission = evaluate_schedule_admission(
             context.compiled_template,
             context.compiled_admission,
             dense_schedule,
         ).simulation_admission
-        if isinstance(context, _NativeSelectionContext)
-        and context.compiled_admission is not None
-        else None
-    )
+        result_admission_time_ns = time.perf_counter_ns() - admission_started
+        result_admission_calls = 1
+    simulation_started = time.perf_counter_ns()
     simulation = simulate_compiled_template(
         context.compiled_template,
         schedule,
         admission=simulation_admission,
     )
+    result_simulation_time_ns = time.perf_counter_ns() - simulation_started
     selected_diagnostic = result.candidates[candidate_index]
+    aggregate_work = PressureFitWorkDiagnostics()
+    for context_result in results:
+        aggregate_work += context_result.work
+    aggregate_work += PressureFitWorkDiagnostics(
+        result_simulation_calls=1,
+        result_admission_calls=result_admission_calls,
+        result_simulation_time_ns=result_simulation_time_ns,
+        result_admission_time_ns=result_admission_time_ns,
+    )
     public_diagnostics = PressureFitDiagnostics(
         selected_candidate_id=selected_diagnostic.candidate_id,
         selected_selection_id=context.selection_id,
-        candidate_count=len(diagnostics),
-        valid_candidate_count=valid_count,
         selected_makespan_ns=simulation.makespan_ns,
-        candidates=tuple(diagnostics),
+        recomputation_contexts=tuple(recomputation_contexts),
+        work=aggregate_work,
     )
     return PressureFitResult(
         program=program,
@@ -1112,23 +1233,79 @@ def _pressurefit_once(
     )
     assert best.schedule is not None
     assert best.simulation is not None
-    final_simulation = (
-        simulate_compiled_template(
+    result_simulation_calls = 0
+    result_simulation_time_ns = 0
+    if (
+        isinstance(best.simulation, CompiledSimulationSummary)
+        and best.spec.context.compiled_template is not None
+    ):
+        simulation_started = time.perf_counter_ns()
+        final_simulation = simulate_compiled_template(
             best.spec.context.compiled_template,
             best.schedule,
         )
-        if isinstance(best.simulation, CompiledSimulationSummary)
-        and best.spec.context.compiled_template is not None
-        else best.simulation
+        result_simulation_time_ns = time.perf_counter_ns() - simulation_started
+        result_simulation_calls = 1
+    else:
+        assert isinstance(best.simulation, SimulationResult)
+        final_simulation = best.simulation
+    context_diagnostics: list[RecomputationContextDiagnostics] = []
+    aggregate_work = PressureFitWorkDiagnostics(
+        result_simulation_calls=result_simulation_calls,
+        result_simulation_time_ns=result_simulation_time_ns,
     )
-    assert isinstance(final_simulation, SimulationResult)
+    for context in contexts:
+        context_outcomes = tuple(
+            outcome for outcome in outcomes if outcome.spec.context is context
+        )
+        context_candidates = tuple(
+            outcome.diagnostic for outcome in context_outcomes
+        )
+        context_valid = tuple(
+            outcome
+            for outcome in context_outcomes
+            if outcome.schedule is not None and outcome.simulation is not None
+        )
+        context_best = (
+            None
+            if not context_valid
+            else min(
+                context_valid,
+                key=lambda outcome: (
+                    outcome.simulation.makespan_ns,  # type: ignore[union-attr]
+                    outcome.spec.ordinal,
+                ),
+            )
+        )
+        context_work = PressureFitWorkDiagnostics()
+        for candidate in context_candidates:
+            context_work += candidate.work
+        aggregate_work += context_work
+        context_diagnostics.append(
+            RecomputationContextDiagnostics(
+                selection_id=context.selection_id,
+                choices=tuple(
+                    RecomputationChoiceDiagnostic(item.group_id, item.option_id)
+                    for item in context.selections
+                ),
+                selected_candidate_id=(
+                    None if context_best is None else context_best.spec.candidate_id
+                ),
+                selected_makespan_ns=(
+                    None
+                    if context_best is None
+                    else context_best.simulation.makespan_ns  # type: ignore[union-attr]
+                ),
+                candidate_evaluations=context_candidates,
+                work=context_work,
+            )
+        )
     diagnostics = PressureFitDiagnostics(
         selected_candidate_id=best.spec.candidate_id,
         selected_selection_id=best.spec.context.selection_id,
-        candidate_count=len(outcomes),
-        valid_candidate_count=len(valid),
         selected_makespan_ns=final_simulation.makespan_ns,
-        candidates=tuple(outcome.diagnostic for outcome in outcomes),
+        recomputation_contexts=tuple(context_diagnostics),
+        work=aggregate_work,
     )
     return PressureFitResult(
         program=program,

@@ -48,6 +48,31 @@ def test_pressurefit_cache_preserves_the_complete_selection(tmp_path: Path) -> N
     assert second.result.diagnostics == first.result.diagnostics
 
 
+def test_pressurefit_cache_ignores_only_fresh_work_timings(tmp_path: Path) -> None:
+    initial, final = exact_capacity_residency()
+    first = PressureFitCache(tmp_path).resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=SMALL_PORTFOLIO,
+    )
+    fresh = PressureFitCache(tmp_path, read_enabled=False).resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=SMALL_PORTFOLIO,
+    )
+
+    assert not first.cache_hit
+    assert not fresh.cache_hit
+    assert fresh.result.schedule == first.result.schedule
+    assert fresh.result.diagnostics.work.simulation_calls == (
+        first.result.diagnostics.work.simulation_calls
+    )
+
+
 def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
     initial, final = exact_capacity_residency()
     cache = PressureFitCache(tmp_path)
@@ -60,10 +85,10 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
-    value["diagnostics"]["selected_makespan_ns"] += 1
+    value["diagnostics"]["selection"]["makespan_ns"] += 1
     path.write_text(json.dumps(value))
 
-    with pytest.raises(ValueError, match="stale simulator evidence"):
+    with pytest.raises(ValueError, match="invalid diagnostics"):
         cache.resolve(
             exact_capacity_program(),
             initial_residency=initial,

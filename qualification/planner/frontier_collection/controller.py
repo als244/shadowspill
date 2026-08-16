@@ -148,6 +148,7 @@ def _run_case_until_complete(
             repository_root=repository_root,
             case_run_directory=case_directory,
             log_path=log_path,
+            collection_log_path=paths.log_path,
             point_timeout_seconds=config.point_timeout_seconds,
             console_prefix=prefix,
         )
@@ -206,12 +207,26 @@ def _recover_active_point(
         "message": _process_failure(outcome),
         "return_code": outcome.return_code,
     }
-    recover_running_attempt(
+    final = recover_running_attempt(
         directory,
         request,
         max_attempts=config.max_point_attempts,
         error=error,
     )
+    disposition = "FINAL" if final else "RETRY"
+    if outcome.timed_out_point_id is not None:
+        _log(
+            paths,
+            f"POINT TIMEOUT {disposition} {case.case_id} point={point_id} "
+            f"timeout_seconds={config.point_timeout_seconds} "
+            f"return_code={outcome.return_code}",
+        )
+    else:
+        _log(
+            paths,
+            f"POINT WORKER_FAILURE {disposition} {case.case_id} "
+            f"point={point_id} return_code={outcome.return_code}",
+        )
     write_active_point(paths.case_directory(case), None)
 
 
@@ -336,8 +351,9 @@ def _load_case_failures(paths: BaselinePaths) -> dict[str, dict[str, object]]:
 
 
 def _log(paths: BaselinePaths, message: str) -> None:
-    append_log(paths.log_path, message)
-    print(message, flush=True)
+    timestamped = f"[{utc_now()}] {message}"
+    append_log(paths.log_path, timestamped)
+    print(timestamped, flush=True)
 
 
 class _CollectionLock(AbstractContextManager[None]):

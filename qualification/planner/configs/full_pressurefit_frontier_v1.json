@@ -4,8 +4,8 @@
   "expected_programs": 168,
   "expected_points_per_program": 15,
   "program_role": "recurrent",
-  "point_timeout_seconds": 180,
-  "max_point_attempts": 2,
+  "point_timeout_seconds": 300,
+  "max_point_attempts": 1,
   "max_worker_restarts_per_program": 64,
   "pressurefit_cache_mode": "cold",
   "transfer_bandwidths": {

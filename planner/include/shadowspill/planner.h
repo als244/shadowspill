@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 10U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 11U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -196,12 +196,39 @@ typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED = 5,
 } ShadowSpillCandidateStatus;
 
+/* Categorized monotonic repair operations for one candidate evaluation. */
+typedef struct ShadowSpillPressureFitRepairDiagnostics {
+    uint64_t admission_prefetch_advance_attempts;
+    uint64_t admission_prefetch_delay_attempts;
+    uint64_t admission_pressure_boundary_attempts;
+    uint64_t simulation_prefetch_delay_attempts;
+    uint64_t simulation_pressure_boundary_attempts;
+} ShadowSpillPressureFitRepairDiagnostics;
+
+/* Exact operations and summed component work for a candidate or context. */
+typedef struct ShadowSpillPressureFitWorkDiagnostics {
+    uint64_t evaluation_time_ns;
+    uint64_t residency_cache_hits;
+    uint64_t residency_cache_misses;
+    uint64_t schedule_emissions;
+    uint64_t schedule_cache_hits;
+    uint64_t simulation_calls;
+    uint64_t simulation_cache_hits;
+    uint64_t admission_calls;
+    uint64_t residency_time_ns;
+    uint64_t schedule_time_ns;
+    uint64_t simulation_time_ns;
+    uint64_t admission_time_ns;
+    uint64_t digest_time_ns;
+} ShadowSpillPressureFitWorkDiagnostics;
+
 typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint8_t status;
     uint8_t residency_strategy;
     uint8_t prefetch_rule;
     uint8_t coalesced;
-    uint32_t repair_attempts;
+    ShadowSpillPressureFitRepairDiagnostics repairs;
+    ShadowSpillPressureFitWorkDiagnostics work;
     uint32_t simulation_status;
     uint64_t makespan_ns;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
@@ -225,18 +252,8 @@ typedef struct ShadowSpillPressureFitContextResult {
     ShadowSpillDenseSchedule selected_schedule;
     ShadowSpillPressureFitCandidateDiagnostic *candidates;
     uint32_t candidate_count;
-    uint64_t residency_cache_hits;
-    uint64_t residency_cache_misses;
-    uint64_t schedule_emissions;
-    uint64_t schedule_cache_hits;
-    uint64_t simulation_calls;
-    uint64_t simulation_cache_hits;
-    uint64_t admission_calls;
-    uint64_t residency_time_ns;
-    uint64_t schedule_time_ns;
-    uint64_t simulation_time_ns;
-    uint64_t admission_time_ns;
-    uint64_t digest_time_ns;
+    ShadowSpillPressureFitRepairDiagnostics repairs;
+    ShadowSpillPressureFitWorkDiagnostics work;
 } ShadowSpillPressureFitContextResult;
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */

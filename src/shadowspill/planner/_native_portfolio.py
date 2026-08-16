@@ -28,9 +28,12 @@ from ._capi import (
     CPressureFitContextOptions,
     CPressureFitContextResult,
     CPressureFitProgramContext,
+    CPressureFitRepairDiagnostics,
+    CPressureFitWorkDiagnostics,
     load_planner_library,
 )
 from ._dense_residency import CompiledResidencyTemplate
+from .diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
 from .model import CandidateDiagnostic, PressureFitOptions
 
 _STRATEGY_CODE = {
@@ -62,7 +65,8 @@ class NativeCandidateDiagnostic:
     strategy: str
     rule: str
     coalesced: bool
-    repair_attempts: int
+    repairs: PressureFitRepairDiagnostics
+    work: PressureFitWorkDiagnostics
     simulation_status: int
     makespan_ns: int
     schedule_digest: str | None
@@ -81,6 +85,10 @@ class NativeCandidateDiagnostic:
     def candidate_id(self) -> str:
         suffix = "-coalesced" if self.coalesced else ""
         return f"{self.strategy}/{self.rule}{suffix}"
+
+    @property
+    def repair_attempts(self) -> int:
+        return self.repairs.total_attempts
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,18 +115,25 @@ class NativeContextResult:
     selected_makespan_ns: int | None
     selected_schedule: NativeDenseSchedule | None
     candidates: tuple[NativeCandidateDiagnostic, ...]
-    residency_cache_hits: int
-    residency_cache_misses: int
-    schedule_emissions: int
-    schedule_cache_hits: int
-    simulation_calls: int
-    simulation_cache_hits: int
-    admission_calls: int
-    residency_time_ns: int
-    schedule_time_ns: int
-    simulation_time_ns: int
-    admission_time_ns: int
-    digest_time_ns: int
+    repairs: PressureFitRepairDiagnostics
+    work: PressureFitWorkDiagnostics
+
+    def __post_init__(self) -> None:
+        repairs = PressureFitRepairDiagnostics()
+        candidate_work = PressureFitWorkDiagnostics()
+        for candidate in self.candidates:
+            repairs += candidate.repairs
+            candidate_work += candidate.work
+        if repairs != self.repairs:
+            raise RuntimeError(
+                "native PressureFit context repair counters do not reconcile"
+            )
+        for name in candidate_work.__dataclass_fields__:
+            if getattr(candidate_work, name) > getattr(self.work, name):
+                raise RuntimeError(
+                    "native PressureFit candidate work exceeds context work: "
+                    f"{name}"
+                )
 
 
 class NativeContextPreparationError(RuntimeError):
@@ -140,7 +155,8 @@ def decode_candidate_diagnostic(
             status="valid",
             makespan_ns=value.makespan_ns,
             schedule_digest=value.schedule_digest,
-            repair_attempts=value.repair_attempts,
+            repairs=value.repairs,
+            work=value.work,
         )
     if value.status == 1:
         device_id = simulation.device_ids[value.error_device]
@@ -156,7 +172,8 @@ def decode_candidate_diagnostic(
             status="infeasible",
             failure_kind="analytic_capacity",
             failure_detail=detail,
-            repair_attempts=value.repair_attempts,
+            repairs=value.repairs,
+            work=value.work,
         )
     if value.status == 3:
         device_id = simulation.device_ids[value.error_device]
@@ -173,7 +190,8 @@ def decode_candidate_diagnostic(
             status="infeasible",
             failure_kind="physical_admission",
             failure_detail=detail,
-            repair_attempts=value.repair_attempts,
+            repairs=value.repairs,
+            work=value.work,
         )
     if value.status == 5:
         if value.simulation_status == 0:
@@ -207,7 +225,8 @@ def decode_candidate_diagnostic(
                 f"{value.repair_attempts} monotonic repairs; last result: "
                 f"{last_result}"
             ),
-            repair_attempts=value.repair_attempts,
+            repairs=value.repairs,
+            work=value.work,
         )
     if value.status != 2:
         raise RuntimeError(
@@ -231,7 +250,48 @@ def decode_candidate_diagnostic(
         status="infeasible",
         failure_kind=kind,
         failure_detail=detail,
-        repair_attempts=value.repair_attempts,
+        repairs=value.repairs,
+        work=value.work,
+    )
+
+
+def _decode_repairs(
+    value: CPressureFitRepairDiagnostics,
+) -> PressureFitRepairDiagnostics:
+    return PressureFitRepairDiagnostics(
+        admission_prefetch_advance_attempts=int(
+            value.admission_prefetch_advance_attempts
+        ),
+        admission_prefetch_delay_attempts=int(
+            value.admission_prefetch_delay_attempts
+        ),
+        admission_pressure_boundary_attempts=int(
+            value.admission_pressure_boundary_attempts
+        ),
+        simulation_prefetch_delay_attempts=int(
+            value.simulation_prefetch_delay_attempts
+        ),
+        simulation_pressure_boundary_attempts=int(
+            value.simulation_pressure_boundary_attempts
+        ),
+    )
+
+
+def _decode_work(value: CPressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
+    return PressureFitWorkDiagnostics(
+        evaluation_time_ns=int(value.evaluation_time_ns),
+        residency_cache_hits=int(value.residency_cache_hits),
+        residency_cache_misses=int(value.residency_cache_misses),
+        schedule_emissions=int(value.schedule_emissions),
+        schedule_cache_hits=int(value.schedule_cache_hits),
+        simulation_calls=int(value.simulation_calls),
+        simulation_cache_hits=int(value.simulation_cache_hits),
+        admission_calls=int(value.admission_calls),
+        residency_time_ns=int(value.residency_time_ns),
+        schedule_time_ns=int(value.schedule_time_ns),
+        simulation_time_ns=int(value.simulation_time_ns),
+        admission_time_ns=int(value.admission_time_ns),
+        digest_time_ns=int(value.digest_time_ns),
     )
 
 
@@ -433,7 +493,8 @@ def _evaluate_native_context(
                     strategy=strategy,
                     rule=rule,
                     coalesced=bool(value.coalesced),
-                    repair_attempts=int(value.repair_attempts),
+                    repairs=_decode_repairs(value.repairs),
+                    work=_decode_work(value.work),
                     simulation_status=int(value.simulation_status),
                     makespan_ns=int(value.makespan_ns),
                     schedule_digest=digest,
@@ -463,18 +524,8 @@ def _evaluate_native_context(
                 else _copy_schedule(native_result)
             ),
             candidates=tuple(candidates),
-            residency_cache_hits=int(native_result.residency_cache_hits),
-            residency_cache_misses=int(native_result.residency_cache_misses),
-            schedule_emissions=int(native_result.schedule_emissions),
-            schedule_cache_hits=int(native_result.schedule_cache_hits),
-            simulation_calls=int(native_result.simulation_calls),
-            simulation_cache_hits=int(native_result.simulation_cache_hits),
-            admission_calls=int(native_result.admission_calls),
-            residency_time_ns=int(native_result.residency_time_ns),
-            schedule_time_ns=int(native_result.schedule_time_ns),
-            simulation_time_ns=int(native_result.simulation_time_ns),
-            admission_time_ns=int(native_result.admission_time_ns),
-            digest_time_ns=int(native_result.digest_time_ns),
+            repairs=_decode_repairs(native_result.repairs),
+            work=_decode_work(native_result.work),
         )
     finally:
         library.shadowspill_pressurefit_context_result_destroy(

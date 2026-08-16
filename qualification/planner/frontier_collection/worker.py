@@ -197,7 +197,7 @@ def _evaluate_point(
             f"POINT SUCCESS [{ordinal}/{point_count}] {case.case_id} "
             f"point={request.point_id} elapsed_seconds={elapsed:.3f} "
             f"makespan_seconds={plan.simulation.makespan_ns / 1e9:.6f} "
-            f"plan_digest={plan.digest}",
+            f"plan_digest={plan.digest} utc={completed_at}",
             flush=True,
         )
     except _EXPECTED_INFEASIBLE as error:
@@ -279,7 +279,7 @@ def _finish_error(
     print(
         f"POINT {status.upper()} {disposition} {case.case_id} "
         f"point={request.point_id} elapsed_seconds={elapsed:.3f} "
-        f"error_type={type(error).__name__} error={error}",
+        f"error_type={type(error).__name__} error={error} utc={completed_at}",
         flush=True,
     )
 

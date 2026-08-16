@@ -88,21 +88,11 @@ class SelectedAdmission:
     def apply_prediction(self, selected: PressureFitResult) -> PressureFitResult:
         """Return the selection with admission-aware simulator evidence."""
 
-        diagnostics = selected.diagnostics
-        candidates = tuple(
-            replace(item, makespan_ns=self.simulation.makespan_ns)
-            if item.candidate_id == diagnostics.selected_candidate_id
-            and item.selection_id == diagnostics.selected_selection_id
-            else item
-            for item in diagnostics.candidates
-        )
         return replace(
             selected,
             simulation=self.simulation,
-            diagnostics=replace(
-                diagnostics,
-                selected_makespan_ns=self.simulation.makespan_ns,
-                candidates=candidates,
+            diagnostics=selected.diagnostics.with_selected_makespan(
+                self.simulation.makespan_ns
             ),
         )
 

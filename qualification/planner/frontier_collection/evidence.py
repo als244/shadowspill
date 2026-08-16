@@ -67,9 +67,7 @@ def successful_point_evidence(
     selection_value = [item.to_dict() for item in plan.result.selections]
     selection_digest = _digest(selection_value)
     option_counts = Counter(item.option_id for item in plan.result.selections)
-    candidate_statuses = Counter(
-        item.status for item in plan.result.diagnostics.candidates
-    )
+    pressurefit_diagnostics = plan.result.diagnostics
     peak = simulation.device_peaks[0]
     manifest = json.loads((annotated_plan_directory / "manifest.json").read_text())
     artifact = manifest["annotated_program_plan"]
@@ -127,16 +125,30 @@ def successful_point_evidence(
                 "option_counts": dict(sorted(option_counts.items())),
                 "selections": selection_value,
                 "selected_candidate_id": (
-                    plan.result.diagnostics.selected_candidate_id
+                    pressurefit_diagnostics.selected_candidate_id
                 ),
                 "selected_selection_id": (
-                    plan.result.diagnostics.selected_selection_id
+                    pressurefit_diagnostics.selected_selection_id
                 ),
-                "candidate_count": plan.result.diagnostics.candidate_count,
-                "valid_candidate_count": (
-                    plan.result.diagnostics.valid_candidate_count
+                "recomputation_context_count": (
+                    pressurefit_diagnostics.recomputation_context_count
                 ),
-                "candidate_status_counts": dict(sorted(candidate_statuses.items())),
+                "valid_recomputation_context_count": (
+                    pressurefit_diagnostics.valid_recomputation_context_count
+                ),
+                "candidate_policy_count": (
+                    pressurefit_diagnostics.candidate_policy_count
+                ),
+                "candidate_evaluation_count": (
+                    pressurefit_diagnostics.candidate_evaluation_count
+                ),
+                "valid_candidate_evaluation_count": (
+                    pressurefit_diagnostics.valid_candidate_evaluation_count
+                ),
+                "candidate_status_counts": (
+                    pressurefit_diagnostics.candidate_status_counts
+                ),
+                "pressurefit_diagnostics": pressurefit_diagnostics.to_dict(),
             },
             "schedule": {
                 "digest": plan.result.schedule.digest,
@@ -156,7 +168,31 @@ def successful_point_evidence(
                 "reuse_dependency_count": len(
                     plan.fixed_layout.reuse_dependencies
                 ),
-                "attempts": [asdict(item) for item in plan.attempts],
+                "attempts": [
+                    {
+                        "requested_object_capacity_bytes": (
+                            item.requested_object_capacity_bytes
+                        ),
+                        "effective_object_capacity_bytes": (
+                            item.effective_object_capacity_bytes
+                        ),
+                        "required_bytes": item.required_bytes,
+                        "pool_capacity_bytes": item.pool_capacity_bytes,
+                        "accepted": item.accepted,
+                        "pressurefit_wall_time_ns": (
+                            item.pressurefit_wall_time_ns
+                        ),
+                        "physical_admission_wall_time_ns": (
+                            item.physical_admission_wall_time_ns
+                        ),
+                        "pressurefit_diagnostics": (
+                            None
+                            if item.pressurefit_diagnostics is None
+                            else item.pressurefit_diagnostics.to_dict()
+                        ),
+                    }
+                    for item in plan.attempts
+                ],
                 "admission_refinements": [
                     asdict(item)
                     for item in plan.result.diagnostics.admission_refinements

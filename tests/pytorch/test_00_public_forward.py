@@ -81,8 +81,14 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     assert layout.strategy == "fixed"
     assert layout.required_bytes <= layout.pool_capacity_bytes
     assert layout.attempts[-1].accepted
+    assert all(item.pressurefit_wall_time_ns > 0 for item in layout.attempts)
+    assert all(
+        item.physical_admission_wall_time_ns > 0 for item in layout.attempts
+    )
     assert layout.task_memory_envelopes
-    assert planned.plan_report.diagnostics.as_dict()["physical_layouts"]
+    encoded_layout = planned.plan_report.diagnostics.as_dict()["physical_layouts"][0]
+    assert encoded_layout["attempts"][-1]["pressurefit_wall_time_ns"] > 0
+    assert encoded_layout["attempts"][-1]["physical_admission_wall_time_ns"] > 0
     actual = planned([inputs, 17])[0]
     torch.testing.assert_close(
         actual.cpu(), reference(inputs, 17)[0], rtol=2e-5, atol=2e-6

@@ -93,7 +93,7 @@ def _expected_value(result: PressureFitResult) -> dict[str, Any]:
         "schedule": result.schedule.to_dict(),
         "selections": [item.to_dict() for item in result.selections],
         "simulation": asdict(result.simulation),
-        "diagnostics": asdict(result.diagnostics),
+        "diagnostics": result.diagnostics.stable_dict(),
     }
 
 
@@ -103,6 +103,7 @@ def _run_suite(paths: tuple[Path, ...], repeats: int) -> dict[str, Any]:
         if fixture.get("schema") not in {
             "shadowspill.pressurefit_fixture/v1",
             "shadowspill.pressurefit_fixture/v2",
+            "shadowspill.pressurefit_fixture/v3",
         }:
             raise ValueError(f"unsupported PressureFit fixture: {path}")
     requests = [_request(value) for value in fixtures]

@@ -143,6 +143,12 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert all(item.strategy == "fixed" for item in layouts)
     assert all(item.required_bytes <= item.pool_capacity_bytes for item in layouts)
     assert all(item.attempts[-1].accepted for item in layouts)
+    assert all(
+        attempt.pressurefit_wall_time_ns > 0
+        and attempt.physical_admission_wall_time_ns > 0
+        for layout in layouts
+        for attempt in layout.attempts
+    )
     assert all(parameter.device.type == "cuda" for parameter in model.parameters())
     with pytest.raises(InputGuardError):
         training([[*steps[0][0][:-1], "changed"], steps[0][1]])

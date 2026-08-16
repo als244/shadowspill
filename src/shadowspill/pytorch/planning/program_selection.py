@@ -101,21 +101,11 @@ def _with_physical_prediction(
         raise TypeError("physical simulation has an invalid type")
     if not isinstance(topology, AdmissionTopology):
         raise TypeError("effective topology has an invalid type")
-    diagnostics = selected.diagnostics
-    candidates = tuple(
-        replace(item, makespan_ns=simulation.makespan_ns)
-        if item.candidate_id == diagnostics.selected_candidate_id
-        and item.selection_id == diagnostics.selected_selection_id
-        else item
-        for item in diagnostics.candidates
-    )
     return replace(
         selected,
         simulation=simulation,
-        diagnostics=replace(
-            diagnostics,
-            selected_makespan_ns=simulation.makespan_ns,
-            candidates=candidates,
+        diagnostics=selected.diagnostics.with_selected_makespan(
+            simulation.makespan_ns
         ),
         admission_topology=topology,
     )

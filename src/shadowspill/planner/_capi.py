@@ -9,7 +9,7 @@ from pathlib import Path
 from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 10
+ABI_VERSION = 11
 NO_INDEX = (1 << 32) - 1
 
 
@@ -172,13 +172,42 @@ class CPressureFitProgramContext(ctypes.Structure):
     ]
 
 
+class CPressureFitRepairDiagnostics(ctypes.Structure):
+    _fields_ = [
+        ("admission_prefetch_advance_attempts", ctypes.c_uint64),
+        ("admission_prefetch_delay_attempts", ctypes.c_uint64),
+        ("admission_pressure_boundary_attempts", ctypes.c_uint64),
+        ("simulation_prefetch_delay_attempts", ctypes.c_uint64),
+        ("simulation_pressure_boundary_attempts", ctypes.c_uint64),
+    ]
+
+
+class CPressureFitWorkDiagnostics(ctypes.Structure):
+    _fields_ = [
+        ("evaluation_time_ns", ctypes.c_uint64),
+        ("residency_cache_hits", ctypes.c_uint64),
+        ("residency_cache_misses", ctypes.c_uint64),
+        ("schedule_emissions", ctypes.c_uint64),
+        ("schedule_cache_hits", ctypes.c_uint64),
+        ("simulation_calls", ctypes.c_uint64),
+        ("simulation_cache_hits", ctypes.c_uint64),
+        ("admission_calls", ctypes.c_uint64),
+        ("residency_time_ns", ctypes.c_uint64),
+        ("schedule_time_ns", ctypes.c_uint64),
+        ("simulation_time_ns", ctypes.c_uint64),
+        ("admission_time_ns", ctypes.c_uint64),
+        ("digest_time_ns", ctypes.c_uint64),
+    ]
+
+
 class CPressureFitCandidateDiagnostic(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint8),
         ("residency_strategy", ctypes.c_uint8),
         ("prefetch_rule", ctypes.c_uint8),
         ("coalesced", ctypes.c_uint8),
-        ("repair_attempts", ctypes.c_uint32),
+        ("repairs", CPressureFitRepairDiagnostics),
+        ("work", CPressureFitWorkDiagnostics),
         ("simulation_status", ctypes.c_uint32),
         ("makespan_ns", ctypes.c_uint64),
         ("schedule_digest", ctypes.c_uint8 * 32),
@@ -203,18 +232,8 @@ class CPressureFitContextResult(ctypes.Structure):
         ("selected_schedule", CDenseSchedule),
         ("candidates", ctypes.POINTER(CPressureFitCandidateDiagnostic)),
         ("candidate_count", ctypes.c_uint32),
-        ("residency_cache_hits", ctypes.c_uint64),
-        ("residency_cache_misses", ctypes.c_uint64),
-        ("schedule_emissions", ctypes.c_uint64),
-        ("schedule_cache_hits", ctypes.c_uint64),
-        ("simulation_calls", ctypes.c_uint64),
-        ("simulation_cache_hits", ctypes.c_uint64),
-        ("admission_calls", ctypes.c_uint64),
-        ("residency_time_ns", ctypes.c_uint64),
-        ("schedule_time_ns", ctypes.c_uint64),
-        ("simulation_time_ns", ctypes.c_uint64),
-        ("admission_time_ns", ctypes.c_uint64),
-        ("digest_time_ns", ctypes.c_uint64),
+        ("repairs", CPressureFitRepairDiagnostics),
+        ("work", CPressureFitWorkDiagnostics),
     ]
 
 
@@ -322,6 +341,8 @@ __all__ = [
     "CPressureFitContextOptions",
     "CPressureFitContextResult",
     "CPressureFitProgramContext",
+    "CPressureFitRepairDiagnostics",
+    "CPressureFitWorkDiagnostics",
     "CResidencyOptions",
     "CResidencyProblem",
     "CResidencyResult",

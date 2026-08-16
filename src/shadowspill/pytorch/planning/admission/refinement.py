@@ -7,7 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner import AdmissionTopology, PressureFitResult
+from shadowspill.planner import (
+    AdmissionTopology,
+    PressureFitDiagnostics,
+    PressureFitResult,
+)
 from shadowspill.planner._cache import CachedPressureFitResult
 from shadowspill.simulator import SimulationConfig
 
@@ -18,7 +22,7 @@ from .layout import (
 )
 
 _MIB = 1 << 20
-_FINE_STEP_BYTES = 128 * _MIB
+_FINE_STEP_BYTES = 256 * _MIB
 _FINE_LIMIT_BYTES = 1 << 30
 _COARSE_STEP_BYTES = 512 * _MIB
 
@@ -34,6 +38,7 @@ class FixedLayoutAttempt:
     accepted: bool
     pressurefit_wall_time_ns: int = 0
     physical_admission_wall_time_ns: int = 0
+    pressurefit_diagnostics: PressureFitDiagnostics | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +146,7 @@ def resolve_fixed_layout_selection(
                     False,
                     pressurefit_wall_time_ns,
                     physical_admission_wall_time_ns,
+                    selected.result.diagnostics,
                 )
             )
             if progress is not None:
@@ -162,6 +168,7 @@ def resolve_fixed_layout_selection(
                 True,
                 pressurefit_wall_time_ns,
                 physical_admission_wall_time_ns,
+                selected.result.diagnostics,
             )
         )
         if progress is not None:
@@ -204,6 +211,8 @@ def _effective_object_capacity(
 
 
 def _capacity_reductions(capacity_bytes: int) -> tuple[int, ...]:
+    """Return 256-MiB reductions through 1 GiB, then 512-MiB reductions."""
+
     result = [0]
     reduction = _FINE_STEP_BYTES
     while reduction < capacity_bytes:

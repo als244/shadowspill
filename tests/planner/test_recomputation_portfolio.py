@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -80,28 +82,67 @@ def test_small_recomputation_portfolio_remains_exhaustive() -> None:
     assert options[-1] == ("recompute",) * 6
 
 
-def test_large_binary_portfolio_uses_four_deterministic_seeds() -> None:
-    options = _option_ids(_binary_program(7))
+def test_large_binary_portfolio_uses_even_group_quarters() -> None:
+    options = _option_ids(_binary_program(8))
 
-    assert options == (
-        ("save",) * 7,
-        ("recompute",) * 7,
-        (
-            "recompute",
-            "save",
-            "recompute",
-            "save",
-            "recompute",
-            "save",
-            "recompute",
-        ),
-        (
-            "save",
-            "recompute",
-            "save",
-            "recompute",
-            "save",
-            "recompute",
-            "save",
-        ),
+    assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 6, 8)
+    assert options[0] == ("save",) * 8
+    assert options[1] == (
+        "save",
+        "save",
+        "recompute",
+        "save",
+        "save",
+        "save",
+        "recompute",
+        "save",
     )
+    assert options[2] == (
+        "save",
+        "recompute",
+        "save",
+        "recompute",
+        "save",
+        "recompute",
+        "save",
+        "recompute",
+    )
+    assert options[-1] == ("recompute",) * 8
+
+
+def test_large_portfolio_is_bounded() -> None:
+    options = _option_ids(_binary_program(64))
+
+    assert len(options) == 5
+    assert tuple(item.count("recompute") for item in options) == (
+        0,
+        16,
+        32,
+        48,
+        64,
+    )
+
+
+def test_terminal_forward_group_is_always_saved() -> None:
+    program = _binary_program(8)
+    tasks: list[TaskSpec] = []
+    for group_index in range(8):
+        dependencies = (
+            ()
+            if group_index == 0
+            else (
+                f"save_task_{group_index - 1}",
+                f"recompute_task_{group_index - 1}",
+            )
+        )
+        tasks.extend(
+            replace(task, phase="forward", dependencies=dependencies)
+            for task in program.tasks[2 * group_index : 2 * group_index + 2]
+        )
+    linear = replace(program, tasks=tuple(tasks))
+
+    options = _option_ids(linear)
+
+    assert len(options) == 5
+    assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 5, 7)
+    assert all(item[-1] == "save" for item in options)

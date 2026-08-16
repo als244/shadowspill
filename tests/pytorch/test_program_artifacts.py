@@ -126,6 +126,10 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     assert encoded["transfer_bandwidths"] == transfer_bandwidths.to_dict()
     assert restored.memory_budgets == MemoryBudgets(224, 1_024)
     assert restored.transfer_bandwidths == transfer_bandwidths
+    assert restored.result.diagnostics == selected.result.diagnostics
+    assert tuple(item.pressurefit_diagnostics for item in restored.attempts) == tuple(
+        item.pressurefit_diagnostics for item in selected.attempts
+    )
     assert restored.digest == selected.digest
     assert selected.pressurefit_wall_time_ns > 0
     assert selected.physical_admission_wall_time_ns > 0

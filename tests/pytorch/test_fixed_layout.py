@@ -14,9 +14,11 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionTopology,
+    CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
+    RecomputationContextDiagnostics,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -49,10 +51,23 @@ def _selected(
         diagnostics=PressureFitDiagnostics(
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
-            candidate_count=1,
-            valid_candidate_count=1,
             selected_makespan_ns=simulation.makespan_ns,
-            candidates=(),
+            recomputation_contexts=(
+                RecomputationContextDiagnostics(
+                    selection_id="fixture",
+                    choices=(),
+                    selected_candidate_id="fixture",
+                    selected_makespan_ns=simulation.makespan_ns,
+                    candidate_evaluations=(
+                        CandidateDiagnostic(
+                            candidate_id="fixture",
+                            selection_id="fixture",
+                            status="valid",
+                            makespan_ns=simulation.makespan_ns,
+                        ),
+                    ),
+                ),
+            ),
         ),
     )
 

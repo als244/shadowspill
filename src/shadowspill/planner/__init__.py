@@ -14,8 +14,12 @@ from .model import (
     PressureFitDiagnostics,
     PressureFitInfeasibleError,
     PressureFitOptions,
+    PressureFitRepairDiagnostics,
     PressureFitResult,
     PressureFitSearchExhaustedError,
+    PressureFitWorkDiagnostics,
+    RecomputationChoiceDiagnostic,
+    RecomputationContextDiagnostics,
 )
 from .pressurefit import pressurefit, validate_schedule_feasibility
 
@@ -27,8 +31,12 @@ __all__ = [
     "PressureFitDiagnostics",
     "PressureFitInfeasibleError",
     "PressureFitOptions",
+    "PressureFitRepairDiagnostics",
     "PressureFitResult",
     "PressureFitSearchExhaustedError",
+    "PressureFitWorkDiagnostics",
+    "RecomputationChoiceDiagnostic",
+    "RecomputationContextDiagnostics",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

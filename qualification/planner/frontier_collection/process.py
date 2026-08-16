@@ -30,6 +30,7 @@ def execute_case_worker(
     repository_root: Path,
     case_run_directory: Path,
     log_path: Path,
+    collection_log_path: Path,
     point_timeout_seconds: int,
     console_prefix: str,
 ) -> WorkerProcessOutcome:
@@ -60,7 +61,11 @@ def execute_case_worker(
     active_started = time.perf_counter()
     timed_out_point_id: str | None = None
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as log:
+    collection_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        log_path.open("a", encoding="utf-8", buffering=1) as log,
+        collection_log_path.open("a", encoding="utf-8", buffering=1) as collection_log,
+    ):
         log.write(f"COMMAND {command!r}\n")
         log.flush()
         reader_done = False
@@ -70,7 +75,7 @@ def execute_case_worker(
                 if line is None:
                     reader_done = True
                 elif line:
-                    _write_line(log, console_prefix, line)
+                    _write_line(log, collection_log, console_prefix, line)
                 observed = read_active_point(case_run_directory)
                 if observed != active:
                     active = observed
@@ -94,8 +99,9 @@ def execute_case_worker(
                 except queue.Empty:
                     break
                 if remaining:
-                    _write_line(log, console_prefix, remaining)
+                    _write_line(log, collection_log, console_prefix, remaining)
             log.flush()
+            collection_log.flush()
     return WorkerProcessOutcome(
         return_code,
         time.perf_counter() - started,
@@ -111,9 +117,17 @@ def _next_line(lines: queue.Queue[str | None]) -> str | None:
         return ""
 
 
-def _write_line(log: TextIO, prefix: str, line: str) -> None:
-    log.write(f"[{utc_now()}] {line}")
+def _write_line(
+    log: TextIO,
+    collection_log: TextIO,
+    prefix: str,
+    line: str,
+) -> None:
+    timestamp = utc_now()
+    log.write(f"[{timestamp}] {line}")
     log.flush()
+    collection_log.write(f"[{timestamp}] {prefix} | {line}")
+    collection_log.flush()
     print(f"{prefix} | {line}", end="", flush=True)
 
 

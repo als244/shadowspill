@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from qualification.planner.corpus import (
     ProgramCaseIdentity,
@@ -19,6 +22,7 @@ from qualification.planner.frontier_collection.matrix import (
     expand_frontier_points,
     expand_grid_axes,
 )
+from qualification.planner.frontier_collection.process import execute_case_worker
 from qualification.planner.frontier_collection.provenance import (
     RepositoryProvenance,
 )
@@ -49,6 +53,8 @@ _CONFIG = (
 
 def test_full_frontier_has_2520_points_and_three_global_bandwidths() -> None:
     config = load_frontier_config(_CONFIG)
+    assert config.point_timeout_seconds == 300
+    assert config.max_point_attempts == 1
     assert len(expand_grid_axes(config.grids)) == 15
     assert config.expected_programs * config.expected_points_per_program == 2520
     program = _fixture().recurrent
@@ -162,3 +168,38 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         final=True,
     )
     assert point_complete(directory, request)
+
+
+def test_worker_output_is_streamed_to_worker_main_log_and_stdout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    worker_log = tmp_path / "worker.log"
+    collection_log = tmp_path / "collection.log"
+    outcome = execute_case_worker(
+        [
+            sys.executable,
+            "-c",
+            (
+                "print('POINT START point=one utc=2026-08-16T00:00:00+00:00', "
+                "flush=True); "
+                "print('POINT SUCCESS point=one utc=2026-08-16T00:00:01+00:00', "
+                "flush=True)"
+            ),
+        ],
+        repository_root=tmp_path,
+        case_run_directory=tmp_path / "case",
+        log_path=worker_log,
+        collection_log_path=collection_log,
+        point_timeout_seconds=10,
+        console_prefix="[1/1] example",
+    )
+    assert outcome.return_code == 0
+    assert "POINT START point=one" in worker_log.read_text()
+    assert "POINT SUCCESS point=one" in worker_log.read_text()
+    main_log = collection_log.read_text()
+    assert "[1/1] example | POINT START point=one" in main_log
+    assert "[1/1] example | POINT SUCCESS point=one" in main_log
+    captured = capsys.readouterr()
+    assert "[1/1] example | POINT START point=one" in captured.out
+    assert "[1/1] example | POINT SUCCESS point=one" in captured.out

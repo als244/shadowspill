@@ -18,6 +18,16 @@ from shadowspill.ir import (
 )
 from shadowspill.simulator import SimulationConfig, SimulationResult
 
+from .diagnostics import (
+    AdmissionRefinement,
+    CandidateDiagnostic,
+    PressureFitDiagnostics,
+    PressureFitRepairDiagnostics,
+    PressureFitWorkDiagnostics,
+    RecomputationChoiceDiagnostic,
+    RecomputationContextDiagnostics,
+)
+
 if TYPE_CHECKING:
     from .admission import AdmissionTopology
 
@@ -102,45 +112,6 @@ class PressureFitOptions:
             or self.workers < 0
         ):
             raise ValueError("workers must be a non-negative integer")
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateDiagnostic:
-    """Deterministic outcome of one complete planner candidate."""
-
-    candidate_id: str
-    selection_id: str
-    status: str
-    makespan_ns: int | None = None
-    schedule_digest: str | None = None
-    failure_kind: str | None = None
-    failure_detail: str | None = None
-    repair_attempts: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class AdmissionRefinement:
-    """One monotonic reduction of logical object capacity after slab replay."""
-
-    attempt: int
-    previous_object_capacity_bytes: int
-    required_additional_slack_bytes: int
-    reserve_increment_bytes: int
-    object_capacity_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class PressureFitDiagnostics:
-    """Candidate evidence that is observational and never affects selection."""
-
-    selected_candidate_id: str
-    selected_selection_id: str
-    candidate_count: int
-    valid_candidate_count: int
-    selected_makespan_ns: int
-    candidates: tuple[CandidateDiagnostic, ...]
-    admission_refinements: tuple[AdmissionRefinement, ...] = ()
-    effective_object_capacity_bytes: int | None = None
 
 
 class PressureFitInfeasibleError(ValueError):
@@ -264,6 +235,10 @@ __all__ = [
     "PressureFitDiagnostics",
     "PressureFitInfeasibleError",
     "PressureFitOptions",
+    "PressureFitRepairDiagnostics",
     "PressureFitResult",
     "PressureFitSearchExhaustedError",
+    "PressureFitWorkDiagnostics",
+    "RecomputationChoiceDiagnostic",
+    "RecomputationContextDiagnostics",
 ]

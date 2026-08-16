@@ -565,6 +565,9 @@ class PlanFixedLayoutAttempt:
     required_bytes: int
     pool_capacity_bytes: int
     accepted: bool
+    pressurefit_wall_time_ns: int
+    physical_admission_wall_time_ns: int
+    pressurefit_diagnostics: PressureFitDiagnostics | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -573,6 +576,15 @@ class PlanFixedLayoutAttempt:
             "required_bytes": self.required_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "accepted": self.accepted,
+            "pressurefit_wall_time_ns": self.pressurefit_wall_time_ns,
+            "physical_admission_wall_time_ns": (
+                self.physical_admission_wall_time_ns
+            ),
+            "pressurefit_diagnostics": (
+                None
+                if self.pressurefit_diagnostics is None
+                else self.pressurefit_diagnostics.to_dict()
+            ),
         }
 
 
@@ -715,30 +727,7 @@ class PlanDiagnostics:
             "pressurefit": [
                 {
                     "run_index": index,
-                    "selected_candidate_id": item.selected_candidate_id,
-                    "selected_selection_id": item.selected_selection_id,
-                    "candidate_count": item.candidate_count,
-                    "valid_candidate_count": item.valid_candidate_count,
-                    "selected_makespan_ns": item.selected_makespan_ns,
-                    "effective_object_capacity_bytes": (
-                        item.effective_object_capacity_bytes
-                    ),
-                    "admission_refinements": [
-                        {
-                            "attempt": refinement.attempt,
-                            "previous_object_capacity_bytes": (
-                                refinement.previous_object_capacity_bytes
-                            ),
-                            "required_additional_slack_bytes": (
-                                refinement.required_additional_slack_bytes
-                            ),
-                            "reserve_increment_bytes": (
-                                refinement.reserve_increment_bytes
-                            ),
-                            "object_capacity_bytes": (refinement.object_capacity_bytes),
-                        }
-                        for refinement in item.admission_refinements
-                    ],
+                    **item.to_dict(),
                 }
                 for index, item in enumerate(self.pressurefit_runs)
             ],

@@ -31,15 +31,13 @@ from ._admission import (
 )
 from .admission import AdmissionTopology
 from .model import (
-    AdmissionRefinement,
-    CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
 )
 from .pressurefit import pressurefit
 
-_SCHEMA = "shadowspill.pressurefit_selection/v4"
+_SCHEMA = "shadowspill.pressurefit_selection/v7"
 
 
 class _ArtifactRecorder(Protocol):
@@ -238,7 +236,7 @@ class PressureFitCache:
             return
         path = self.path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, object] = {
             "schema": _SCHEMA,
             "key_digest": key,
             "program_digest": result.program.digest,
@@ -252,7 +250,7 @@ class PressureFitCache:
             "admission_digest": admission.digest if admission is not None else None,
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
-            "diagnostics": asdict(result.diagnostics),
+            "diagnostics": result.diagnostics.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         if path.exists() and not self.overwrite:
@@ -262,7 +260,15 @@ class PressureFitCache:
                 raise ValueError(
                     f"PressureFit cache entry {path} cannot be read"
                 ) from exc
-            if existing != encoded:
+            try:
+                existing_payload = json.loads(existing)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"PressureFit cache entry {path} cannot be read"
+                ) from exc
+            if _stable_cache_payload(existing_payload) != _stable_cache_payload(
+                payload
+            ):
                 raise ValueError(
                     "fresh PressureFit output differs from an existing cache entry; "
                     "use overwrite_plan=True or a new implementation_revision: "
@@ -339,34 +345,26 @@ def _options_identity(options: PressureFitOptions) -> dict[str, object]:
 
 
 def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics:
-    if not isinstance(value, dict):
-        raise ValueError(f"PressureFit cache entry {path} has invalid diagnostics")
-    raw_candidates = value.get("candidates")
-    if not isinstance(raw_candidates, list):
-        raise ValueError(f"PressureFit cache entry {path} has invalid candidates")
     try:
-        candidates = tuple(CandidateDiagnostic(**item) for item in raw_candidates)
-        return PressureFitDiagnostics(
-            selected_candidate_id=str(value["selected_candidate_id"]),
-            selected_selection_id=str(value["selected_selection_id"]),
-            candidate_count=int(value["candidate_count"]),
-            valid_candidate_count=int(value["valid_candidate_count"]),
-            selected_makespan_ns=int(value["selected_makespan_ns"]),
-            candidates=candidates,
-            admission_refinements=tuple(
-                AdmissionRefinement(**item)
-                for item in value.get("admission_refinements", ())
-            ),
-            effective_object_capacity_bytes=(
-                None
-                if value.get("effective_object_capacity_bytes") is None
-                else int(value["effective_object_capacity_bytes"])
-            ),
-        )
-    except (KeyError, TypeError, ValueError) as exc:
+        return PressureFitDiagnostics.from_value(value, "cache.diagnostics")
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             f"PressureFit cache entry {path} has invalid diagnostics"
         ) from exc
+
+
+def _stable_cache_payload(value: object) -> object:
+    """Remove measurement-only work times before semantic cache comparison."""
+
+    if isinstance(value, (list, tuple)):
+        return [_stable_cache_payload(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _stable_cache_payload(item)
+        for key, item in value.items()
+        if not key.endswith("_time_ns")
+    }
 
 
 __all__ = ["CachedPressureFitResult", "PressureFitCache"]

@@ -49,13 +49,15 @@ def pressurefit_fixture(
         "schedule": result.schedule.to_dict(),
         "selections": [item.to_dict() for item in result.selections],
         "simulation": _simulation_value(result),
-        "diagnostics": asdict(result.diagnostics),
+        "diagnostics": result.diagnostics.to_dict(),
     }
+    stable_expected = dict(expected)
+    stable_expected["diagnostics"] = result.diagnostics.stable_dict()
     return {
-        "schema": "shadowspill.pressurefit_fixture/v2",
+        "schema": "shadowspill.pressurefit_fixture/v3",
         "role": role,
         "request_digest": _digest(request),
-        "expected_digest": _digest(expected),
+        "expected_digest": _digest(stable_expected),
         "program_digest": result.program.digest,
         "schedule_digest": result.schedule.digest,
         "request": request,

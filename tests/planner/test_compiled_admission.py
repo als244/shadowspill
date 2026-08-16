@@ -587,7 +587,13 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     )
 
     assert result.diagnostics.admission_refinements == ()
-    assert result.diagnostics.candidates[0].repair_attempts == 2
+    diagnostic = result.diagnostics.candidates[0]
+    assert diagnostic.repair_attempts == 2
+    assert diagnostic.repairs.admission_prefetch_delay_attempts == 1
+    assert diagnostic.repairs.admission_pressure_boundary_attempts == 1
+    assert diagnostic.work.admission_calls == 3
+    assert diagnostic.work.simulation_calls == 1
+    assert result.diagnostics.repairs == diagnostic.repairs
     assert tuple(
         (action.trigger_task_id, action.alias_group_id, action.kind)
         for action in result.schedule.actions

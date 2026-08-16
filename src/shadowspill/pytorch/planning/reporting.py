@@ -503,6 +503,9 @@ def fixed_layout_diagnostic(
                 item.required_bytes,
                 item.pool_capacity_bytes,
                 item.accepted,
+                item.pressurefit_wall_time_ns,
+                item.physical_admission_wall_time_ns,
+                item.pressurefit_diagnostics,
             )
             for item in selection.attempts
         ),

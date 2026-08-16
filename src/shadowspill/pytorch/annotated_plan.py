@@ -30,7 +30,8 @@ from .program_serialization import (
 if TYPE_CHECKING:
     from .planning.admission import FixedLayoutAttempt, FixedPhysicalLayout
 
-_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v1"
+_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v2"
+_LEGACY_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,20 @@ class AnnotatedProgramPlan:
         value = self.to_dict()
         selection = dict(_mapping(value["selection"], "selection"))
         selection.pop("cache_hit")
+        selection.pop("diagnostics")
         value["selection"] = selection
+        physical = dict(
+            _mapping(value["physical_admission"], "physical_admission")
+        )
+        physical["attempts"] = [
+            {
+                key: item
+                for key, item in _mapping(attempt, "physical_admission.attempt").items()
+                if key != "pressurefit_diagnostics"
+            }
+            for attempt in _list(physical["attempts"], "physical_admission.attempts")
+        ]
+        value["physical_admission"] = physical
         value.pop("timing")
         return _digest(value)
 
@@ -99,7 +113,7 @@ class AnnotatedProgramPlan:
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "selection": {
                 "cache_hit": self.pressurefit_cache_hit,
-                "diagnostics": asdict(self.result.diagnostics),
+                "diagnostics": self.result.diagnostics.to_dict(),
                 "final_residency": [
                     item.to_dict() for item in self.result.final_residency
                 ],
@@ -129,6 +143,11 @@ class AnnotatedProgramPlan:
                         "required_bytes": item.required_bytes,
                         "pool_capacity_bytes": item.pool_capacity_bytes,
                         "accepted": item.accepted,
+                        "pressurefit_diagnostics": (
+                            None
+                            if item.pressurefit_diagnostics is None
+                            else item.pressurefit_diagnostics.to_dict()
+                        ),
                     }
                     for item in self.attempts
                 ],
@@ -161,7 +180,10 @@ class AnnotatedProgramPlan:
         from .planning.admission import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
-        if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:
+        if data.get("schema") not in {
+            _ANNOTATED_PROGRAM_PLAN_SCHEMA,
+            _LEGACY_ANNOTATED_PROGRAM_PLAN_SCHEMA,
+        }:
             raise ValueError("annotated_program_plan.schema: unsupported schema")
         program = PressureFitProgram.from_value(
             data.get("source_program"), "annotated_program_plan.source_program"
@@ -362,6 +384,15 @@ class AnnotatedProgramPlan:
                         "annotated_program_plan.timing."
                         f"refinement_attempts[{index}]."
                         "physical_admission_wall_time_ns",
+                    )
+                ),
+                pressurefit_diagnostics=(
+                    None
+                    if item.get("pressurefit_diagnostics") is None
+                    else _pressurefit_diagnostics_from_value(
+                        item.get("pressurefit_diagnostics"),
+                        "annotated_program_plan.physical_admission."
+                        f"attempts[{index}].pressurefit_diagnostics",
                     )
                 ),
             )

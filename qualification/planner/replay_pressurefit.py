@@ -69,7 +69,7 @@ def _expected(result: PressureFitResult) -> dict[str, object]:
         "schedule": result.schedule.to_dict(),
         "selections": [item.to_dict() for item in result.selections],
         "simulation": asdict(result.simulation),
-        "diagnostics": asdict(result.diagnostics),
+        "diagnostics": result.diagnostics.to_dict(),
     }
 
 
