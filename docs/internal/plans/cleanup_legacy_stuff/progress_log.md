@@ -615,3 +615,27 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: the complete Python suite with four expected skips; the
   focused planner, artifact, admission, and documentation suites; Ruff; strict
   mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Handle-only task boundary and explicit plans
+
+- Removed every raw task-ID boundary and the duplicate “execution handle” API.
+  The only production task operations now admit a plan-owned task handle and
+  pass that same handle to `before_task`, `after_task`, or `abort_task`.
+- Made abort handle-bound and validated against the calling runtime, owning
+  plan, and active task scope. Runtime destruction retains one private
+  current-scope cleanup helper; it is not a second public task API.
+- Deleted the hidden runtime default plan and all default-plan fixed-layout,
+  admission, resolution, and clear wrappers. Every canary now constructs its
+  plan, bindings, action batches, and task handles explicitly.
+- Deleted the old raw boundary implementation, including its runtime-global
+  mutex, readiness condition wait, population scans, repeated action-array
+  construction, and separate private boundary header.
+- Migrated the PyTorch adapter, bridge, storage guard, forward/training
+  executors, canaries, API references, and physical-admission documentation to
+  the single handle path.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips;
+  documentation tests; Ruff; strict mypy over 177 installed source files; and
+  `git diff --check`.
+- Passing structural commit: `a2e01e6` (`Remove raw task and default-plan
+  APIs`).
