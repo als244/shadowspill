@@ -28,6 +28,7 @@ from .program import (
     RecomputationSelection,
     ResourceKind,
     ResourceSpec,
+    SharedResidencyPolicy,
     TaskProfile,
     TaskSpec,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "ResidencySpec",
     "ResourceKind",
     "ResourceSpec",
+    "SharedResidencyPolicy",
     "TaskProfile",
     "TaskSpec",
     "ValidationError",

@@ -22,6 +22,18 @@ the same storage root share an object and retain their own geometry. Program
 identity is deterministic and independent of diagnostic wall times or cache
 paths.
 
+An alias group may declare one runtime-global shared-residency policy:
+
+| Policy | Contract |
+|---|---|
+| `SHARED_READ_ONLY` | The execution-pool lease is shared by callables and may never be mutated or replaced. |
+| `SHARED_WRITABLE_UNORDERED` | The lease is shared and may be mutated in place; cross-callable read/write visibility is intentionally unordered. |
+
+Shared aliases are not plan-owned residency. They cannot appear in memory
+actions, initial/final schedule residency, or recomputation-retained sets.
+Replacement outputs are forbidden for both policies because changing the
+backing lease would invalidate another callable's storage binding.
+
 ## Recomputation
 
 A `RecomputationGroup` owns mutually exclusive `RecomputationOption` values.

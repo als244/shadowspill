@@ -10,6 +10,7 @@ from .program import (
     Persistence,
     Program,
     ResourceKind,
+    SharedResidencyPolicy,
 )
 from .schedule import MemoryActionKind, MemoryLocation, MemorySchedule
 
@@ -20,6 +21,11 @@ RESOURCE_KIND_CODE = {
 }
 OBJECT_ROLE_CODE = {value: index for index, value in enumerate(ObjectRole)}
 PERSISTENCE_CODE = {value: index for index, value in enumerate(Persistence)}
+SHARED_RESIDENCY_CODE = {
+    None: 0,
+    SharedResidencyPolicy.SHARED_READ_ONLY: 1,
+    SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED: 2,
+}
 MEMORY_LOCATION_CODE = {
     MemoryLocation.DEVICE: 0,
     MemoryLocation.HOST: 1,
@@ -49,6 +55,7 @@ class IndexedProgram:
     alias_size_bytes: tuple[int, ...]
     alias_initial_version: tuple[int, ...]
     alias_retain_spill_copy: tuple[bool, ...]
+    alias_shared_residency: tuple[int, ...]
     object_alias_group: tuple[int, ...]
     object_offset_bytes: tuple[int, ...]
     object_size_bytes: tuple[int, ...]
@@ -202,6 +209,10 @@ def index_program(program: Program) -> IndexedProgram:
         ),
         alias_retain_spill_copy=tuple(
             item.retain_spill_copy for item in program.alias_groups
+        ),
+        alias_shared_residency=tuple(
+            SHARED_RESIDENCY_CODE[item.shared_residency]
+            for item in program.alias_groups
         ),
         object_alias_group=tuple(
             alias_index[item.alias_group_id] for item in program.objects

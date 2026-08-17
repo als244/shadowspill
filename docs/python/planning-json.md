@@ -6,7 +6,7 @@ for corpus collection, budget sweeps, inspection, and reproducible planning.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, and recomputation choices. |
+| `Program` | `shadowspill.program/v2` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
 | `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, admission topology, and search options. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v2` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
@@ -54,13 +54,14 @@ An abridged `Program` has this shape:
 
 ```json
 {
-  "schema": "shadowspill.program/v1",
+  "schema": "shadowspill.program/v2",
   "devices": [
     {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
   ],
   "alias_groups": [
     {"alias_group_id": "alias_0", "device_id": "device_0", "size_bytes": 4096,
-     "initial_version": 0, "retain_spill_copy": false}
+     "initial_version": 0, "retain_spill_copy": false,
+     "shared_residency": null}
   ],
   "objects": [
     {"object_id": "activation_0", "alias_group_id": "alias_0", "offset_bytes": 0,
@@ -97,7 +98,7 @@ An abridged `Program` has this shape:
 | Record | Keys | Meaning |
 |---|---|---|
 | Device | `device_id`, `process_id`, `kind`, `index` | Logical resource identity. |
-| Alias group | `alias_group_id`, `device_id`, `size_bytes`, `initial_version`, `retain_spill_copy` | One storage root and its version/spill-retention policy. |
+| Alias group | `alias_group_id`, `device_id`, `size_bytes`, `initial_version`, `retain_spill_copy`, `shared_residency` | One storage root and its version, spill-retention, and optional runtime-global sharing policy. |
 | Object | `object_id`, `alias_group_id`, `offset_bytes`, `size_bytes`, `role`, `persistence` | One view into a root. |
 
 `ObjectSpec.size_bytes` is the logical view span. `AliasGroupSpec.size_bytes` is
@@ -152,7 +153,7 @@ shadowspill.pressurefit_program/v1
 ├── role
 ├── program
 │   ├── digest
-│   └── value                 complete shadowspill.program/v1
+│   └── value                 complete shadowspill.program/v2
 ├── residency
 │   ├── initial
 │   └── final

@@ -29,7 +29,7 @@ from ._validation import (
     require_tuple,
 )
 
-PROGRAM_SCHEMA = "shadowspill.program/v1"
+PROGRAM_SCHEMA = "shadowspill.program/v2"
 
 
 class ObjectRole(StrEnum):
@@ -48,6 +48,13 @@ class Persistence(StrEnum):
     STEP = "step"
     RUN = "run"
     CHECKPOINT = "checkpoint"
+
+
+class SharedResidencyPolicy(StrEnum):
+    """Runtime-global residency and mutation policy for one storage root."""
+
+    SHARED_READ_ONLY = "shared_read_only"
+    SHARED_WRITABLE_UNORDERED = "shared_writable_unordered"
 
 
 class ResourceKind(StrEnum):
@@ -130,6 +137,7 @@ class AliasGroupSpec:
     size_bytes: int
     initial_version: int = 0
     retain_spill_copy: bool = False
+    shared_residency: SharedResidencyPolicy | None = None
 
     def __post_init__(self) -> None:
         require_identifier(self.alias_group_id, "alias_group.alias_group_id")
@@ -141,6 +149,12 @@ class AliasGroupSpec:
             "alias_group.retain_spill_copy",
             "must be a boolean",
         )
+        require(
+            self.shared_residency is None
+            or isinstance(self.shared_residency, SharedResidencyPolicy),
+            "alias_group.shared_residency",
+            "invalid shared residency policy",
+        )
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
@@ -148,12 +162,27 @@ class AliasGroupSpec:
             "device_id": self.device_id,
             "initial_version": self.initial_version,
             "retain_spill_copy": self.retain_spill_copy,
+            "shared_residency": (
+                None if self.shared_residency is None else self.shared_residency.value
+            ),
             "size_bytes": self.size_bytes,
         }
 
     @classmethod
     def from_value(cls, value: object, path: str) -> AliasGroupSpec:
         data = expect_mapping(value, path)
+        shared_value = field(data, "shared_residency", path)
+        if shared_value is None:
+            shared_residency = None
+        else:
+            shared_name = expect_string(shared_value, f"{path}.shared_residency")
+            try:
+                shared_residency = SharedResidencyPolicy(shared_name)
+            except ValueError:
+                fail(
+                    f"{path}.shared_residency",
+                    f"unknown shared residency policy {shared_name!r}",
+                )
         return cls(
             alias_group_id=expect_string(
                 field(data, "alias_group_id", path), f"{path}.alias_group_id"
@@ -171,6 +200,7 @@ class AliasGroupSpec:
                 field(data, "retain_spill_copy", path),
                 f"{path}.retain_spill_copy",
             ),
+            shared_residency=shared_residency,
         )
 
 
@@ -546,6 +576,7 @@ class Program:
         alias_by_id = {
             alias_group.alias_group_id: alias_group for alias_group in self.alias_groups
         }
+        object_by_id = {item.object_id: item for item in self.objects}
         for index, alias_group in enumerate(self.alias_groups):
             require(
                 alias_group.device_id in device_ids,
@@ -594,6 +625,14 @@ class Program:
                         f"{option_path}.retained_alias_group_ids",
                         f"unknown alias group {alias_id!r}",
                     )
+                    require(
+                        alias_by_id[alias_id].shared_residency is None,
+                        f"{option_path}.retained_alias_group_ids",
+                        (
+                            f"shared alias group {alias_id!r} is runtime-resident and "
+                            "cannot be retained by a recomputation option"
+                        ),
+                    )
             overlap = tasks_in_groups & group_tasks
             require(
                 not overlap,
@@ -638,6 +677,15 @@ class Program:
                         f"unknown object {object_id!r}",
                     )
             for output in task.outputs:
+                output_alias = object_by_id[output].alias_group_id
+                require(
+                    alias_by_id[output_alias].shared_residency is None,
+                    f"{path}.outputs",
+                    (
+                        f"shared alias group {output_alias!r} cannot be replaced by "
+                        "a task output"
+                    ),
+                )
                 previous_writers = produced_by.setdefault(output, [])
                 require(
                     all(
@@ -664,6 +712,13 @@ class Program:
                     mutation.object_id in task.inputs,
                     f"{path}.mutations[{mutation_index}].object_id",
                     "mutated object must be an input",
+                )
+                mutation_alias = object_by_id[mutation.object_id].alias_group_id
+                require(
+                    alias_by_id[mutation_alias].shared_residency
+                    is not SharedResidencyPolicy.SHARED_READ_ONLY,
+                    f"{path}.mutations[{mutation_index}].object_id",
+                    f"shared alias group {mutation_alias!r} is read-only",
                 )
             seen_tasks.add(task.task_id)
 

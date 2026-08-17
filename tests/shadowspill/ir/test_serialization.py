@@ -76,6 +76,7 @@ def test_indexed_projection_has_stable_declared_order() -> None:
     assert indexed.outputs == (2, 2, 3)
     assert indexed.alias_initial_version == (0, 0, 0, 0)
     assert indexed.alias_retain_spill_copy == (False, True, False, False)
+    assert indexed.alias_shared_residency == (0, 0, 0, 0)
     assert indexed.object_role == (0, 1, 3, 6)
     assert indexed.group_option_offsets == (0, 2)
     assert indexed.option_active_task_offsets == (0, 1, 2)

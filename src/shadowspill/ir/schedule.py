@@ -197,12 +197,17 @@ class MemorySchedule:
         object_alias = {item.object_id: item.alias_group_id for item in program.objects}
 
         alias_by_id = {group.alias_group_id: group for group in program.alias_groups}
+        shared_aliases = {
+            group.alias_group_id
+            for group in program.alias_groups
+            if group.shared_residency is not None
+        }
         zero_size_aliases = {
             group.alias_group_id
             for group in program.alias_groups
             if group.size_bytes == 0
         }
-        device_resident: set[str] = set()
+        device_resident: set[str] = set(shared_aliases)
         host_resident = {
             group.alias_group_id
             for group in program.alias_groups
@@ -214,6 +219,11 @@ class MemorySchedule:
                 residency.alias_group_id in alias_ids,
                 f"schedule.initial_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
+            )
+            require(
+                residency.alias_group_id not in shared_aliases,
+                f"schedule.initial_residency[{index}].alias_group_id",
+                "shared residency is owned by the runtime, not the schedule",
             )
             if residency.alias_group_id in zero_size_aliases:
                 continue
@@ -241,6 +251,11 @@ class MemorySchedule:
                 action.alias_group_id not in zero_size_aliases,
                 f"{path}.alias_group_id",
                 "zero-size alias groups cannot have physical memory actions",
+            )
+            require(
+                action.alias_group_id not in shared_aliases,
+                f"{path}.alias_group_id",
+                "shared alias groups cannot have plan-owned memory actions",
             )
             trigger = task_order[action.trigger_task_id]
             require(
@@ -316,6 +331,11 @@ class MemorySchedule:
                 residency.alias_group_id in alias_ids,
                 f"schedule.final_residency[{index}].alias_group_id",
                 f"unknown alias group {residency.alias_group_id!r}",
+            )
+            require(
+                residency.alias_group_id not in shared_aliases,
+                f"schedule.final_residency[{index}].alias_group_id",
+                "shared residency is owned by the runtime, not the schedule",
             )
             if residency.alias_group_id in zero_size_aliases:
                 continue
