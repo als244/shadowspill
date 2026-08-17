@@ -266,6 +266,8 @@ static int inflight_prefetch_transfers_to_caller(void) {
     ShadowSpillAllocation caller = {0};
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
+    struct timespec handoff_started = {0};
+    struct timespec handoff_finished = {0};
     const ShadowSpillTaskDescription consumer = {
         .task_id = 2U,
         .input_object_ids = &object.object_id,
@@ -281,10 +283,18 @@ static int inflight_prefetch_transfers_to_caller(void) {
             runtime, consumer.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             runtime, consumer.task_id, compute
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_test_transfer_object_to_caller(
+        ) != SHADOWSPILL_RUNTIME_OK;
+    (void)clock_gettime(CLOCK_MONOTONIC, &handoff_started);
+    failed = failed || shadowspill_test_transfer_object_to_caller(
             runtime, object.object_id, compute, &caller
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_RUNTIME_OK;
+    (void)clock_gettime(CLOCK_MONOTONIC, &handoff_finished);
+    const uint64_t handoff_nanoseconds =
+        ((uint64_t)handoff_finished.tv_sec -
+         (uint64_t)handoff_started.tv_sec) * 1000000000U +
+        (uint64_t)handoff_finished.tv_nsec -
+        (uint64_t)handoff_started.tv_nsec;
+    failed = failed || handoff_nanoseconds > 30000000U ||
         caller.allocation_id != binding.allocation_id ||
         shadowspill_object_snapshot(
             runtime, object.object_id, &snapshot
@@ -1048,11 +1058,17 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &fetch_task
         ) != SHADOWSPILL_RUNTIME_OK;
-    for (uint32_t invocation = 0U; !failed && invocation < 2U; ++invocation) {
+    for (uint32_t invocation = 0U; !failed && invocation < 64U; ++invocation) {
         ShadowSpillAllocation produced = {0};
         ShadowSpillAllocation caller = {0};
         ShadowSpillObjectSnapshot snapshot = {0};
-        failed = shadowspill_memory_pool_allocate(fixture.runtime, 0U, object.size_bytes, 1U, fixture.compute, &produced
+        failed = shadowspill_memory_pool_allocate(
+                fixture.runtime,
+                0U,
+                object.size_bytes,
+                1U,
+                fixture.compute,
+                &produced
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_publish_initial(
                 fixture.runtime, object.object_id, produced.pointer, NULL
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
@@ -1063,7 +1079,8 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
                 fixture.runtime, fetch_task.task_id, fixture.compute, NULL, 0U
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
                 fixture.runtime, fetch_task.task_id, fixture.compute
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_transfer_object_to_caller(
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_test_transfer_object_to_caller(
                 fixture.runtime, object.object_id, fixture.compute, &caller
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
                 fixture.runtime, object.object_id, &snapshot
@@ -1071,7 +1088,8 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
             snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
             snapshot.execution_pointer != NULL ||
             caller.allocation_id == SHADOWSPILL_RUNTIME_NO_ID ||
-            shadowspill_memory_pool_free(fixture.runtime, 0U, caller.allocation_id, fixture.compute
+            shadowspill_memory_pool_free(
+                fixture.runtime, 0U, caller.allocation_id, fixture.compute
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
                 fixture.runtime
             ) != SHADOWSPILL_RUNTIME_OK;
@@ -1079,8 +1097,8 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(
             fixture.runtime, &statistics
-        ) != SHADOWSPILL_RUNTIME_OK || statistics.evict_transfers != 2U ||
-        statistics.fetch_transfers != 2U;
+        ) != SHADOWSPILL_RUNTIME_OK || statistics.evict_transfers != 64U ||
+        statistics.fetch_transfers != 64U;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }

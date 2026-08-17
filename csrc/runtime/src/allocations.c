@@ -312,7 +312,6 @@ ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    pthread_cond_broadcast(&runtime->condition);
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -964,7 +963,6 @@ void shadowspill_release_execution_lease_locked(
         publish_execution_successor_locked(runtime, causal_successor);
     }
     shadowspill_memory_pool_try_recycle_lease_record_locked(allocation);
-    pthread_cond_broadcast(&runtime->condition);
 }
 
 ShadowSpillRuntimeStatus shadowspill_memory_pool_allocate(
@@ -1524,7 +1522,6 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_free(
             runtime, status, SHADOWSPILL_RUNTIME_NO_ID, allocation_id, 0U
         );
     }
-    pthread_cond_broadcast(&runtime->condition);
     if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
         status = shadowspill_failure_status(runtime);
     }
@@ -1611,6 +1608,5 @@ void shadowspill_finalize_aborted_task_retirements(
             break;
         }
     }
-    pthread_cond_broadcast(&runtime->condition);
     shadowspill_memory_pool_unlock_foreground(pool);
 }

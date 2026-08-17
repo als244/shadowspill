@@ -117,6 +117,10 @@ static void complete_action(
     const uint64_t allocation_id = object->allocation_id;
     const uint8_t kind = action->kind;
     const uint8_t admitted = action->admitted;
+    ShadowSpillMemoryLease *caller_handoff_lease =
+        action->caller_handoff_lease;
+    action->caller_handoff_lease = NULL;
+    action->caller_handoff_generation = 0U;
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_lock(&runtime->actions.lock);
     unlink_action_locked(runtime, action);
@@ -175,10 +179,10 @@ static void complete_action(
         }
         free(action);
     }
+    shadowspill_memory_lease_release(caller_handoff_lease);
     const uint64_t previous_actions = atomic_fetch_sub_explicit(
         &runtime->actions.count, 1U, memory_order_release
     );
-    pthread_cond_broadcast(&runtime->condition);
     if (previous_actions == 1U) {
         shadowspill_idle_notify(runtime);
     }
@@ -900,7 +904,6 @@ static int handle_action(
                 }
                 if (dispatched != 0) {
                     shadowspill_transfer_lane_publish_inflight(lane, action);
-                    pthread_cond_broadcast(&runtime->condition);
                 }
                 pthread_mutex_unlock(&object->lock);
                 return dispatched;
@@ -929,9 +932,25 @@ static int handle_action(
             if (complete) {
                 ShadowSpillEventLease *readiness_to_release = NULL;
                 ShadowSpillMemoryPool *release_pool = NULL;
+                const int caller_handoff =
+                    action->caller_handoff_lease != NULL;
+                if (caller_handoff &&
+                    action->caller_handoff_lease->generation !=
+                        action->caller_handoff_generation) {
+                    latch_action_failure(
+                        runtime,
+                        action,
+                        SHADOWSPILL_RUNTIME_INVALID_STATE,
+                        object->object_id,
+                        action->caller_handoff_lease->allocation_id,
+                        object->size_bytes
+                    );
+                    pthread_mutex_unlock(&object->lock);
+                    return -1;
+                }
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
                     release_pool = action->plan_owner->execution_pool;
-                } else if (!object->retain_spill_copy) {
+                } else if (caller_handoff || !object->retain_spill_copy) {
                     release_pool = action->plan_owner->spill_pool;
                 }
                 if (release_pool != NULL &&
@@ -1004,7 +1023,7 @@ static int handle_action(
                     object->has_readiness_event = 0U;
                     readiness_to_release = object->readiness_event;
                     object->readiness_event = NULL;
-                    if (!object->retain_spill_copy) {
+                    if (caller_handoff || !object->retain_spill_copy) {
                         ShadowSpillObjectLocation *spill =
                             shadowspill_plan_spill_location(
                                 action->plan_owner, object
@@ -1042,7 +1061,9 @@ static int handle_action(
                     SHADOWSPILL_TRACE_TRANSFER_COMPLETED,
                     action->task_id,
                     object->object_id,
-                    object->allocation_id,
+                    caller_handoff
+                        ? action->caller_handoff_lease->allocation_id
+                        : object->allocation_id,
                     object->size_bytes,
                     action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
                         ? SHADOWSPILL_TRANSFER_EVICT

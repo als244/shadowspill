@@ -407,6 +407,14 @@ struct ShadowSpillQueuedAction {
      */
     ShadowSpillMemoryLease *handoff_lease;
     uint64_t handoff_generation;
+    /*
+     * A final fetch may be handed to the caller after its readiness event is
+     * published but before the worker observes completion.  The caller owns
+     * the execution lease immediately; this retained metadata lets the worker
+     * finish source cleanup without keeping the logical object resident.
+     */
+    ShadowSpillMemoryLease *caller_handoff_lease;
+    uint64_t caller_handoff_generation;
     uint64_t scheduled_version;
     struct ShadowSpillQueuedAction *previous;
     struct ShadowSpillQueuedAction *next;
@@ -598,7 +606,6 @@ void shadowspill_abort_current_task(ShadowSpillRuntime *runtime);
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
     pthread_mutex_t mutex;
-    pthread_cond_t condition;
     pthread_mutex_t failure_lock;
     ShadowSpillIdleWakeup idle_wakeup;
     pthread_t worker_thread;

@@ -1073,3 +1073,34 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Focused runtime transition, mutation, and training canaries pass after the
   removal. The worker hot loop now performs no unused wake operation for an
   object state transition.
+
+## 2026-08-17 — Nonblocking caller ownership transfer
+
+- Found the final steady-execution condition wait in caller-output handoff.
+  Acquisition had already inserted a generation-matched readiness-event wait
+  into the consumer stream, but handoff nevertheless acquired the global
+  runtime mutex and slept until the worker observed transfer completion. A
+  delayed mock fetch proved that this unnecessarily serialized the host on
+  wire time.
+- Caller handoff now snapshots and validates the direct admitted object under
+  its object lock, records the consumer stream, and transfers the same
+  execution lease immediately. If the final fetch is still in flight, its
+  admitted action retains only the lease metadata needed for completion
+  bookkeeping. The worker later releases the spill source and readiness-event
+  reference; it neither copies the payload nor changes caller ownership.
+- Stress exposed a narrow valid transition: the worker publishes
+  `EXECUTION_READY` and clears readiness before it unlinks the completed fetch
+  action. Handoff now recognizes that single generation-matched settling
+  action as equivalent to either stable endpoint. The action record retains
+  the lease metadata until unlink completes, preventing retirement from
+  recycling it first.
+- Removed the now-unconsumed runtime condition variable and every associated
+  broadcast. Only the explicitly cold `wait_idle()` and shutdown lifecycle
+  wakeup retains a condition variable. The continuously active worker and all
+  task/caller execution paths use no condition wait, timed wait, sleep, or
+  yield.
+- Native coverage now requires a caller handoff to return within 30 ms while
+  the mock fetch remains delayed by 100 ms, and repeats the recurrent
+  evict/fetch/handoff lifecycle 64 times. One hundred focused transition runs,
+  thirty complete transition-canary runs, and the full 28-test native/CUDA
+  canary suite passed after the correction.
