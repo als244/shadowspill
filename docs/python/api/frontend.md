@@ -135,6 +135,36 @@ invocation fails clearly until the preceding reference is closed. Once
 closed, the next invocation overwrites the same logical object with a new
 residency generation.
 
+`SharedInput` is the symmetric input declaration. Wrap a `TensorRef` with
+`shared_input(reference, require_in=pool_name)` in `example_inputs` when
+planning the consumer. The consumer plan binds the same runtime object; it
+does not create another logical object or copy the value through caller
+memory. At invocation time, pass an open `TensorRef` with the same runtime
+identity and tensor geometry:
+
+```python
+produced = producer(inputs)
+state = produced["state"]
+
+consumer = plan_forward(
+    consumer_model,
+    example_inputs=[shared_input(state, require_in="execution")],
+    runtime=runtime,
+    execution="execution",
+    spill="spill",
+)
+result = consumer([state])
+```
+
+`ObjectConsistency.CAUSAL` is the default and makes each task acquire the
+object's current generation plus its published readiness dependency.
+`ObjectConsistency.UNORDERED` deliberately omits cross-callable value
+ordering while retaining the object and lease safely. `require_in` must name
+a pool guaranteed by the reference. Floating shared inputs receive a
+deterministic task-local profiling representative; integer and Boolean
+control inputs require an explicit CPU `profiling_value` on `SharedInput`.
+The `ObjectConsistency` enumeration contains these two policies.
+
 <!-- source-signature: src/shadowspill/pytorch/api.py:plan_step -->
 ```text
 plan_step(
@@ -181,6 +211,7 @@ Shared planning arguments have these meanings:
 | `profiling_metadata` | JSON-compatible identity for data-sensitive task measurement. |
 | `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
+| `SharedInput` / `shared_input()` | Zero-copy binding of an existing runtime-owned `TensorRef` in `example_inputs`. |
 | `shared_outputs` | Forward-output leaves retained as runtime-owned `TensorRef` values. |
 | `save_plan`, `force_fresh`, `overwrite_plan` | Artifact cache policy. |
 | `implementation_revision` | Explicit implementation identity for compiler/profile invalidation. |

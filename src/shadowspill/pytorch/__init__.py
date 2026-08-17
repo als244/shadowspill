@@ -59,7 +59,14 @@ from .runtime_adapter import (
     TransferCapabilities,
     TransferProfile,
 )
-from .sharing import SharedOutput, TensorRef, shared_output
+from .sharing import (
+    ObjectConsistency,
+    SharedInput,
+    SharedOutput,
+    TensorRef,
+    shared_input,
+    shared_output,
+)
 from .state import (
     export_model_state,
     export_optimizer_state,
@@ -78,6 +85,7 @@ __all__ = [
     "InputGuardError",
     "MemoryBudgets",
     "MemoryPool",
+    "ObjectConsistency",
     "ObjectiveError",
     "ObjectiveResult",
     "PartitionPolicy",
@@ -111,6 +119,7 @@ __all__ = [
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
     "RuntimeFailureDiagnostics",
+    "SharedInput",
     "SharedOutput",
     "SimulatorTransferComparison",
     "StepDiagnostics",
@@ -130,5 +139,6 @@ __all__ = [
     "plan_forward",
     "plan_step",
     "pressurefit_program",
+    "shared_input",
     "shared_output",
 ]

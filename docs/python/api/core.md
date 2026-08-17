@@ -90,3 +90,5 @@ The production-memory-pool replay interface is:
 logical object. Object identity is independent of its current pool lease or
 residency generation. Framework integrations layer their own view metadata on
 this handle and call `ObjectRef.close()` to release public ownership.
+`ObjectConsistency` selects causal generation/readiness ordering or an
+explicitly unordered cross-plan view for a plan binding.

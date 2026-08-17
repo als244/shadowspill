@@ -42,6 +42,7 @@ class TensorRef:
     storage_offset: int = 0
     requires_grad: bool = False
     generation: int = 0
+    retained_pools: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.object._require_open()
@@ -49,6 +50,10 @@ class TensorRef:
             raise TypeError("tensor reference dtype must be torch.dtype")
         if self.generation < 0:
             raise ValueError("tensor reference generation must be non-negative")
+        if any(not isinstance(pool, str) or not pool for pool in self.retained_pools):
+            raise ValueError("tensor reference pool names must be non-empty strings")
+        if len(self.retained_pools) != len(set(self.retained_pools)):
+            raise ValueError("tensor reference pool names must be unique")
         extent = (
             _addressable_elements(self.shape, self.stride, self.storage_offset)
             * torch.empty((), dtype=self.dtype).element_size()
@@ -66,6 +71,7 @@ class TensorRef:
         tensor: torch.Tensor,
         *,
         generation: int = 0,
+        retained_pools: tuple[str, ...] = (),
     ) -> TensorRef:
         """Capture public view metadata without retaining a tensor address."""
 
@@ -77,6 +83,7 @@ class TensorRef:
             storage_offset=int(tensor.storage_offset()),
             requires_grad=bool(tensor.requires_grad),
             generation=generation,
+            retained_pools=retained_pools,
         )
 
     @property

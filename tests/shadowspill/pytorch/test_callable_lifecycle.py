@@ -26,6 +26,9 @@ class _FailingExecutor:
     def validate_invocation(self) -> None:
         pass
 
+    def prepare_invocation(self, inputs: object) -> object:
+        return inputs
+
     def restore_optimizer_cpu(self) -> None:
         self.optimizer_restored = True
 

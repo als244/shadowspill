@@ -148,7 +148,9 @@ def plan_forward(
     seed identically to expose first-use allocation paths. The defaults are
     one seed and two repetitions.
 
-    ``shared_outputs`` names public tensor leaves that remain runtime-owned
+    An ``example_inputs`` leaf may be wrapped with :func:`shared_input` to bind
+    an existing runtime-owned object without copying it. ``shared_outputs``
+    names public tensor leaves that remain runtime-owned
     and identifies the pool or pools in which each leaf must be retained.
     Undeclared leaves keep ordinary caller-owned output behavior.
     """

@@ -12,6 +12,7 @@ from shadowspill.ir import (
     ObjectSpec,
     Program,
     ResidencySpec,
+    SharedResidencyPolicy,
     TaskProfile,
     TaskSpec,
 )
@@ -88,6 +89,56 @@ def test_admission_replay_reserves_workspace_for_complete_task_interval() -> Non
     purposes = tuple(item.purpose for item in replay.operations)
     assert AdmissionReplayPurpose.TASK_WORKSPACE in purposes
     assert AdmissionReplayPurpose.TASK_OUTPUT in purposes
+
+
+def test_admission_replay_treats_shared_input_as_externally_resident() -> None:
+    program = _program(
+        (
+            AliasGroupSpec(
+                "shared",
+                "cuda_0",
+                64,
+                shared_residency=SharedResidencyPolicy.SHARED_READ_ONLY,
+            ),
+            AliasGroupSpec("output", "cuda_0", 32),
+        ),
+        (
+            ObjectSpec("shared_object", "shared", 0, 64),
+            ObjectSpec("output_object", "output", 0, 32),
+        ),
+        (
+            TaskSpec(
+                "forward",
+                COMPUTE,
+                "profile",
+                inputs=("shared_object",),
+                outputs=("output_object",),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        (),
+        (),
+        (ResidencySpec("output", MemoryLocation.DEVICE),),
+    )
+    topology = AdmissionTopology(
+        "cuda_0",
+        32,
+        32,
+        1,
+        (TaskAdmissionSpec("forward", fresh_output_aliases=("output",)),),
+    )
+
+    replay = replay_admission(
+        program,
+        schedule,
+        execution_pool_bytes=32,
+        topology=topology,
+        alignment=1,
+    )
+
+    assert replay.pool.peak_allocated_bytes == 32
+    assert all(step.alias_group_id != "shared" for step in replay.operations)
 
 
 def test_task_local_reuse_preserves_one_physical_lease() -> None:

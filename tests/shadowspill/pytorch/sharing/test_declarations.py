@@ -5,15 +5,21 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from shadowspill.pytorch import SharedOutput, TensorRef, shared_output
-from shadowspill.pytorch.sharing import (
-    SharedConsistency,
+from shadowspill.pytorch import (
+    ObjectConsistency,
+    PlanningError,
     SharedInput,
+    SharedOutput,
+    TensorRef,
+    shared_input,
+    shared_output,
+)
+from shadowspill.pytorch.sharing import (
     StateRef,
     format_path,
     resolve_path,
+    resolve_shared_inputs,
     resolve_shared_outputs,
-    shared_input,
 )
 from shadowspill.runtime import ObjectRef
 
@@ -132,11 +138,89 @@ def test_shared_input_defaults_to_causal_consistency() -> None:
     unordered = SharedInput(
         tensor,
         require_in="execution",
-        consistency=SharedConsistency.UNORDERED,
+        consistency=ObjectConsistency.UNORDERED,
     )
 
-    assert declaration.consistency is SharedConsistency.CAUSAL
-    assert unordered.consistency is SharedConsistency.UNORDERED
+    assert declaration.consistency is ObjectConsistency.CAUSAL
+    assert unordered.consistency is ObjectConsistency.UNORDERED
+
+
+def test_shared_inputs_preserve_alias_geometry_and_use_one_cpu_owner() -> None:
+    owner = _Owner()
+    root = ObjectRef(owner, object_id=9, size_bytes=32, native_handle=13)
+    first = TensorRef(
+        object=root,
+        dtype=torch.float32,
+        shape=(4,),
+        stride=(1,),
+        retained_pools=("execution",),
+    )
+    second = TensorRef(
+        object=root,
+        dtype=torch.float32,
+        shape=(2,),
+        stride=(1,),
+        storage_offset=2,
+        retained_pools=("execution",),
+    )
+
+    values, resolved = resolve_shared_inputs(
+        [
+            shared_input(first, require_in="execution"),
+            shared_input(second, require_in="execution"),
+        ],
+        pool_names=("execution", "spill"),
+        runtime=owner,
+    )
+
+    assert isinstance(values, list)
+    assert values[0].untyped_storage()._cdata == values[1].untyped_storage()._cdata
+    assert values[1].storage_offset() == 2
+    assert tuple(item.public_leaf_index for item in resolved) == (0, 1)
+
+
+def test_shared_input_requires_guaranteed_pool_and_authentic_control_value() -> None:
+    owner = _Owner()
+    root = ObjectRef(owner, object_id=9, size_bytes=8, native_handle=13)
+    floating = TensorRef(
+        object=root,
+        dtype=torch.float32,
+        shape=(2,),
+        stride=(1,),
+        retained_pools=("spill",),
+    )
+    with pytest.raises(PlanningError, match="does not guarantee"):
+        resolve_shared_inputs(
+            [shared_input(floating, require_in="execution")],
+            pool_names=("execution", "spill"),
+            runtime=owner,
+        )
+
+    control = TensorRef(
+        object=root,
+        dtype=torch.int32,
+        shape=(2,),
+        stride=(1,),
+        retained_pools=("spill",),
+    )
+    with pytest.raises(PlanningError, match="provide profiling_value"):
+        resolve_shared_inputs(
+            [shared_input(control, require_in="spill")],
+            pool_names=("execution", "spill"),
+            runtime=owner,
+        )
+    values, _ = resolve_shared_inputs(
+        [
+            shared_input(
+                control,
+                require_in="spill",
+                profiling_value=torch.tensor([3, 5], dtype=torch.int32),
+            )
+        ],
+        pool_names=("execution", "spill"),
+        runtime=owner,
+    )
+    torch.testing.assert_close(values[0], torch.tensor([3, 5], dtype=torch.int32))
 
 
 @dataclass

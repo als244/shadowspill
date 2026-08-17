@@ -22,6 +22,11 @@ def derive_forward_residency(
     if any(not isinstance(value, MemoryLocation) for value in locations.values()):
         raise TypeError("public output residency must use MemoryLocation")
     aliases = objects.catalog.alias_groups()
+    shared_aliases = {
+        group.alias_group_id
+        for group in aliases
+        if group.shared_residency is not None
+    }
     logical_objects = objects.catalog.objects()
     initial_aliases = {
         item.alias_group_id
@@ -34,6 +39,7 @@ def derive_forward_residency(
             ObjectRole.CONTROL,
         }
         and item.alias_group_id not in graph.produced_aliases
+        and item.alias_group_id not in shared_aliases
     }
     final_host = {
         item.alias_group_id
@@ -52,6 +58,8 @@ def derive_forward_residency(
         if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.HOST
     )
     final_host -= final_device
+    final_host -= shared_aliases
+    final_device -= shared_aliases
     return (
         tuple(
             ResidencySpec(group.alias_group_id, MemoryLocation.HOST)

@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+
+import torch
+
+from shadowspill.runtime import ObjectConsistency
 
 from .paths import PathComponent, PytreePath, normalize_path
-from .references import StateRef, TensorRef
-
-
-class SharedConsistency(StrEnum):
-    """Cross-callable value-ordering policy for one plan binding."""
-
-    CAUSAL = "causal"
-    UNORDERED = "unordered"
+from .references import TensorRef
 
 
 def _normalize_pools(value: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -43,17 +39,22 @@ class SharedOutput:
 class SharedInput:
     """Bind a runtime-backed reference at one callable input position."""
 
-    reference: TensorRef | StateRef
+    reference: TensorRef
     require_in: str
-    consistency: SharedConsistency = SharedConsistency.CAUSAL
+    consistency: ObjectConsistency = ObjectConsistency.CAUSAL
+    profiling_value: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.reference, (TensorRef, StateRef)):
-            raise TypeError("shared input reference must be TensorRef or StateRef")
+        if not isinstance(self.reference, TensorRef):
+            raise TypeError("shared input reference must be a TensorRef")
         if not self.require_in:
             raise ValueError("shared input required pool must be non-empty")
-        if not isinstance(self.consistency, SharedConsistency):
+        if not isinstance(self.consistency, ObjectConsistency):
             raise TypeError("shared input consistency is invalid")
+        if self.profiling_value is not None and not isinstance(
+            self.profiling_value, torch.Tensor
+        ):
+            raise TypeError("shared input profiling value must be a tensor")
 
 
 def shared_output(
@@ -66,10 +67,11 @@ def shared_output(
 
 
 def shared_input(
-    reference: TensorRef | StateRef,
+    reference: TensorRef,
     *,
     require_in: str,
-    consistency: SharedConsistency = SharedConsistency.CAUSAL,
+    consistency: ObjectConsistency = ObjectConsistency.CAUSAL,
+    profiling_value: torch.Tensor | None = None,
 ) -> SharedInput:
     """Construct a shared-input declaration."""
 
@@ -77,11 +79,11 @@ def shared_input(
         reference=reference,
         require_in=require_in,
         consistency=consistency,
+        profiling_value=profiling_value,
     )
 
 
 __all__ = [
-    "SharedConsistency",
     "SharedInput",
     "SharedOutput",
     "shared_input",
