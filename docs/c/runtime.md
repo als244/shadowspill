@@ -94,8 +94,6 @@ after table removal until their own references are released.
 runtime's pool, route, event, and object owners:
 
 - `shadowspill_plan_create()` creates a plan from explicit pool and route IDs.
-- `shadowspill_plan_create_for_pools()` resolves the unique directed routes for
-  a selected pool pair.
 - `shadowspill_plan_bind_object()` maps a Program-local object identity to a
   retained `ShadowSpillObjectHandle` with causal or explicitly unordered
   consistency. The plan owns an independent reference after the call returns.
@@ -115,7 +113,9 @@ runtime's pool, route, event, and object owners:
   view names the replacement publication's exact retired lease while its
   successor tensor names the current lease.
 - `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
-  the sole production execution boundary.
+  the sole production execution boundary. For an action-bearing task, the
+  after boundary publishes its preallocated batch and actively waits only for
+  worker submission acknowledgement, never for route completion.
 - `shadowspill_abort_task_handle()` closes that same handle-bound task scope
   when frontend execution raises before `after_task`; it does not cancel work
   already submitted to the device.

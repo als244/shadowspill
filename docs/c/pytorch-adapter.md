@@ -7,7 +7,7 @@ neutral runtime and translates Python/ATen-facing values into runtime handles.
 ## Bootstrap and capabilities
 
 - `shadowspill_pytorch_allocator_bootstrap()` installs the allocator and
-  process-owned runtime.
+  process-owned runtime from explicit pool and directed-route registries.
 - `shadowspill_pytorch_allocator_close()` permanently closes the installed
   runtime, joins its worker, and releases its routes, pools, and backend. The
   PyTorch allocator shim remains installed and rejects future allocations.
@@ -83,6 +83,9 @@ semantics:
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
 - `shadowspill_pytorch_plan_clear_tasks()`
 
+Plan creation receives explicit execution/spill pool IDs and fetch/evict route
+IDs. The adapter does not infer routes from global runtime roles.
+
 Task calls mirror the neutral runtime:
 
 - `shadowspill_pytorch_before_task_handle()` and
@@ -91,7 +94,9 @@ Task calls mirror the neutral runtime:
   of copying bindings into caller storage. The storage operators consume that
   view in place and return no per-task generation container to Python. Both
   boundaries derive task identity and the semantic profiler label from the
-  admitted handle; no parallel task ID or mutable label table exists.
+  admitted handle; no parallel task ID or mutable label table exists. The
+  after boundary returns once the continuously active worker acknowledges
+  submission of eligible actions, not when their asynchronous copies finish.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission
