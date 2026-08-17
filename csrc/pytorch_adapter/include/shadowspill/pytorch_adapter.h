@@ -213,6 +213,37 @@ shadowspill_pytorch_plan_resolve_execution(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_admit_object_acquisition(
+    uintptr_t plan_handle,
+    const uint64_t *object_ids,
+    uint32_t object_count,
+    uintptr_t *acquisition_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_admit_action_batch(
+    uintptr_t plan_handle,
+    uint64_t batch_id,
+    const ShadowSpillRuntimeAction *actions,
+    uint32_t action_count,
+    uintptr_t *action_batch_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_submit_action_batch_handle(
+    uintptr_t action_batch_handle,
+    uintptr_t trigger_stream_address
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_acquire_objects_handle(
+    uintptr_t acquisition_handle,
+    uintptr_t consumer_stream_address,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_admit_execution(
     const ShadowSpillExecutionDescription *description
 );

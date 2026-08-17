@@ -538,3 +538,31 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   PyTorch canaries; the complete Python suite with four expected skips; 44
   focused allocator/compiler/profiling tests; documentation contract tests;
   Ruff; strict mypy over 177 source files; and `git diff --check`.
+
+## 2026-08-17 — Dedicated initial-action and caller-acquisition handles
+
+- Removed the two remaining fake frontend task boundaries. Initial placement
+  now uses one admitted action-batch handle and caller return uses one admitted
+  ordered object-acquisition handle.
+- Action-batch submission opens no Python task pair. One call publishes its
+  predecoded actions and returns after worker submission acknowledgement, not
+  transfer completion. The handle is explicitly rejected by task resolution.
+- Caller acquisition retains direct object pointers, deduplicates aliases on
+  the cold path, snapshots each current generation once, inserts only
+  published readiness-event waits, and expands bindings without opening an
+  allocator scope or calling `after_task()`.
+- Root-caused the first plan-adoption failure: public output objects had been
+  registered lazily by their first producer, which is too late for cold handle
+  admission. Plan adoption now registers those already-known outputs as empty
+  placeholders. Execution publishes the produced lease into that same logical
+  object; there is no copy or replacement object.
+- Extracted the shared object-snapshot/wait loop so task input acquisition and
+  public-object acquisition use one implementation. Acquisition handles are
+  plan-owned and are cleared before plan object bindings.
+- Added a native contract canary proving action handles are not task handles,
+  immediate fetch-to-acquisition readiness, duplicate expansion, and exact
+  handle lifetime.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; focused
+  execution tests; documentation tests; Ruff; strict mypy over 177 source
+  files; and `git diff --check`.

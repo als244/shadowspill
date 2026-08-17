@@ -81,6 +81,12 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_admit_execution()` and
   `shadowspill_plan_resolve_execution()` publish and resolve immutable task
   handles.
+- `shadowspill_plan_admit_action_batch()` creates an action-only trigger
+  handle; `shadowspill_submit_action_batch_handle()` publishes it without
+  opening a task boundary.
+- `shadowspill_plan_admit_object_acquisition()` creates an immutable direct
+  object set; `shadowspill_acquire_objects_handle()` snapshots its current
+  generations and inserts readiness waits without opening a task boundary.
 - `shadowspill_plan_admit_fixed_layout()` and
   `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
 - `shadowspill_plan_clear_execution()` discards admitted records and bindings.
@@ -102,6 +108,8 @@ Resolved execution plans use:
 
 Handle variants bypass repeated task-ID lookup. Admission retains direct
 object references and predecoded actions for the complete plan lifetime.
+Initial placement and caller-output acquisition use their dedicated handles;
+they never impersonate execution tasks or allocate per-invocation identities.
 
 Physical placement is installed with `shadowspill_admit_fixed_layout()` and
 made immutable by `shadowspill_seal_fixed_layout()`. Allocation callbacks then

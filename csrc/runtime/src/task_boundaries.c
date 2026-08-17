@@ -802,16 +802,18 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
             status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         }
     }
-    shadowspill_append_trace_event_locked(
-        runtime,
-        SHADOWSPILL_TRACE_AFTER_TASK,
-        record->task_id,
-        failure_object_id,
-        failure_allocation_id,
-        0U,
-        (uint64_t)status,
-        record->action_count
-    );
+    if (record->boundary_kind == SHADOWSPILL_BOUNDARY_EXECUTION_TASK) {
+        shadowspill_append_trace_event_locked(
+            runtime,
+            SHADOWSPILL_TRACE_AFTER_TASK,
+            record->task_id,
+            failure_object_id,
+            failure_allocation_id,
+            0U,
+            (uint64_t)status,
+            record->action_count
+        );
+    }
     shadowspill_leave_task_scope(runtime);
     return status;
 }

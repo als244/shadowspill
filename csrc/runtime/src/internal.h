@@ -423,9 +423,15 @@ typedef struct ShadowSpillExecutionRecord {
     _Atomic uint64_t submission_sequence;
     _Atomic uint64_t submission_invocation;
     _Atomic uint64_t acknowledgement_sequence;
+    uint8_t boundary_kind;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
 } ShadowSpillExecutionRecord;
+
+enum {
+    SHADOWSPILL_BOUNDARY_EXECUTION_TASK = 0U,
+    SHADOWSPILL_BOUNDARY_ACTION_BATCH = 1U,
+};
 
 typedef struct ShadowSpillExecutionTable {
     pthread_rwlock_t lock;
@@ -434,6 +440,20 @@ typedef struct ShadowSpillExecutionTable {
     uint64_t bucket_count;
     uint8_t lock_initialized;
 } ShadowSpillExecutionTable;
+
+typedef struct ShadowSpillObjectAcquisitionRecord
+    ShadowSpillObjectAcquisitionRecord;
+
+struct ShadowSpillObjectAcquisitionRecord {
+    ShadowSpillPlan *plan_owner;
+    ShadowSpillObject **objects;
+    uint32_t object_count;
+    ShadowSpillObject **unique_objects;
+    uint32_t unique_object_count;
+    uint32_t *object_unique_indices;
+    uint32_t *unique_first_positions;
+    struct ShadowSpillObjectAcquisitionRecord *ownership_next;
+};
 
 typedef struct ShadowSpillPlanObjectBinding {
     uint64_t plan_object_id;
@@ -459,6 +479,7 @@ struct ShadowSpillPlan {
     ShadowSpillRouteState *evict_route;
     ShadowSpillPlanObjectTable object_bindings;
     ShadowSpillExecutionTable execution;
+    ShadowSpillObjectAcquisitionRecord *object_acquisitions;
     ShadowSpillFixedLayoutState fixed_layout;
     pthread_mutex_t lifecycle_lock;
     _Atomic uint32_t active_invocations;
@@ -1073,6 +1094,19 @@ void shadowspill_publish_execution_geometry_locked(ShadowSpillRuntime *runtime);
 int shadowspill_execution_table_initialize(
     ShadowSpillExecutionTable *table,
     uint64_t bucket_count
+);
+void shadowspill_object_acquisitions_clear(ShadowSpillPlan *plan);
+ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
+    ShadowSpillRuntime *runtime,
+    uint64_t trace_task_id,
+    ShadowSpillObject *const *unique_objects,
+    uint32_t unique_object_count,
+    const uint32_t *object_unique_indices,
+    const uint32_t *unique_first_positions,
+    uint32_t object_count,
+    ShadowSpillBackendStream consumer_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
 );
 void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table);
 void shadowspill_execution_table_clear(ShadowSpillExecutionTable *table);

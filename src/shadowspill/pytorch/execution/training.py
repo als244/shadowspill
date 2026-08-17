@@ -168,8 +168,8 @@ class TrainingExecutor:
         self._optimizer_state_available = (
             optimizer_state_preinitialized or not optimizer_state_was_lazy
         )
-        # Materialization uses short-lived legacy action records.  Replace
-        # them with exactly one immutable initial or recurrent plan.
+        # Materialization uses a short-lived action batch. Replace it with
+        # exactly one immutable initial or recurrent plan.
         self._bridge.clear_execution_plan()
         if self._initial is not None and not self._optimizer_state_initialized:
             assert self._initial_fixed_layout is not None
@@ -247,11 +247,20 @@ class TrainingExecutor:
                     ),
                 )
             )
+        caller_aliases = tuple(
+            alias_id
+            for values in run.public_by_microbatch
+            for alias_id in values
+        )
+        caller_acquisition_handle = self._bridge.admit_caller_acquisition(
+            caller_aliases
+        )
         self._bridge.seal_fixed_layout()
         return replace(
             run,
             execution=tuple(admitted),
             initial_task_id=fixed_layout.initial_task_id,
+            caller_acquisition_handle=caller_acquisition_handle,
         )
 
     def prepare_execution_tracing(self) -> None:
@@ -420,7 +429,7 @@ class TrainingExecutor:
         bindings = self._bridge.acquire_for_caller(
             aliases,
             tensors,
-            task_number=(1 << 59) + self._invocations,
+            acquisition_handle=run.caller_acquisition_handle,
         )
         self._bridge.transfer_outputs_to_caller(aliases, tensors, bindings)
         for alias_id in aliases:

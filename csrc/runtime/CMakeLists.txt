@@ -14,7 +14,8 @@ add_library(
   src/memory_pool.c
   src/object_actions.c
   src/object_table.c
-  src/objects.c
+    src/objects.c
+    src/object_acquisition.c
   src/plan.c
   src/plan_object_bindings.c
   src/profiler.c

@@ -823,6 +823,46 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
+        "shadowspill_pytorch_plan_admit_object_acquisition",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_acquire_objects_handle",
+        [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.POINTER(ObjectBinding),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_admit_action_batch",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.POINTER(RuntimeAction),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_submit_action_batch_handle",
+        [ctypes.c_size_t, ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
         "shadowspill_pytorch_admit_execution",
         [ctypes.POINTER(ExecutionDescription)],
         ctypes.c_uint32,
