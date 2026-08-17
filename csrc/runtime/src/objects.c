@@ -713,6 +713,10 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
+    if (shadowspill_track_task_retirement(runtime, prior) != 0) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        goto done;
+    }
     shadowspill_append_allocation_event_locked(
         runtime,
         prior,

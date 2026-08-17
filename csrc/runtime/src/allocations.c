@@ -229,8 +229,10 @@ ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
     ShadowSpillBackendStream stream
 ) {
     uint64_t count = 0U;
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
-         allocation != NULL; allocation = allocation->active_next) {
+    for (ShadowSpillMemoryLease *allocation =
+             shadowspill_current_task_retirements(runtime);
+         allocation != NULL;
+         allocation = allocation->task_retirement_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
             allocation->retirement_events == NULL &&
@@ -264,8 +266,10 @@ ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
-         allocation != NULL; allocation = allocation->active_next) {
+    for (ShadowSpillMemoryLease *allocation =
+             shadowspill_current_task_retirements(runtime);
+         allocation != NULL;
+         allocation = allocation->task_retirement_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||
@@ -1266,6 +1270,10 @@ ShadowSpillRuntimeStatus shadowspill_free(
             goto done;
         }
         index_reusable_locked(runtime, allocation);
+        if (shadowspill_track_task_retirement(runtime, allocation) != 0) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done;
+        }
         shadowspill_append_allocation_event_locked(
             runtime,
             allocation,
@@ -1363,8 +1371,10 @@ void shadowspill_finalize_aborted_task_retirements(
         return;
     }
     shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
-         allocation != NULL; allocation = allocation->active_next) {
+    for (ShadowSpillMemoryLease *allocation =
+             shadowspill_current_task_retirements(runtime);
+         allocation != NULL;
+         allocation = allocation->task_retirement_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||

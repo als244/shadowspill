@@ -27,6 +27,8 @@ typedef struct ShadowSpillTaskScope {
     uint64_t scratch_live_charged_bytes;
     uint64_t scratch_peak_charged_bytes;
     uint64_t scratch_allocation_count;
+    ShadowSpillMemoryLease *retirement_head;
+    ShadowSpillMemoryLease *retirement_tail;
 } ShadowSpillTaskScope;
 
 enum {
@@ -84,6 +86,34 @@ ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime) {
         : NULL;
 }
 
+int shadowspill_track_task_retirement(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryLease *lease
+) {
+    if (task_scope.runtime != runtime || lease == NULL) {
+        return -1;
+    }
+    if (lease->task_retirement_linked) {
+        return 0;
+    }
+    lease->task_retirement_next = NULL;
+    lease->task_retirement_linked = 1U;
+    if (task_scope.retirement_tail == NULL) {
+        task_scope.retirement_head = lease;
+    } else {
+        task_scope.retirement_tail->task_retirement_next = lease;
+    }
+    task_scope.retirement_tail = lease;
+    return 0;
+}
+
+ShadowSpillMemoryLease *shadowspill_current_task_retirements(
+    ShadowSpillRuntime *runtime
+) {
+    return task_scope.runtime == runtime
+        ? task_scope.retirement_head : NULL;
+}
+
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
@@ -111,6 +141,8 @@ int shadowspill_enter_task_scope(
     task_scope.scratch_live_charged_bytes = 0U;
     task_scope.scratch_peak_charged_bytes = 0U;
     task_scope.scratch_allocation_count = 0U;
+    task_scope.retirement_head = NULL;
+    task_scope.retirement_tail = NULL;
     return 0;
 }
 
@@ -510,6 +542,14 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
 
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
     if (task_scope.runtime == runtime) {
+        ShadowSpillMemoryLease *retirement = task_scope.retirement_head;
+        while (retirement != NULL) {
+            ShadowSpillMemoryLease *next =
+                retirement->task_retirement_next;
+            retirement->task_retirement_next = NULL;
+            retirement->task_retirement_linked = 0U;
+            retirement = next;
+        }
         task_scope.runtime = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.execution = NULL;
@@ -530,6 +570,8 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.scratch_live_charged_bytes = 0U;
         task_scope.scratch_peak_charged_bytes = 0U;
         task_scope.scratch_allocation_count = 0U;
+        task_scope.retirement_head = NULL;
+        task_scope.retirement_tail = NULL;
     }
 }
 

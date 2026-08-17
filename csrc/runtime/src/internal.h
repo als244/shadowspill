@@ -181,6 +181,14 @@ typedef struct ShadowSpillMemoryLease {
     struct ShadowSpillMemoryLease *reusable_index_next;
     struct ShadowSpillMemoryLease *active_next;
     struct ShadowSpillMemoryLease **active_previous_link;
+    /*
+     * Dispatcher-local frees are linked directly to the active task scope.
+     * A lease stays linked when it is reused within that task; after_task()
+     * examines its final state exactly once instead of scanning every active
+     * execution lease.
+     */
+    struct ShadowSpillMemoryLease *task_retirement_next;
+    uint8_t task_retirement_linked;
     struct ShadowSpillMemoryLease *pool_next;
     struct ShadowSpillMemoryLease **pool_previous_link;
     uint8_t in_reusable_index;
@@ -953,6 +961,13 @@ int shadowspill_current_task_allocation_is_scratch(
 );
 uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime);
 ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime);
+int shadowspill_track_task_retirement(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryLease *lease
+);
+ShadowSpillMemoryLease *shadowspill_current_task_retirements(
+    ShadowSpillRuntime *runtime
+);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id

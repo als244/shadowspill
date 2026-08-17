@@ -330,8 +330,10 @@ static uint64_t count_task_retirements_locked(
 ) {
     uint64_t count = 0U;
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
-         allocation != NULL; allocation = allocation->active_next) {
+    for (ShadowSpillMemoryLease *allocation =
+             shadowspill_current_task_retirements(runtime);
+         allocation != NULL;
+         allocation = allocation->task_retirement_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
             allocation->retirement_events == NULL &&
@@ -552,8 +554,10 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
-         allocation != NULL; allocation = allocation->active_next) {
+    for (ShadowSpillMemoryLease *allocation =
+             shadowspill_current_task_retirements(runtime);
+         allocation != NULL;
+         allocation = allocation->task_retirement_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
             allocation->retirement_events != NULL ||
