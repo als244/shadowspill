@@ -23,8 +23,8 @@ for tools such as NSYS but does not create `StepDiagnostics`.
 
 | Field | Meaning |
 |---|---|
-| `objectives` | Detached objective tensor for each accumulation round. |
-| `metrics` | Nondifferentiated objective metadata for each round. |
+| `objectives` | Detached scalar objective tensor for each accumulation round. |
+| `metrics` | Reconstructed nondifferentiated objective metrics for each round. |
 | `step_number` | Completed optimizer-step count. |
 | `diagnostics` | `None`, or a deferred `DiagnosticsHandle` for a traced call. |
 

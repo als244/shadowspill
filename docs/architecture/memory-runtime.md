@@ -162,6 +162,10 @@ the worker, closes every pool backend, unregisters pinned memory, and releases
 device memory. Explicit callable and Python-runtime close remain required for
 timely ownership validation and error reporting.
 
+The Python-facing taxonomy, structured diagnostic fields, automatic rollback,
+and normal close order are documented in [Errors, failures, and
+cleanup](../python/failures.md).
+
 ## Optional tracing
 
 `runtime_trace=False` has no trace-buffer work on the critical path.

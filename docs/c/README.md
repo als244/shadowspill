@@ -4,6 +4,10 @@ ShadowSpill's compiled components expose narrow C ABIs with caller-owned input
 and output buffers. Public headers are authoritative for exact layouts,
 constants, and signatures.
 
+The C pages remain flat because each one maps directly to a compiled component
+or backend boundary; the table below is both the component inventory and the
+reference index.
+
 | Component | Header | Reference |
 |---|---|---|
 | Runtime | [`runtime.h`](../../csrc/runtime/include/shadowspill/runtime.h) | [Runtime API](runtime.md) |

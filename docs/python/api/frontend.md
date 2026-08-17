@@ -231,8 +231,26 @@ verbose output is disabled.
 `TensorSpec` is storage-free fixed tensor geometry for planning. It records
 shape, dtype, optional stride, `requires_grad`, and layout.
 
-An objective may return a scalar loss tensor or `ObjectiveResult`. The latter
-contains a differentiable `loss` plus arbitrary nondifferentiated `metrics`.
+An objective may return a scalar loss tensor or `ObjectiveResult`. A bare
+tensor becomes the corresponding `StepResult.objectives` entry and has
+`metrics=None`. `ObjectiveResult` explicitly names the differentiable `loss`
+and arbitrary nondifferentiated `metrics`; each becomes the corresponding
+entry in the two per-round `StepResult` tuples. ShadowSpill validates this
+contract during capture rather than inferring a loss from model output names.
+
+### ObjectiveResult
+
+| Field | Contract |
+|---|---|
+| `loss` | One floating-point or complex scalar tensor that participates in backward. |
+| `metrics` | Optional nondifferentiated metadata returned to the caller for the same accumulation round. |
+
+`metrics` may be a pytree. Tensor leaves are detached task outputs. Static
+leaves must be copyable, and the pytree structure must remain fixed across the
+captured workload. Metrics never contribute to backward, are not aggregated
+across accumulation rounds, and are unrelated to `PlanReport` or runtime-trace
+diagnostics. Applications that do not need auxiliary outputs should return the
+loss tensor directly.
 
 `PartitionSpec` accepts `"auto"`, `"whole"`, or a `PartitionPolicy` object.
 A custom `PartitionPolicy.assign_stages(graph_module, module)` returns a
@@ -262,12 +280,18 @@ PlannedTrainStep(
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
 `state_dict()`, `load_state_dict()`, `close()`, and context manager support.
 
-`StepResult` contains `objectives`, `metrics`, `step_number`, and an optional
-`DiagnosticsHandle`. `DiagnosticsHandle.result()` and
-`DiagnosticsHandle.wait()` resolve the trace once; `resolved` reports whether
-that has happened.
+`StepResult` contains one detached scalar objective and the reconstructed
+objective metrics for each accumulation round, the completed `step_number`,
+and an optional `DiagnosticsHandle`. Tensor-valued metrics are detached;
+static metric leaves preserve the captured pytree. `DiagnosticsHandle.result()`
+and `DiagnosticsHandle.wait()` synchronously resolve the trace once; `resolved`
+reports whether that has happened.
 
 ## Exceptions
+
+The [errors, failures, and cleanup guide](../failures.md) explains propagation,
+structured runtime evidence, automatic rollback, and ownership-safe teardown.
+This section is the compact exported-type reference.
 
 Planning exceptions preserve phase-specific meaning:
 

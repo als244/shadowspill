@@ -4,14 +4,19 @@ The Python package provides model-state relocation, PyTorch capture and
 lowering, reusable planning artifacts, PressureFit, diagnostics, and callable
 execution.
 
+The directory is intentionally split between task-oriented guides and the
+`api/` reference.
+
 ## Guides
 
 - [Quickstart](quickstart.md)
 - [Planning cache](planning-cache.md)
 - [PyTorch allocator integration](allocator.md)
+- [Errors, failures, and cleanup](failures.md)
 - [Interpreting a PlanReport](plan-report.md)
 - [Interpreting StepResult diagnostics](step-diagnostics.md)
 - [Program and annotated-plan JSON](planning-json.md)
+- [Practical examples](../examples/README.md)
 
 ## API reference
 

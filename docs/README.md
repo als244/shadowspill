@@ -8,8 +8,11 @@ statement applies to Python, C, or the framework-neutral design.
 
 - To use ShadowSpill from PyTorch, read the [Python quickstart](python/quickstart.md)
   and then the [Python API](python/README.md).
+- To learn from complete workflows, use the [examples](examples/README.md).
 - To inspect a plan or real step, use the [PlanReport](python/plan-report.md)
   and [StepResult diagnostics](python/step-diagnostics.md) guides.
+- To understand failure propagation and cleanup, read [Errors, failures, and
+  cleanup](python/failures.md).
 - To consume saved planning data, use the [Program and annotated-plan JSON
   guide](python/planning-json.md).
 - To understand the system, follow the ordered path in the [architecture
@@ -20,15 +23,27 @@ statement applies to Python, C, or the framework-neutral design.
 
 ## Architecture
 
+The pages stay in one directory because they form one ordered system pipeline.
+The groups below are conceptual reading boundaries, not separate ownership
+trees.
+
+### Foundations
+
 1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
    ownership, invariants, and supported scope.
 2. [Intermediate representation](architecture/ir.md) — logical Programs,
    recomputation, schedules, and execution plans.
+
+### PyTorch lowering
+
 3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
    executable storage, profiling, and canonical objects.
 4. [Graph-pair construction](architecture/graph-pair-construction.md) —
    structural forward/backward alternatives, saved-value accounting, and
    profiling.
+
+### Planning
+
 5. [Recomputation selection](architecture/recomputation-selection.md) — bounded
    complete selections across occurrence-level graph-pair options.
 6. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
@@ -37,12 +52,23 @@ statement applies to Python, C, or the framework-neutral design.
    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
 8. [Planning orchestration](architecture/planning.md) — reusable artifacts,
    transfer inputs, callable publication, and PlanReport.
+
+### Execution
+
 9. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
    causal-dependency replay.
 10. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
-   task boundaries, failure, and tracing.
+    task boundaries, failure, and tracing.
 
-## Diagnostics and artifacts
+## Examples
+
+- [Training loop](examples/training-lifecycle.md)
+- [Forward-only execution](examples/forward-only.md)
+- [Reusable planning and budget sweeps](examples/reusable-planning.md)
+- [Diagnosing a plan and real step](examples/diagnostics.md)
+- [Custom stage partitioning](examples/custom-partitioning.md)
+
+## Diagnostics, failures, and artifacts
 
 - [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
   graph-pair selection, profiles, PressureFit, caches, and physical admission.
@@ -51,6 +77,8 @@ statement applies to Python, C, or the framework-neutral design.
   reconciliation.
 - [Program and annotated-plan JSON](python/planning-json.md) — canonical Program,
   PressureFitProgram, StepProgram, and AnnotatedProgramPlan schemas.
+- [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
+  structured runtime evidence, rollback, and teardown.
 
 ## Historical evidence
 

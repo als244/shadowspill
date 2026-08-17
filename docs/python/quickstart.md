@@ -49,12 +49,11 @@ from functools import partial
 
 import torch
 
-from shadowspill.pytorch import ObjectiveResult, plan_step
+from shadowspill.pytorch import plan_step
 
 
 def objective(model, tokens, targets):
-    loss = model(tokens, labels=targets).loss
-    return ObjectiveResult(loss=loss, metrics={"loss": loss.detach()})
+    return model(tokens, labels=targets).loss
 
 
 train_step = plan_step(
@@ -97,10 +96,14 @@ result = train_step(
     ]
 )
 
-print(result.objectives)
-print(result.metrics)
 print(result.step_number)
+losses = result.objectives
 ```
+
+`losses` contains one detached scalar tensor per accumulation round. Ordinary
+calls do not collect a detailed runtime trace; tracing is an explicit
+operation below. The [frontend API](api/frontend.md#inputs-objectives-and-partitioning)
+documents optional nondifferentiated objective metrics.
 
 Tracing and profiler annotations are independent and disabled by default:
 

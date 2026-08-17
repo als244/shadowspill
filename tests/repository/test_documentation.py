@@ -333,6 +333,13 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "python/plan-report.md",
         "python/step-diagnostics.md",
         "python/planning-json.md",
+        "python/failures.md",
+        "examples/README.md",
+        "examples/training-lifecycle.md",
+        "examples/forward-only.md",
+        "examples/reusable-planning.md",
+        "examples/diagnostics.md",
+        "examples/custom-partitioning.md",
         "c/README.md",
         "development/README.md",
         "investigations/README.md",
@@ -362,6 +369,74 @@ def test_architecture_overview_starts_with_purpose_and_visuals() -> None:
     ):
         assert required in overview
     assert overview.count("```mermaid") >= 3
+
+
+def test_architecture_index_groups_one_flat_reading_path() -> None:
+    index = (DOCS / "README.md").read_text()
+    for heading in (
+        "### Foundations",
+        "### PyTorch lowering",
+        "### Planning",
+        "### Execution",
+    ):
+        assert heading in index
+
+
+def test_examples_cover_complete_public_workflows() -> None:
+    examples = DOCS / "examples"
+    expected = {
+        "training-lifecycle.md": (
+            "Runtime(",
+            "relocate_model_state(",
+            "plan_step(",
+            "state_dict()",
+            "training_batches(",
+            "train_step.close()",
+        ),
+        "forward-only.md": ("plan_forward(", "run_forward.close()"),
+        "reusable-planning.md": (
+            "make_step_program(",
+            "pressurefit_program(",
+            "StepProgram.from_json(",
+            "annotated.to_json()",
+        ),
+        "diagnostics.md": (
+            "report.diagnostics.task(",
+            "step.simulator_comparison",
+            "step.as_dict()",
+        ),
+        "custom-partitioning.md": ("assign_stages(", "partition=EveryNNodes("),
+    }
+    for name, required in expected.items():
+        reference = (examples / name).read_text()
+        for value in required:
+            assert value in reference
+        for source in _PYTHON_FENCE.findall(reference):
+            tree = ast.parse(source)
+            assert not any(isinstance(node, ast.Try) for node in ast.walk(tree))
+
+
+def test_failure_guide_covers_public_boundaries_and_cleanup() -> None:
+    reference = (DOCS / "python" / "failures.md").read_text()
+    for required in (
+        "RuntimeConfigurationError",
+        "PlanningError",
+        "CaptureError",
+        "CompilationError",
+        "ProfilingError",
+        "AdmissionError",
+        "PlanInfeasibleError",
+        "PlanSearchExhaustedError",
+        "ObjectiveError",
+        "InputGuardError",
+        "RuntimeExecutionError",
+        "RuntimeFailureDiagnostics",
+        "task_allocation_envelope_exceeded",
+        "task_allocation_abi_mismatch",
+        "## Execution rollback",
+        "## Normal close order",
+    ):
+        assert required in reference
 
 
 def test_every_public_python_export_appears_on_its_api_page() -> None:

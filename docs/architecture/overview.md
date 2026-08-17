@@ -246,12 +246,20 @@ admission instead of selecting a heuristic semantic fallback.
 
 ## Architecture reading order
 
+**Foundations**
+
 1. [Intermediate representation](ir.md) defines Programs, objects, tasks, and
    schedules.
+
+**PyTorch lowering**
+
 2. [PyTorch capture and lowering](lowering.md) maps PyTorch semantics and
    compiled storage behavior into that IR.
 3. [Graph-pair construction](graph-pair-construction.md) constructs local
    forward/backward alternatives.
+
+**Planning**
+
 4. [Recomputation selection](recomputation-selection.md) constructs bounded
    complete assignments across those alternatives.
 5. [PressureFit](pressurefit.md) formulates logical residency and memory-action
@@ -260,11 +268,15 @@ admission instead of selecting a heuristic semantic fallback.
    selected plan against real pool geometry.
 7. [Planning orchestration](planning.md) composes artifacts and publishes the
    callable and report.
+
+**Execution**
+
 8. [Simulation](simulation.md) defines deterministic timeline prediction.
 9. [Memory runtime](memory-runtime.md) defines pools, leases, task boundaries,
    transfer lanes, completion, failure, and tracing.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document
-the corresponding public interfaces.
+the corresponding public interfaces. The [examples](../examples/README.md)
+apply the complete pipeline to practical workflows.
 
 Next: [Intermediate representation](ir.md).

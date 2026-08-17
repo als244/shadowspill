@@ -58,10 +58,12 @@ to the top-level `shadowspill.pytorch` import surface.
 
 ## Step result and handle
 
-`StepResult` contains objectives, metrics, the completed step number, and an
-optional diagnostics handle. `StepResult.diagnostics` is `None` for an
-ordinary step and a `DiagnosticsHandle` for a traced step. Resolving the handle
-returns `StepDiagnostics`.
+`StepResult` contains detached objectives, reconstructed objective metrics,
+the completed step number, and an optional diagnostics handle. Tensor-valued
+metric leaves remain tensors; static leaves preserve their captured values.
+`StepResult.diagnostics` is `None` for an ordinary step and a
+`DiagnosticsHandle` for a traced step. Resolving the handle returns
+`StepDiagnostics` and may wait for recorded events.
 
 Each execution has `ExecutionTiming` and exactly seven boundary timestamps:
 
