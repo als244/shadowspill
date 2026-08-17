@@ -845,7 +845,7 @@ class TrainingExecutor:
             return prepared
         except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task()
+                self._bridge.abort_task(record.task_handle, record.task_index)
             self._finish_task_timing(timing)
             raise
 
@@ -1237,7 +1237,10 @@ class TrainingExecutor:
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task()
+            self._bridge.abort_task(
+                prepared.record.task_handle,
+                prepared.record.task_index,
+            )
 
     def _bind_forward_outputs(
         self,

@@ -159,8 +159,9 @@ rebinds storages, assembles arguments, and records timing. `_after_task()`
 classifies outputs, publishes mutations, dematerializes releases, records the
 completion fence, submits actions, and performs terminal cleanup.
 
-The neutral `shadowspill_before_task()` and `shadowspill_after_task()` remain
-small object/lease/action orchestrators. They contain no PyTorch storage logic.
+The neutral `shadowspill_before_task_handle()` and
+`shadowspill_after_task_handle()` remain small object/lease/action
+orchestrators. They contain no PyTorch storage logic.
 
 ## Failure and teardown
 

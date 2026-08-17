@@ -188,12 +188,6 @@ shadowspill_pytorch_plan_bind_object(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_plan_admit_execution(
-    uintptr_t plan_handle,
-    const ShadowSpillExecutionDescription *description
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_task(
     uintptr_t plan_handle,
     const ShadowSpillExecutionDescription *description,
@@ -211,13 +205,6 @@ shadowspill_pytorch_plan_seal_fixed_layout(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_clear_execution(uintptr_t plan_handle);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_plan_resolve_execution(
-    uintptr_t plan_handle,
-    uint64_t task_id,
-    uintptr_t *execution_handle
-);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_object_acquisition(
@@ -251,70 +238,12 @@ shadowspill_pytorch_acquire_objects_handle(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_admit_execution(
-    const ShadowSpillExecutionDescription *description
-);
-
-/* Install one copied physical-layout certificate before execution admission. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_admit_fixed_layout(
-    const ShadowSpillFixedLayoutDescription *description
-);
-
-/* Resolve every certificate endpoint after all execution tasks are admitted. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_seal_fixed_layout(void);
-
-/*
- * Clear immutable execution records while preserving the runtime-scoped
- * physical-budget and event-pool seal.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_clear_execution_plan(void);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_resolve_execution(
-    uint64_t task_id,
-    uintptr_t *execution_handle
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_before_execution(
-    uint64_t task_id,
-    uintptr_t compute_stream_address,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_after_execution(
-    uint64_t task_id,
-    uintptr_t compute_stream_address
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_before_execution_handle(
-    uintptr_t execution_handle,
-    uint64_t task_id,
-    uintptr_t compute_stream_address,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_after_execution_handle(
-    uintptr_t execution_handle,
-    uint64_t task_id,
-    uintptr_t compute_stream_address
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
@@ -523,31 +452,6 @@ shadowspill_pytorch_validate_spill_binding(
     uint64_t size_bytes
 );
 
-/*
- * Private frontend bridge for exact runtime task boundaries. CUDA stream
- * addresses are borrowed for the duration of each call and wrapped without
- * transferring ownership.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_before_task(
-    uint64_t task_id,
-    uintptr_t compute_stream_address,
-    const uint64_t *input_object_ids,
-    uint32_t input_count,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_after_task(
-    uint64_t task_id,
-    uintptr_t compute_stream_address,
-    const ShadowSpillObjectUpdate *updates,
-    uint32_t update_count,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count
-);
-
 /* Attribute isolated profiling allocations without opening a fake task. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocation_scope_begin(uint64_t scope_id);
@@ -596,7 +500,11 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_debug_task_timing_disable(void);
 
 /* Closes a task NVTX range when frontend execution raises before after_task. */
-SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_abort_task_range(void);
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_abort_task_handle(
+    uintptr_t task_handle,
+    uint64_t task_id
+);
 
 /*
  * Exact callback ABI consumed by torch.cuda.memory.CUDAPluggableAllocator.

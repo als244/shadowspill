@@ -731,11 +731,30 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_read(
     return status;
 }
 
-void shadowspill_abort_task(ShadowSpillRuntime *runtime) {
-    if (runtime != NULL) {
-        shadowspill_finalize_aborted_task_retirements(
-            runtime, shadowspill_current_task_id(runtime)
-        );
-        shadowspill_leave_task_scope(runtime);
+void shadowspill_abort_current_task(ShadowSpillRuntime *runtime) {
+    if (runtime == NULL) {
+        return;
     }
+    shadowspill_finalize_aborted_task_retirements(
+        runtime, shadowspill_current_task_id(runtime)
+    );
+    shadowspill_leave_task_scope(runtime);
+}
+
+ShadowSpillRuntimeStatus shadowspill_abort_task_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle
+) {
+    const ShadowSpillExecutionRecord *record = handle;
+    if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
+        record->plan_owner->runtime != runtime ||
+        record->boundary_kind != SHADOWSPILL_BOUNDARY_EXECUTION_TASK) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (shadowspill_current_plan(runtime) != record->plan_owner ||
+        shadowspill_current_task_id(runtime) != record->task_id) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    shadowspill_abort_current_task(runtime);
+    return SHADOWSPILL_RUNTIME_OK;
 }

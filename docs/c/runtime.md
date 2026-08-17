@@ -82,9 +82,9 @@ runtime's pool, route, event, and object owners:
   returns its direct repeated-path handle in the same cold-path call.
 - `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
   the sole production execution boundary.
-- `shadowspill_plan_admit_execution()` and
-  `shadowspill_plan_resolve_execution()` remain exported only while native
-  canaries are migrated to the direct admission API.
+- `shadowspill_abort_task_handle()` closes that same handle-bound task scope
+  when frontend execution raises before `after_task`; it does not cancel work
+  already submitted to the device.
 - `shadowspill_plan_admit_action_batch()` creates an action-only trigger
   handle; `shadowspill_submit_action_batch_handle()` publishes it without
   opening a task boundary.
@@ -97,27 +97,15 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 
-The direct task boundary is `shadowspill_before_task()` /
-`shadowspill_after_task()`, with `shadowspill_abort_task()` for rollback.
-
-Resolved execution plans use:
-
-- `shadowspill_admit_execution()`
-- `shadowspill_clear_execution_plan()`
-- `shadowspill_resolve_execution()`
-- `shadowspill_before_execution()` and
-  `shadowspill_before_execution_handle()`
-- `shadowspill_after_execution()` and
-  `shadowspill_after_execution_handle()`
-
 Task handles bypass repeated task-ID lookup. Admission retains direct object
 references and predecoded actions for the complete plan lifetime.
 Initial placement and caller-output acquisition use their dedicated handles;
 they never impersonate execution tasks or allocate per-invocation identities.
 
-Physical placement is installed with `shadowspill_admit_fixed_layout()` and
-made immutable by `shadowspill_seal_fixed_layout()`. Allocation callbacks then
-validate task/ordinal/size/ownership before returning the admitted offset.
+Physical placement is installed with `shadowspill_plan_admit_fixed_layout()`
+and made immutable by `shadowspill_plan_seal_fixed_layout()`. Allocation
+callbacks then validate task/ordinal/size/ownership before returning the
+admitted offset.
 See [Physical admission and offset handling](../architecture/physical-admission.md)
 for the layout certificate and offset coordinate systems.
 

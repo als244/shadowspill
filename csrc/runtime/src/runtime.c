@@ -441,19 +441,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
             &runtime->profiler, route->lane, config->routes[route_id].name
         );
     }
-    const ShadowSpillPlanDescription default_plan = {
-        .execution_pool_id = runtime->execution_pool_id,
-        .spill_pool_id = runtime->spill_pool_id,
-        .fetch_route_id = runtime->fetch_route_id,
-        .evict_route_id = runtime->evict_route_id,
-    };
-    status = shadowspill_plan_create(
-        runtime, &default_plan, &runtime->default_plan
-    );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        goto fail;
-    }
-    runtime->default_plan->internal_default = 1U;
     if (pthread_create(
             &runtime->worker_thread, NULL, shadowspill_worker_main, runtime
         ) != 0) {
@@ -645,7 +632,7 @@ void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
      * task scope.  Clear its thread-local reference before closing and
      * freeing the runtime so a later runtime cannot inherit stale scope state.
      */
-    shadowspill_abort_task(runtime);
+    shadowspill_abort_current_task(runtime);
     (void)shadowspill_runtime_close(runtime);
     shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
     pthread_cond_destroy(&runtime->condition);

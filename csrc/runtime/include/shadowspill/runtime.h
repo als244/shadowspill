@@ -25,7 +25,6 @@ extern "C" {
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
-typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
 typedef struct ShadowSpillExecutionRecord ShadowSpillTaskHandle;
 typedef struct ShadowSpillExecutionRecord ShadowSpillActionBatchHandle;
 typedef struct ShadowSpillObjectAcquisitionRecord
@@ -725,56 +724,6 @@ shadowspill_transfer_object_to_caller(
     ShadowSpillAllocation *allocation
 );
 
-/*
- * Acquires all input generations and returns one binding per input position.
- * Duplicate object IDs share a binding and one readiness wait. Every distinct
- * in-flight FETCH inserts a wait on compute_stream without host synchronization.
- * Input arrays are borrowed for the call. Returned pointers remain valid for
- * the reported generation until its annotated release/offload completes.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_before_task(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream,
-    const uint64_t *input_object_ids,
-    uint32_t input_count,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-/*
- * Applies declared device-version updates, records one completion event on the
- * borrowed compute stream, and copies the ordered action list into runtime
- * ownership. It never reorders or substitutes supplied actions. Arrays are
- * borrowed only for the call; completion is asynchronous.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_after_task(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream,
-    const ShadowSpillObjectUpdate *updates,
-    uint32_t update_count,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count
-);
-
-/*
- * Resolves one immutable execution task during plan adoption. Input, mutation,
- * and action arrays are copied and every referenced object is retained. An
- * identical duplicate is idempotent; a conflicting task identity is rejected.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_admit_execution(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionDescription *description
-);
-
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_plan_admit_execution(
-    ShadowSpillPlan *plan,
-    const ShadowSpillExecutionDescription *description
-);
-
 /* Admit one immutable task and return its direct repeated-path handle. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_admit_task(
@@ -783,63 +732,22 @@ shadowspill_plan_admit_task(
     const ShadowSpillTaskHandle **handle
 );
 
-/*
- * Releases every immutable execution record admitted for the completed plan.
- * The runtime must be idle and no task boundary may be active. Logical objects
- * may outlive an execution plan; persistent frontend state is one such owner.
- * Ordinary caller-owned allocations are unaffected. This explicitly
- * synchronizing lifecycle boundary permits a later plan to reuse the same
- * contiguous task indices.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);
-
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_clear_execution(ShadowSpillPlan *plan);
 
 /*
  * Copies and validates one immutable physical-layout certificate and reserves
  * its single parent slice. Task and action identities are resolved when
- * shadowspill_seal_fixed_layout() is called after execution admission.
+ * shadowspill_plan_seal_fixed_layout() is called after task admission.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_admit_fixed_layout(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillFixedLayoutDescription *description
-);
-
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_admit_fixed_layout(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description
 );
 
-/* Resolve every task/action reference and enable fixed placement. */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_seal_fixed_layout(ShadowSpillRuntime *runtime);
-
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
-
-/*
- * Resolves one stable, immutable execution handle on the cold path. The handle
- * is borrowed from runtime and remains valid until its execution plan is
- * cleared or that runtime is destroyed. It must only be passed back to the
- * runtime that produced it.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_resolve_execution(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    const ShadowSpillExecutionHandle **handle
-);
-
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_plan_resolve_execution(
-    ShadowSpillPlan *plan,
-    uint64_t task_id,
-    const ShadowSpillExecutionHandle **handle
-);
 
 /*
  * Admit one immutable ordered object set for non-execution acquisition, such
@@ -886,33 +794,7 @@ shadowspill_acquire_objects_handle(
     uint32_t binding_capacity
 );
 
-/* Execute an admitted boundary without resupplying or decoding its topology. */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_before_execution(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_after_execution(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream
-);
-
-/* Hot-path equivalents that bypass execution-table lookup and locking. */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_before_execution_handle(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionHandle *handle,
-    ShadowSpillBackendStream compute_stream,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
+/* Repeated hot path over the task handle returned by plan admission. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_before_task_handle(
     ShadowSpillRuntime *runtime,
@@ -920,13 +802,6 @@ shadowspill_before_task_handle(
     ShadowSpillBackendStream compute_stream,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
-);
-
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_after_execution_handle(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionHandle *handle,
-    ShadowSpillBackendStream compute_stream
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
@@ -940,8 +815,10 @@ shadowspill_after_task_handle(
  * Clears the calling thread's active task scope after frontend execution
  * aborts before after_task. This does not cancel already submitted device work.
  */
-SHADOWSPILL_RUNTIME_API void shadowspill_abort_task(
-    ShadowSpillRuntime *runtime
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_abort_task_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle
 );
 
 /*

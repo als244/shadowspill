@@ -721,31 +721,10 @@ def _configure_task_boundaries(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_before_task",
-        [
-            ctypes.c_uint64,
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_uint64),
-            ctypes.c_uint32,
-            ctypes.POINTER(ObjectBinding),
-            ctypes.c_uint32,
-        ],
+        "shadowspill_pytorch_abort_task_handle",
+        [ctypes.c_size_t, ctypes.c_uint64],
         ctypes.c_uint32,
     )
-    _signature(
-        library,
-        "shadowspill_pytorch_after_task",
-        [
-            ctypes.c_uint64,
-            ctypes.c_size_t,
-            ctypes.POINTER(ObjectUpdate),
-            ctypes.c_uint32,
-            ctypes.POINTER(RuntimeAction),
-            ctypes.c_uint32,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(library, "shadowspill_pytorch_abort_task_range", [], None)
 
 
 def _configure_execution(library: Any) -> None:
@@ -793,12 +772,6 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_plan_admit_execution",
-        [ctypes.c_size_t, ctypes.POINTER(ExecutionDescription)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
         "shadowspill_pytorch_plan_admit_task",
         [
             ctypes.c_size_t,
@@ -823,12 +796,6 @@ def _configure_execution(library: Any) -> None:
         library,
         "shadowspill_pytorch_plan_clear_execution",
         [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_resolve_execution",
-        [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
         ctypes.c_uint32,
     )
     _signature(
@@ -873,60 +840,6 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_admit_execution",
-        [ctypes.POINTER(ExecutionDescription)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_admit_fixed_layout",
-        [ctypes.POINTER(FixedLayoutDescription)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_seal_fixed_layout",
-        [],
-        ctypes.c_uint32,
-    )
-    _signature(library, "shadowspill_pytorch_clear_execution_plan", [], ctypes.c_uint32)
-    _signature(
-        library,
-        "shadowspill_pytorch_resolve_execution",
-        [ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_before_execution",
-        [
-            ctypes.c_uint64,
-            ctypes.c_size_t,
-            ctypes.POINTER(ObjectBinding),
-            ctypes.c_uint32,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_after_execution",
-        [ctypes.c_uint64, ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_before_execution_handle",
-        [
-            ctypes.c_size_t,
-            ctypes.c_uint64,
-            ctypes.c_size_t,
-            ctypes.POINTER(ObjectBinding),
-            ctypes.c_uint32,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
         "shadowspill_pytorch_before_task_handle",
         [
             ctypes.c_size_t,
@@ -935,12 +848,6 @@ def _configure_execution(library: Any) -> None:
             ctypes.POINTER(ObjectBinding),
             ctypes.c_uint32,
         ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_after_execution_handle",
-        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t],
         ctypes.c_uint32,
     )
     _signature(

@@ -62,8 +62,6 @@ semantics:
 - `shadowspill_pytorch_plan_destroy()`
 - `shadowspill_pytorch_plan_bind_object()`
 - `shadowspill_pytorch_plan_admit_task()`
-- `shadowspill_pytorch_plan_admit_execution()` remains exported only while
-  low-level adapter canaries are migrated.
 - `shadowspill_pytorch_plan_admit_action_batch()` and
   `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_plan_admit_object_acquisition()` and
@@ -71,25 +69,15 @@ semantics:
 - `shadowspill_pytorch_plan_admit_fixed_layout()`
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
 - `shadowspill_pytorch_plan_clear_execution()`
-- `shadowspill_pytorch_plan_resolve_execution()`
 
-Task and admitted-execution calls mirror the neutral runtime:
+Task calls mirror the neutral runtime:
 
 - `shadowspill_pytorch_before_task_handle()` and
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
-- `shadowspill_pytorch_before_task()` / `shadowspill_pytorch_after_task()`
-- `shadowspill_pytorch_admit_execution()`
-- `shadowspill_pytorch_resolve_execution()`
-- `shadowspill_pytorch_before_execution()` and
-  `shadowspill_pytorch_before_execution_handle()`
-- `shadowspill_pytorch_after_execution()` and
-  `shadowspill_pytorch_after_execution_handle()`
-- `shadowspill_pytorch_clear_execution_plan()`
 
-Fixed placement uses `shadowspill_pytorch_admit_fixed_layout()` and
-`shadowspill_pytorch_seal_fixed_layout()`. The certificate and its runtime
-projection are described in [Physical admission and offset
-handling](../architecture/physical-admission.md).
+Fixed placement uses the plan-owned admission and sealing calls above. The
+certificate and its runtime projection are described in [Physical admission
+and offset handling](../architecture/physical-admission.md).
 
 ## Profiling and tracing
 
@@ -99,9 +87,10 @@ handling](../architecture/physical-admission.md).
   allocations without creating a fake execution task.
 - `shadowspill_pytorch_profiler_annotations_set()` enables the profiler
   backend.
-- `shadowspill_pytorch_profile_range_begin()`,
-  `shadowspill_pytorch_profile_range_end()`, and
-  `shadowspill_pytorch_abort_task_range()` manage ranges.
+- `shadowspill_pytorch_profile_range_begin()` and
+  `shadowspill_pytorch_profile_range_end()` manage explicit ranges.
+- `shadowspill_pytorch_abort_task_handle()` closes the matching admitted task
+  scope and its profiler range after frontend execution aborts.
 - `shadowspill_pytorch_task_labels_configure()` installs semantic execution
   labels.
 - `shadowspill_pytorch_debug_task_timing_enable()`,

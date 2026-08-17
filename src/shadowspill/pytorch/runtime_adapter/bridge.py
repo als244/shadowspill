@@ -1275,10 +1275,15 @@ class RuntimeBridge:
             )
         return tuple(result)
 
-    def abort_task(self) -> None:
-        """Close the current native task scope after frontend failure."""
+    def abort_task(self, task_handle: int, task_id: int) -> None:
+        """Close the matching admitted task scope after frontend failure."""
 
-        self.library.shadowspill_pytorch_abort_task_range()
+        self._require(
+            self.library.shadowspill_pytorch_abort_task_handle(
+                task_handle, task_id
+            ),
+            f"abort task {task_id}",
+        )
 
     def raise_if_allocator_failed(self, operation: str) -> None:
         """Raise the first callback failure without touching the device timeline."""

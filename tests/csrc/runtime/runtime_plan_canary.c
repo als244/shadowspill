@@ -26,36 +26,32 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         .evict_route_id = 1U,
     };
     const ShadowSpillExecutionDescription task = {.task_id = 7U};
-    const ShadowSpillExecutionHandle *first_handle = NULL;
-    const ShadowSpillExecutionHandle *second_handle = NULL;
+    const ShadowSpillTaskHandle *first_handle = NULL;
+    const ShadowSpillTaskHandle *second_handle = NULL;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_execution(first, &task) !=
+        shadowspill_plan_admit_task(first, &task, &first_handle) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_execution(second, &task) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_resolve_execution(first, 7U, &first_handle) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_resolve_execution(second, 7U, &second_handle) !=
+        shadowspill_plan_admit_task(second, &task, &second_handle) !=
             SHADOWSPILL_RUNTIME_OK ||
         first_handle == NULL || second_handle == NULL ||
         first_handle == second_handle ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
-        failed = shadowspill_before_execution_handle(
+        failed = shadowspill_before_task_handle(
                 runtime, first_handle, compute, NULL, 0U
             ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_after_execution_handle(
+            shadowspill_after_task_handle(
                 runtime, first_handle, compute
             ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_before_execution_handle(
+            shadowspill_before_task_handle(
                 runtime, second_handle, compute, NULL, 0U
             ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_after_execution_handle(
+            shadowspill_after_task_handle(
                 runtime, second_handle, compute
             ) != SHADOWSPILL_RUNTIME_OK ||
             shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
@@ -200,6 +196,8 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
         .input_object_ids = &input,
         .input_count = 1U,
     };
+    const ShadowSpillTaskHandle *first_task = NULL;
+    const ShadowSpillTaskHandle *second_task = NULL;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &first_object) !=
@@ -222,10 +220,11 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
         shadowspill_plan_bind_object(
             second, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_execution(first, &task) !=
+        shadowspill_plan_admit_task(first, &task, &first_task) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_execution(second, &task) !=
+        shadowspill_plan_admit_task(second, &task, &second_task) !=
             SHADOWSPILL_RUNTIME_OK ||
+        first_task == NULL || second_task == NULL ||
         shadowspill_plan_bind_object(
             first, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -370,7 +369,6 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     const uint64_t requested_objects[2] = {9U, 9U};
     const ShadowSpillActionBatchHandle *batch = NULL;
     const ShadowSpillObjectAcquisitionHandle *acquisition = NULL;
-    const ShadowSpillExecutionHandle *not_a_task = NULL;
     ShadowSpillObjectBinding bindings[2] = {{0}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -388,9 +386,6 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
             plan, 77U, &fetch, 1U, &batch
         ) != SHADOWSPILL_RUNTIME_OK ||
         batch == NULL ||
-        shadowspill_plan_resolve_execution(plan, 77U, &not_a_task) !=
-            SHADOWSPILL_RUNTIME_INVALID_STATE ||
-        not_a_task != NULL ||
         shadowspill_plan_admit_object_acquisition(
             plan, requested_objects, 2U, &acquisition
         ) != SHADOWSPILL_RUNTIME_OK ||
@@ -407,6 +402,13 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
             bindings[0].pointer == NULL ||
             bindings[0].pointer != bindings[1].pointer ||
             bindings[0].generation != bindings[1].generation ||
+            shadowspill_before_task_handle(
+                runtime,
+                (const ShadowSpillTaskHandle *)batch,
+                compute,
+                NULL,
+                0U
+            ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
             shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
     }
     if (object_handle != NULL) {

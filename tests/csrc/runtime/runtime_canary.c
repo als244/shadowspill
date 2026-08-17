@@ -6,6 +6,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 static int best_fit_preserves_largest_range(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -333,7 +335,19 @@ int main(void) {
         .object_id = object.object_id,
         .version_delta = 1U,
     };
-    if (shadowspill_after_task(runtime, 1U, compute, &update, 1U, &offload, 1U) !=
+    const ShadowSpillExecutionDescription first_task = {
+        .task_id = 1U,
+        .updates = &update,
+        .update_count = 1U,
+        .actions = &offload,
+        .action_count = 1U,
+    };
+    if (shadowspill_test_admit_task(runtime, &first_task) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, first_task.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
+            runtime, first_task.task_id, compute
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
@@ -347,14 +361,28 @@ int main(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    if (shadowspill_after_task(runtime, 2U, compute, NULL, 0U, &prefetch, 1U) !=
+    if (shadowspill_test_submit_actions(
+            runtime, 2U, compute, &prefetch, 1U
+        ) !=
         SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
     const uint64_t input_ids[] = {object.object_id, object.object_id};
+    const ShadowSpillObjectUpdate post_prefetch_update = {
+        .object_id = object.object_id,
+        .version_delta = 1U,
+    };
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 3U,
+        .input_object_ids = input_ids,
+        .input_count = 2U,
+        .updates = &post_prefetch_update,
+        .update_count = 1U,
+    };
     ShadowSpillObjectBinding bindings[2] = {{0}};
-    if (shadowspill_before_task(
-            runtime, 3U, compute, input_ids, 2U, bindings, 2U
+    if (shadowspill_test_admit_task(runtime, &consumer) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, consumer.task_id, compute, bindings, 2U
         ) != SHADOWSPILL_RUNTIME_OK ||
         bindings[0].pointer == first_generation.pointer ||
         bindings[0].pointer != bindings[1].pointer ||
@@ -363,14 +391,9 @@ int main(void) {
         bindings[0].authoritative_version != 5U) {
         return EXIT_FAILURE;
     }
-    const ShadowSpillObjectUpdate post_prefetch_update = {
-        .object_id = object.object_id,
-        .version_delta = 1U,
-    };
     ShadowSpillObjectSnapshot snapshot = {0};
-    if (shadowspill_after_task(
-            runtime, 3U, compute, &post_prefetch_update, 1U, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_test_after_task(runtime, consumer.task_id, compute) !=
+            SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -384,8 +407,8 @@ int main(void) {
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
     if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
-        shadowspill_after_task(
-            runtime, 6U, compute, NULL, 0U, &release, 1U
+        shadowspill_test_submit_actions(
+            runtime, 6U, compute, &release, 1U
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
@@ -427,27 +450,35 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &pair[1]) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 4U, compute, NULL, 0U, pair_prefetch, 2U
+        shadowspill_test_submit_actions(
+            runtime, 4U, compute, pair_prefetch, 2U
         ) !=
             SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
     const uint64_t pair_inputs[] = {8U, 9U};
-    ShadowSpillObjectBinding pair_bindings[2] = {{0}};
-    if (shadowspill_before_task(
-            runtime, 5U, compute, pair_inputs, 2U, pair_bindings, 2U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        pair_bindings[0].pointer == pair_bindings[1].pointer) {
-        return EXIT_FAILURE;
-    }
     const ShadowSpillRuntimeAction pair_release[] = {
         {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
         {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
     };
+    const ShadowSpillExecutionDescription pair_consumer = {
+        .task_id = 5U,
+        .input_object_ids = pair_inputs,
+        .input_count = 2U,
+        .actions = pair_release,
+        .action_count = 2U,
+    };
+    ShadowSpillObjectBinding pair_bindings[2] = {{0}};
+    if (shadowspill_test_admit_task(runtime, &pair_consumer) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, pair_consumer.task_id, compute, pair_bindings, 2U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        pair_bindings[0].pointer == pair_bindings[1].pointer) {
+        return EXIT_FAILURE;
+    }
     if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
-        shadowspill_after_task(
-            runtime, 5U, compute, NULL, 0U, pair_release, 2U
+        shadowspill_test_after_task(
+            runtime, pair_consumer.task_id, compute
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
@@ -463,7 +494,7 @@ int main(void) {
         shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
         return EXIT_FAILURE;
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     shadowspill_mock_backend_destroy(mock);
     return EXIT_SUCCESS;
 }

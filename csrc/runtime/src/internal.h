@@ -488,7 +488,6 @@ struct ShadowSpillPlan {
     uint8_t lifecycle_lock_initialized;
     uint8_t object_bindings_initialized;
     uint8_t execution_initialized;
-    uint8_t internal_default;
     struct ShadowSpillPlan *ownership_next;
     struct ShadowSpillPlan **ownership_previous_link;
 };
@@ -504,6 +503,8 @@ ShadowSpillObject *shadowspill_plan_object_acquire(
     uint64_t plan_object_id,
     uint8_t *consistency
 );
+
+void shadowspill_abort_current_task(ShadowSpillRuntime *runtime);
 
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
@@ -548,7 +549,6 @@ struct ShadowSpillRuntime {
     ShadowSpillObjectTable objects;
     pthread_mutex_t plans_lock;
     ShadowSpillPlan *plans;
-    ShadowSpillPlan *default_plan;
     uint8_t plans_lock_initialized;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
@@ -1119,7 +1119,7 @@ char *shadowspill_copy_action_trace_label(
     uint64_t task_id,
     uint64_t size_bytes
 );
-ShadowSpillRuntimeStatus shadowspill_after_execution_record(
+ShadowSpillRuntimeStatus shadowspill_after_task_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
     ShadowSpillBackendStream compute_stream
