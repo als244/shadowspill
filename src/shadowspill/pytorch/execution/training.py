@@ -439,7 +439,6 @@ class TrainingExecutor:
         )
         for alias_id in aliases:
             self._state.object_store.pop(alias_id, None)
-            self._state.generations.pop(alias_id, None)
 
     def _rebuild_objective_results(
         self,
@@ -737,7 +736,6 @@ class TrainingExecutor:
             for item in planned:
                 alias_id = self._bridge.alias_for_object(item.object_id)
                 self._state.object_store.pop(alias_id, None)
-                self._state.generations.pop(alias_id, None)
                 self._state.object_tensors.pop(item.object_id, None)
             self._optimizer_state_initialized = False
             return False
@@ -818,11 +816,8 @@ class TrainingExecutor:
                     f"shadowspill.storage_rebind.{record.trace_label}"
                 ):
                     input_tensors = self._lookup_task_inputs(record, timing)
-                    generations = self._acquire_task_inputs(
-                        record, stream, input_tensors, timing
-                    )
+                    self._acquire_task_inputs(record, stream, input_tensors, timing)
                     runtime_scope_open = True
-                    self._publish_input_generations(record, generations, timing)
                     call = self._assemble_task_call(record, timing)
                 if timing is not None:
                     timing.host_rebind_ns = time.perf_counter_ns() - rebind_started_ns
@@ -890,46 +885,32 @@ class TrainingExecutor:
         stream: torch.cuda.Stream | None,
         tensors: tuple[torch.Tensor, ...],
         timing: _ArmedTaskTiming | None,
-    ) -> tuple[int, ...]:
+    ) -> None:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         try:
-            generations = self._acquire_input_generations(record, stream, tensors)
+            self._acquire_input_storages(record, stream, tensors)
         except RuntimeError as error:
             states = self._bridge.input_failure_states(record.input_aliases)
             detail = "; ".join(states) if states else "all snapshots device-ready"
             raise RuntimeError(f"{error}; input_states=[{detail}]") from error
         if timing is not None:
             timing.host_native_before_task_ns = time.perf_counter_ns() - started_ns
-        return generations
 
-    def _acquire_input_generations(
+    def _acquire_input_storages(
         self,
         record: _ExecutionTaskRecord,
         stream: torch.cuda.Stream | None,
         tensors: tuple[torch.Tensor, ...],
-    ) -> tuple[int, ...]:
+    ) -> None:
         if record.task_handle == 0:
             raise AssertionError("execution task has no admitted handle")
-        return self._bridge.before_task_and_acquire(
+        self._bridge.before_task_and_acquire(
             record.task_handle,
             record.task_index,
             self._state.device.index or 0,
             tensors,
             record.input_aliases,
         )
-
-    def _publish_input_generations(
-        self,
-        record: _ExecutionTaskRecord,
-        generations: tuple[int, ...],
-        timing: _ArmedTaskTiming | None,
-    ) -> None:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        self._state.generations.update(
-            zip(record.input_aliases, generations, strict=True)
-        )
-        if timing is not None:
-            timing.host_generation_publish_ns = time.perf_counter_ns() - started_ns
 
     def _assemble_task_call(
         self,
@@ -1030,10 +1011,8 @@ class TrainingExecutor:
             # allocator frees become causal predecessors of any action that
             # reuses the task's spatial ranges.
             del raw_outputs
-            generations = self._publish_task_to_runtime(
-                prepared, processed, dematerialized
-            )
-            self._publish_output_generations(prepared, processed, generations)
+            self._publish_task_to_runtime(prepared, processed, dematerialized)
+            self._publish_frontend_bindings(prepared, processed)
             self._finish_task_cleanup(prepared)
             outputs = processed.outputs
         self._finish_task_timing(prepared.timing)
@@ -1062,32 +1041,29 @@ class TrainingExecutor:
         prepared: _PreparedTask,
         processed: _ProcessedTaskOutputs,
         dematerialized: tuple[torch.Tensor, ...],
-    ) -> tuple[int, ...]:
+    ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         with self._profile_range(
             f"shadowspill.runtime.after_task.{prepared.record.trace_label}"
         ):
-            generations = self._publish_admitted_task(
-                prepared, processed, dematerialized
-            )
+            self._publish_admitted_task(prepared, processed, dematerialized)
         prepared.runtime_scope_open = False
         if prepared.timing is not None:
             prepared.timing.host_native_after_task_ns = (
                 time.perf_counter_ns() - started_ns
             )
-        return generations
 
     def _publish_admitted_task(
         self,
         prepared: _PreparedTask,
         processed: _ProcessedTaskOutputs,
         dematerialized: tuple[torch.Tensor, ...],
-    ) -> tuple[int, ...]:
+    ) -> None:
         record = prepared.record
         if record.task_handle == 0:
             raise AssertionError("execution task has no admitted handle")
         try:
-            return self._bridge.after_task_and_update(
+            self._bridge.after_task_and_update(
                 record.task_handle,
                 record.task_index,
                 self._state.device.index or 0,
@@ -1111,34 +1087,23 @@ class TrainingExecutor:
                 f"({record.semantic_name}): {error}"
             ) from error
 
-    def _publish_output_generations(
+    def _publish_frontend_bindings(
         self,
         prepared: _PreparedTask,
         processed: _ProcessedTaskOutputs,
-        generations: tuple[int, ...],
     ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         replacement_by_alias = {item.alias_id: item for item in processed.replacements}
-        for publication, generation in zip(processed.adopted, generations, strict=True):
+        for publication in processed.adopted:
             alias_id = publication.alias_id
             if alias_id in processed.replacement_aliases:
-                self._state.publish_replacement_generation(
-                    replacement_by_alias[alias_id], generation
-                )
+                self._state.publish_replacement_views(replacement_by_alias[alias_id])
             else:
-                self._state.generations[alias_id] = generation
+                self._state.object_store[alias_id] = publication.tensor
         if processed.optimizer_bindings:
-            generation_by_alias = dict(
-                zip(
-                    (item.alias_id for item in processed.adopted),
-                    generations,
-                    strict=True,
-                )
-            )
             for object_id, tensor, alias_id in processed.optimizer_bindings:
                 self._state.object_store.setdefault(alias_id, tensor)
                 self._state.object_tensors[object_id] = tensor
-                self._state.generations[alias_id] = generation_by_alias[alias_id]
             self._optimizer_state_available = True
         if prepared.timing is not None:
             prepared.timing.host_output_state_publish_ns = (
@@ -1219,7 +1184,6 @@ class TrainingExecutor:
                 parameter.grad = None
             for alias_id in self._gradients:
                 self._state.object_store.pop(alias_id, None)
-                self._state.generations.pop(alias_id, None)
             for gradient_binding in prepared.run.lowered.gradients:
                 self._state.object_tensors.pop(
                     gradient_binding.gradient_object_id, None
@@ -1456,7 +1420,6 @@ class TrainingExecutor:
         del run
         for alias_id, object_ids in record.released_ephemeral:
             self._state.object_store.pop(alias_id, None)
-            self._state.generations.pop(alias_id, None)
             for object_id in object_ids:
                 self._state.object_tensors.pop(object_id, None)
 

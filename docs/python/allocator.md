@@ -27,10 +27,12 @@ matching free.
 ## Storage rebinding
 
 Logical objects keep identity while their current execution address changes.
-Before a task, the executor acquires current object generations, inserts
-stream waits for unfinished fetches, and batch-rebinds PyTorch storages. After
-the compiled call, returned allocations are classified as outputs, mutations,
-or anonymous temporaries and published through the runtime.
+Before a task, the native boundary snapshots current leases, inserts stream
+waits for unfinished fetches, and batch-rebinds PyTorch storages. After the
+compiled call, returned allocations are classified as outputs, mutations, or
+anonymous temporaries and published through the runtime. Generation ownership
+stays in the neutral runtime; ordinary task boundaries do not copy generation
+arrays into Python.
 
 Views preserve shape, stride, storage offset, and alias relationships. The
 runtime never asks PyTorch to copy an object solely because its residency

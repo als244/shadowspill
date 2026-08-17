@@ -164,7 +164,6 @@ class MaterializedForwardState:
         self.device = torch.device("cuda", device_ordinal)
         self.root_arguments = flat_runtime_arguments(capture, model, example_inputs)
         self.object_store: dict[str, torch.Tensor] = {}
-        self.generations: dict[str, int] = {}
         self._closed = False
         self._state_names = tuple(model.state_dict().keys())
         self._model_aliases: set[str] = set()
@@ -344,9 +343,6 @@ class MaterializedForwardState:
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
         """Collect persistent views before native task publication begins."""
 
-        previous_generation = self.generations.get(alias_id)
-        if previous_generation is None:
-            raise RuntimeError(f"replacement alias {alias_id!r} has no generation")
         tensors: list[torch.Tensor] = []
         representative = self.object_store.get(alias_id)
         if representative is not None:
@@ -365,19 +361,13 @@ class MaterializedForwardState:
             raise RuntimeError(f"replacement alias {alias_id!r} has no frontend view")
         return ReplacementStorageViews(
             alias_id=alias_id,
-            previous_generation=previous_generation,
             tensors=unique,
         )
 
-    def publish_replacement_generation(
-        self,
-        replacement: ReplacementStorageViews,
-        target_generation: int,
-    ) -> None:
-        """Record a replacement already rebound by the native task boundary."""
+    def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
+        """Keep the stable frontend representative rebound by the native boundary."""
 
         self.object_store[replacement.alias_id] = replacement.tensors[0]
-        self.generations[replacement.alias_id] = target_generation
 
     def restore_cpu_and_unregister(self) -> None:
         """Synchronize, write model state back, and reclaim all plan objects."""
@@ -412,7 +402,6 @@ class MaterializedForwardState:
             self.bridge.registered_aliases() - self._persistent_aliases
         )
         self.object_store.clear()
-        self.generations.clear()
         self._closed = True
 
     def _empty_model_aliases(
@@ -535,11 +524,9 @@ class MaterializedForwardState:
         if shared_items:
             torch.ops.shadowspill._dematerialize_storages([representative])
             self.object_store[alias_id] = representative
-            self.generations[alias_id] = shared_items[0].reference.generation
             return
         binding = self.bridge.publish_initial_tensor(alias_id, owner)
         self.object_store[alias_id] = representative
-        self.generations[alias_id] = binding.generation
         task_number = (1 << 61) + ordinal
         actions = (
             MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),

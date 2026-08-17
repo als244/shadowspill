@@ -212,7 +212,6 @@ def _build_task_timing(
         host_native_before_task_seconds=task.host_native_before_task_ns / 1e9,
         host_input_lookup_seconds=task.host_input_lookup_ns / 1e9,
         host_storage_rebind_seconds=task.host_storage_rebind_ns / 1e9,
-        host_generation_publish_seconds=task.host_generation_publish_ns / 1e9,
         host_argument_assembly_seconds=task.host_argument_assembly_ns / 1e9,
         host_rebind_seconds=task.host_rebind_ns / 1e9,
         host_dispatch_seconds=task.host_dispatch_ns / 1e9,

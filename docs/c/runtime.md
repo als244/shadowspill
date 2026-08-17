@@ -105,8 +105,9 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_task_publish_allocation()` updates one predecoded logical
   object by task-owned publication ordinal. Bind and replacement publication
   preserve the same logical object identity.
-- `shadowspill_task_validate_publication_binding()` validates a current or
-  just-retired generation through that same direct task record.
+- `shadowspill_task_validate_replacement_binding()` validates that a frontend
+  view names the replacement publication's exact retired lease while its
+  successor tensor names the current lease.
 - `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
   the sole production execution boundary.
 - `shadowspill_abort_task_handle()` closes that same handle-bound task scope

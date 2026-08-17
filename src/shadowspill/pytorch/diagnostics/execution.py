@@ -49,7 +49,6 @@ class TaskExecutionTiming:
     host_native_before_task_seconds: float
     host_input_lookup_seconds: float
     host_storage_rebind_seconds: float
-    host_generation_publish_seconds: float
     host_argument_assembly_seconds: float
     host_rebind_seconds: float
     host_dispatch_seconds: float
@@ -118,7 +117,6 @@ class TaskExecutionTiming:
             "host_native_before_task_seconds": (self.host_native_before_task_seconds),
             "host_input_lookup_seconds": self.host_input_lookup_seconds,
             "host_storage_rebind_seconds": self.host_storage_rebind_seconds,
-            "host_generation_publish_seconds": (self.host_generation_publish_seconds),
             "host_argument_assembly_seconds": self.host_argument_assembly_seconds,
             "host_rebind_seconds": self.host_rebind_seconds,
             "host_dispatch_seconds": self.host_dispatch_seconds,

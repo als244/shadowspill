@@ -146,7 +146,6 @@ capacity wait.
 | `host_native_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
 | `host_input_lookup_seconds` | Resolve frontend tensor/object bindings. |
 | `host_storage_rebind_seconds` | Rebind changed PyTorch storages. |
-| `host_generation_publish_seconds` | Publish current object generations. |
 | `host_argument_assembly_seconds` | Assemble predecoded callable arguments. |
 | `host_rebind_seconds` | Aggregate rebinding path retained for qualification. |
 

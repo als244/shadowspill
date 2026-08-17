@@ -32,7 +32,6 @@ class ArmedTaskTiming:
     host_native_before_task_ns: int = 0
     host_input_lookup_ns: int = 0
     host_storage_rebind_ns: int = 0
-    host_generation_publish_ns: int = 0
     host_argument_assembly_ns: int = 0
     host_rebind_ns: int = 0
     host_dispatch_ns: int = 0

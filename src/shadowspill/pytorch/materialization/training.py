@@ -62,7 +62,6 @@ class TrainingMaterializedState:
         self.device = torch.device("cuda", device_ordinal)
         self.object_store: dict[str, torch.Tensor] = {}
         self.object_tensors: dict[str, torch.Tensor] = {}
-        self.generations: dict[str, int] = {}
         self._closed = False
         self._model_on_cpu = False
         self._state_names = tuple(model.state_dict().keys())
@@ -130,7 +129,6 @@ class TrainingMaterializedState:
             self.object_store[alias_id] = representative
             for item in items:
                 self.object_tensors[item.binding.object_id] = item.tensor
-            self.generations[alias_id] = binding.generation
             self._release_placeholder(
                 alias_id, representative, binding.generation, ordinal
             )
@@ -177,7 +175,6 @@ class TrainingMaterializedState:
             binding = bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = tensor
             self.object_tensors[fixed.object_id] = tensor
-            self.generations[alias_id] = binding.generation
             self._release_placeholder(
                 alias_id,
                 tensor,
@@ -243,7 +240,6 @@ class TrainingMaterializedState:
                 representative = tensor
             binding = self.bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = representative
-            self.generations[alias_id] = binding.generation
             self._release_placeholder(
                 alias_id,
                 representative,
@@ -276,9 +272,6 @@ class TrainingMaterializedState:
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
         """Collect persistent views before native task publication begins."""
 
-        previous_generation = self.generations.get(alias_id)
-        if previous_generation is None:
-            raise RuntimeError(f"replacement alias {alias_id!r} has no generation")
         tensors: list[torch.Tensor] = []
         representative = self.object_store.get(alias_id)
         if representative is not None:
@@ -292,19 +285,13 @@ class TrainingMaterializedState:
             raise RuntimeError(f"replacement alias {alias_id!r} has no frontend view")
         return ReplacementStorageViews(
             alias_id=alias_id,
-            previous_generation=previous_generation,
             tensors=unique,
         )
 
-    def publish_replacement_generation(
-        self,
-        replacement: ReplacementStorageViews,
-        target_generation: int,
-    ) -> None:
-        """Record a replacement already rebound by the native task boundary."""
+    def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
+        """Keep the stable frontend representative rebound by the native boundary."""
 
         self.object_store[replacement.alias_id] = replacement.tensors[0]
-        self.generations[replacement.alias_id] = target_generation
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         if self._closed:
@@ -373,7 +360,6 @@ class TrainingMaterializedState:
         )
         self.object_store.clear()
         self.object_tensors.clear()
-        self.generations.clear()
         self._closed = True
         self._model_on_cpu = True
 
@@ -482,7 +468,6 @@ class TrainingMaterializedState:
             representative = view
         binding = self.bridge.publish_initial_tensor(alias_id, owner)
         self.object_store[alias_id] = representative
-        self.generations[alias_id] = binding.generation
         self._release_placeholder(
             alias_id,
             representative,
