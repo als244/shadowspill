@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 36U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 37U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -475,6 +475,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t allocation_events;
     uint64_t allocation_event_capacity;
     uint64_t allocation_event_overflow;
+    uint64_t event_lease_capacity;
+    uint64_t event_lease_in_use;
+    uint64_t event_lease_peak_in_use;
+    uint64_t event_lease_growth_rejections;
 } ShadowSpillRuntimeStatistics;
 
 typedef struct ShadowSpillRuntimeFailure {
@@ -532,6 +536,18 @@ typedef struct ShadowSpillObjectSnapshot {
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **runtime
+);
+
+/*
+ * Cold-path capacity reservation for neutral event records. Repeated calls may
+ * grow the owner for additional admitted callables at an idle boundary. After
+ * the first call, steady execution never falls back to host allocation when
+ * the pool is full.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_reserve_event_leases(
+    ShadowSpillRuntime *runtime,
+    uint64_t minimum_free_leases
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_create(

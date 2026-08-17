@@ -4,6 +4,17 @@
 #include <shadowspill/runtime.h>
 
 typedef struct ShadowSpillEventLease ShadowSpillEventLease;
+typedef struct ShadowSpillEventPool ShadowSpillEventPool;
+
+int shadowspill_event_pool_initialize(ShadowSpillEventPool *pool);
+void shadowspill_event_pool_destroy(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventPool *pool
+);
+ShadowSpillRuntimeStatus shadowspill_event_pool_reserve(
+    ShadowSpillEventPool *pool,
+    uint64_t minimum_free_leases
+);
 
 ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
     ShadowSpillRuntime *runtime,

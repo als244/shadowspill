@@ -706,10 +706,6 @@ int shadowspill_cuda_backend_seal_event_pool(
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    if (backend->statistics.event_pool_sealed) {
-        pthread_mutex_unlock(&backend->mutex);
-        return 0;
-    }
     uint64_t free_count = backend->statistics.event_pool_capacity -
         backend->statistics.event_pool_in_use;
     pthread_mutex_unlock(&backend->mutex);

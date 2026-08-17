@@ -7,7 +7,10 @@ worker, trace buffers, and first-failure state.
 ## Lifecycle and calibration
 
 - `shadowspill_runtime_create()` validates the backend/configuration, allocates
-  pool arenas, creates lanes and event inventory, and starts the worker.
+  pool arenas, creates lanes, and starts the worker.
+- `shadowspill_runtime_reserve_event_leases()` grows and seals the neutral
+  event-record inventory at an idle cold-plan boundary. Repeated calls support
+  additional callables sharing the same runtime without racing existing work.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.

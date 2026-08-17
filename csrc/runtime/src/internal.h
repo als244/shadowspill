@@ -45,6 +45,7 @@ typedef struct ShadowSpillStreamRecord {
 
 typedef struct ShadowSpillObject ShadowSpillObject;
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskRecord;
+typedef struct ShadowSpillEventPool ShadowSpillEventPool;
 
 struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
@@ -56,6 +57,33 @@ struct ShadowSpillEventLease {
      * owning MemoryPool commits the matching lease transition under pool.lock.
      */
     _Atomic uint8_t backend_complete;
+    struct ShadowSpillEventLease *free_next;
+    uint8_t pool_owned;
+};
+
+typedef struct ShadowSpillEventPoolBlock {
+    ShadowSpillEventLease *leases;
+    uint64_t count;
+    struct ShadowSpillEventPoolBlock *next;
+} ShadowSpillEventPoolBlock;
+
+/*
+ * Owns reusable neutral event records. Backend event handles are still leased
+ * through the synchronization backend, whose implementation may maintain its
+ * own driver-event pool. Explicit cold-path reserve calls may grow this owner;
+ * once reserved, a hot-path shortage fails instead of allocating from libc.
+ */
+struct ShadowSpillEventPool {
+    pthread_mutex_t lock;
+    ShadowSpillEventPoolBlock *blocks;
+    ShadowSpillEventLease *free_head;
+    uint64_t capacity;
+    uint64_t available;
+    uint64_t in_use;
+    uint64_t peak_in_use;
+    uint64_t growth_rejections;
+    uint8_t initialized;
+    uint8_t sealed;
 };
 
 typedef struct ShadowSpillEventRecord {
@@ -572,6 +600,7 @@ struct ShadowSpillRuntime {
     pthread_mutex_t plans_lock;
     ShadowSpillPlan *plans;
     uint8_t plans_lock_initialized;
+    ShadowSpillEventPool events;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;

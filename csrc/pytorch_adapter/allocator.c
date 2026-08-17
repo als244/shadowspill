@@ -479,9 +479,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
 ) {
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillCudaBackend *cuda = adapter.cuda;
+    ShadowSpillRuntime *runtime = adapter.runtime;
     pthread_mutex_unlock(&adapter.mutex);
-    if (cuda == NULL) {
+    if (cuda == NULL || runtime == NULL) {
         return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillRuntimeStatus reserve_status =
+        shadowspill_runtime_reserve_event_leases(runtime, event_pool_reserve);
+    if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
+        return reserve_status;
     }
     if (shadowspill_cuda_backend_seal_event_pool(cuda, event_pool_reserve) != 0) {
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;

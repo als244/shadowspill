@@ -915,3 +915,38 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Recycled-generation retirement race (`056b772`)
+
+- A repeated native lifecycle run exposed an intermittent worker SIGSEGV in
+  `shadowspill_memory_pool_try_lock_reclamation()`. The worker had detached an
+  incomplete retirement for generation N; same-stream reuse recycled the same
+  lease record for generation N+1, whose retirement could be processed first.
+  Releasing N+1 cleared the mutable `lease->pool`, after which the stale N
+  record dereferenced that field before it performed its generation check.
+- Retirement records now snapshot their stable pool owner and allocation ID at
+  enqueue time. The worker locks that runtime-owned pool first and then checks
+  that the lease still names the same pool and generation. Stale records only
+  release their retained event references.
+- The best-fit canary now keeps its intended retirements pending explicitly,
+  rather than asserting an asynchronous count against a zero-delay backend.
+  Fifty repeated perturbed-heap runs and the complete 28-canary suite passed.
+
+## 2026-08-17 — Runtime-owned neutral event records
+
+- Found that the device backend already reused timing-disabled driver events,
+  but the neutral runtime still allocated and freed one C event wrapper for
+  every task, transfer, and retirement fence. This violated the steady-state
+  host-allocation contract even though driver-event growth was already zero.
+- Added a runtime-owned event-record pool. Cold physical sealing reserves its
+  complete free inventory; hot acquisition pops one record, and final release
+  returns it. Once sealed, exhaustion fails closed instead of falling back to
+  `calloc`.
+- Explicit cold reserve calls may grow the inventory for another callable
+  sharing the runtime. The CUDA backend's matching explicit seal call now also
+  grows its free driver-event inventory when necessary, while ordinary event
+  creation remains forbidden from growing a sealed pool.
+- Added runtime diagnostics for capacity, current/peak use, and rejected hot
+  growth, plus native coverage for cold growth and reuse across 320 retirement
+  fences. Runtime ABI 37 and PyTorch adapter ABI 46 describe the extended
+  statistics and reserve function.
