@@ -198,12 +198,7 @@ def main() -> int:
     torch.cuda._sleep(1_000)
     compute.synchronize()
 
-    torch.ops.shadowspill._rebind_storage(
-        second, 0, second_binding.object_id, second_binding.generation
-    )
-    torch.ops.shadowspill._rebind_storage(
-        third, 0, third_binding.object_id, third_binding.generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([second, third])
     _submit_actions(
         library,
         plan,
@@ -236,9 +231,7 @@ def main() -> int:
         "baseline statistics",
     )
 
-    torch.ops.shadowspill._rebind_storage(
-        first, 0, first_binding.object_id, first_binding.generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([first])
     overlap_compute = torch.cuda.Stream()
     overlap_compute.wait_stream(compute)
     with torch.cuda.stream(overlap_compute):
@@ -298,17 +291,8 @@ def main() -> int:
         ),
         "two-input acquisition",
     )
-    torch.ops.shadowspill._rebind_storage(
-        second,
-        rebound[0].pointer,
-        rebound[0].object_id,
-        rebound[0].generation,
-    )
-    torch.ops.shadowspill._rebind_storage(
-        third,
-        rebound[1].pointer,
-        rebound[1].object_id,
-        rebound[1].generation,
+    torch.ops.shadowspill._acquire_storages(
+        [second, third], [rebound[0].pointer, rebound[1].pointer]
     )
 
     deadline = time.monotonic() + 5.0
@@ -352,12 +336,7 @@ def main() -> int:
     overlap_compute.synchronize()
     torch.testing.assert_close(second[:1024].cpu(), torch.full((1024,), 2.0))
     torch.testing.assert_close(third[-1024:].cpu(), torch.full((1024,), 3.0))
-    torch.ops.shadowspill._rebind_storage(
-        second, 0, rebound[0].object_id, rebound[0].generation
-    )
-    torch.ops.shadowspill._rebind_storage(
-        third, 0, rebound[1].object_id, rebound[1].generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([second, third])
     _require_ok(
         int(
             library.shadowspill_pytorch_after_task_handle(

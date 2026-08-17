@@ -237,29 +237,6 @@ def main() -> int:
     if status != 0 or binding.pointer != address:
         raise AssertionError("ordinary PyTorch allocation promotion failed")
     try:
-        torch.ops.shadowspill._rebind_storage(
-            parameter, address, binding.object_id, binding.generation + 1
-        )
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("storage adapter accepted a stale generation")
-    if parameter.data_ptr() != address:
-        raise AssertionError("failed rebinding validation mutated the storage")
-    try:
-        torch.ops.shadowspill._rebind_storages(
-            [parameter, parameter],
-            [0, 0],
-            [binding.object_id, binding.object_id],
-            [binding.generation, binding.generation + 1],
-        )
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("batch adapter accepted a stale generation")
-    if parameter.data_ptr() != address:
-        raise AssertionError("failed batch validation partially mutated storage")
-    try:
         torch.ops.shadowspill._acquire_storages(
             [parameter, parameter], [address, address + 256]
         )
@@ -269,12 +246,7 @@ def main() -> int:
         raise AssertionError("storage acquisition accepted a stale address")
     if parameter.data_ptr() != address:
         raise AssertionError("failed storage acquisition partially mutated storage")
-    torch.ops.shadowspill._rebind_storages(
-        [parameter],
-        [address],
-        [binding.object_id],
-        [binding.generation],
-    )
+    torch.ops.shadowspill._acquire_storages([parameter], [address])
 
     compute_stream = torch.cuda.current_stream().cuda_stream
     torch.cuda._sleep(100_000_000)
@@ -282,9 +254,7 @@ def main() -> int:
         RuntimeAction(object_id=binding.object_id, kind=1)
     )
     _submit_actions(library, plan, 100, compute_stream, tuple(offload))
-    torch.ops.shadowspill._rebind_storage(
-        parameter, 0, binding.object_id, binding.generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([parameter])
     if parameter.data_ptr() != 0 or view.data_ptr() != 0:
         raise AssertionError("alias storage was not dematerialized together")
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
@@ -336,12 +306,7 @@ def main() -> int:
         raise AssertionError("prefetch did not lease a different slab range")
     if rebound[0].generation == binding.generation:
         raise AssertionError("prefetch did not advance the allocation generation")
-    torch.ops.shadowspill._rebind_storage(
-        parameter,
-        rebound[0].pointer,
-        rebound[0].object_id,
-        rebound[0].generation,
-    )
+    torch.ops.shadowspill._acquire_storages([parameter], [rebound[0].pointer])
     if id(parameter) != parameter_identity:
         raise AssertionError("Parameter identity changed during storage rebinding")
     if parameter.untyped_storage()._cdata != storage_identity:
@@ -358,9 +323,7 @@ def main() -> int:
     )
     if status != 0:
         raise AssertionError(f"release submission failed with status {status}")
-    torch.ops.shadowspill._rebind_storage(
-        parameter, 0, rebound[0].object_id, rebound[0].generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([parameter])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("planned release did not complete")
     del blocker, view, parameter
@@ -414,9 +377,7 @@ def main() -> int:
         raise AssertionError(f"registered allocation bind failed with status {status}")
     host_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
     _submit_actions(library, plan, 300, compute_stream, tuple(host_release))
-    torch.ops.shadowspill._rebind_storage(
-        host_tensor, 0, host_binding.object_id, host_binding.generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([host_tensor])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("host placeholder release did not drain")
     host_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
@@ -434,11 +395,8 @@ def main() -> int:
         != 0
     ):
         raise AssertionError("direct host object acquisition failed")
-    torch.ops.shadowspill._rebind_storage(
-        host_tensor,
-        host_rebound[0].pointer,
-        host_rebound[0].object_id,
-        host_rebound[0].generation,
+    torch.ops.shadowspill._acquire_storages(
+        [host_tensor], [host_rebound[0].pointer]
     )
     torch.testing.assert_close(host_tensor.cpu(), host_source)
     if (
@@ -450,9 +408,7 @@ def main() -> int:
         != 0
     ):
         raise AssertionError("direct host final release failed")
-    torch.ops.shadowspill._rebind_storage(
-        host_tensor, 0, host_rebound[0].object_id, host_rebound[0].generation
-    )
+    torch.ops.shadowspill._dematerialize_storages([host_tensor])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("direct host final release did not drain")
 

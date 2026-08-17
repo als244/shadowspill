@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 43U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 44U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -471,14 +471,6 @@ shadowspill_pytorch_promote_allocation(
     uint64_t address,
     uint64_t size_bytes,
     ShadowSpillObjectBinding *binding
-);
-
-/* Private storage-operator guard over object identity/address/generation. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_validate_object_binding(
-    uint64_t object_id,
-    uint64_t address,
-    uint64_t generation
 );
 
 /* Validate one CPU-addressable spill lease before rebinding CPU storage. */

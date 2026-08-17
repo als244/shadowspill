@@ -1317,36 +1317,6 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_promote_allocation(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_validate_object_binding(
-    uint64_t object_id,
-    uint64_t address,
-    uint64_t generation
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
-    }
-    ShadowSpillObjectSnapshot snapshot = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_object_snapshot(
-        runtime, object_id, &snapshot
-    );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        return status;
-    }
-    const int current_matches = snapshot.generation == generation &&
-        (address == 0U ||
-         snapshot.execution_pointer == (void *)(uintptr_t)address);
-    const int retired_matches = address != 0U &&
-        snapshot.retired_generation == generation &&
-        snapshot.retired_execution_pointer == (void *)(uintptr_t)address;
-    if (!current_matches && !retired_matches) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    return SHADOWSPILL_RUNTIME_OK;
-}
-
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_create(
     uint32_t execution_pool_id,
     uint32_t spill_pool_id,
