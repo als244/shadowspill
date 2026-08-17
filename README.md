@@ -10,12 +10,19 @@ ordinary PyTorch execution while enforcing an explicit physical-memory cap.
 ## Install
 
 ```bash
-python -m pip install -e ".[dev]"
+./scripts/setup.sh
 ```
 
-Development and qualification use the PyTorch build installed in the
-`shadowspill` Conda environment. The release installer remains a later release
-gate.
+This single command creates a local `.venv`, installs PyTorch 2.13 with the
+accelerator backend selected for the machine, builds ShadowSpill, installs the
+development dependencies, and verifies the GPU and all compiled components.
+It uses [`uv`](https://docs.astral.sh/uv/) for dependency installation and
+bootstraps an isolated copy when `uv` is not already installed. To populate an
+existing virtual or Conda environment instead, pass its interpreter explicitly:
+
+```bash
+./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
+```
 
 The build installs the runtime, PyTorch adapter, simulator, and planner beneath
 the Python package. ShadowSpill resolves those package-owned libraries
@@ -176,3 +183,21 @@ See [the architecture](docs/architecture.md),
 [memory-budget semantics](docs/memory-budget-semantics.md), and the
 [development plan](docs/development-plan.md). Historical root-cause reports are
 indexed separately under [engineering investigations](docs/investigations/README.md).
+
+## Repository layout
+
+```text
+src/shadowspill/   installed Python package
+csrc/              compiled planner, simulator, runtime, backends, and adapter
+tests/             tests mirroring Python, C, integration, and tooling boundaries
+workloads/         model/data clients used by benchmarks and qualification
+benchmarking/      reusable Program collection and planning-frontier evaluation
+qualification/     thin numerical and performance release gates
+src/tools/         reusable source-tree diagnostics and acceptance tooling
+docs/              public architecture, API, and engineering documentation
+```
+
+The root build file is only a component orchestrator. Each compiled component
+owns its sources, public headers, and build declaration under `csrc/`; see
+[the compiled-component guide](csrc/README.md). Qualification contains no
+product implementation and delegates to `src/shadowspill` and `src/tools`.

@@ -22,7 +22,7 @@ from shadowspill.simulator import (
     SimulationResult,
     simulate,
 )
-from shadowspill.simulator._capi import simulator_library_path
+from shadowspill.simulator._capi import load_simulator_library
 from shadowspill.simulator._compiled import (
     CompiledSimulationSummary,
     CompiledSimulationTemplate,
@@ -37,7 +37,7 @@ from ._admission import (
     compile_admission_topology,
     evaluate_schedule_admission,
 )
-from ._capi import planner_library_path
+from ._capi import load_planner_library
 from ._dense_residency import (
     CompiledResidencyTemplate,
     compile_residency_template,
@@ -45,7 +45,6 @@ from ._dense_residency import (
 )
 from ._facts import PlanningFacts, build_facts
 from ._native_portfolio import (
-    NativeContextPreparationError,
     NativeContextResult,
     decode_candidate_diagnostic,
     decode_schedule,
@@ -666,8 +665,6 @@ def _build_contexts(
 ) -> tuple[_SelectionContext, ...]:
     contexts: list[_SelectionContext] = []
     failures: list[PressureFitInfeasibleError] = []
-    compiled_simulator_available = simulator_library_path() is not None
-    compiled_planner_available = planner_library_path() is not None
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         try:
@@ -696,21 +693,13 @@ def _build_contexts(
                 _selection_id(selections),
                 facts,
                 seed,
-                (
-                    compile_simulation_template(
-                        program,
-                        selections,
-                        config,
-                        selected_tasks=facts.tasks,
-                    )
-                    if compiled_simulator_available
-                    else None
+                compile_simulation_template(
+                    program,
+                    selections,
+                    config,
+                    selected_tasks=facts.tasks,
                 ),
-                (
-                    compile_residency_template(facts, config, seed)
-                    if compiled_planner_available
-                    else None
-                ),
+                compile_residency_template(facts, config, seed),
             )
         )
         if progress is not None:
@@ -1052,6 +1041,11 @@ def _pressurefit_once(
         raise TypeError("final_residency must be a tuple")
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
+    # PressureFit's installed contract is compiled and fail-closed.  Python
+    # implementations remain private diagnostic oracles and are never selected
+    # because a required shared library is absent or ABI-incompatible.
+    load_simulator_library()
+    load_planner_library()
     if admission is not None:
         if not isinstance(admission, AdmissionTopology):
             raise TypeError("admission must be an AdmissionTopology")
@@ -1064,11 +1058,7 @@ def _pressurefit_once(
             f"groups={len(program.recomputation_groups)}, "
             f"selections={len(portfolio)}"
         )
-    if (
-        program.alias_groups
-        and simulator_library_path() is not None
-        and planner_library_path() is not None
-    ):
+    if program.alias_groups:
         contexts_started = time.perf_counter_ns()
         native_contexts = _build_native_contexts(
             program,
@@ -1079,20 +1069,12 @@ def _pressurefit_once(
             portfolio=portfolio,
             progress=progress,
         )
-        try:
-            native_results = _run_native_program_contexts(
-                native_contexts,
-                selected_options,
-            )
-        except NativeContextPreparationError:
-            if admission is not None:
-                raise
-            native_results = ()
-            if progress is not None:
-                progress(
-                    "PressureFit compiled context rejected semantic input; "
-                    "using the Python diagnostic authority"
-                )
+        # A compiled semantic rejection is a real contract failure.  Do not
+        # conceal it by evaluating a different implementation.
+        native_results = _run_native_program_contexts(
+            native_contexts,
+            selected_options,
+        )
         valid_pairs = (
             tuple(
                 (context, result)
@@ -1368,6 +1350,16 @@ def pressurefit(
     changing physical pool capacity, task semantics, or action rules.
     """
 
+    # Preserve the framework-neutral semantic diagnostics before entering the
+    # required compiled search. This validates caller input; it is not an
+    # alternate planner or simulator execution path.
+    validate_schedule_feasibility(
+        program,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        config=config,
+        admission=admission,
+    )
     original_config = config
     current_config = config
     current_admission = admission

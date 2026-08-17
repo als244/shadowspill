@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import replace
 
-from models.full_model import (
+from workloads.full_model import (
     FullModelCase,
     build_case,
     manifest_for,

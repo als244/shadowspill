@@ -680,7 +680,7 @@ longer decides correctness.
 
 ### Isolated regression
 
-`tests/simulator/test_causal_reservation_deadlock.py` reduces the incident to
+`tests/shadowspill/simulator/test_causal_reservation_deadlock.py` reduces the incident to
 four meaningfully named objects:
 
 | Test object | Bytes | Initial location / purpose |

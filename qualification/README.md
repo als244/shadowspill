@@ -1,58 +1,46 @@
 # Qualification
 
-This tree contains ShadowSpill's reproducible correctness, performance, and
-diagnostic gates. Generated checkpoints, traces, planning caches, and reports
-are written beneath `qualification/results/`, which is intentionally ignored.
+`qualification/` is ShadowSpill's thin release-acceptance surface. It owns the
+protocol descriptions and four launchers, but no alternate implementation of
+planning, execution, diagnostics, serialization, or model state.
 
-## Numerical matrix
-
-Run the five approximately-1B provider cells in fresh reference and planned
-processes:
-
-```bash
-python -m qualification.numerical.matrix \
-  --build-dir /tmp/shadowspill-build-full \
-  --cache-dir qualification/results/cache
+```text
+qualification/
+├── numerical/
+│   ├── README.md
+│   ├── run.py       one reference/planned correctness cell
+│   └── matrix.py    the five approximately-1B cells
+└── performance/
+    ├── README.md
+    ├── run.py       one full-model throughput cell
+    └── matrix.py    the retained full-model matrix
 ```
 
-The matrix supports model subsets, budget overrides, reusable reference
-artifacts, and external case factories. See
-[`numerical/README.md`](numerical/README.md) for the protocol and individual
-worker interface.
+The launchers delegate to `src/tools/qualification/`, which in turn uses the
+public `src/shadowspill/` APIs and workload definitions under `workloads/`.
+Generated reference states, compact result summaries, and optional detailed
+reports are written beneath `qualification/results/`, which is ignored by Git.
+The numerical matrix reuses one identity-checked compiled reference under
+`qualification/results/references/approximately_1b/<model>/<provider>/reference.pt`.
+Its neighboring `inputs.pt` contains the exact input microbatches, while the
+reference contains only the final model and optimizer state; repeated matrix
+runs do not create duplicate checkpoints.
+
+Run the numerical matrix:
 
 ```bash
 python -m qualification.numerical.matrix \
-  --build-dir /tmp/shadowspill-build-full \
-  --models qwen35 olmoe \
-  --implementations pytorch mlops \
-  --budget qwen35=10GiB \
-  --budget olmoe=10GiB \
-  --reuse-reference \
   --keep-going
 ```
 
-Models outside the built-in registry use an importable factory and explicit
-configuration:
+Compact correctness evidence is the default. A `--cold` run uses temporary
+compiler and planning caches and removes them afterward. Use
+`--detailed-artifacts` only for an investigation that needs full PlanReports,
+PressureFit fixtures, and per-task runtime traces. Use
+`--regenerate-reference` only when intentionally replacing the canonical
+compiled references and input sidecars.
 
-```bash
-python -m qualification.numerical.matrix \
-  --build-dir /tmp/shadowspill-build-full \
-  --models diffusion_transformer \
-  --implementations pytorch \
-  --budget diffusion_transformer=24GiB \
-  --case-factory my_project.shadowspill_cases:build_case \
-  --model-config @configs/dit.json \
-  --data-geometry @configs/dit_microbatches.json
-```
-
-The factory receives the model identity, implementation, seed, model config,
-data geometry, and case options. It returns the model, microbatches, objective,
-optimizer factory, and provider context used independently by the reference and
-planned workers.
-
-## Full-model performance
-
-Run all retained full-model ShadowSpill cells:
+Run the full-model matrix:
 
 ```bash
 python -m qualification.performance.matrix \
@@ -61,27 +49,6 @@ python -m qualification.performance.matrix \
   --keep-going
 ```
 
-Each worker can also be launched directly with
-`python -m qualification.performance.run`; see
-[`performance/README.md`](performance/README.md).
-
-## Framework-free planning replay
-
-Benchmark canonical PressureFit fixtures without capture, compilation,
-profiling, or runtime execution:
-
-```bash
-python -m qualification.planning.benchmark \
-  qualification/results/numerical_matrix/pytorch_llama3_pressurefit \
-  --repeats 3 \
-  --output qualification/results/pressurefit_benchmark.json
-```
-
-## Diagnostics
-
-- `python -m qualification.diagnostics.step` summarizes serialized
-  `StepDiagnostics` task boundaries.
-- `python -m qualification.diagnostics.nsys_extract` extracts task and runtime
-  intervals from an Nsight Systems SQLite export.
-- `python -m qualification.diagnostics.nsys_validate` validates the expected
-  CUDA allocation and synchronization invariants in that export.
+Framework-free PressureFit benchmarking belongs in
+`benchmarking/planning_eval/fixture_benchmark.py`. Step and NSYS inspection
+belong in `src/tools/diagnostics/`.

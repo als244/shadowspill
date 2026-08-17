@@ -2,11 +2,11 @@
 
 Public declarations live in:
 
-- `runtime/include/shadowspill/backend.h`;
-- `runtime/include/shadowspill/admission_replay.h`;
-- `runtime/include/shadowspill/profiler.h`;
-- `runtime/include/shadowspill/runtime.h`;
-- `runtime/backends/mock/include/shadowspill/backend_mock.h`.
+- `csrc/runtime/include/shadowspill/backend.h`;
+- `csrc/runtime/include/shadowspill/admission_replay.h`;
+- `csrc/runtime/include/shadowspill/profiler.h`;
+- `csrc/runtime/include/shadowspill/runtime.h`;
+- `csrc/runtime/backends/mock/include/shadowspill/backend_mock.h`.
 
 The runtime ABI is version 23. Public functions return
 `ShadowSpillRuntimeStatus` except documented idempotent destroy/read-only
@@ -104,7 +104,7 @@ compatible causal predecessor; completion polling occurs outside the pool.
 ## AdmissionReplay boundary
 
 AdmissionReplay is a separate runtime component implemented in
-`runtime/src/admission_replay.c`; it is not part of `memory_pool.c`. It translates
+`csrc/runtime/src/admission_replay.c`; it is not part of `memory_pool.c`. It translates
 an ordered, timing-free ownership script into calls to the exact production
 `MemoryPool` transitions. Its result contains allocator decisions, physical
 charge deltas, fragmentation, infeasibility geometry, and any causal

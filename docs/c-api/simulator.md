@@ -1,7 +1,7 @@
 # Simulator C API
 
 The public interface is declared by
-`simulator/include/shadowspill/simulator.h` and implemented by
+`csrc/simulator/include/shadowspill/simulator.h` and implemented by
 `libshadowspill_simulator.so`.
 
 ## ABI and ownership

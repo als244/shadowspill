@@ -150,8 +150,8 @@ retirement, reservation, acquisition, completion, and release—and answers:
 The replay source, public C ABI, and Python wrapper are isolated in:
 
 ```text
-runtime/src/admission_replay.c
-runtime/include/shadowspill/admission_replay.h
+csrc/runtime/src/admission_replay.c
+csrc/runtime/include/shadowspill/admission_replay.h
 src/shadowspill/runtime/admission_replay.py
 ```
 

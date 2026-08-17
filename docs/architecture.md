@@ -35,6 +35,28 @@ PyTorch caller ──► task boundaries ──► neutral C runtime
 - Models and operation libraries are clients and cannot become core
   dependencies.
 
+## Compiled source layout
+
+All compiled production code lives under `csrc/`; there are no C/C++
+implementation directories at repository root.
+
+```text
+csrc/
+├── simulator/{include,src}            schedule evaluation
+├── runtime/
+│   ├── {include,src}                  neutral pools, objects, and worker
+│   └── backends/{mock,cuda}/{include,src}
+├── planner/{include,src}              PressureFit selection
+└── pytorch_adapter/{include,*.c,*.cpp} allocator and storage bridge
+```
+
+Each component owns its own `CMakeLists.txt`; the root build file only sets
+project-wide compiler policy and orders component/test subdirectories. Public
+headers always live below `include/shadowspill/`. Private implementation
+headers remain beside, or under `src/internal/` within, their owning component.
+See [`csrc/README.md`](../csrc/README.md) for the dependency diagram and backend
+boundary.
+
 ## Runtime topology
 
 `Runtime` is initialized explicitly before planning. It owns a registry of

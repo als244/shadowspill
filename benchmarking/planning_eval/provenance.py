@@ -148,7 +148,7 @@ def _is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
 
 
 def _reject_untracked_runtime_sources(status: str) -> None:
-    protected = ("src/", "planner/", "runtime/", "simulator/")
+    protected = ("src/", "csrc/")
     offenders = tuple(
         line[3:]
         for line in status.splitlines()

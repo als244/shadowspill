@@ -12,6 +12,7 @@ __pycache__/
 .coverage
 .coverage.*
 torch_compile_debug/
+.venv/
 
 # Native and packaging outputs
 /build/

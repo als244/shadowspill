@@ -15,31 +15,37 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
 ```
 
 Both modes use `mlops.optim.AdamW`; the model implementation changes only the
-forward/backward operation provider. Results and large eager checkpoints are
-written beneath the gitignored `qualification/results/` tree with a
-`pytorch_` or `mlops_` filename prefix.
+forward/backward operation provider. The default reference root is
+`qualification/results/references/approximately_1b/`, with one
+identity-checked final state plus an exact-input `inputs.pt` sidecar under each
+model/provider directory.
+Pass `--reference-dir` to place that canonical set elsewhere, or
+`--regenerate-reference` to replace it deliberately.
 
 Optimizer updates are grouped by captured training stage and placed immediately
 after that stage's final-microbatch backward task by default. Pass
-`--optimizer-ordering tail` only for an explicit ordering comparison. Each run
-persists the immutable `<case>_plan_report.pt` object in addition to its JSON
-summary and direct PressureFit fixtures.
+`--optimizer-ordering tail` only for an explicit ordering comparison.
 
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint followed by bitwise replay,
-real EVICT/FETCH traffic, selected recomputation, numerical tolerances, and the
-physical device cap. The JSON artifact records all tolerances and planning
-phase timings used for that run. Physical qualification checks the sealed cap
+real EVICT/FETCH traffic, numerical tolerances, and the physical device cap.
+Recomputation availability and selection are reported diagnostically but are
+not independently required for these tiny geometries. The JSON artifact
+records all tolerances and planning phase timings used for that run. Physical
+qualification checks the sealed cap
 after planning, after each of the five steps, and after both replay steps. It
 also requires the observed process high-water to remain within the public cap,
 one initial CUDA slab allocation, no steady-state device or pinned allocation,
 bounded slab/host peaks, and no allocator callback or pointer-lookup failure.
-Each planned case also writes canonical initial/recurrent PressureFit fixtures.
-They contain exactly the framework-free arguments passed to `pressurefit()`—the
-Program, residency inputs, simulator configuration, and planner options—and
-exactly its expected selections, schedule, full simulator result, and candidate
-diagnostics. Frontend capture, profiling, physical admission, ExecutionPlan
-construction, and outer `plan_step()` timing are intentionally excluded.
+By default, the JSON contains compact correctness, physical-budget, planning,
+and step-summary evidence and planning artifacts are not retained. Add
+`--detailed-artifacts` to write the complete PlanReport, per-task traces, and
+canonical initial/recurrent PressureFit fixtures. Those fixtures contain the
+framework-free arguments passed to `pressurefit()` and its complete result.
+
+The supported matrix uses a 10 GiB execution cap for Llama and Qwen and an
+8 GiB cap for OLMoE, which is required to exercise real transfer pressure for
+the small qualification geometry.
 
 For repeatable matrices and configurable/custom model cases, use
 `python -m qualification.numerical.matrix`; the parent

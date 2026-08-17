@@ -1,7 +1,7 @@
 # Planner C API
 
 The public compiled planner interface is declared by
-`planner/include/shadowspill/planner.h` and implemented by
+`csrc/planner/include/shadowspill/planner.h` and implemented by
 `libshadowspill_planner.so`.
 
 ## Purpose
