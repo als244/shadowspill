@@ -20,6 +20,7 @@ from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingStorageLayout,
 )
+from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
@@ -272,13 +273,8 @@ class TrainingMaterializedState:
                     self.bridge.write_spill_tensor(alias_id, tensor)
                     written.add(alias_id)
 
-    def replace_alias_generation(
-        self,
-        alias_id: str,
-        target: torch.Tensor,
-        target_generation: int,
-    ) -> None:
-        """Rebind every persistent frontend view to a functional replacement."""
+    def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
+        """Collect persistent views before native task publication begins."""
 
         previous_generation = self.generations.get(alias_id)
         if previous_generation is None:
@@ -294,15 +290,21 @@ class TrainingMaterializedState:
         unique = unique_live_tensors(tensors)
         if not unique:
             raise RuntimeError(f"replacement alias {alias_id!r} has no frontend view")
-        self.bridge.replace_many(
-            unique,
-            alias_id,
+        return ReplacementStorageViews(
+            alias_id=alias_id,
             previous_generation=previous_generation,
-            target_tensor=target,
-            target_generation=target_generation,
+            tensors=unique,
         )
-        self.object_store[alias_id] = unique[0]
-        self.generations[alias_id] = target_generation
+
+    def publish_replacement_generation(
+        self,
+        replacement: ReplacementStorageViews,
+        target_generation: int,
+    ) -> None:
+        """Record a replacement already rebound by the native task boundary."""
+
+        self.object_store[replacement.alias_id] = replacement.tensors[0]
+        self.generations[replacement.alias_id] = target_generation
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         if self._closed:

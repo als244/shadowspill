@@ -132,10 +132,8 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
 
     bridge.register_placeholder("alias_000099")
     binding = bridge.bind_registered_tensor("alias_000099", tensor)
-    generations = bridge.adopt_many(((tensor, "alias_000099"),))
     bridge.rebind_many(((tensor, "alias_000099", binding),))
 
     assert not bridge.requires_storage("alias_000099")
     assert binding.pointer is None
     assert binding.generation == 0
-    assert generations == (0,)

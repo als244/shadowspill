@@ -14,7 +14,6 @@ from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.partition import PartitionedExport
-from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
@@ -30,7 +29,6 @@ from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_
 class _PreparedForwardTask:
     arguments: tuple[object, ...]
     input_aliases: tuple[str, ...]
-    stream: torch.cuda.Stream
     runtime_scope_open: bool = True
 
 
@@ -44,6 +42,7 @@ class _ExecutingStage(nn.Module):
         state: MaterializedForwardState,
         actions: tuple[MemoryAction, ...],
         identity: ExecutionTaskIdentity,
+        task_handle: int,
     ) -> None:
         super().__init__()
         self._entrypoint = entrypoint
@@ -53,6 +52,13 @@ class _ExecutingStage(nn.Module):
         self._state = state
         self._actions = actions
         self._identity = identity
+        self._task_handle = task_handle
+        self._task_index = int(task.task_id.removeprefix("task_"))
+        self._device_ordinal = state.device.index or 0
+        self._input_aliases = tuple(
+            bridge.alias_for_object(slot.object_id)
+            for slot in entrypoint.input_slots
+        )
 
     def forward(self, *arguments: object) -> object:
         prepared = self._before_task(arguments)
@@ -65,36 +71,32 @@ class _ExecutingStage(nn.Module):
 
     def _before_task(self, arguments: tuple[object, ...]) -> _PreparedForwardTask:
         leaves, _ = tree_flatten(arguments)
-        input_aliases = tuple(
-            self._bridge.alias_for_object(slot.object_id)
-            for slot in self._entrypoint.input_slots
-        )
-        stream = torch.cuda.current_stream()
         runtime_scope_open = False
         try:
-            bindings = self._bridge.before_task(
-                self._task.task_id, stream, input_aliases
-            )
-            runtime_scope_open = True
-            rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
-            compiled_arguments: list[torch.Tensor] = []
-            for slot, alias_id, binding in zip(
-                self._entrypoint.input_slots,
-                input_aliases,
-                bindings,
-                strict=True,
-            ):
+            input_tensors: list[torch.Tensor] = []
+            for slot in self._entrypoint.input_slots:
                 tensor = leaves[slot.leaf_index]
                 if not isinstance(tensor, torch.Tensor):
                     raise RuntimeError("task tensor input became static")
-                rebound.append((tensor, alias_id, binding))
-                compiled_arguments.append(tensor)
-            self._bridge.rebind_many(rebound)
-            for tensor, alias_id, binding in rebound:
+                input_tensors.append(tensor)
+            generations = self._bridge.before_task_and_acquire(
+                self._task_handle,
+                self._task_index,
+                self._device_ordinal,
+                input_tensors,
+                self._input_aliases,
+            )
+            runtime_scope_open = True
+            for tensor, alias_id, generation in zip(
+                input_tensors,
+                self._input_aliases,
+                generations,
+                strict=True,
+            ):
                 self._state.object_store[alias_id] = tensor
-                self._state.generations[alias_id] = binding.generation
+                self._state.generations[alias_id] = generation
             return _PreparedForwardTask(
-                tuple(compiled_arguments), input_aliases, stream
+                tuple(input_tensors), self._input_aliases
             )
         except BaseException:
             if runtime_scope_open:
@@ -114,7 +116,8 @@ class _ExecutingStage(nn.Module):
     ) -> object:
         output_leaves, _ = tree_flatten(output)
         produced: set[str] = set()
-        rebound: list[tuple[torch.Tensor, str, ObjectBinding]] = []
+        adopted: list[tuple[torch.Tensor, str]] = []
+        replacement_aliases: set[str] = set()
         replacement_leaves = set(self._entrypoint.replacement_output_leaves)
         for slot in self._entrypoint.output_slots:
             tensor = output_leaves[slot.leaf_index]
@@ -123,22 +126,22 @@ class _ExecutingStage(nn.Module):
             alias_id = self._bridge.alias_for_object(slot.object_id)
             replacement = slot.leaf_index in replacement_leaves
             if replacement and alias_id not in produced:
-                binding = self._bridge.replace_output(alias_id, tensor)
-                self._state.replace_alias_generation(
-                    alias_id, tensor, binding.generation
-                )
+                adopted.append((tensor, alias_id))
+                replacement_aliases.add(alias_id)
                 produced.add(alias_id)
             elif alias_id not in prepared.input_aliases and alias_id not in produced:
-                binding = self._bridge.promote_output(alias_id, tensor)
-                rebound.append((tensor, alias_id, binding))
+                adopted.append((tensor, alias_id))
                 produced.add(alias_id)
                 self._state.object_store[alias_id] = tensor
             elif not replacement:
                 self._state.object_store[alias_id] = tensor
-        self._bridge.rebind_many(rebound)
-        for _, alias_id, binding in rebound:
-            self._state.generations[alias_id] = binding.generation
-        dematerialized: list[tuple[torch.Tensor, str, int]] = []
+        replacements = tuple(
+            self._state.replacement_storage_views(alias_id)
+            for _tensor, alias_id in adopted
+            if alias_id in replacement_aliases
+        )
+        replacement_by_alias = {item.alias_id: item for item in replacements}
+        dematerialized: list[torch.Tensor] = []
         handoff_sources = {
             self._bridge.alias_for_object(item.source_object_id)
             for item in self._entrypoint.storage_handoffs
@@ -154,20 +157,30 @@ class _ExecutingStage(nn.Module):
             if alias_id in handoff_sources:
                 continue
             tensor = self._state.object_store.get(alias_id)
-            generation = self._state.generations.get(alias_id)
-            if tensor is None or generation is None:
+            if tensor is None or alias_id not in self._state.generations:
                 raise RuntimeError(
                     f"action references unbound alias group {alias_id!r}"
                 )
-            dematerialized.append((tensor, alias_id, generation))
-        self._bridge.dematerialize_many(dematerialized)
-        self._bridge.after_task(
-            self._task.task_id,
-            prepared.stream,
-            self._task.mutations,
-            self._actions,
+            dematerialized.append(tensor)
+        generations = self._bridge.after_task_and_update(
+            self._task_handle,
+            self._task_index,
+            self._device_ordinal,
+            adopted,
+            dematerialized,
+            replacements=replacements,
         )
         prepared.runtime_scope_open = False
+        for (tensor, alias_id), generation in zip(
+            adopted, generations, strict=True
+        ):
+            if alias_id in replacement_aliases:
+                self._state.publish_replacement_generation(
+                    replacement_by_alias[alias_id], generation
+                )
+            else:
+                self._state.object_store[alias_id] = tensor
+                self._state.generations[alias_id] = generation
         return output
 
     def _abort_task(
@@ -241,7 +254,7 @@ class ForwardExecutor:
         for execution_ordinal, entrypoint in enumerate(lowered.entrypoints):
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
-            bridge.admit_execution(
+            task_handle = bridge.admit_task(
                 task,
                 tuple(
                     bridge.alias_for_object(slot.object_id)
@@ -267,6 +280,7 @@ class ForwardExecutor:
                     ),
                     canonical_task_id=task.task_id,
                 ),
+                task_handle,
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         bridge.seal_fixed_layout()

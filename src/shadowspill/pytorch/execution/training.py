@@ -33,6 +33,7 @@ from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingTaskEntrypoint,
 )
+from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
@@ -102,8 +103,12 @@ class _TaskCall:
 class _ProcessedTaskOutputs:
     outputs: tuple[torch.Tensor, ...]
     adopted: tuple[tuple[torch.Tensor, str], ...]
-    replacement_aliases: frozenset[str]
+    replacements: tuple[ReplacementStorageViews, ...]
     optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
+
+    @property
+    def replacement_aliases(self) -> frozenset[str]:
+        return frozenset(item.alias_id for item in self.replacements)
 
 
 class TrainingExecutor:
@@ -233,7 +238,7 @@ class TrainingExecutor:
             admitted.append(
                 replace(
                     record,
-                    native_handle=self._bridge.admit_execution(
+                    task_handle=self._bridge.admit_task(
                         record.task,
                         record.input_aliases,
                         record.actions,
@@ -844,7 +849,6 @@ class TrainingExecutor:
         needs_python_stream = (
             timing is not None
             or self._armed_span_timing is not None
-            or not record.native_handle
         )
         stream = torch.cuda.current_stream() if needs_python_stream else None
         if timing is not None:
@@ -901,23 +905,15 @@ class TrainingExecutor:
         stream: torch.cuda.Stream | None,
         tensors: tuple[torch.Tensor, ...],
     ) -> tuple[int, ...]:
-        if record.native_handle:
-            return self._bridge.before_execution_and_acquire(
-                record.native_handle,
-                record.task_index,
-                self._state.device.index or 0,
-                tensors,
-                record.input_aliases,
-            )
-        bindings = self._bridge.before_task(
-            record.task.task_id,
-            stream if stream is not None else torch.cuda.current_stream(),
+        if record.task_handle == 0:
+            raise AssertionError("execution task has no admitted handle")
+        return self._bridge.before_task_and_acquire(
+            record.task_handle,
+            record.task_index,
+            self._state.device.index or 0,
+            tensors,
             record.input_aliases,
         )
-        self._bridge.rebind_many(
-            tuple(zip(tensors, record.input_aliases, bindings, strict=True))
-        )
-        return tuple(binding.generation for binding in bindings)
 
     def _publish_input_generations(
         self,
@@ -1066,14 +1062,9 @@ class TrainingExecutor:
         with self._profile_range(
             f"shadowspill.runtime.after_task.{prepared.record.trace_label}"
         ):
-            if prepared.record.native_handle:
-                generations = self._publish_native_task(
-                    prepared, processed, dematerialized
-                )
-            else:
-                generations = self._publish_legacy_task(
-                    prepared, processed, dematerialized
-                )
+            generations = self._publish_admitted_task(
+                prepared, processed, dematerialized
+            )
         prepared.runtime_scope_open = False
         if prepared.timing is not None:
             prepared.timing.host_native_after_task_ns = (
@@ -1081,21 +1072,23 @@ class TrainingExecutor:
             )
         return generations
 
-    def _publish_native_task(
+    def _publish_admitted_task(
         self,
         prepared: _PreparedTask,
         processed: _ProcessedTaskOutputs,
         dematerialized: tuple[torch.Tensor, ...],
     ) -> tuple[int, ...]:
         record = prepared.record
+        if record.task_handle == 0:
+            raise AssertionError("execution task has no admitted handle")
         try:
-            return self._bridge.after_execution_and_update(
-                record.native_handle,
+            return self._bridge.after_task_and_update(
+                record.task_handle,
                 record.task_index,
                 self._state.device.index or 0,
                 processed.adopted,
                 dematerialized,
-                replacement_aliases=processed.replacement_aliases,
+                replacements=processed.replacements,
             )
         except RuntimeError as error:
             diagnostics = read_allocator_failure(
@@ -1113,59 +1106,6 @@ class TrainingExecutor:
                 f"({record.semantic_name}): {error}"
             ) from error
 
-    def _publish_legacy_task(
-        self,
-        prepared: _PreparedTask,
-        processed: _ProcessedTaskOutputs,
-        dematerialized: tuple[torch.Tensor, ...],
-    ) -> tuple[int, ...]:
-        record = prepared.record
-        generations = self._bridge.adopt_many(
-            processed.adopted,
-            replacement_aliases=processed.replacement_aliases,
-        )
-        pending = self._legacy_dematerialization_bindings(
-            record,
-            dematerialized,
-            processed.adopted,
-            generations,
-        )
-        self._bridge.dematerialize_many(pending)
-        self._bridge.after_task(
-            record.task.task_id,
-            prepared.stream
-            if prepared.stream is not None
-            else torch.cuda.current_stream(),
-            record.task.mutations,
-            record.actions,
-        )
-        return generations
-
-    def _legacy_dematerialization_bindings(
-        self,
-        record: _ExecutionTaskRecord,
-        tensors: tuple[torch.Tensor, ...],
-        adopted: tuple[tuple[torch.Tensor, str], ...],
-        adopted_generations: tuple[int, ...],
-    ) -> tuple[tuple[torch.Tensor, str, int], ...]:
-        new_generations = {
-            alias_id: generation
-            for (_tensor, alias_id), generation in zip(
-                adopted,
-                adopted_generations,
-                strict=True,
-            )
-        }
-        pending: list[tuple[torch.Tensor, str, int]] = []
-        for tensor, alias_id in zip(tensors, record.dematerialize_aliases, strict=True):
-            generation = new_generations.get(alias_id)
-            if generation is None:
-                generation = self._state.generations.get(alias_id)
-            if generation is None:
-                raise RuntimeError(f"action references unbound generation {alias_id!r}")
-            pending.append((tensor, alias_id, generation))
-        return tuple(pending)
-
     def _publish_output_generations(
         self,
         prepared: _PreparedTask,
@@ -1173,11 +1113,16 @@ class TrainingExecutor:
         generations: tuple[int, ...],
     ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        for (tensor, alias_id), generation in zip(
+        replacement_by_alias = {
+            item.alias_id: item for item in processed.replacements
+        }
+        for (_tensor, alias_id), generation in zip(
             processed.adopted, generations, strict=True
         ):
             if alias_id in processed.replacement_aliases:
-                self._state.replace_alias_generation(alias_id, tensor, generation)
+                self._state.publish_replacement_generation(
+                    replacement_by_alias[alias_id], generation
+                )
             else:
                 self._state.generations[alias_id] = generation
         if processed.optimizer_bindings:
@@ -1251,10 +1196,15 @@ class TrainingExecutor:
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
+        replacements = tuple(
+            self._state.replacement_storage_views(alias_id)
+            for _tensor, alias_id in adopted
+            if alias_id in replacement_aliases
+        )
         return _ProcessedTaskOutputs(
             outputs,
             adopted,
-            replacement_aliases,
+            replacements,
             optimizer_bindings,
         )
 
