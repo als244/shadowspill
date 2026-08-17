@@ -115,15 +115,19 @@ capacity; deferring copy submission preserves FIFO lane behavior.
 ## Worker
 
 One C-owned worker services completions, releases, and both transfer lanes. It
-is named `shadowspill.wkr` in profiler traces. The hot loop visits each
+is named `shadowspill_worker` in profiler traces (`shadowspill.wkr` is the
+OS-level shortened name). The hot loop visits each
 completion frontier, drains immediately completed FIFO successors, handles
 retirements, and dispatches queued actions. The default incomplete-head query
 cadence is one microsecond; an already-complete head is followed immediately
 without an artificial delay.
 
-Events are precreated and reused through generation-tagged leases. The worker
-queries only FIFO heads and calls the backend outside data-structure locks.
-Steady-state execution creates or destroys no events.
+Cold plan adoption reserves reusable neutral event records and backend event
+handles. A later callable sharing the runtime may grow both inventories only
+at that same cold boundary. Generation-tagged leases return records and handles
+to their respective pools; the worker queries only FIFO heads and calls the
+backend outside data-structure locks. Steady-state execution performs no host
+allocation and creates or destroys no backend-native event.
 
 ## Dispatcher, streams, and worker timeline
 

@@ -79,7 +79,12 @@ int main(void) {
     if (shadowspill_runtime_create(&runtime_config, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         routes[0].route.create_lane(routes[0].route.context, &compute) != 0 ||
-        shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0) {
+        shadowspill_runtime_reserve_event_leases(runtime, 8U) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0 ||
+        shadowspill_runtime_reserve_event_leases(runtime, 12U) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_cuda_backend_seal_event_pool(cuda, 12U) != 0) {
         FAIL("runtime or stream initialization");
     }
     ShadowSpillCudaPhysicalMemory admitted_memory = {0};
@@ -200,6 +205,10 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         runtime_statistics.fetch_transfers != 1U ||
         runtime_statistics.evict_transfers != 1U ||
+        runtime_statistics.event_lease_capacity != 12U ||
+        runtime_statistics.event_lease_in_use != 0U ||
+        runtime_statistics.event_lease_peak_in_use == 0U ||
+        runtime_statistics.event_lease_growth_rejections != 0U ||
         runtime_statistics.bytes_fetched != PAYLOAD_BYTES ||
         runtime_statistics.bytes_evicted != PAYLOAD_BYTES) {
         FAIL("runtime statistics");
@@ -225,7 +234,7 @@ int main(void) {
         cuda_statistics.streams_destroyed != 3U ||
         cuda_statistics.events_created != cuda_statistics.events_destroyed ||
         !cuda_statistics.event_pool_sealed ||
-        cuda_statistics.event_pool_capacity < 8U ||
+        cuda_statistics.event_pool_capacity < 12U ||
         cuda_statistics.event_pool_driver_creates !=
             cuda_statistics.event_pool_capacity ||
         cuda_statistics.event_pool_in_use != 0U ||

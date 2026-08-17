@@ -189,6 +189,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     runtime->pools = NULL;
     runtime->pool_count = 0U;
     shadowspill_transfer_profiles_destroy(runtime);
+    shadowspill_event_pool_destroy(runtime, &runtime->events);
 }
 
 static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
@@ -301,12 +302,14 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->plans_lock_initialized = 1U;
-    if (shadowspill_object_table_initialize(
+    if (shadowspill_event_pool_initialize(&runtime->events) != 0 ||
+        shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
         ) != 0 || shadowspill_completion_tracker_initialize(
             &runtime->completions
         ) != 0) {
         shadowspill_object_table_destroy(&runtime->objects);
+        shadowspill_event_pool_destroy(runtime, &runtime->events);
         pthread_mutex_destroy(&runtime->plans_lock);
         runtime->plans_lock_initialized = 0U;
         free(runtime->routes);
@@ -431,6 +434,25 @@ fail:
     runtime->plans_lock_initialized = 0U;
     free(runtime);
     return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_runtime_reserve_event_leases(
+    ShadowSpillRuntime *runtime,
+    uint64_t minimum_free_leases
+) {
+    if (runtime == NULL || minimum_free_leases == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    return shadowspill_event_pool_reserve(
+        &runtime->events, minimum_free_leases
+    );
 }
 
 ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
@@ -636,6 +658,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     pthread_mutex_lock(&runtime->mutex);
     pthread_mutex_lock(&execution_pool->lock);
     pthread_mutex_lock(&spill_pool->lock);
+    pthread_mutex_lock(&runtime->events.lock);
     uint64_t retirement_records_fenced = 0U;
     uint64_t retirement_records_evented = 0U;
     uint64_t retirement_records_preparing = 0U;
@@ -708,7 +731,12 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .allocation_event_capacity = runtime->allocation_event_capacity,
         .allocation_event_overflow =
             (uint64_t)runtime->allocation_event_overflow,
+        .event_lease_capacity = runtime->events.capacity,
+        .event_lease_in_use = runtime->events.in_use,
+        .event_lease_peak_in_use = runtime->events.peak_in_use,
+        .event_lease_growth_rejections = runtime->events.growth_rejections,
     };
+    pthread_mutex_unlock(&runtime->events.lock);
     pthread_mutex_unlock(&spill_pool->lock);
     pthread_mutex_unlock(&execution_pool->lock);
     pthread_mutex_unlock(&runtime->mutex);

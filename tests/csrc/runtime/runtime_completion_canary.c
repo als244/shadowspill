@@ -41,7 +41,11 @@ int main(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        shadowspill_runtime_reserve_event_leases(runtime, 32U) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_reserve_event_leases(runtime, COMPLETION_COUNT) !=
+            SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
 
@@ -113,6 +117,11 @@ int main(void) {
             COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
         runtime_statistics.pending_retirements != 0U ||
         runtime_statistics.live_allocations != 0U ||
+        runtime_statistics.event_lease_capacity != COMPLETION_COUNT ||
+        runtime_statistics.event_lease_in_use != 0U ||
+        runtime_statistics.event_lease_peak_in_use == 0U ||
+        runtime_statistics.event_lease_peak_in_use > COMPLETION_COUNT ||
+        runtime_statistics.event_lease_growth_rejections != 0U ||
         runtime_statistics.free_bytes !=
             COMPLETION_COUNT * ALLOCATION_BYTES) {
         return EXIT_FAILURE;

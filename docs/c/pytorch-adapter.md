@@ -13,6 +13,8 @@ neutral runtime and translates Python/ATen-facing values into runtime handles.
   `shadowspill_pytorch_physical_admission()`,
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
+  Sealing also reserves both neutral event records and backend event handles;
+  a later callable may explicitly grow both inventories during plan adoption.
 - `shadowspill_pytorch_calibrate_transfer_capabilities()` and
   `shadowspill_pytorch_transfer_profiles()` manage transfer calibration.
 - `shadowspill_pytorch_resize_spill_pool()` performs the supported idle resize.
