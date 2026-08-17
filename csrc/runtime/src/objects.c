@@ -559,7 +559,7 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
     pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
     ShadowSpillObject *object = shadowspill_find_object(runtime, object_id);
     ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
-        runtime, allocation_id
+        shadowspill_execution_pool(runtime), allocation_id
     );
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     if (object == NULL || allocation == NULL || allocation->logical_freed ||
@@ -663,7 +663,7 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     pthread_mutex_lock(&object->lock);
     shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
     ShadowSpillMemoryLease *replacement = shadowspill_find_execution_lease(
-        runtime, allocation_id
+        shadowspill_execution_pool(runtime), allocation_id
     );
     ShadowSpillMemoryLease *prior = shadowspill_execution_location(
         runtime, object
@@ -725,6 +725,9 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     );
     (void)atomic_fetch_add_explicit(
         &runtime->pending_retirements, 1U, memory_order_acq_rel
+    );
+    (void)atomic_fetch_add_explicit(
+        &prior->pool->pending_retirements, 1U, memory_order_acq_rel
     );
 
     ShadowSpillObjectLocation *execution = shadowspill_execution_location(
@@ -820,8 +823,11 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         goto release_object;
     }
 
-    status = shadowspill_record_stream(
-        runtime, expected_allocation_id, consumer_stream
+    status = shadowspill_memory_pool_record_stream(
+        runtime,
+        SHADOWSPILL_EXECUTION_POOL_ID,
+        expected_allocation_id,
+        consumer_stream
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto release_object;
@@ -845,7 +851,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
 
     shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
     ShadowSpillMemoryLease *record = shadowspill_find_execution_lease(
-        runtime, object->allocation_id
+        shadowspill_execution_pool(runtime), object->allocation_id
     );
     if (record == NULL || record->pointer == NULL || record->logical_freed ||
         !record->plan_owned) {
@@ -886,6 +892,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         SHADOWSPILL_ALLOCATION_CALLER_OWNED
     );
     *allocation = (ShadowSpillAllocation){
+        .pool_id = shadowspill_execution_pool(runtime)->pool_id,
         .allocation_id = record->allocation_id,
         .generation = record->generation,
         .requested_bytes = record->requested_bytes,
@@ -920,7 +927,7 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
-        runtime, object->allocation_id
+        shadowspill_execution_pool(runtime), object->allocation_id
     );
     *snapshot = (ShadowSpillObjectSnapshot){
         .object_id = object->object_id,

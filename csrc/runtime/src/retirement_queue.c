@@ -239,9 +239,8 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
          * client is waiting.  Requeue the remaining completed records and let
          * the foreground call run before another background attempt.
          */
-        if (!shadowspill_memory_pool_try_lock_reclamation(
-                shadowspill_execution_pool(runtime)
-            )) {
+        ShadowSpillMemoryPool *pool = record->allocation->pool;
+        if (!shadowspill_memory_pool_try_lock_reclamation(pool)) {
             work.pool_busy = 1U;
             append_retry(&retry_head, &retry_tail, record);
             while (next != NULL) {
@@ -276,7 +275,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             shadowspill_release_execution_lease_locked(runtime, allocation);
             released = 1;
         }
-        shadowspill_memory_pool_unlock_reclamation(shadowspill_execution_pool(runtime));
+        shadowspill_memory_pool_unlock_reclamation(pool);
 
         release_owned_retirement_requirements(
             runtime,
@@ -288,6 +287,11 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
                 &runtime->pending_retirements, 1U, memory_order_release
             ) == 1U) {
             shadowspill_idle_notify(runtime);
+        }
+        if (released) {
+            (void)atomic_fetch_sub_explicit(
+                &pool->pending_retirements, 1U, memory_order_release
+            );
         }
         destroy_retirement_record(runtime, record);
         (void)atomic_fetch_sub_explicit(

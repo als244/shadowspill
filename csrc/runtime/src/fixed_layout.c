@@ -128,7 +128,6 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
     if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
@@ -153,7 +152,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
             plan->fixed_layout.slice_offset = offset;
             plan->fixed_layout.slice_bytes = bytes;
             plan->fixed_layout.active = 1U;
-            shadowspill_publish_execution_geometry_locked(runtime);
+            shadowspill_publish_pool_geometry_locked(pool);
         }
     }
     shadowspill_memory_pool_unlock_reservation(pool);
@@ -162,7 +161,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
 }
 
 static int has_borrowed_layout_lease(const ShadowSpillMemoryPool *pool) {
-    for (const ShadowSpillMemoryLease *lease = pool->leases;
+    for (const ShadowSpillMemoryLease *lease = pool->range_leases;
         lease != NULL; lease = lease->pool_next) {
         if (!lease->owns_pool_range) {
             return 1;
@@ -177,7 +176,6 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
     if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
@@ -195,7 +193,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     } else {
         clear_metadata(&plan->fixed_layout);
-        shadowspill_publish_execution_geometry_locked(runtime);
+        shadowspill_publish_pool_geometry_locked(pool);
     }
     shadowspill_memory_pool_unlock_reservation(pool);
     shadowspill_memory_pool_relinquish_reservation(pool);

@@ -126,6 +126,13 @@ static void complete_action(
         (void)atomic_fetch_sub_explicit(
             &runtime->pending_capacity_actions, 1U, memory_order_release
         );
+        if (action->plan_owner != NULL) {
+            (void)atomic_fetch_sub_explicit(
+                &action->plan_owner->execution_pool->pending_capacity_actions,
+                1U,
+                memory_order_release
+            );
+        }
     }
     if (admitted) {
         pthread_mutex_lock(&object->lock);
@@ -243,7 +250,7 @@ static int acquire_reserved_destination(
     ShadowSpillMemoryPool *pool = lease->pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillEventLease *dependency_event = NULL;
-    const int status = pool->pool_id == runtime->execution_pool_id
+    const int status = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
         ? shadowspill_acquire_reserved_execution_lease_locked(
             runtime, lease, &dependency_event
         )
@@ -386,13 +393,13 @@ static int dispatch_offload_locked(
         backend_failed = 1;
     }
     if (!backend_failed) {
-        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+        pthread_mutex_lock(&allocation->pool->lock);
         if (shadowspill_memory_pool_publish_retirement_dependency_locked(
                 allocation, completion_event
             ) != 0) {
             backend_failed = 1;
         }
-        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+        pthread_mutex_unlock(&allocation->pool->lock);
     }
     if (shadowspill_event_lease_release(runtime, trigger_event) != 0) {
         backend_failed = 1;
@@ -535,13 +542,13 @@ static int dispatch_prefetch_locked(
         backend_failed = 1;
     }
     if (!backend_failed && !object->retain_spill_copy) {
-        pthread_mutex_lock(&shadowspill_spill_pool(runtime)->lock);
+        pthread_mutex_lock(&spill->lease->pool->lock);
         if (shadowspill_memory_pool_begin_retirement_locked(
                 spill->lease, completion_event, 0
             ) != 0) {
             backend_failed = 1;
         }
-        pthread_mutex_unlock(&shadowspill_spill_pool(runtime)->lock);
+        pthread_mutex_unlock(&spill->lease->pool->lock);
     }
     if (shadowspill_event_lease_release(runtime, trigger_event) != 0) {
         backend_failed = 1;
@@ -640,18 +647,19 @@ static int handle_action(
                 );
                 if (complete) {
                     if (!shadowspill_memory_pool_try_lock_reclamation(
-                            shadowspill_execution_pool(runtime)
+                            action->plan_owner->execution_pool
                         )) {
                         pthread_mutex_unlock(&object->lock);
                         return 0;
                     }
                     ShadowSpillMemoryLease *allocation =
                         shadowspill_find_execution_lease(
-                            runtime, object->allocation_id
+                            action->plan_owner->execution_pool,
+                            object->allocation_id
                         );
                     if (allocation == NULL) {
                         shadowspill_memory_pool_unlock_reclamation(
-                            shadowspill_execution_pool(runtime)
+                            action->plan_owner->execution_pool
                         );
                         latch_action_failure(
                             runtime,
@@ -669,7 +677,7 @@ static int handle_action(
                         if (allocation->handoff_head_object_id !=
                                 object->object_id) {
                             shadowspill_memory_pool_unlock_reclamation(
-                                shadowspill_execution_pool(runtime)
+                                action->plan_owner->execution_pool
                             );
                             pthread_mutex_unlock(&object->lock);
                             return 0;
@@ -683,7 +691,7 @@ static int handle_action(
                             target == NULL ||
                             target->allocation_id != allocation->allocation_id) {
                             shadowspill_memory_pool_unlock_reclamation(
-                                shadowspill_execution_pool(runtime)
+                                action->plan_owner->execution_pool
                             );
                             latch_action_failure(
                                 runtime,
@@ -718,7 +726,7 @@ static int handle_action(
                         object->handoff_next_source_object_id =
                             SHADOWSPILL_RUNTIME_NO_ID;
                         shadowspill_memory_pool_unlock_reclamation(
-                            shadowspill_execution_pool(runtime)
+                            action->plan_owner->execution_pool
                         );
                         pthread_cond_broadcast(&object->state_changed);
                         pthread_mutex_unlock(&object->lock);
@@ -730,7 +738,7 @@ static int handle_action(
                     allocation->release_task_id = action->task_id;
                     shadowspill_release_execution_lease_locked(runtime, allocation);
                     shadowspill_memory_pool_unlock_reclamation(
-                        shadowspill_execution_pool(runtime)
+                        action->plan_owner->execution_pool
                     );
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
                     shadowspill_execution_location(runtime, object)->lease = NULL;
@@ -915,9 +923,9 @@ static int handle_action(
                 ShadowSpillEventLease *readiness_to_release = NULL;
                 ShadowSpillMemoryPool *release_pool = NULL;
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
-                    release_pool = shadowspill_execution_pool(runtime);
+                    release_pool = action->plan_owner->execution_pool;
                 } else if (!object->retain_spill_copy) {
-                    release_pool = shadowspill_spill_pool(runtime);
+                    release_pool = action->plan_owner->spill_pool;
                 }
                 if (release_pool != NULL &&
                     !shadowspill_memory_pool_try_lock_reclamation(
@@ -929,11 +937,12 @@ static int handle_action(
                 if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
                     ShadowSpillMemoryLease *allocation =
                         shadowspill_find_execution_lease(
-                            runtime, object->allocation_id
+                            action->plan_owner->execution_pool,
+                            object->allocation_id
                         );
                     if (allocation == NULL) {
                         shadowspill_memory_pool_unlock_reclamation(
-                            shadowspill_execution_pool(runtime)
+                            action->plan_owner->execution_pool
                         );
                         latch_action_failure(
                             runtime,
@@ -951,7 +960,7 @@ static int handle_action(
                     allocation->release_task_id = action->task_id;
                     shadowspill_release_execution_lease_locked(runtime, allocation);
                     shadowspill_memory_pool_unlock_reclamation(
-                        shadowspill_execution_pool(runtime)
+                        action->plan_owner->execution_pool
                     );
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
                     shadowspill_execution_location(runtime, object)->lease = NULL;
@@ -985,7 +994,7 @@ static int handle_action(
                         const int range_status =
                             shadowspill_memory_pool_release_lease_locked(lease);
                         shadowspill_memory_pool_unlock_reclamation(
-                            shadowspill_spill_pool(runtime)
+                            action->plan_owner->spill_pool
                         );
                         if (range_status != 0) {
                             latch_action_failure(

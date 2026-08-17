@@ -3,9 +3,20 @@
 
 #include <shadowspill/runtime.h>
 
+struct ShadowSpillMemoryPool;
+
 /* Thread-safe first-cause publication; callers need not hold another lock. */
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatus status,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+);
+
+void shadowspill_latch_pool_failure_locked(
+    ShadowSpillRuntime *runtime,
+    struct ShadowSpillMemoryPool *pool,
     ShadowSpillRuntimeStatus status,
     uint64_t object_id,
     uint64_t allocation_id,

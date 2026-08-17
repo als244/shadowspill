@@ -156,18 +156,16 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_RUNTIME_OK;
 
     ShadowSpillAllocation caller_owned = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 64U, 16U, compute, &caller_owned
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &caller_owned
         ) != SHADOWSPILL_RUNTIME_OK;
     failed = failed || shadowspill_test_before_task(
             runtime, execution.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillAllocation fixed = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 64U, 16U, compute, &fixed
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &fixed
         ) != SHADOWSPILL_RUNTIME_OK ||
         (uintptr_t)fixed.pointer + 64U != (uintptr_t)caller_owned.pointer ||
-        shadowspill_free(runtime, fixed.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, fixed.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(runtime, execution.task_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -176,11 +174,10 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
             runtime, dynamic_execution.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillAllocation dynamic = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 32U, 16U, compute, &dynamic
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 32U, 16U, compute, &dynamic
         ) != SHADOWSPILL_RUNTIME_OK ||
         (uintptr_t)dynamic.pointer != (uintptr_t)caller_owned.pointer + 64U ||
-        shadowspill_free(runtime, dynamic.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, dynamic.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(
             runtime, dynamic_execution.task_id, compute
@@ -198,8 +195,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         statistics.allocated_bytes != 64U ||
         statistics.largest_free_range_bytes != 128U;
 
-    failed = failed || shadowspill_free(
-            runtime, caller_owned.allocation_id, compute
+    failed = failed || shadowspill_memory_pool_free(runtime, 0U, caller_owned.allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_unregister_object(runtime, object.object_id) !=
@@ -318,10 +314,9 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
             runtime, execution.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillAllocation allocation = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 32U, 16U, compute, &allocation
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 32U, 16U, compute, &allocation
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, allocation.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(runtime, execution.task_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -567,11 +562,10 @@ static int eviction_completion_orders_fixed_reuse(void) {
             runtime, allocation_task.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillAllocation reused = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 64U, 16U, compute, &reused
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &reused
         ) != SHADOWSPILL_RUNTIME_OK ||
         reused.pointer != snapshot.execution_pointer ||
-        shadowspill_free(runtime, reused.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, reused.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(
             runtime, allocation_task.task_id, compute

@@ -16,8 +16,8 @@ worker, trace buffers, and first-failure state.
   directions.
 - `shadowspill_runtime_transfer_profiles()` reads the published immutable
   transfer matrix.
-- `shadowspill_runtime_resize_spill_pool()` changes the configured spill arena
-  only when the header's idle-state preconditions hold.
+- `shadowspill_memory_pool_grow()` grows one explicitly selected pool only when
+  the header's idle-state preconditions hold.
 
 Calibration first measures each available directed route alone. When reverse
 routes exist, it then measures both directions simultaneously on independent
@@ -29,12 +29,14 @@ matrix; it does not benchmark routes itself.
 
 ## Allocation API
 
-- `shadowspill_allocate()` leases a compatible range for the active task.
-- `shadowspill_allocation_for_pointer()` resolves the stable allocation record
-  that owns a pointer.
-- `shadowspill_free()` performs logical release and records causal retirement.
-- `shadowspill_record_stream()` adds a stream use that must complete before
-  reuse.
+- `shadowspill_memory_pool_allocate()` leases a compatible range from an
+  explicitly selected pool for the active allocation scope.
+- `shadowspill_memory_pool_allocation_for_pointer()` resolves the stable
+  allocation record that owns a pointer within one pool.
+- `shadowspill_memory_pool_free()` performs logical release and records causal
+  retirement in that pool.
+- `shadowspill_memory_pool_record_stream()` adds a stream use that must
+  complete before the range can be reused.
 
 No backend operation runs while the pool lock is held. A request waits only
 when a known pending transition can satisfy it; otherwise it returns a
@@ -114,7 +116,8 @@ for the layout certificate and offset coordinate systems.
 Structural profiling attributes allocator activity through a dedicated,
 non-execution boundary:
 
-- `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope.
+- `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope
+  against an explicitly selected pool.
 - `shadowspill_allocation_scope_end()` retires its anonymous allocations behind
   the supplied stream fence and closes the scope.
 - `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.

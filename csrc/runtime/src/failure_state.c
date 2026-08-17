@@ -4,6 +4,7 @@
 
 static void latch_failure(
     ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
     ShadowSpillRuntimeStatus status,
     uint64_t task_id,
     uint64_t object_id,
@@ -26,15 +27,16 @@ static void latch_failure(
     }
     runtime->failure = (ShadowSpillRuntimeFailure){
         .status = (uint32_t)status,
+        .pool_id = pool == NULL ? UINT32_MAX : pool->pool_id,
         .task_id = task_id,
         .object_id = object_id,
         .allocation_id = allocation_id,
         .requested_bytes = requested_bytes,
-        .free_bytes = atomic_load_explicit(
-            &runtime->execution_free_bytes_snapshot, memory_order_acquire
+        .free_bytes = pool == NULL ? 0U : atomic_load_explicit(
+            &pool->free_bytes_snapshot, memory_order_acquire
         ),
-        .largest_free_range_bytes = atomic_load_explicit(
-            &runtime->execution_largest_free_snapshot, memory_order_acquire
+        .largest_free_range_bytes = pool == NULL ? 0U : atomic_load_explicit(
+            &pool->largest_free_bytes_snapshot, memory_order_acquire
         ),
         .task_live_requested_bytes = task_live_requested_bytes,
         .task_live_charged_bytes = task_live_charged_bytes,
@@ -83,10 +85,10 @@ static void latch_failure(
     );
     pthread_cond_broadcast(&runtime->condition);
     shadowspill_idle_notify(runtime);
-    if (shadowspill_execution_pool(runtime)->initialized) {
-        pthread_cond_broadcast(
-            &shadowspill_execution_pool(runtime)->capacity_changed
-        );
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        if (runtime->pools[pool_id].initialized) {
+            pthread_cond_broadcast(&runtime->pools[pool_id].capacity_changed);
+        }
     }
 }
 
@@ -99,6 +101,33 @@ void shadowspill_latch_failure_locked(
 ) {
     latch_failure(
         runtime,
+        shadowspill_current_allocation_pool(runtime),
+        status,
+        shadowspill_current_task_id(runtime),
+        object_id,
+        allocation_id,
+        requested_bytes,
+        0U,
+        0U,
+        0U,
+        0U,
+        0U,
+        0U,
+        NULL
+    );
+}
+
+void shadowspill_latch_pool_failure_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillRuntimeStatus status,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+) {
+    latch_failure(
+        runtime,
+        pool,
         status,
         shadowspill_current_task_id(runtime),
         object_id,
@@ -124,6 +153,7 @@ void shadowspill_latch_task_failure(
 ) {
     latch_failure(
         runtime,
+        shadowspill_current_allocation_pool(runtime),
         status,
         task_id,
         object_id,
@@ -152,6 +182,7 @@ void shadowspill_latch_task_envelope_failure(
 ) {
     latch_failure(
         runtime,
+        shadowspill_current_allocation_pool(runtime),
         SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED,
         shadowspill_current_task_id(runtime),
         SHADOWSPILL_RUNTIME_NO_ID,
@@ -177,6 +208,7 @@ void shadowspill_latch_task_allocation_contract_failure(
     }
     latch_failure(
         runtime,
+        shadowspill_current_allocation_pool(runtime),
         SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH,
         shadowspill_current_task_id(runtime),
         SHADOWSPILL_RUNTIME_NO_ID,
@@ -234,7 +266,15 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
     if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
+    pthread_mutex_lock(&runtime->failure_lock);
+    const uint32_t failure_pool_id = runtime->failure.pool_id;
+    pthread_mutex_unlock(&runtime->failure_lock);
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(
+        runtime, failure_pool_id
+    );
+    if (pool == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     shadowspill_memory_pool_lock_foreground(pool);
     pthread_mutex_lock(&runtime->failure_lock);
     const ShadowSpillRuntimeStatus failure = shadowspill_failure_status(runtime);
@@ -243,7 +283,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
         status = SHADOWSPILL_RUNTIME_OK;
     } else if (failure != SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         status = failure;
-    } else if (runtime->blocked_allocators != 0U) {
+    } else if (pool->blocked_allocators != 0U) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     } else {
         /*
@@ -253,7 +293,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
          * publish the complete causal retirement before recovery.
          */
         for (const ShadowSpillMemoryLease *allocation =
-                 runtime->active_execution_leases;
+                 pool->active_leases;
              allocation != NULL; allocation = allocation->active_next) {
             if (allocation->logical_freed && allocation->pointer != NULL &&
                 !allocation->retirement_preparing &&
@@ -267,6 +307,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
     if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         runtime->failure = (ShadowSpillRuntimeFailure){
             .status = SHADOWSPILL_RUNTIME_OK,
+            .pool_id = UINT32_MAX,
             .task_id = SHADOWSPILL_RUNTIME_NO_ID,
             .object_id = SHADOWSPILL_RUNTIME_NO_ID,
             .allocation_id = SHADOWSPILL_RUNTIME_NO_ID,

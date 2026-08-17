@@ -87,7 +87,7 @@ static int completion_without_successor_frees_and_coalesces(void) {
             &predecessor
         ) != 0;
     failed = failed || predecessor.state != SHADOWSPILL_LEASE_FREE ||
-        pool.leases != NULL ||
+        pool.range_leases != NULL ||
         shadowspill_memory_pool_free_bytes_locked(&pool) != 128U ||
         shadowspill_memory_pool_largest_free_locked(&pool) != 128U;
     destroy_pool(&pool);
@@ -121,7 +121,7 @@ static int completion_hands_range_directly_to_reserved_successor(void) {
         ) != 0;
     failed = failed || predecessor.state != SHADOWSPILL_LEASE_FREE ||
         successor.state != SHADOWSPILL_LEASE_RESERVED ||
-        successor.pool != &pool || pool.leases != &successor ||
+        successor.pool != &pool || pool.range_leases != &successor ||
         successor.offset != 0U || successor.charged_bytes != 96U ||
         pool.reserved_bytes != 96U ||
         shadowspill_memory_pool_free_bytes_locked(&pool) != 32U ||
@@ -164,7 +164,7 @@ static int acquisition_hands_range_to_successor_with_dependency(void) {
         predecessor.state != SHADOWSPILL_LEASE_PREDECESSOR_TRANSFERRED ||
         predecessor.pool != NULL ||
         successor.state != SHADOWSPILL_LEASE_IN_USE ||
-        successor.pool != &pool || pool.leases != &successor ||
+        successor.pool != &pool || pool.range_leases != &successor ||
         successor.offset != 0U || successor.charged_bytes != 96U ||
         pool.reserved_bytes != 0U ||
         shadowspill_memory_pool_free_bytes_locked(&pool) != 32U;
@@ -176,7 +176,7 @@ static int acquisition_hands_range_to_successor_with_dependency(void) {
         ) != 0;
     failed = failed || predecessor.state != SHADOWSPILL_LEASE_FREE ||
         shadowspill_memory_pool_free_bytes_locked(&pool) != 32U ||
-        pool.leases != &successor;
+        pool.range_leases != &successor;
 
     failed = failed || shadowspill_memory_pool_release_lease_locked(
             &successor
@@ -245,7 +245,7 @@ static int borrowed_subranges_do_not_change_parent_geometry(void) {
         shadowspill_memory_pool_free_bytes_locked(&pool) != 32U;
     failed = failed || shadowspill_memory_pool_release_lease_locked(&first) != 0 ||
         shadowspill_memory_pool_release_lease_locked(&second) != 0;
-    failed = failed || pool.leases != NULL || pool.ranges.allocated != 96U ||
+    failed = failed || pool.range_leases != NULL || pool.ranges.allocated != 96U ||
         shadowspill_memory_pool_largest_free_locked(&pool) != 32U;
     failed = failed || shadowspill_memory_pool_release_locked(
             &pool, parent_offset, 96U

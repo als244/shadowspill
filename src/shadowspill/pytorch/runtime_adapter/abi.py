@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 39
-RUNTIME_ABI_VERSION: Final = 31
+ADAPTER_ABI_VERSION: Final = 40
+RUNTIME_ABI_VERSION: Final = 32
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -113,6 +113,7 @@ class RuntimeStatistics(ctypes.Structure):
 class AllocationEvent(ctypes.Structure):
     _fields_ = [
         ("sequence", ctypes.c_uint64),
+        ("pool_id", ctypes.c_uint32),
         ("task_id", ctypes.c_uint64),
         ("allocation_id", ctypes.c_uint64),
         ("generation", ctypes.c_uint64),
@@ -208,6 +209,7 @@ class TraceSummary(ctypes.Structure):
 
 class Allocation(ctypes.Structure):
     _fields_ = [
+        ("pool_id", ctypes.c_uint32),
         ("allocation_id", ctypes.c_uint64),
         ("generation", ctypes.c_uint64),
         ("requested_bytes", ctypes.c_uint64),
@@ -246,6 +248,7 @@ class CudaStatistics(ctypes.Structure):
 class RuntimeFailure(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
+        ("pool_id", ctypes.c_uint32),
         ("task_id", ctypes.c_uint64),
         ("object_id", ctypes.c_uint64),
         ("allocation_id", ctypes.c_uint64),

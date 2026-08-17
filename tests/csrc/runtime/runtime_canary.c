@@ -26,21 +26,16 @@ static int best_fit_preserves_largest_range(void) {
     ShadowSpillAllocation allocations[5] = {{0}};
     const uint64_t sizes[] = {64U, 32U, 96U, 32U};
     for (uint32_t index = 0U; !failed && index < 4U; ++index) {
-        failed = shadowspill_allocate(
-            runtime, sizes[index], 1U, compute, &allocations[index]
+        failed = shadowspill_memory_pool_allocate(runtime, 0U, sizes[index], 1U, compute, &allocations[index]
         ) != SHADOWSPILL_RUNTIME_OK;
     }
-    failed = failed || shadowspill_free(
-            runtime, allocations[1].allocation_id, compute
+    failed = failed || shadowspill_memory_pool_free(runtime, 0U, allocations[1].allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(
-            runtime, allocations[0].allocation_id, compute
+        shadowspill_memory_pool_free(runtime, 0U, allocations[0].allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(
-            runtime, allocations[3].allocation_id, compute
+        shadowspill_memory_pool_free(runtime, 0U, allocations[3].allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(
-            runtime, 48U, 1U, compute, &allocations[4]
+        shadowspill_memory_pool_allocate(runtime, 0U, 48U, 1U, compute, &allocations[4]
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillRuntimeStatistics statistics = {0};
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -85,14 +80,14 @@ static int same_stream_split_retires_cleanly(void) {
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
-        shadowspill_allocate(runtime, 128U, 1U, compute, &original) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 128U, 1U, compute, &original) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, original.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, original.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 64U, 1U, compute, &split) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &split) !=
             SHADOWSPILL_RUNTIME_OK ||
         split.pointer != original.pointer ||
-        shadowspill_free(runtime, split.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, split.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillRuntimeStatistics statistics = {0};
@@ -140,11 +135,10 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
          ++iteration) {
         ShadowSpillAllocation whole = {0};
         ShadowSpillAllocation splits[SPLITS_PER_ITERATION] = {{0}};
-        failed = shadowspill_allocate(
-                runtime, POOL_BYTES, 16U, compute, &whole
+        failed = shadowspill_memory_pool_allocate(runtime, 0U, POOL_BYTES, 16U, compute, &whole
             ) != SHADOWSPILL_RUNTIME_OK ||
             shadowspill_mock_enqueue_compute(mock, compute, 1000U) != 0 ||
-            shadowspill_free(runtime, whole.allocation_id, compute) !=
+            shadowspill_memory_pool_free(runtime, 0U, whole.allocation_id, compute) !=
                 SHADOWSPILL_RUNTIME_OK;
         uint64_t remaining = POOL_BYTES;
         for (uint32_t index = 0U;
@@ -157,16 +151,14 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
             const uint64_t bytes = index + 1U == SPLITS_PER_ITERATION
                 ? remaining
                 : 16U * (1U + pseudo_random % slot_count);
-            failed = shadowspill_allocate(
-                    runtime, bytes, 16U, compute, &splits[index]
+            failed = shadowspill_memory_pool_allocate(runtime, 0U, bytes, 16U, compute, &splits[index]
                 ) != SHADOWSPILL_RUNTIME_OK;
             remaining -= bytes;
         }
         for (uint32_t index = 0U;
              !failed && index < SPLITS_PER_ITERATION;
              ++index) {
-            failed = shadowspill_free(
-                    runtime, splits[index].allocation_id, compute
+            failed = shadowspill_memory_pool_free(runtime, 0U, splits[index].allocation_id, compute
                 ) != SHADOWSPILL_RUNTIME_OK;
         }
         failed = failed || shadowspill_runtime_wait_idle(runtime) !=
@@ -228,39 +220,36 @@ int main(void) {
     }
     ShadowSpillAllocation allocation = {0};
     ShadowSpillAllocation resolved = {0};
-    if (shadowspill_allocate(runtime, 128U, 16U, compute, &allocation) !=
+    if (shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &allocation) !=
         SHADOWSPILL_RUNTIME_OK || allocation.pointer == NULL ||
         allocation.charged_bytes != 128U ||
-        shadowspill_allocation_for_pointer(
-            runtime, allocation.pointer, &resolved
+        shadowspill_memory_pool_allocation_for_pointer(runtime, 0U, allocation.pointer, &resolved
         ) != SHADOWSPILL_RUNTIME_OK ||
         resolved.allocation_id != allocation.allocation_id ||
         resolved.generation != allocation.generation) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_record_stream(runtime, allocation.allocation_id, compute) !=
+    if (shadowspill_memory_pool_record_stream(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
-        shadowspill_free(runtime, allocation.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
     ShadowSpillAllocation same_stream_reuse = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
-    if (shadowspill_allocate(
-            runtime, 128U, 16U, compute, &same_stream_reuse
+    if (shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &same_stream_reuse
         ) != SHADOWSPILL_RUNTIME_OK ||
         same_stream_reuse.pointer == allocation.pointer ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
         statistics.pending_retirements != 1U ||
-        shadowspill_free(runtime, same_stream_reuse.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, same_stream_reuse.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_allocation_for_pointer(
-            runtime, allocation.pointer, &resolved
+    if (shadowspill_memory_pool_allocation_for_pointer(runtime, 0U, allocation.pointer, &resolved
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE) {
         return EXIT_FAILURE;
     }
@@ -302,9 +291,9 @@ int main(void) {
         memcmp(
             original_payload, restored_payload, sizeof(original_payload)
         ) != 0 ||
-        shadowspill_runtime_resize_spill_pool(runtime, 512U) !=
+        shadowspill_memory_pool_grow(runtime, 1U, 512U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_resize_spill_pool(runtime, 255U) !=
+        shadowspill_memory_pool_grow(runtime, 1U, 255U) !=
             SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
         shadowspill_read_spill_object(
             runtime,
@@ -319,7 +308,7 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.spill_pool_bytes != 512U ||
         statistics.spill_allocated_bytes != 128U ||
-        shadowspill_allocate(runtime, 128U, 16U, compute, &first_generation) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(
             runtime, object.object_id, first_generation.allocation_id
@@ -353,7 +342,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     ShadowSpillAllocation blocker = {0};
-    if (shadowspill_allocate(runtime, 64U, 16U, compute, &blocker) !=
+    if (shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &blocker) !=
         SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
@@ -412,7 +401,7 @@ int main(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, blocker.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, blocker.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_statistics(runtime, &statistics) !=

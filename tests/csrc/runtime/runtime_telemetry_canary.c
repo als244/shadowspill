@@ -56,13 +56,13 @@ static int ordered_task_capture(void) {
     };
     int failed = shadowspill_allocation_telemetry_start(runtime, 8U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocation_scope_begin(runtime, 42U) !=
+        shadowspill_allocation_scope_begin(runtime, 0U, 42U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 64U, 1U, compute, &first) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &first) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, first.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, first.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 96U, 1U, compute, &second) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 96U, 1U, compute, &second) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -162,11 +162,9 @@ static int same_stream_retirement_is_task_batched(void) {
         ) != SHADOWSPILL_RUNTIME_OK;
     for (uint32_t index = 0U; !failed && index < 2500U; ++index) {
         ShadowSpillAllocation allocation = {0};
-        failed = shadowspill_allocate(
-                runtime, 64U, 1U, compute, &allocation
+        failed = shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &allocation
             ) != SHADOWSPILL_RUNTIME_OK;
-        failed = failed || shadowspill_free(
-            runtime, allocation.allocation_id, compute
+        failed = failed || shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK;
     }
     shadowspill_mock_backend_statistics(mock, &during);
@@ -253,10 +251,9 @@ static int queued_transfers_survive_retirement_only_task(void) {
             runtime, temporary_task.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK;
     ShadowSpillAllocation temporary = {0};
-    failed = failed || shadowspill_allocate(
-            runtime, 16U, 1U, compute, &temporary
+    failed = failed || shadowspill_memory_pool_allocate(runtime, 0U, 16U, 1U, compute, &temporary
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, temporary.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, temporary.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(
             runtime, temporary_task.task_id, compute
@@ -309,13 +306,13 @@ static int all_completed_retirements_precede_action_admission(void) {
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, allocator_task.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 64U, 1U, compute, &first) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &first) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 64U, 1U, compute, &second) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &second) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, first.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, first.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, second.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, second.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(
             runtime, allocator_task.task_id, compute
@@ -351,9 +348,9 @@ static int overflow_is_failure(void) {
     ShadowSpillAllocation allocation = {0};
     if (shadowspill_allocation_telemetry_start(runtime, 1U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_allocate(runtime, 8U, 1U, compute, &allocation) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 8U, 1U, compute, &allocation) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, allocation.allocation_id, compute) !=
+        shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE) {
         destroy_runtime(mock, runtime, compute);
         return -1;

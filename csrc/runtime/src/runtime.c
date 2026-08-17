@@ -36,32 +36,36 @@ int shadowspill_synchronization_backend_is_valid(
 }
 
 static void destroy_allocations(ShadowSpillRuntime *runtime) {
-    ShadowSpillMemoryLease *allocation = runtime->execution_leases;
-    while (allocation != NULL) {
-        ShadowSpillMemoryLease *next = allocation->next;
-        ShadowSpillStreamRecord *stream = allocation->streams;
-        while (stream != NULL) {
-            ShadowSpillStreamRecord *stream_next = stream->next;
-            free(stream);
-            stream = stream_next;
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        ShadowSpillMemoryPool *pool = &runtime->pools[pool_id];
+        ShadowSpillMemoryLease *allocation = pool->owned_leases;
+        while (allocation != NULL) {
+            ShadowSpillMemoryLease *next = allocation->ownership_next;
+            ShadowSpillStreamRecord *stream = allocation->streams;
+            while (stream != NULL) {
+                ShadowSpillStreamRecord *stream_next = stream->next;
+                free(stream);
+                stream = stream_next;
+            }
+            ShadowSpillEventRecord *event = allocation->retirement_events;
+            while (event != NULL) {
+                ShadowSpillEventRecord *event_next = event->next;
+                (void)shadowspill_event_lease_release(runtime, event->event);
+                free(event);
+                event = event_next;
+            }
+            if (allocation->retirement_event != NULL) {
+                (void)shadowspill_event_lease_release(
+                    runtime, allocation->retirement_event
+                );
+                allocation->retirement_event = NULL;
+            }
+            free(allocation);
+            allocation = next;
         }
-        ShadowSpillEventRecord *event = allocation->retirement_events;
-        while (event != NULL) {
-            ShadowSpillEventRecord *event_next = event->next;
-            (void)shadowspill_event_lease_release(runtime, event->event);
-            free(event);
-            event = event_next;
-        }
-        if (allocation->retirement_event != NULL) {
-            (void)shadowspill_event_lease_release(
-                runtime, allocation->retirement_event
-            );
-            allocation->retirement_event = NULL;
-        }
-        free(allocation);
-        allocation = next;
+        pool->owned_leases = NULL;
+        pool->active_leases = NULL;
     }
-    runtime->execution_leases = NULL;
 }
 
 static void destroy_objects(ShadowSpillRuntime *runtime) {
@@ -105,7 +109,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                 action->destination_lease = NULL;
             } else {
                 pthread_mutex_lock(&pool->lock);
-                if (pool->pool_id == runtime->execution_pool_id) {
+                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
                     shadowspill_cancel_execution_reservation_locked(
                         runtime, lease
                     );
@@ -157,12 +161,6 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     destroy_allocations(runtime);
     shadowspill_plan_destroy_all(runtime);
     destroy_objects(runtime);
-    free(runtime->execution_leases_by_id);
-    free(runtime->execution_leases_by_pointer);
-    free(runtime->reusable_execution_leases_by_size);
-    runtime->execution_leases_by_id = NULL;
-    runtime->execution_leases_by_pointer = NULL;
-    runtime->reusable_execution_leases_by_size = NULL;
     free(runtime->allocation_events);
     runtime->allocation_events = NULL;
     runtime->allocation_event_count = 0U;
@@ -196,8 +194,8 @@ static void release_resources(ShadowSpillRuntime *runtime) {
 static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
     if (config == NULL ||
         config->abi_version != SHADOWSPILL_RUNTIME_ABI_VERSION ||
-        config->pools == NULL || config->pool_count < 2U ||
-        config->routes == NULL || config->route_count < 2U ||
+        config->pools == NULL || config->pool_count == 0U ||
+        (config->routes == NULL && config->route_count != 0U) ||
         !shadowspill_synchronization_backend_is_valid(
             &config->synchronization
         ) || !shadowspill_profiler_is_valid(&config->profiler)) {
@@ -229,16 +227,7 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
             }
         }
     }
-    /* Temporary until every operation is anchored to a plan-owned binding. */
-    return config->pools[SHADOWSPILL_EXECUTION_POOL_ID].capacity_bytes != 0U &&
-        config->routes[SHADOWSPILL_FETCH_ROUTE_ID].route.source_pool_id ==
-            SHADOWSPILL_SPILL_POOL_ID &&
-        config->routes[SHADOWSPILL_FETCH_ROUTE_ID].route.destination_pool_id ==
-            SHADOWSPILL_EXECUTION_POOL_ID &&
-        config->routes[SHADOWSPILL_EVICT_ROUTE_ID].route.source_pool_id ==
-            SHADOWSPILL_EXECUTION_POOL_ID &&
-        config->routes[SHADOWSPILL_EVICT_ROUTE_ID].route.destination_pool_id ==
-            SHADOWSPILL_SPILL_POOL_ID;
+    return 1;
 }
 
 ShadowSpillRuntimeStatus shadowspill_runtime_create(
@@ -257,8 +246,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->pools = calloc(config->pool_count, sizeof(*runtime->pools));
-    runtime->routes = calloc(config->route_count, sizeof(*runtime->routes));
-    if (runtime->pools == NULL || runtime->routes == NULL) {
+    runtime->routes = config->route_count == 0U
+        ? NULL : calloc(config->route_count, sizeof(*runtime->routes));
+    if (runtime->pools == NULL ||
+        (config->route_count != 0U && runtime->routes == NULL)) {
         free(runtime->routes);
         free(runtime->pools);
         free(runtime);
@@ -266,21 +257,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
     }
     runtime->pool_count = config->pool_count;
     runtime->route_count = config->route_count;
-    runtime->execution_pool_id = SHADOWSPILL_EXECUTION_POOL_ID;
-    runtime->spill_pool_id = SHADOWSPILL_SPILL_POOL_ID;
-    runtime->fetch_route_id = SHADOWSPILL_FETCH_ROUTE_ID;
-    runtime->evict_route_id = SHADOWSPILL_EVICT_ROUTE_ID;
     runtime->synchronization = config->synchronization;
     runtime->profiler = config->profiler;
     for (uint32_t route_id = 0U; route_id < config->route_count; ++route_id) {
         runtime->routes[route_id].route = config->routes[route_id].route;
     }
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
-    runtime->next_allocation_id = 1U;
-    runtime->next_generation = 1U;
+    atomic_init(&runtime->next_allocation_id, 1U);
+    atomic_init(&runtime->next_generation, 1U);
     atomic_init(&runtime->next_event_generation, 1U);
     runtime->failure.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     runtime->failure.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    runtime->failure.pool_id = UINT32_MAX;
     atomic_init(&runtime->closing, 0U);
     atomic_init(&runtime->closed, 0U);
     atomic_init(&runtime->worker_stop, 0U);
@@ -296,8 +284,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
     atomic_init(&runtime->actions.count, 0U);
     atomic_init(&runtime->worker_submission, NULL);
     atomic_init(&runtime->next_worker_submission_sequence, 0U);
-    atomic_init(&runtime->execution_free_bytes_snapshot, 0U);
-    atomic_init(&runtime->execution_largest_free_snapshot, 0U);
     atomic_init(&runtime->allocation_event_count, 0U);
     atomic_init(&runtime->next_allocation_event_sequence, 0U);
     atomic_init(&runtime->allocation_telemetry_active, 0U);
@@ -307,8 +293,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
     atomic_init(&runtime->trace_prepared, 0U);
     atomic_init(&runtime->trace_active, 0U);
     atomic_init(&runtime->trace_event_overflow, 0U);
-    runtime->allocation_index_bucket_count = 65536U;
-    runtime->reusable_index_bucket_count = 8192U;
     const uint64_t object_index_bucket_count = 16384U;
     if (pthread_mutex_init(&runtime->plans_lock, NULL) != 0) {
         free(runtime->routes);
@@ -317,29 +301,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     runtime->plans_lock_initialized = 1U;
-    runtime->execution_leases_by_id = calloc(
-        (size_t)runtime->allocation_index_bucket_count,
-        sizeof(*runtime->execution_leases_by_id)
-    );
-    runtime->execution_leases_by_pointer = calloc(
-        (size_t)runtime->allocation_index_bucket_count,
-        sizeof(*runtime->execution_leases_by_pointer)
-    );
-    runtime->reusable_execution_leases_by_size = calloc(
-        (size_t)runtime->reusable_index_bucket_count,
-        sizeof(*runtime->reusable_execution_leases_by_size)
-    );
-    if (runtime->execution_leases_by_id == NULL ||
-        runtime->execution_leases_by_pointer == NULL ||
-        runtime->reusable_execution_leases_by_size == NULL ||
-        shadowspill_object_table_initialize(
+    if (shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
         ) != 0 || shadowspill_completion_tracker_initialize(
             &runtime->completions
         ) != 0) {
-        free(runtime->execution_leases_by_id);
-        free(runtime->execution_leases_by_pointer);
-        free(runtime->reusable_execution_leases_by_size);
         shadowspill_object_table_destroy(&runtime->objects);
         pthread_mutex_destroy(&runtime->plans_lock);
         runtime->plans_lock_initialized = 0U;
@@ -424,7 +390,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
             goto fail;
         }
     }
-    shadowspill_publish_execution_geometry_locked(runtime);
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        shadowspill_publish_pool_geometry_locked(&runtime->pools[pool_id]);
+    }
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
         if (shadowspill_transfer_lane_initialize(&route->transfers) != 0) {
@@ -486,11 +454,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool(
+ShadowSpillRuntimeStatus shadowspill_memory_pool_grow(
     ShadowSpillRuntime *runtime,
-    uint64_t spill_pool_bytes
+    uint32_t pool_id,
+    uint64_t capacity_bytes
 ) {
-    if (runtime == NULL || spill_pool_bytes > SIZE_MAX) {
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL || capacity_bytes > SIZE_MAX) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
@@ -499,7 +469,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool(
     }
     pthread_mutex_lock(&runtime->mutex);
     status = shadowspill_current_status_locked(runtime);
-    uint64_t current_bytes = shadowspill_spill_pool(runtime)->ranges.capacity;
+    uint64_t current_bytes = pool->ranges.capacity;
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
@@ -511,52 +481,52 @@ ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
-    if (spill_pool_bytes < current_bytes) {
+    if (capacity_bytes < current_bytes) {
         status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
         goto done;
     }
-    if (spill_pool_bytes == current_bytes) {
+    if (capacity_bytes == current_bytes) {
         goto done;
     }
 
-    ShadowSpillMemoryPool *spill_pool = shadowspill_spill_pool(runtime);
     void *replacement = NULL;
-    if (spill_pool->backend.allocate_arena(
-            spill_pool->backend.context, spill_pool_bytes, &replacement
+    if (pool->backend.allocate_arena(
+            pool->backend.context, capacity_bytes, &replacement
         ) != 0) {
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         goto done;
     }
     if (current_bytes != 0U) {
-        memcpy(replacement, spill_pool->base, (size_t)current_bytes);
+        memcpy(replacement, pool->base, (size_t)current_bytes);
     }
     ShadowSpillRangeAllocator ranges = {0};
     if (shadowspill_range_clone_extended(
-            &spill_pool->ranges,
-            spill_pool_bytes,
+            &pool->ranges,
+            capacity_bytes,
             &ranges
         ) != 0) {
-        (void)spill_pool->backend.close(
-            spill_pool->backend.context, replacement
+        (void)pool->backend.close(
+            pool->backend.context, replacement
         );
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    if (spill_pool->base != NULL && spill_pool->backend.close(
-            spill_pool->backend.context, spill_pool->base
+    if (pool->base != NULL && pool->backend.close(
+            pool->backend.context, pool->base
         ) != 0) {
         shadowspill_range_destroy(&ranges);
-        (void)spill_pool->backend.close(
-            spill_pool->backend.context, replacement
+        (void)pool->backend.close(
+            pool->backend.context, replacement
         );
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         goto done;
     }
     shadowspill_memory_pool_rebase_locked(
-        spill_pool, replacement
+        pool, replacement
     );
-    shadowspill_range_destroy(&spill_pool->ranges);
-    spill_pool->ranges = ranges;
+    shadowspill_range_destroy(&pool->ranges);
+    pool->ranges = ranges;
+    shadowspill_publish_pool_geometry_locked(pool);
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
@@ -654,15 +624,24 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     if (runtime == NULL || statistics == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    ShadowSpillMemoryPool *execution_pool = shadowspill_runtime_pool(
+        runtime, SHADOWSPILL_EXECUTION_POOL_ID
+    );
+    ShadowSpillMemoryPool *spill_pool = shadowspill_runtime_pool(
+        runtime, SHADOWSPILL_SPILL_POOL_ID
+    );
+    if (execution_pool == NULL || spill_pool == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    pthread_mutex_lock(&shadowspill_spill_pool(runtime)->lock);
+    pthread_mutex_lock(&execution_pool->lock);
+    pthread_mutex_lock(&spill_pool->lock);
     uint64_t retirement_records_fenced = 0U;
     uint64_t retirement_records_evented = 0U;
     uint64_t retirement_records_preparing = 0U;
     uint64_t retirement_records_unfenced = 0U;
     for (const ShadowSpillMemoryLease *allocation =
-             runtime->active_execution_leases;
+             execution_pool->active_leases;
          allocation != NULL; allocation = allocation->active_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL) {
             continue;
@@ -678,31 +657,27 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         }
     }
     *statistics = (ShadowSpillRuntimeStatistics){
-        .execution_pool_bytes = shadowspill_execution_pool(runtime)->ranges.capacity,
-        .requested_allocated_bytes = runtime->requested_allocated_bytes,
+        .execution_pool_bytes = execution_pool->ranges.capacity,
+        .requested_allocated_bytes = execution_pool->requested_allocated_bytes,
         .peak_requested_allocated_bytes =
-            runtime->peak_requested_allocated_bytes,
-        .allocated_bytes = shadowspill_execution_pool(runtime)->ranges.allocated,
+            execution_pool->peak_requested_allocated_bytes,
+        .allocated_bytes = execution_pool->ranges.allocated,
         .free_bytes =
-            shadowspill_memory_pool_free_bytes_locked(shadowspill_execution_pool(runtime)),
+            shadowspill_memory_pool_free_bytes_locked(execution_pool),
         .free_prefix_bytes = shadowspill_memory_pool_free_prefix_locked(
-            shadowspill_execution_pool(runtime)
+            execution_pool
         ),
         .largest_free_range_bytes =
-            shadowspill_memory_pool_largest_free_locked(
-                shadowspill_execution_pool(runtime)
-            ),
+            shadowspill_memory_pool_largest_free_locked(execution_pool),
         .external_fragmentation_bytes =
-            shadowspill_memory_pool_free_bytes_locked(shadowspill_execution_pool(runtime)) -
-            shadowspill_memory_pool_largest_free_locked(
-                shadowspill_execution_pool(runtime)
-            ),
-        .peak_allocated_bytes = shadowspill_execution_pool(runtime)->ranges.peak_allocated,
-        .spill_pool_bytes = shadowspill_spill_pool(runtime)->ranges.capacity,
-        .spill_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.allocated,
-        .spill_peak_allocated_bytes = shadowspill_spill_pool(runtime)->ranges.peak_allocated,
-        .live_allocations = runtime->live_allocations,
-        .blocked_allocators = runtime->blocked_allocators,
+            shadowspill_memory_pool_free_bytes_locked(execution_pool) -
+            shadowspill_memory_pool_largest_free_locked(execution_pool),
+        .peak_allocated_bytes = execution_pool->ranges.peak_allocated,
+        .spill_pool_bytes = spill_pool->ranges.capacity,
+        .spill_allocated_bytes = spill_pool->ranges.allocated,
+        .spill_peak_allocated_bytes = spill_pool->ranges.peak_allocated,
+        .live_allocations = execution_pool->live_allocations,
+        .blocked_allocators = execution_pool->blocked_allocators,
         .pending_retirements = runtime->pending_retirements,
         .retirement_records_fenced = retirement_records_fenced,
         .retirement_records_evented = retirement_records_evented,
@@ -734,8 +709,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .allocation_event_overflow =
             (uint64_t)runtime->allocation_event_overflow,
     };
-    pthread_mutex_unlock(&shadowspill_spill_pool(runtime)->lock);
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&spill_pool->lock);
+    pthread_mutex_unlock(&execution_pool->lock);
     pthread_mutex_unlock(&runtime->mutex);
     return SHADOWSPILL_RUNTIME_OK;
 }

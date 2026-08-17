@@ -16,8 +16,7 @@ typedef struct AllocationRequest {
 
 static void *allocate_from_thread(void *pointer) {
     AllocationRequest *request = pointer;
-    request->status = shadowspill_allocate(
-        request->runtime,
+    request->status = shadowspill_memory_pool_allocate(request->runtime, 0U,
         128U,
         1U,
         request->stream,
@@ -49,12 +48,11 @@ int main(void) {
     ShadowSpillAllocation first = {0};
     if (shadowspill_mock_create_compute_stream(mock, &first_stream) != 0 ||
         shadowspill_mock_create_compute_stream(mock, &second_stream) != 0 ||
-        shadowspill_allocate(runtime, 128U, 1U, first_stream, &first) !=
+        shadowspill_memory_pool_allocate(runtime, 0U, 128U, 1U, first_stream, &first) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_record_stream(
-            runtime, first.allocation_id, second_stream
+        shadowspill_memory_pool_record_stream(runtime, 0U, first.allocation_id, second_stream
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_free(runtime, first.allocation_id, first_stream) !=
+        shadowspill_memory_pool_free(runtime, 0U, first.allocation_id, first_stream) !=
             SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
@@ -68,8 +66,7 @@ int main(void) {
         pthread_join(thread, NULL) != 0 ||
         request.status != SHADOWSPILL_RUNTIME_OK ||
         request.allocation.pointer == NULL ||
-        shadowspill_free(
-            runtime, request.allocation.allocation_id, first_stream
+        shadowspill_memory_pool_free(runtime, 0U, request.allocation.allocation_id, first_stream
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;

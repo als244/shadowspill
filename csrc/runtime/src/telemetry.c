@@ -6,6 +6,7 @@
 
 typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
+    ShadowSpillMemoryPool *allocation_pool;
     uint64_t task_id;
     const ShadowSpillTaskRecord *task;
     uint64_t invocation;
@@ -40,6 +41,7 @@ enum {
 
 static _Thread_local ShadowSpillTaskScope task_scope = {
     .runtime = NULL,
+    .allocation_pool = NULL,
     .task_id = SHADOWSPILL_RUNTIME_NO_ID,
     .task = NULL,
 };
@@ -86,6 +88,12 @@ ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime) {
         : NULL;
 }
 
+ShadowSpillMemoryPool *shadowspill_current_allocation_pool(
+    ShadowSpillRuntime *runtime
+) {
+    return task_scope.runtime == runtime ? task_scope.allocation_pool : NULL;
+}
+
 int shadowspill_track_task_retirement(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *lease
@@ -114,14 +122,17 @@ ShadowSpillMemoryLease *shadowspill_current_task_retirements(
         ? task_scope.retirement_head : NULL;
 }
 
-int shadowspill_enter_task_scope(
+int shadowspill_enter_allocation_scope(
     ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
     uint64_t task_id
 ) {
-    if (task_scope.runtime != NULL || task_id == SHADOWSPILL_RUNTIME_NO_ID) {
+    if (runtime == NULL || pool == NULL || task_scope.runtime != NULL ||
+        task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return -1;
     }
     task_scope.runtime = runtime;
+    task_scope.allocation_pool = pool;
     task_scope.task_id = task_id;
     task_scope.task = NULL;
     task_scope.invocation = 0U;
@@ -215,7 +226,9 @@ int shadowspill_enter_task_scope(
 ) {
     if (record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime ||
-        shadowspill_enter_task_scope(runtime, record->task_id) != 0) {
+        shadowspill_enter_allocation_scope(
+            runtime, record->plan_owner->execution_pool, record->task_id
+        ) != 0) {
         return -1;
     }
     task_scope.task = record;
@@ -551,6 +564,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
             retirement = next;
         }
         task_scope.runtime = NULL;
+        task_scope.allocation_pool = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.task = NULL;
         task_scope.invocation = 0U;
@@ -628,6 +642,7 @@ void shadowspill_append_allocation_event_locked(
     runtime->allocation_events[slot] =
         (ShadowSpillAllocationEvent){
             .sequence = slot,
+            .pool_id = allocation->pool->pool_id,
             .task_id = task_id,
             .allocation_id = allocation->allocation_id,
             .generation = allocation->generation,

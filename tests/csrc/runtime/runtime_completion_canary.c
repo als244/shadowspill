@@ -47,8 +47,7 @@ int main(void) {
 
     ShadowSpillAllocation allocations[COMPLETION_COUNT] = {{0}};
     for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
-        if (shadowspill_allocate(
-                runtime,
+        if (shadowspill_memory_pool_allocate(runtime, 0U,
                 ALLOCATION_BYTES,
                 1U,
                 compute,
@@ -61,8 +60,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
-        if (shadowspill_free(
-                runtime, allocations[index].allocation_id, compute
+        if (shadowspill_memory_pool_free(runtime, 0U, allocations[index].allocation_id, compute
             ) != SHADOWSPILL_RUNTIME_OK) {
             return EXIT_FAILURE;
         }
@@ -84,14 +82,12 @@ int main(void) {
      */
     for (uint64_t round = 0U; round < WAIT_IDLE_ROUNDS; ++round) {
         ShadowSpillAllocation allocation = {0};
-        if (shadowspill_allocate(
-                runtime,
+        if (shadowspill_memory_pool_allocate(runtime, 0U,
                 ALLOCATION_BYTES,
                 1U,
                 compute,
                 &allocation
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_free(
-                runtime, allocation.allocation_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
                 runtime
             ) != SHADOWSPILL_RUNTIME_OK) {
