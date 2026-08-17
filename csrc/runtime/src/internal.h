@@ -420,6 +420,9 @@ typedef struct ShadowSpillExecutionRecord {
     uint64_t dynamic_scratch_maximum_allocation_bytes;
     uint64_t dynamic_scratch_live_limit_bytes;
     _Atomic uint64_t invocation_count;
+    _Atomic uint64_t submission_sequence;
+    _Atomic uint64_t submission_invocation;
+    _Atomic uint64_t acknowledgement_sequence;
     struct ShadowSpillExecutionRecord *hash_next;
     struct ShadowSpillExecutionRecord *ownership_next;
 } ShadowSpillExecutionRecord;
@@ -530,6 +533,8 @@ struct ShadowSpillRuntime {
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;
     ShadowSpillActionQueue actions;
+    _Atomic(ShadowSpillExecutionRecord *) worker_submission;
+    _Atomic uint64_t next_worker_submission_sequence;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -566,6 +571,16 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t trace_event_overflow;
     ShadowSpillRuntimeFailure failure;
 };
+
+static inline void shadowspill_cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ volatile("yield" ::: "memory");
+#else
+    atomic_signal_fence(memory_order_seq_cst);
+#endif
+}
 
 int shadowspill_idle_wakeup_initialize(
     ShadowSpillIdleWakeup *wakeup

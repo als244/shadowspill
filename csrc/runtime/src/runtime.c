@@ -294,6 +294,8 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     atomic_init(&runtime->bytes_evicted, 0U);
     atomic_init(&runtime->wait_events_inserted, 0U);
     atomic_init(&runtime->actions.count, 0U);
+    atomic_init(&runtime->worker_submission, NULL);
+    atomic_init(&runtime->next_worker_submission_sequence, 0U);
     atomic_init(&runtime->execution_free_bytes_snapshot, 0U);
     atomic_init(&runtime->execution_largest_free_snapshot, 0U);
     atomic_init(&runtime->allocation_event_count, 0U);

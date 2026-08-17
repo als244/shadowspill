@@ -125,7 +125,7 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
     return failed ? -1 : 0;
 }
 
-static int prefetch_window_is_enqueued_without_host_blocking(void) {
+static int prefetch_window_is_submitted_without_wire_blocking(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -167,7 +167,7 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.live_allocations != 2U ||
         statistics.allocated_bytes != 64U ||
-        statistics.fetch_transfers != 0U;
+        statistics.fetch_transfers != 2U;
     sleep_milliseconds(60U);
     failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -2005,7 +2005,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     return failed ? -1 : 0;
 }
 
-static int completed_offload_preserves_later_queued_fetch(void) {
+static int completed_offload_preserves_later_submitted_fetch(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -2057,43 +2057,32 @@ static int completed_offload_preserves_later_queued_fetch(void) {
             runtime, 2U, compute, NULL, 0U, &target_fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
 
-    ShadowSpillQueuedAction *queued_fetch = NULL;
-    pthread_mutex_lock(&runtime->actions.lock);
-    for (ShadowSpillQueuedAction *action = runtime->actions.head;
-         action != NULL; action = action->next) {
-        if (action->task_id == 2U &&
-            action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-            queued_fetch = action;
-            action->processing = 1U;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&runtime->actions.lock);
-    failed = failed || queued_fetch == NULL;
-
-    sleep_milliseconds(50U);
-    uint32_t unpublished_fetches = 0U;
-    if (queued_fetch != NULL) {
-        pthread_mutex_lock(&queued_fetch->object->lock);
-        unpublished_fetches = atomic_load_explicit(
-            &queued_fetch->object->unpublished_fetch_count,
-            memory_order_acquire
-        );
-        pthread_mutex_unlock(&queued_fetch->object->lock);
-        pthread_mutex_lock(&runtime->actions.lock);
-        queued_fetch->processing = 0U;
-        pthread_mutex_unlock(&runtime->actions.lock);
-        pthread_mutex_lock(&runtime->mutex);
-        pthread_cond_broadcast(&runtime->condition);
-        pthread_mutex_unlock(&runtime->mutex);
-    }
-    failed = failed || unpublished_fetches == 0U ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillObjectSnapshot submitted = {0};
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    failed = failed || shadowspill_object_snapshot(
+            runtime, target.object_id, &submitted
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        (submitted.residency != SHADOWSPILL_OBJECT_PREFETCHING &&
+         submitted.residency != SHADOWSPILL_OBJECT_EXECUTION_READY) ||
+        submitted.execution_pointer == NULL ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(runtime, target.object_id, &snapshot) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_statistics(runtime, &statistics) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        statistics.evict_transfers != 1U ||
+        statistics.fetch_transfers != 1U;
     if (failed) {
         fprintf(
             stderr,
-            "queued fetch marker mismatch: unpublished=%u\n",
-            (unsigned)unpublished_fetches
+            "submitted fetch mismatch: submitted_residency=%u "
+            "submitted_execution=%p final_residency=%u fetches=%llu\n",
+            (unsigned)submitted.residency,
+            submitted.execution_pointer,
+            (unsigned)snapshot.residency,
+            (unsigned long long)statistics.fetch_transfers
         );
     }
 
@@ -2233,7 +2222,7 @@ int main(void) {
     REQUIRE_CANARY(output_allocation_handoff());
     REQUIRE_CANARY(chained_output_allocation_handoff());
     REQUIRE_CANARY(valid_transition_paths());
-    REQUIRE_CANARY(prefetch_window_is_enqueued_without_host_blocking());
+    REQUIRE_CANARY(prefetch_window_is_submitted_without_wire_blocking());
     REQUIRE_CANARY(inflight_prefetch_transfers_to_caller());
     REQUIRE_CANARY(offload_window_is_enqueued_without_host_serialization());
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
@@ -2256,7 +2245,7 @@ int main(void) {
     REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
     REQUIRE_CANARY(nonretained_fetch_then_offload_reserves_fresh_spill());
-    REQUIRE_CANARY(completed_offload_preserves_later_queued_fetch());
+    REQUIRE_CANARY(completed_offload_preserves_later_submitted_fetch());
     REQUIRE_CANARY(consumer_waits_for_latest_queued_fetch_generation());
     return EXIT_SUCCESS;
 }

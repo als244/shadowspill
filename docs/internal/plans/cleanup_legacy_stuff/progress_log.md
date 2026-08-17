@@ -483,3 +483,35 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   functional-mutation canary; the complete Python suite (680 passed, four
   expected skips); focused execution tests; Ruff; strict mypy over the PyTorch
   source tree; and `git diff --check`.
+
+## 2026-08-17 — Atomic worker submission acknowledgement
+
+- Replaced the worker's timed condition-variable idle path with one
+  continuously active, `cpu_relax`-based loop. The thread remains named
+  `shadowspill_worker` and performs a short ordered pass over newly published
+  batches, completion frontiers, retirement reclamation, and outstanding
+  actions.
+- Added a single release/acquire submission slot plus monotonic submission and
+  acknowledgement sequences. An action-bearing `after_task()` publishes its
+  immutable admitted record and spins until the worker has observed the batch.
+  Fetch acknowledgement additionally requires the route wait, asynchronous
+  copy, completion event, and object readiness event to have been published;
+  it never waits for wire completion.
+- Made fetch route submission stream-causal instead of host-polling the task
+  trigger. The route lane waits on the already-published task event, so an
+  immediate consumer can insert its readiness wait without a dispatcher sleep.
+- Removed the timed readiness wait from admitted `before_task()`. Encountering
+  an unpublished fetch after the preceding task was acknowledged is now an
+  immediate invariant failure rather than a latent condition wait.
+- Root-caused the first queued release-to-fetch failure to the compatibility
+  action-only path's invocation value `0`: the initial
+  `completed_generation == 0` was incorrectly accepted as proof of submission.
+  A completed generation now counts only after that action has become inactive;
+  an active queued action can never satisfy acknowledgement.
+- Updated two transition/failure canaries that intentionally encoded the old
+  behavior. They now require all fetches to be submitted before boundary return
+  and require backend submission failure to propagate directly through
+  `after_task()` without a readiness-waiter thread.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and PyTorch
+  canaries; the complete Python suite with four expected skips; Ruff; strict
+  mypy over 177 source files; and `git diff --check`.
