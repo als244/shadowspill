@@ -5,6 +5,36 @@ from __future__ import annotations
 import ctypes
 
 from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
+from shadowspill.pytorch.runtime_adapter.allocator import (
+    PoolBootstrap,
+    RouteBootstrap,
+)
+
+
+def two_pool_topology(spill_bytes: int) -> dict[str, object]:
+    """Return the canonical execution/spill topology for adapter canaries."""
+
+    return {
+        "allocator_pool_id": 0,
+        "pools": (
+            PoolBootstrap(pool_id=0, backend_kind=0, capacity_bytes=0),
+            PoolBootstrap(pool_id=1, backend_kind=1, capacity_bytes=spill_bytes),
+        ),
+        "routes": (
+            RouteBootstrap(
+                route_id=0,
+                name="fetch",
+                source_pool_id=1,
+                destination_pool_id=0,
+            ),
+            RouteBootstrap(
+                route_id=1,
+                name="evict",
+                source_pool_id=0,
+                destination_pool_id=1,
+            ),
+        ),
+    }
 
 
 def begin_task(
@@ -39,4 +69,4 @@ def begin_task(
     return tuple(bindings[index] for index in range(count.value))
 
 
-__all__ = ["begin_task"]
+__all__ = ["begin_task", "two_pool_topology"]

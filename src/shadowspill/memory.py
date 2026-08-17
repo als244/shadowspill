@@ -1,4 +1,4 @@
-"""Framework-neutral configuration values for runtime memory pools."""
+"""Framework-neutral configuration values for runtime pools and routes."""
 
 from __future__ import annotations
 
@@ -63,6 +63,29 @@ class PinnedHostPool:
 MemoryPoolConfig = DevicePool | PinnedHostPool
 
 
+@dataclass(frozen=True, slots=True)
+class TransferRoute:
+    """One directed transfer capability between two named memory pools.
+
+    The concrete backend is resolved from the endpoint pool implementations at
+    runtime construction. Direction is immutable: callers never pass a copy
+    direction to an already-created route.
+    """
+
+    source: str
+    destination: str
+
+    def __post_init__(self) -> None:
+        for field, value in (
+            ("source", self.source),
+            ("destination", self.destination),
+        ):
+            if not isinstance(value, str) or not value or not value.isidentifier():
+                raise ValueError(f"route {field} must be a non-empty pool identifier")
+        if self.source == self.destination:
+            raise ValueError("a directed transfer route requires distinct pools")
+
+
 def device(
     *,
     physical_capacity: int,
@@ -84,10 +107,18 @@ def pinned_host(*, capacity: int) -> PinnedHostPool:
     return PinnedHostPool(capacity=capacity)
 
 
+def transfer_route(*, source: str, destination: str) -> TransferRoute:
+    """Return a directed route configuration between two named pools."""
+
+    return TransferRoute(source=source, destination=destination)
+
+
 __all__ = [
     "DevicePool",
     "MemoryPoolConfig",
     "PinnedHostPool",
+    "TransferRoute",
     "device",
     "pinned_host",
+    "transfer_route",
 ]

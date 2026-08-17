@@ -24,8 +24,9 @@ class PersistentStorage:
 
     persistent_object_id: int
     current_object_id: int
+    pool_id: int
     size_bytes: int
-    spill_pointer: int
+    pool_pointer: int
     anchor: torch.Tensor
     views: tuple[TensorView, ...]
     frontend_storage_is_separate: bool

@@ -9,9 +9,10 @@ from typing import Any
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.abi import ObjectSnapshot
+from shadowspill.pytorch.runtime_adapter.abi import ObjectLocationSnapshot
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import (
+    MemoryPool,
     Runtime,
     RuntimeConfigurationError,
 )
@@ -37,7 +38,7 @@ def import_tensors(
     release_source: bool,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
-    """Copy unique CPU storages into authoritative spill-pool objects."""
+    """Copy unique CPU storages into authoritative runtime-pool objects."""
 
     _validate_pool(
         runtime,
@@ -61,7 +62,8 @@ def import_tensors(
         if release_source and created:
             torch.ops.shadowspill._import_cpu_storages(
                 [item.anchor for item in created],
-                [item.spill_pointer for item in created],
+                [item.pool_id for item in created],
+                [item.pool_pointer for item in created],
                 [item.current_object_id for item in created],
                 [item.size_bytes for item in created],
             )
@@ -92,7 +94,7 @@ def register_tensor_storages(
 ) -> tuple[PersistentStorage, ...]:
     """Copy unique source storages into newly registered runtime objects."""
 
-    _validate_pool(
+    selected_pool = _validate_pool(
         runtime,
         pool,
         allow_in_progress_plan=_allow_in_progress_plan,
@@ -108,7 +110,8 @@ def register_tensor_storages(
         for object_id, (anchor, views) in zip(object_ids, roots, strict=True):
             size_bytes = int(anchor.untyped_storage().nbytes())
             _require_status(
-                library.shadowspill_pytorch_register_host_object(
+                library.shadowspill_pytorch_register_object(
+                    selected_pool.pool_id,
                     object_id,
                     size_bytes,
                     1,
@@ -116,18 +119,19 @@ def register_tensor_storages(
                 ),
                 f"import persistent object {object_id}",
             )
-            snapshot = _snapshot(library, object_id)
-            spill_pointer = int(snapshot.spill_pointer or 0)
-            if not snapshot.has_spill_lease or not snapshot.spill_current:
+            snapshot = _snapshot(library, object_id, selected_pool.pool_id)
+            pool_pointer = int(snapshot.pointer or 0)
+            if not snapshot.has_lease or not snapshot.current:
                 raise RuntimeError(
-                    f"persistent object {object_id} has no authoritative spill lease"
+                    f"persistent object {object_id} has no authoritative pool lease"
                 )
             created.append(
                 PersistentStorage(
                     persistent_object_id=object_id,
                     current_object_id=object_id,
+                    pool_id=selected_pool.pool_id,
                     size_bytes=size_bytes,
-                    spill_pointer=spill_pointer,
+                    pool_pointer=pool_pointer,
                     anchor=anchor,
                     views=views,
                     frontend_storage_is_separate=True,
@@ -201,7 +205,7 @@ def export_tensors(
     runtime: Runtime,
     release_runtime: bool,
 ) -> PersistentState | None:
-    """Copy authoritative spill bytes into ordinary CPU storage roots."""
+    """Copy authoritative runtime bytes into ordinary CPU storage roots."""
 
     runtime._require_state_operation_allowed()
     registry = registry_for(runtime)
@@ -219,7 +223,8 @@ def export_tensors(
     ]
     for item, owner in zip(state.storages, owners, strict=True):
         _require_status(
-            library.shadowspill_pytorch_read_spill_object(
+            library.shadowspill_pytorch_read_object(
+                item.pool_id,
                 item.current_object_id,
                 item.size_bytes,
                 int(owner.untyped_storage().data_ptr()),
@@ -268,18 +273,20 @@ def adopt_persistent_tensor(
     library = runtime._installed.library
     if item.frontend_storage_is_separate:
         _require_status(
-            library.shadowspill_pytorch_write_spill_object(
+            library.shadowspill_pytorch_write_object(
+                item.pool_id,
                 item.current_object_id,
                 item.size_bytes,
                 int(item.anchor.untyped_storage().data_ptr()),
             ),
             f"refresh persistent object {item.current_object_id}",
         )
-    item.current_object_id = bridge.adopt_persistent_spill_object(
+    item.current_object_id = bridge.adopt_persistent_object(
         alias_id,
         current_object_id=item.current_object_id,
+        pool_id=item.pool_id,
         size_bytes=item.size_bytes,
-        spill_pointer=item.spill_pointer,
+        pool_pointer=item.pool_pointer,
     )
     return item
 
@@ -297,7 +304,8 @@ def restore_persistent_state(
         if not item.frontend_storage_is_separate:
             continue
         _require_status(
-            library.shadowspill_pytorch_read_spill_object(
+            library.shadowspill_pytorch_read_object(
+                item.pool_id,
                 item.current_object_id,
                 item.size_bytes,
                 int(item.anchor.untyped_storage().data_ptr()),
@@ -382,7 +390,7 @@ def _validate_pool(
     pool: str,
     *,
     allow_in_progress_plan: bool = False,
-) -> None:
+) -> MemoryPool:
     runtime._require_state_operation_allowed(
         allow_in_progress_plan=allow_in_progress_plan
     )
@@ -394,12 +402,17 @@ def _validate_pool(
         raise RuntimeConfigurationError(
             "the current PyTorch state import path requires a pinned-host pool"
         )
+    return selected
 
 
-def _snapshot(library: Any, object_id: int) -> ObjectSnapshot:
-    result = ObjectSnapshot()
+def _snapshot(
+    library: Any, object_id: int, pool_id: int
+) -> ObjectLocationSnapshot:
+    result = ObjectLocationSnapshot()
     _require_status(
-        library.shadowspill_pytorch_object_snapshot(object_id, ctypes.byref(result)),
+        library.shadowspill_pytorch_object_location_snapshot(
+            object_id, pool_id, ctypes.byref(result)
+        ),
         f"inspect persistent object {object_id}",
     )
     return result

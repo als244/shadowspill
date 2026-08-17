@@ -17,7 +17,7 @@ from typing import Any, cast
 
 import torch
 
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
@@ -137,7 +137,11 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                     physical_capacity=manifest.device_physical_capacity_bytes
                 ),
                 "spill": pinned_host(capacity=manifest.spill_budget_bytes),
-            }
+            },
+            routes={
+                "fetch": transfer_route(source="spill", destination="execution"),
+                "evict": transfer_route(source="execution", destination="spill"),
+            },
         )
         case = import_case_model(case, runtime=runtime)
         model = case.model

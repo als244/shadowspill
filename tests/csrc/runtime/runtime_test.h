@@ -43,7 +43,13 @@ static inline ShadowSpillTestRuntime *shadowspill_test_runtime_record(
         return NULL;
     }
     ShadowSpillPlan *plan = NULL;
-    if (shadowspill_plan_create_for_pools(runtime, 0U, 1U, &plan) !=
+    const ShadowSpillPlanDescription description = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    if (shadowspill_plan_create(runtime, &description, &plan) !=
             SHADOWSPILL_RUNTIME_OK) {
         return NULL;
     }

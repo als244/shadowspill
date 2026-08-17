@@ -13,6 +13,7 @@ import triton.language as tl
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import read_allocator_failure
+from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 
 @triton.jit
@@ -28,7 +29,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=1 << 20,
+        **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=1_000,
     )
     value = torch.zeros(1, dtype=torch.float32, device="cuda")

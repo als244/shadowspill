@@ -10,8 +10,10 @@ The symbols on this page are exported by `shadowspill.memory` or
 | `DevicePool` | Immutable execution-device pool configuration. |
 | `PinnedHostPool` | Immutable registered pinned-host spill-pool configuration. |
 | `MemoryPoolConfig` | Union of supported pool configurations. |
+| `TransferRoute` | Immutable directed relationship between two named pools. |
 | `device()` | Construct a `DevicePool` from `physical_capacity`, device ordinal, and optional provider headroom. |
 | `pinned_host()` | Construct a `PinnedHostPool` from a byte capacity. |
+| `transfer_route()` | Construct a directed route from source and destination pool names. |
 
 Provider headroom is inside `DevicePool.physical_capacity`. The runtime reports
 the derived suballocatable capacity after initialization.
@@ -23,6 +25,7 @@ the derived suballocatable capacity after initialization.
 Runtime(
     *,
     pools: Mapping[str, MemoryPoolConfig],
+    routes: Mapping[str, TransferRoute],
     library_path: str | Path | None = None,
     calibrate: bool = True,
     worker_poll_nanoseconds: int = 1_000,

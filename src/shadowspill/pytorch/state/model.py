@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
-from .model_copy import copy_model_with_spill_storages
+from .model_copy import copy_model_with_runtime_storages
 from .storage import (
     NamedTensor,
     export_tensors,
@@ -30,7 +30,7 @@ def import_model_state[ModelT: nn.Module](
 
     The returned module has distinct Python module and tensor identities while
     preserving topology, ties, views, values, and metadata. Its registered
-    tensors point directly into runtime-owned spill leases.
+    tensors point directly into runtime-owned pool leases.
 
     The default ``release_source=True`` means neither the returned model nor
     ShadowSpill retains the input model. Assign the return value back to the
@@ -51,7 +51,9 @@ def import_model_state[ModelT: nn.Module](
         pool=pool,
     )
     try:
-        imported, imported_storages = copy_model_with_spill_storages(model, storages)
+        imported, imported_storages = copy_model_with_runtime_storages(
+            model, storages
+        )
         own_persistent_state(
             imported,
             runtime=runtime,

@@ -9,7 +9,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
@@ -30,7 +30,11 @@ runtime = Runtime(
     pools={
         "execution": device(physical_capacity=4 << 30),
         "spill": pinned_host(capacity=2 << 30),
-    }
+    },
+    routes={
+        "fetch": transfer_route(source="spill", destination="execution"),
+        "evict": transfer_route(source="execution", destination="spill"),
+    },
 )
 
 model = nn.Sequential(

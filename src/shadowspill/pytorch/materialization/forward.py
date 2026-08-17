@@ -606,7 +606,7 @@ class MaterializedForwardState:
             raise PlanningError(
                 f"registered model alias {alias_id!r} has no imported runtime storage"
             )
-        self.bridge.register_host_tensor(
+        self.bridge.register_spill_tensor(
             alias_id,
             source,
             retain_spill_copy=retain_spill_copy,

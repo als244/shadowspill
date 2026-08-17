@@ -17,6 +17,8 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     PhysicalAdmission,
     PhysicalMemory,
+    PoolConfig,
+    RouteConfig,
     configure_adapter_library,
 )
 
@@ -44,6 +46,25 @@ class InstalledAllocator:
 _installed: InstalledAllocator | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PoolBootstrap:
+    """One pool entry passed to the native runtime constructor."""
+
+    pool_id: int
+    backend_kind: int
+    capacity_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class RouteBootstrap:
+    """One directed route entry passed to the native runtime constructor."""
+
+    route_id: int
+    name: str
+    source_pool_id: int
+    destination_pool_id: int
+
+
 def installed_allocator() -> InstalledAllocator | None:
     """Return the process-lifetime allocator owner, if already selected."""
 
@@ -67,7 +88,9 @@ def install_allocator(
     device_ordinal: int,
     device_budget_bytes: int,
     provider_headroom_bytes: int,
-    spill_pool_bytes: int,
+    allocator_pool_id: int,
+    pools: tuple[PoolBootstrap, ...],
+    routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int = 1_000,
 ) -> InstalledAllocator:
     """Install the process-global CUDA allocator before PyTorch CUDA init.
@@ -82,7 +105,9 @@ def install_allocator(
         device_ordinal,
         device_budget_bytes,
         provider_headroom_bytes,
-        spill_pool_bytes,
+        allocator_pool_id,
+        pools,
+        routes,
         worker_poll_nanoseconds,
     )
     path = _adapter_path(library_path)
@@ -90,12 +115,38 @@ def install_allocator(
     library = _load_adapter(path)
     allocator = _create_allocator(cuda, path)
     _configure_record_stream(library, allocator)
+    pool_values = (PoolConfig * len(pools))(
+        *(
+            PoolConfig(
+                pool_id=item.pool_id,
+                backend_kind=item.backend_kind,
+                capacity_bytes=item.capacity_bytes,
+            )
+            for item in pools
+        )
+    )
+    route_names = tuple(item.name.encode("utf-8") for item in routes)
+    route_values = (RouteConfig * len(routes))(
+        *(
+            RouteConfig(
+                route_id=item.route_id,
+                source_pool_id=item.source_pool_id,
+                destination_pool_id=item.destination_pool_id,
+                name=name,
+            )
+            for item, name in zip(routes, route_names, strict=True)
+        )
+    )
     config = AdapterConfig(
         abi_version=ADAPTER_ABI_VERSION,
         device_ordinal=device_ordinal,
         device_budget_bytes=device_budget_bytes,
         provider_headroom_bytes=provider_headroom_bytes,
-        spill_pool_bytes=spill_pool_bytes,
+        allocator_pool_id=allocator_pool_id,
+        pools=pool_values,
+        pool_count=len(pools),
+        routes=route_values,
+        route_count=len(routes),
         worker_poll_nanoseconds=worker_poll_nanoseconds,
     )
     _bootstrap_allocator(library, config)
@@ -141,7 +192,7 @@ def _initialize_provider_state(
     # need not reserve a 32 MiB library workspace merely to initialize the
     # runtime. A real matrix task in such a pool will still receive the normal
     # allocator failure if its provider state cannot fit.
-    if int(admission.execution_pool_bytes) < 64 << 20:
+    if int(admission.allocator_pool_bytes) < 64 << 20:
         return 0
 
     get_handle = getattr(torch._C, "_cuda_getCurrentBlasHandle", None)
@@ -188,7 +239,7 @@ def _initialize_provider_state(
     runtime = statistics.runtime
     fixed = int(runtime.allocated_bytes)
     free = int(runtime.free_bytes)
-    capacity = int(admission.execution_pool_bytes)
+    capacity = int(admission.allocator_pool_bytes)
     largest = int(runtime.largest_free_range_bytes)
     if fixed + free != capacity or largest != free:
         raise AllocatorInstallError(
@@ -235,7 +286,7 @@ def validate_dynamic_execution_reservation(
     runtime = statistics.runtime
     allocated = int(runtime.allocated_bytes)
     free = int(runtime.free_bytes)
-    capacity = int(installed.admission.execution_pool_bytes)
+    capacity = int(installed.admission.allocator_pool_bytes)
     if allocated > reserved_bytes:
         raise AllocatorInstallError(
             "persistent provider allocations exceed the admitted slab reserve: "
@@ -257,7 +308,9 @@ def _validate_install_request(
     device_ordinal: int,
     device_budget_bytes: int,
     provider_headroom_bytes: int,
-    spill_pool_bytes: int,
+    allocator_pool_id: int,
+    pools: tuple[PoolBootstrap, ...],
+    routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int,
 ) -> None:
     if device_ordinal < 0:
@@ -268,8 +321,25 @@ def _validate_install_request(
         raise AllocatorInstallError(
             "provider headroom must be non-negative and smaller than device budget"
         )
-    if spill_pool_bytes < 0:
-        raise AllocatorInstallError("host arena bytes must be non-negative")
+    if not pools:
+        raise AllocatorInstallError("pool registry must not be empty")
+    if allocator_pool_id < 0 or allocator_pool_id >= len(pools):
+        raise AllocatorInstallError("allocator pool ID is outside the pool registry")
+    if tuple(item.pool_id for item in pools) != tuple(range(len(pools))):
+        raise AllocatorInstallError("pool IDs must match their registry positions")
+    if any(item.capacity_bytes < 0 for item in pools):
+        raise AllocatorInstallError("pool capacities must be non-negative")
+    if tuple(item.route_id for item in routes) != tuple(range(len(routes))):
+        raise AllocatorInstallError("route IDs must match their registry positions")
+    if any(
+        item.source_pool_id < 0
+        or item.source_pool_id >= len(pools)
+        or item.destination_pool_id < 0
+        or item.destination_pool_id >= len(pools)
+        or item.source_pool_id == item.destination_pool_id
+        for item in routes
+    ):
+        raise AllocatorInstallError("route endpoints must name distinct known pools")
     if worker_poll_nanoseconds < 0:
         raise AllocatorInstallError("worker poll interval must be non-negative")
     if _installed is not None:
@@ -356,7 +426,7 @@ def _read_physical_admission(
         or admission.abi_version != ADAPTER_ABI_VERSION
         or admission.device_budget_bytes != device_budget_bytes
         or admission.provider_headroom_bytes != provider_headroom_bytes
-        or admission.execution_pool_bytes == 0
+        or admission.allocator_pool_bytes == 0
     ):
         raise AllocatorInstallError("physical admission handshake failed")
     return admission

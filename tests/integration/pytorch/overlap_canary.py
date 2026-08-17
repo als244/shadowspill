@@ -17,7 +17,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
-from tests.integration.pytorch.runtime_helpers import begin_task
+from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 ELEMENTS = 16 << 20
 BYTES_PER_OBJECT = ELEMENTS * 4
@@ -71,7 +71,11 @@ def _snapshot(library: object, object_id: int) -> ObjectSnapshot:
 def _create_plan(library: object) -> int:
     handle = ctypes.c_size_t()
     _require_ok(
-        int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(handle))),
+        int(
+            library.shadowspill_pytorch_plan_create(
+                0, 1, 0, 1, ctypes.byref(handle)
+            )
+        ),
         "plan creation",
     )
     if handle.value == 0:
@@ -190,7 +194,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=256 << 20,
+        **two_pool_topology(256 << 20),
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library

@@ -304,14 +304,19 @@ def materialize_training_state(
     captured: TrainingCaptureArtifacts,
     *,
     opt: Callable[[Any], torch.optim.Optimizer],
-    runtime: Runtime,
-    plan_handle: int,
-    spill_pool: str,
+    memory: PlanMemory,
     timer: PlanningTimer,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once."""
 
-    bridge = RuntimeBridge(runtime, captured.layout.program, plan_handle)
+    runtime = memory.runtime
+    bridge = RuntimeBridge(
+        runtime,
+        captured.layout.program,
+        memory.plan_handle,
+        execution_pool_id=memory.execution.pool_id,
+        spill_pool_id=memory.spill.pool_id,
+    )
     state: TrainingMaterializedState | None = None
     optimizer: torch.optim.Optimizer | None = None
     try:
@@ -344,7 +349,7 @@ def materialize_training_state(
             import_optimizer_state_for_plan(
                 optimizer,
                 runtime=runtime,
-                pool=spill_pool,
+                pool=memory.spill.name,
             )
         with timer.measure("model_placeholder_restoration"):
             state.restore_cuda_placeholders_after_optimizer_capture()
@@ -846,7 +851,11 @@ def admit_training_plan(
                 ),
             )
         bridge = RuntimeBridge(
-            memory.runtime, recurrent_plan.program, memory.plan_handle
+            memory.runtime,
+            recurrent_plan.program,
+            memory.plan_handle,
+            execution_pool_id=memory.execution.pool_id,
+            spill_pool_id=memory.spill.pool_id,
         )
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(
@@ -1185,9 +1194,7 @@ def make_training_program(
         model,
         captured,
         opt=opt,
-        runtime=memory.runtime,
-        plan_handle=memory.plan_handle,
-        spill_pool=memory.spill.name,
+        memory=memory,
         timer=timer,
     )
     try:
@@ -1423,9 +1430,7 @@ def build_training(
         model,
         captured,
         opt=opt,
-        runtime=memory.runtime,
-        plan_handle=memory.plan_handle,
-        spill_pool=memory.spill.name,
+        memory=memory,
         timer=timer,
     )
     try:

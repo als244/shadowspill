@@ -5,11 +5,28 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 54
-RUNTIME_ABI_VERSION: Final = 44
+ADAPTER_ABI_VERSION: Final = 55
+RUNTIME_ABI_VERSION: Final = 45
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
+
+
+class PoolConfig(ctypes.Structure):
+    _fields_ = [
+        ("pool_id", ctypes.c_uint32),
+        ("backend_kind", ctypes.c_uint8),
+        ("capacity_bytes", ctypes.c_uint64),
+    ]
+
+
+class RouteConfig(ctypes.Structure):
+    _fields_ = [
+        ("route_id", ctypes.c_uint32),
+        ("source_pool_id", ctypes.c_uint32),
+        ("destination_pool_id", ctypes.c_uint32),
+        ("name", ctypes.c_char_p),
+    ]
 
 
 class AdapterConfig(ctypes.Structure):
@@ -18,7 +35,11 @@ class AdapterConfig(ctypes.Structure):
         ("device_ordinal", ctypes.c_int32),
         ("device_budget_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
-        ("spill_pool_bytes", ctypes.c_uint64),
+        ("allocator_pool_id", ctypes.c_uint32),
+        ("pools", ctypes.POINTER(PoolConfig)),
+        ("pool_count", ctypes.c_uint32),
+        ("routes", ctypes.POINTER(RouteConfig)),
+        ("route_count", ctypes.c_uint32),
         ("worker_poll_nanoseconds", ctypes.c_uint64),
     ]
 
@@ -30,11 +51,12 @@ class PhysicalAdmission(ctypes.Structure):
         ("device_budget_bytes", ctypes.c_uint64),
         ("context_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
-        ("execution_pool_bytes", ctypes.c_uint64),
+        ("allocator_pool_id", ctypes.c_uint32),
+        ("pool_count", ctypes.c_uint32),
+        ("allocator_pool_bytes", ctypes.c_uint64),
         ("bootstrap_process_bytes", ctypes.c_uint64),
         ("device_used_bytes", ctypes.c_uint64),
         ("device_total_bytes", ctypes.c_uint64),
-        ("spill_pool_bytes", ctypes.c_uint64),
     ]
 
 
@@ -438,6 +460,21 @@ class ObjectSnapshot(ctypes.Structure):
     ]
 
 
+class ObjectLocationSnapshot(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("size_bytes", ctypes.c_uint64),
+        ("authoritative_version", ctypes.c_uint64),
+        ("version", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("generation", ctypes.c_uint64),
+        ("pool_id", ctypes.c_uint32),
+        ("current", ctypes.c_uint8),
+        ("has_lease", ctypes.c_uint8),
+        ("pointer", ctypes.c_void_p),
+    ]
+
+
 def configure_adapter_library(library: Any) -> None:
     """Assign every non-callback adapter signature in one place."""
 
@@ -647,8 +684,14 @@ def _configure_trace(library: Any) -> None:
 def _configure_objects(library: Any) -> None:
     _signature(
         library,
-        "shadowspill_pytorch_register_host_object",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8, ctypes.c_uint64],
+        "shadowspill_pytorch_register_object",
+        [
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.c_uint8,
+            ctypes.c_uint64,
+        ],
         ctypes.c_uint32,
     )
     _signature(
@@ -659,14 +702,14 @@ def _configure_objects(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_write_spill_object",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
+        "shadowspill_pytorch_write_object",
+        [ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
     _signature(
         library,
-        "shadowspill_pytorch_read_spill_object",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
+        "shadowspill_pytorch_read_object",
+        [ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
     _signature(
@@ -689,8 +732,18 @@ def _configure_objects(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_validate_spill_binding",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
+        "shadowspill_pytorch_object_location_snapshot",
+        [
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.POINTER(ObjectLocationSnapshot),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_validate_object_binding",
+        [ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
 
@@ -721,7 +774,13 @@ def _configure_execution(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_plan_create",
-        [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_size_t)],
+        [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
         ctypes.c_uint32,
     )
     _signature(

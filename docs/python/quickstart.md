@@ -7,14 +7,18 @@ runtime installs the process allocator, creates the execution and spill pools,
 starts its C worker, and calibrates transfer capabilities.
 
 ```python
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import Runtime
 
 runtime = Runtime(
     pools={
         "device": device(physical_capacity=24 << 30),
         "spill": pinned_host(capacity=64 << 30),
-    }
+    },
+    routes={
+        "fetch": transfer_route(source="spill", destination="device"),
+        "evict": transfer_route(source="device", destination="spill"),
+    },
 )
 ```
 

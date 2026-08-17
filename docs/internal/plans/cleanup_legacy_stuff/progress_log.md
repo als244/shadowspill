@@ -1385,3 +1385,36 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   repository/admission/allocator tests, the warnings-as-errors isolated build,
   all 29 native/CUDA/PyTorch canaries, and `git diff --check`. The complete
   Python suite was also run before publication of this milestone.
+
+## 2026-08-17 — Explicit pool and directed-route topology
+
+- Found that the neutral runtime already accepted arbitrary pool and route
+  registries, but the PyTorch bootstrap still constructed exactly pool 0,
+  pool 1, and two inferred routes. Plan creation repeated that assumption by
+  resolving routes from roles inside C. This prevented two callables from
+  selecting different spill pools in one runtime even though the underlying
+  owners were generic.
+- Made pool and directed-route registries explicit at the Python public
+  boundary and adapter ABI. Runtime construction now assigns immutable pool
+  and route identities, passes their complete descriptions to the neutral C
+  runtime, and exposes both read-only registries. Each plan binds its own
+  execution pool, spill pool, fetch route, and evict route by direct ID.
+  Deleted the neutral role-inference plan constructor.
+- Removed the remaining host/spill-shaped persistent-state adapter operations.
+  Object registration, reads, writes, and binding validation now take an
+  explicit pool ID. A new lock-consistent object-location snapshot reports one
+  selected pool without assigning it a global execution or spill role.
+  Persistent frontend records store `(pool_id, pool_pointer)`, while the
+  logical object identity remains stable and its current lease/generation is
+  replaced in place.
+- Renamed the CPU storage bridge from spill-specific to runtime-owned storage
+  and made every batch item carry its pool ID. `RuntimeBridge` now receives the
+  immutable plan pool bindings and rejects persistent state residing outside
+  that plan's selected spill pool.
+- Added focused three-pool/sparse-route validation and updated all examples,
+  qualification tools, and fresh-process canaries to declare routes
+  explicitly. Runtime ABI 45 and adapter ABI 55 describe the new interfaces.
+- Validation passed Ruff, strict mypy over 178 installed source files,
+  documentation/source audits, the warnings-as-errors builds, all 29
+  native/CUDA/PyTorch canaries, focused public forward/training execution, and
+  `git diff --check`.

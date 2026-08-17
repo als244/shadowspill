@@ -24,6 +24,7 @@ from shadowspill.pytorch.profiling import (
 from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 
 class _Repeated(nn.Module):
@@ -44,7 +45,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=64 << 20,
+        **two_pool_topology(64 << 20),
     )
     if installed.fixed_execution_bytes <= 0:
         raise AssertionError("PyTorch provider state was not initialized")

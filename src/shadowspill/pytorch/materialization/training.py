@@ -165,7 +165,7 @@ class TrainingMaterializedState:
                 device="cpu",
             )
             source.fill_(1)
-            bridge.register_host_tensor(alias_id, source, retain_spill_copy=True)
+            bridge.register_spill_tensor(alias_id, source, retain_spill_copy=True)
             owner = torch.empty(
                 source.untyped_storage().nbytes(),
                 dtype=torch.uint8,
@@ -436,7 +436,7 @@ class TrainingMaterializedState:
                     f"registered model alias {alias_id!r} has no imported "
                     "runtime storage"
                 )
-            self.bridge.register_host_tensor(
+            self.bridge.register_spill_tensor(
                 alias_id,
                 source,
                 retain_spill_copy=retain_spill_copy,

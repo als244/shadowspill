@@ -114,14 +114,20 @@ int main(void) {
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
     ShadowSpillPlan *plan = NULL;
+    const ShadowSpillPlanDescription plan_description = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
     ShadowSpillObjectHandle *object_handle = NULL;
     const ShadowSpillActionBatchHandle *initial_actions = NULL;
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_write_object(
             runtime, object.object_id, 1U, original, PAYLOAD_BYTES
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_create_for_pools(
-            runtime, 0U, 1U, &plan
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_create(
+            runtime, &plan_description, &plan
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_handle_acquire(
             runtime, object.object_id, &object_handle
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_bind_object(

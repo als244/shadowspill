@@ -12,7 +12,7 @@ from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
     save_step_program,
 )
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     StepProgram,
@@ -68,7 +68,11 @@ def collect_program(
                     "spill": pinned_host(
                         capacity=request.runtime.spill_pool_capacity_bytes
                     ),
-                }
+                },
+                routes={
+                    "fetch": transfer_route(source="spill", destination="execution"),
+                    "evict": transfer_route(source="execution", destination="spill"),
+                },
             )
             print("PROGRAM PHASE runtime_initialize complete", flush=True)
             print("PROGRAM PHASE import_model start", flush=True)

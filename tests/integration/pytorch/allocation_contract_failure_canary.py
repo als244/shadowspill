@@ -17,7 +17,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     read_allocator_failure,
 )
-from tests.integration.pytorch.runtime_helpers import begin_task
+from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 TASK_ID = 17
 CONTRACT_MISMATCH = 11
@@ -25,7 +25,9 @@ CONTRACT_MISMATCH = 11
 
 def _admit_task(library: object, description: TaskDescription) -> int:
     plan = ctypes.c_size_t()
-    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(plan)))
+    status = int(
+        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(plan))
+    )
     if status != 0 or plan.value == 0:
         raise AssertionError(
             f"allocation-contract plan creation failed with status {status}"
@@ -47,7 +49,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=1 << 20,
+        **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=1_000,
     )
     library = installed.library

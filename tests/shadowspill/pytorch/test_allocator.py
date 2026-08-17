@@ -17,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     FixedLayoutDescription,
     FixedPlacementDescription,
     ObjectBinding,
+    ObjectLocationSnapshot,
     ObjectSnapshot,
     ObjectUpdate,
     PhysicalAdmission,
@@ -35,10 +36,26 @@ from shadowspill.pytorch.runtime_adapter.abi import (
 from shadowspill.pytorch.runtime_adapter.allocator import (
     AllocatorInstallError,
     InstalledAllocator,
+    PoolBootstrap,
+    RouteBootstrap,
     _function_pointer,
     install_allocator,
     validate_dynamic_execution_reservation,
 )
+
+
+def _two_pool_topology(spill_bytes: int = 1) -> dict[str, object]:
+    return {
+        "allocator_pool_id": 0,
+        "pools": (
+            PoolBootstrap(0, 0, 0),
+            PoolBootstrap(1, 1, spill_bytes),
+        ),
+        "routes": (
+            RouteBootstrap(0, "fetch", 1, 0),
+            RouteBootstrap(1, "evict", 0, 1),
+        ),
+    }
 
 
 class _Function:
@@ -74,10 +91,10 @@ class _Library:
     shadowspill_pytorch_trace_end = _Function()
     shadowspill_pytorch_trace_read = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
-    shadowspill_pytorch_register_host_object = _Function()
+    shadowspill_pytorch_register_object = _Function()
     shadowspill_pytorch_register_placeholder_object = _Function()
-    shadowspill_pytorch_write_spill_object = _Function()
-    shadowspill_pytorch_read_spill_object = _Function()
+    shadowspill_pytorch_write_object = _Function()
+    shadowspill_pytorch_read_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
     shadowspill_pytorch_rekey_object = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
@@ -105,12 +122,13 @@ class _Library:
     shadowspill_pytorch_before_task_handle = _Function()
     shadowspill_pytorch_after_task_handle = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
-    shadowspill_pytorch_validate_spill_binding = _Function()
+    shadowspill_pytorch_object_location_snapshot = _Function()
+    shadowspill_pytorch_validate_object_binding = _Function()
     shadowspill_pytorch_abort_task_handle = _Function()
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
-    assert ctypes.sizeof(AdapterConfig) == 40
+    assert ctypes.sizeof(AdapterConfig) == 72
     assert ctypes.sizeof(AdapterCapabilities) == 20
     assert ctypes.sizeof(RuntimeStatistics) == 46 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
@@ -126,6 +144,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(FixedDependencyDescription) == 40
     assert ctypes.sizeof(FixedLayoutDescription) == 48
     assert ctypes.sizeof(ObjectSnapshot) == 96
+    assert ctypes.sizeof(ObjectLocationSnapshot) == 64
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32
     assert ctypes.sizeof(TaskHostTiming) == 88
@@ -202,18 +221,21 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
     ]
-    assert library.shadowspill_pytorch_register_host_object.argtypes == [
+    assert library.shadowspill_pytorch_register_object.argtypes == [
+        ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint8,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_write_spill_object.argtypes == [
+    assert library.shadowspill_pytorch_write_object.argtypes == [
+        ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_read_spill_object.argtypes == [
+    assert library.shadowspill_pytorch_read_object.argtypes == [
+        ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
@@ -223,7 +245,8 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_validate_spill_binding.argtypes == [
+    assert library.shadowspill_pytorch_validate_object_binding.argtypes == [
+        ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
@@ -301,7 +324,7 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity() -> None:
             return 0
 
     admission = PhysicalAdmission()
-    admission.execution_pool_bytes = 128
+    admission.allocator_pool_bytes = 128
     library = _StatisticsLibrary()
     installed = InstalledAllocator(
         library=library,
@@ -349,7 +372,7 @@ def test_installer_rejects_missing_library(
             device_ordinal=0,
             device_budget_bytes=1,
             provider_headroom_bytes=0,
-            spill_pool_bytes=0,
+            **_two_pool_topology(),
         )
 
 
@@ -360,19 +383,27 @@ def test_installer_rejects_missing_library(
         ({"device_budget_bytes": 0}, "budget"),
         ({"provider_headroom_bytes": -1}, "headroom"),
         ({"provider_headroom_bytes": 1024}, "headroom"),
-        ({"spill_pool_bytes": -1}, "host arena"),
+        (
+            {
+                "pools": (
+                    PoolBootstrap(0, 0, 0),
+                    PoolBootstrap(1, 1, -1),
+                )
+            },
+            "capacities",
+        ),
         ({"worker_poll_nanoseconds": -1}, "poll"),
     ],
 )
 def test_installer_rejects_invalid_physical_configuration(
-    tmp_path: Path, overrides: dict[str, int], message: str
+    tmp_path: Path, overrides: dict[str, object], message: str
 ) -> None:
     arguments = {
         "device_ordinal": 0,
         "device_budget_bytes": 1024,
         "provider_headroom_bytes": 0,
-        "spill_pool_bytes": 0,
         "worker_poll_nanoseconds": 0,
+        **_two_pool_topology(),
     }
     arguments.update(overrides)
     with pytest.raises(AllocatorInstallError, match=message):

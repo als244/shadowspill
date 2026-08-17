@@ -35,22 +35,25 @@ compiled code can use an invalid address.
 
 ## Objects and storage
 
-- `shadowspill_pytorch_register_host_object()` and
+- `shadowspill_pytorch_register_object()` and
   `shadowspill_pytorch_register_placeholder_object()` create runtime objects.
 - `shadowspill_pytorch_unregister_object()` and
   `shadowspill_pytorch_rekey_object()` manage identity.
 - `shadowspill_pytorch_plan_publish_initial_allocation()` and
   `shadowspill_pytorch_task_publish_allocation()` publish initial and repeated
   task storages through immutable plan/task records.
-- `shadowspill_pytorch_validate_spill_binding()` rejects stale imported CPU
+- `shadowspill_pytorch_validate_object_binding()` rejects stale imported CPU
   storage views. Device storage acquisition is validated by its admitted task
   or object-acquisition handle before the adapter installs the returned
   address.
-- `shadowspill_pytorch_write_spill_object()` and
-  `shadowspill_pytorch_read_spill_object()` move persistent state.
+- `shadowspill_pytorch_write_object()` and
+  `shadowspill_pytorch_read_object()` move persistent state through an
+  explicitly selected pool.
 - `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
   `shadowspill_pytorch_release_caller_allocation()` manage public outputs.
 - `shadowspill_pytorch_object_snapshot()` returns diagnostic state.
+- `shadowspill_pytorch_object_location_snapshot()` returns one explicit
+  pool-location view without assigning execution or spill meaning to it.
 - `shadowspill_pytorch_object_handle_acquire()` and
   `shadowspill_pytorch_object_handle_release()` retain and release opaque
   runtime-global object ownership across callable boundaries.

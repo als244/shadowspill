@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     export_model_state,
@@ -75,6 +75,10 @@ def main() -> int:
             ),
             "spill": pinned_host(capacity=1 << 30),
         },
+        routes={
+            "fetch": transfer_route(source="spill", destination="execution"),
+            "evict": transfer_route(source="execution", destination="spill"),
+        },
         library_path=adapter,
     )
     torch.manual_seed(811)
@@ -104,7 +108,7 @@ def main() -> int:
     if model.projection.weight.untyped_storage().data_ptr() != source_pointer:
         raise AssertionError("non-consuming import replaced its CPU source")
     if copied_model.projection.weight.untyped_storage().data_ptr() != (
-        copied.storages[0].spill_pointer
+        copied.storages[0].pool_pointer
     ):
         raise AssertionError("imported copy does not point into spill memory")
     if (
@@ -152,7 +156,7 @@ def main() -> int:
     record = imported.storages[0]
     if (
         imported_model.projection.weight.untyped_storage().data_ptr()
-        != record.spill_pointer
+        != record.pool_pointer
     ):
         raise AssertionError("returned model does not point into its spill lease")
     if (
@@ -164,7 +168,7 @@ def main() -> int:
 
     value = torch.randn(3, 32)
     persistent_id = record.persistent_object_id
-    spill_pointer = record.spill_pointer
+    spill_pointer = record.pool_pointer
     spill_bytes_before_plan = int(_statistics(runtime).runtime.spill_allocated_bytes)
     with tempfile.TemporaryDirectory() as cache:
         planned = plan_forward(
