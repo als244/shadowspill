@@ -35,11 +35,15 @@ typedef struct ShadowSpillPytorchAdapterState {
     ShadowSpillDebugTaskRecord *debug_task_records;
     uint32_t debug_task_capacity;
     _Atomic uint8_t debug_task_timing_enabled;
+    _Atomic uint8_t shutdown_started;
+    _Atomic uint64_t active_allocator_callbacks;
     _Atomic(ShadowSpillRuntime *) published_runtime;
     _Atomic int32_t published_device_ordinal;
     char failure_task_label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U];
     ShadowSpillPytorchPhysicalAdmission admission;
     ShadowSpillPytorchAdapterFailure failure;
+    uint8_t bootstrapped;
+    uint8_t closed;
 } ShadowSpillPytorchAdapterState;
 
 static ShadowSpillPytorchAdapterState adapter = {
@@ -61,6 +65,16 @@ struct ShadowSpillDebugTaskRecord {
 static _Thread_local int task_range_active;
 static _Thread_local ShadowSpillProfilerRange task_range_id;
 static _Thread_local const char *active_task_label;
+
+static inline void adapter_cpu_relax(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ __volatile__("pause" ::: "memory");
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    atomic_signal_fence(memory_order_seq_cst);
+#endif
+}
 
 ShadowSpillProfilerRange shadowspill_pytorch_profile_range_begin(
     const char *name
@@ -200,11 +214,101 @@ static ShadowSpillRuntime *bound_runtime(int32_t *device_ordinal) {
     );
 }
 
-static void shadowspill_pytorch_process_exit(void) {
+static ShadowSpillRuntime *acquire_allocator_callback_runtime(
+    int32_t *device_ordinal
+) {
+    if (atomic_load_explicit(
+            &adapter.shutdown_started, memory_order_acquire
+        ) != 0U) {
+        *device_ordinal = atomic_load_explicit(
+            &adapter.published_device_ordinal, memory_order_relaxed
+        );
+        return NULL;
+    }
+    (void)atomic_fetch_add_explicit(
+        &adapter.active_allocator_callbacks, 1U, memory_order_acq_rel
+    );
+    if (atomic_load_explicit(
+            &adapter.shutdown_started, memory_order_acquire
+        ) != 0U) {
+        (void)atomic_fetch_sub_explicit(
+            &adapter.active_allocator_callbacks, 1U, memory_order_release
+        );
+        *device_ordinal = atomic_load_explicit(
+            &adapter.published_device_ordinal, memory_order_relaxed
+        );
+        return NULL;
+    }
+    ShadowSpillRuntime *runtime = bound_runtime(device_ordinal);
+    if (runtime == NULL) {
+        (void)atomic_fetch_sub_explicit(
+            &adapter.active_allocator_callbacks, 1U, memory_order_release
+        );
+    }
+    return runtime;
+}
+
+static void release_allocator_callback_runtime(void) {
+    (void)atomic_fetch_sub_explicit(
+        &adapter.active_allocator_callbacks, 1U, memory_order_release
+    );
+}
+
+static ShadowSpillRuntimeStatus close_adapter_runtime(
+    int require_no_caller_allocations
+) {
     pthread_mutex_lock(&adapter.mutex);
+    if (adapter.closed) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    if (atomic_load_explicit(
+            &adapter.shutdown_started, memory_order_acquire
+        ) != 0U) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     ShadowSpillRuntime *runtime = adapter.runtime;
     ShadowSpillCudaBackend *cuda = adapter.cuda;
     ShadowSpillDebugTaskRecord *debug_records = adapter.debug_task_records;
+    if (runtime == NULL) {
+        pthread_mutex_unlock(&adapter.mutex);
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    atomic_store_explicit(
+        &adapter.shutdown_started, 1U, memory_order_release
+    );
+    pthread_mutex_unlock(&adapter.mutex);
+
+    while (atomic_load_explicit(
+               &adapter.active_allocator_callbacks, memory_order_acquire
+           ) != 0U) {
+        adapter_cpu_relax();
+    }
+
+    if (require_no_caller_allocations) {
+        ShadowSpillRuntimeStatistics statistics = {0};
+        const ShadowSpillRuntimeStatus statistics_status =
+            shadowspill_runtime_statistics(runtime, &statistics);
+        if (statistics_status != SHADOWSPILL_RUNTIME_OK ||
+            statistics.caller_owned_allocations != 0U) {
+            atomic_store_explicit(
+                &adapter.shutdown_started, 0U, memory_order_release
+            );
+            return statistics_status != SHADOWSPILL_RUNTIME_OK
+                ? statistics_status
+                : SHADOWSPILL_RUNTIME_INVALID_STATE;
+        }
+    }
+
+    pthread_mutex_lock(&adapter.mutex);
+    if (adapter.runtime != runtime) {
+        pthread_mutex_unlock(&adapter.mutex);
+        atomic_store_explicit(
+            &adapter.shutdown_started, 0U, memory_order_release
+        );
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     atomic_store_explicit(
         &adapter.published_runtime, NULL, memory_order_release
     );
@@ -216,6 +320,7 @@ static void shadowspill_pytorch_process_exit(void) {
     atomic_store_explicit(
         &adapter.debug_task_timing_enabled, 0U, memory_order_release
     );
+    adapter.closed = 1U;
     pthread_mutex_unlock(&adapter.mutex);
 
     /*
@@ -223,9 +328,15 @@ static void shadowspill_pytorch_process_exit(void) {
      * can observe. Keep the CUDA backend alive until all lanes, events, pinned
      * registrations, and pool arenas have been explicitly closed.
      */
+    const ShadowSpillRuntimeStatus status = shadowspill_runtime_close(runtime);
     shadowspill_runtime_destroy(runtime);
     shadowspill_cuda_backend_destroy(cuda);
     free(debug_records);
+    return status;
+}
+
+static void shadowspill_pytorch_process_exit(void) {
+    (void)close_adapter_runtime(0);
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
@@ -238,7 +349,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
-    if (adapter.runtime != NULL) {
+    if (adapter.bootstrapped) {
         pthread_mutex_unlock(&adapter.mutex);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
@@ -346,6 +457,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     adapter.cuda = cuda;
     adapter.profiler = runtime_config.profiler;
     adapter.runtime = runtime;
+    adapter.bootstrapped = 1U;
+    adapter.closed = 0U;
     adapter.device_ordinal = config->device_ordinal;
     adapter.admission = (ShadowSpillPytorchPhysicalAdmission){
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
@@ -371,8 +484,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     memset(&adapter.failure, 0, sizeof(adapter.failure));
     adapter.failure_task_label[0] = '\0';
     adapter.failure.device_ordinal = config->device_ordinal;
+    adapter.failure.runtime.task_id = SHADOWSPILL_RUNTIME_NO_ID;
     adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    adapter.failure.runtime.pool_id = UINT32_MAX;
     atomic_store_explicit(
         &adapter.published_device_ordinal,
         config->device_ordinal,
@@ -383,6 +498,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     );
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_close(void) {
+    return close_adapter_runtime(1);
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_physical_admission(
@@ -865,8 +984,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_recover_no_progress(void) {
         memset(&adapter.failure, 0, sizeof(adapter.failure));
         adapter.failure_task_label[0] = '\0';
         adapter.failure.device_ordinal = device_ordinal;
+        adapter.failure.runtime.task_id = SHADOWSPILL_RUNTIME_NO_ID;
         adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
         adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+        adapter.failure.runtime.pool_id = UINT32_MAX;
     } else if (adapter.failure.status != SHADOWSPILL_RUNTIME_OK) {
         status = (ShadowSpillRuntimeStatus)adapter.failure.status;
     }
@@ -1817,9 +1938,16 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     }
     pthread_mutex_unlock(&adapter.mutex);
     int32_t expected_device;
-    ShadowSpillRuntime *runtime = bound_runtime(&expected_device);
+    ShadowSpillRuntime *runtime = acquire_allocator_callback_runtime(
+        &expected_device
+    );
+    if (bytes == 0 && runtime == NULL) {
+        shadowspill_pytorch_profile_range_end(range);
+        return NULL;
+    }
     if (bytes == 0 && runtime != NULL && device_ordinal == expected_device) {
         shadowspill_pytorch_profile_range_end(range);
+        release_allocator_callback_runtime();
         return NULL;
     }
     if (runtime == NULL || bytes < 0 || device_ordinal != expected_device) {
@@ -1831,6 +1959,9 @@ void *shadowspill_pytorch_cuda_malloc_impl(
             bytes < 0 ? 0U : (uint64_t)bytes
         );
         shadowspill_pytorch_profile_range_end(range);
+        if (runtime != NULL) {
+            release_allocator_callback_runtime();
+        }
         return NULL;
     }
     ShadowSpillAllocation allocation = {0};
@@ -1845,9 +1976,11 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         latch_failure(status, device_ordinal, NULL, (uint64_t)bytes);
         shadowspill_pytorch_profile_range_end(range);
+        release_allocator_callback_runtime();
         return NULL;
     }
     shadowspill_pytorch_profile_range_end(range);
+    release_allocator_callback_runtime();
     return allocation.pointer;
 }
 
@@ -1864,15 +1997,20 @@ void shadowspill_pytorch_cuda_free(
         return;
     }
     int32_t expected_device;
-    ShadowSpillRuntime *runtime = bound_runtime(&expected_device);
-    if (runtime == NULL || device_ordinal != expected_device) {
+    ShadowSpillRuntime *runtime = acquire_allocator_callback_runtime(
+        &expected_device
+    );
+    if (runtime == NULL) {
+        return;
+    }
+    if (device_ordinal != expected_device) {
         latch_failure(
-            runtime == NULL ? SHADOWSPILL_RUNTIME_CLOSED
-                            : SHADOWSPILL_RUNTIME_INVALID_ARGUMENT,
+            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT,
             device_ordinal,
             address,
             (uint64_t)bytes
         );
+        release_allocator_callback_runtime();
         return;
     }
     ShadowSpillAllocation allocation = {0};
@@ -1885,6 +2023,7 @@ void shadowspill_pytorch_cuda_free(
         ++adapter.pointer_lookup_failures;
         pthread_mutex_unlock(&adapter.mutex);
         latch_failure(status, device_ordinal, address, (uint64_t)bytes);
+        release_allocator_callback_runtime();
         return;
     }
     status = shadowspill_memory_pool_free(
@@ -1896,6 +2035,7 @@ void shadowspill_pytorch_cuda_free(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         latch_failure(status, device_ordinal, address, (uint64_t)bytes);
     }
+    release_allocator_callback_runtime();
 }
 
 void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
@@ -1906,11 +2046,10 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         return;
     }
     int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    ShadowSpillRuntime *runtime = acquire_allocator_callback_runtime(
+        &device_ordinal
+    );
     if (runtime == NULL) {
-        latch_failure(
-            SHADOWSPILL_RUNTIME_CLOSED, device_ordinal, address, 0U
-        );
         return;
     }
     ShadowSpillAllocation allocation = {0};
@@ -1923,6 +2062,7 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         ++adapter.pointer_lookup_failures;
         pthread_mutex_unlock(&adapter.mutex);
         latch_failure(status, device_ordinal, address, 0U);
+        release_allocator_callback_runtime();
         return;
     }
     status = shadowspill_memory_pool_record_stream(
@@ -1934,4 +2074,5 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
     if (status != SHADOWSPILL_RUNTIME_OK) {
         latch_failure(status, device_ordinal, address, 0U);
     }
+    release_allocator_callback_runtime();
 }

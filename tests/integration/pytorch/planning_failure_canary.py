@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import sys
 import tempfile
 from collections.abc import Callable
@@ -340,6 +341,9 @@ def main() -> int:
             if not isinstance(actual, torch.Tensor) or not torch.isfinite(actual).all():
                 raise AssertionError("valid plan after rollback produced bad output")
             planned.close()
+            del actual
+            gc.collect()
+            torch.cuda.synchronize()
         finally:
             _release(runtime, constrained)
     runtime.close()

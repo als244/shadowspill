@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import sys
 import tempfile
 from collections.abc import Iterable
@@ -485,6 +486,12 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("warm-cache execution produced a non-finite loss")
         warm.close()
         export_model_state(warm_model, runtime=runtime, release_runtime=True)
+        del actual
+        del loss
+        del replay_result
+        del warm_result
+        gc.collect()
+        torch.cuda.synchronize()
         runtime.close()
     return 0
 

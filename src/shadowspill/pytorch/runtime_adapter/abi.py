@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 52
-RUNTIME_ABI_VERSION: Final = 43
+ADAPTER_ABI_VERSION: Final = 54
+RUNTIME_ABI_VERSION: Final = 44
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -123,6 +123,7 @@ class RuntimeStatistics(ctypes.Structure):
         ("lease_use_record_in_use", ctypes.c_uint64),
         ("lease_use_record_peak_in_use", ctypes.c_uint64),
         ("lease_use_record_growth_rejections", ctypes.c_uint64),
+        ("caller_owned_allocations", ctypes.c_uint64),
     ]
 
 
@@ -528,6 +529,7 @@ def _configure_allocator(library: Any) -> None:
         [ctypes.POINTER(AdapterConfig)],
         ctypes.c_uint32,
     )
+    _signature(library, "shadowspill_pytorch_allocator_close", [], ctypes.c_uint32)
     _signature(
         library,
         "shadowspill_pytorch_allocator_statistics",

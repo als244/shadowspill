@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import sys
 import tempfile
 from pathlib import Path
@@ -14,6 +15,7 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     InputGuardError,
     Runtime,
+    RuntimeConfigurationError,
     TensorRef,
     export_model_state,
     import_model_state,
@@ -283,6 +285,25 @@ def main() -> int:
             runtime=runtime,
             release_runtime=True,
         )
+        try:
+            runtime.close()
+        except RuntimeConfigurationError as error:
+            if "caller-owned device outputs" not in str(error):
+                raise
+        else:
+            raise AssertionError("runtime close invalidated live caller outputs")
+
+        retained_slice = retained["slice"].cpu()
+        del consumed
+        del first
+        del repeated
+        del replay
+        del retained
+        del second
+        del third
+        del zero
+        gc.collect()
+        torch.cuda.synchronize()
         runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("close replaced a Parameter object")
@@ -296,7 +317,7 @@ def main() -> int:
         if model.training:
             raise AssertionError("forward planning changed the model mode")
         torch.testing.assert_close(
-            retained["slice"].cpu(),
+            retained_slice,
             reference(inputs, 16)["slice"],
             rtol=2e-5,
             atol=2e-6,

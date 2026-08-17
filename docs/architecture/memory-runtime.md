@@ -195,13 +195,13 @@ No-progress OOM, allocation-contract mismatch, worker failure, and backend failu
 remain distinguishable.
 
 Planned callables close their admitted execution state. Python
-`Runtime.close()` requires no active callable or persistent imported state and
-closes the frontend handle. PyTorch cannot uninstall a selected process
-allocator, so the adapter retains the neutral runtime until its registered
-process-exit cleanup calls the C close/destroy path. That path stops and joins
-the worker, closes every pool backend, unregisters pinned memory, and releases
-device memory. Explicit callable and Python-runtime close remain required for
-timely ownership validation and error reporting.
+`Runtime.close()` requires no active callable, persistent imported state,
+public object reference, or caller-owned device output. It then calls the C
+close/destroy path, which stops and joins the worker, closes every route and
+pool backend, unregisters pinned memory, and releases device memory. PyTorch
+cannot uninstall its selected process allocator, so only the allocator shim
+remains; it rejects future allocations as closed. Registered process-exit
+cleanup invokes the same idempotent path as a last resort.
 
 The Python-facing taxonomy, structured diagnostic fields, automatic rollback,
 and normal close order are documented in [Errors, failures, and

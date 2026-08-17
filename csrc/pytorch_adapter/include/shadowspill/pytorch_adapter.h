@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 52U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 54U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -106,6 +106,15 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocator_bootstrap(
     const ShadowSpillPytorchAdapterConfig *config
 );
+
+/*
+ * Idempotently reject new allocator work, stop and join the runtime worker,
+ * close every route and pool, and release the concrete backend. PyTorch's
+ * allocator shim remains installed; subsequent nonzero allocations fail with
+ * SHADOWSPILL_RUNTIME_CLOSED instead of accessing released backend state.
+ */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocator_close(void);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_adapter_capabilities(

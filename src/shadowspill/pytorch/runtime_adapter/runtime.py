@@ -38,6 +38,7 @@ from shadowspill.runtime import ObjectRef
 
 _INITIALIZATION_PROVENANCE = 0
 _RECALIBRATION_PROVENANCE = 1
+_RUNTIME_INVALID_STATE = 5
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -284,10 +285,11 @@ class Runtime:
         )
 
     def close(self) -> None:
-        """Reject new plans after verifying that no callable remains active.
+        """Close every runtime resource after verifying external ownership.
 
-        PyTorch's selected allocator cannot be uninstalled, so the underlying C
-        runtime remains process-owned. Planned callables must be closed first.
+        PyTorch's selected allocator shim remains installed because allocator
+        selection is process-global. Its runtime is permanently closed: future
+        nonzero device allocations raise a typed closed-runtime error.
         """
 
         with self._lock:
@@ -308,13 +310,19 @@ class Runtime:
                     "close every TensorRef or StateRef first"
                 )
             status = int(
-                self._installed.library.shadowspill_pytorch_allocator_wait_idle()
+                self._installed.library.shadowspill_pytorch_allocator_close()
             )
-            if status != 0:
+            if status == _RUNTIME_INVALID_STATE:
                 raise RuntimeConfigurationError(
-                    f"runtime idle wait failed with status {status}"
+                    "cannot close Runtime while caller-owned device outputs "
+                    "still reference its memory pools; release those tensors first"
                 )
             self._closed = True
+            if status != 0:
+                raise RuntimeConfigurationError(
+                    "runtime close released its resources after observing "
+                    f"status {status}"
+                )
 
     def _reserve_persistent_object_ids(
         self,
