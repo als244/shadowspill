@@ -2,9 +2,11 @@
 
 ShadowSpillRuntimeStatus shadowspill_allocation_scope_begin(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t scope_id
 ) {
-    if (runtime == NULL || scope_id == SHADOWSPILL_RUNTIME_NO_ID) {
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL || scope_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     const ShadowSpillRuntimeStatus status =
@@ -12,7 +14,7 @@ ShadowSpillRuntimeStatus shadowspill_allocation_scope_begin(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    return shadowspill_enter_task_scope(runtime, scope_id) == 0
+    return shadowspill_enter_allocation_scope(runtime, pool, scope_id) == 0
         ? SHADOWSPILL_RUNTIME_OK
         : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }
@@ -31,12 +33,16 @@ ShadowSpillRuntimeStatus shadowspill_allocation_scope_end(
     }
 
     ShadowSpillRuntimeStatus status = shadowspill_failure_status(runtime);
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    ShadowSpillMemoryPool *pool = shadowspill_current_allocation_pool(runtime);
+    if (pool == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    pthread_mutex_lock(&pool->lock);
     const ShadowSpillRuntimeStatus retirement_status =
         shadowspill_publish_task_retirement_event_locked(
             runtime, scope_id, stream
         );
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&pool->lock);
     if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_task_failure(
             runtime,

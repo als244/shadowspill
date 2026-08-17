@@ -27,9 +27,7 @@ const ShadowSpillMemoryPool *shadowspill_runtime_pool_const(
 }
 
 ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime) {
-    return runtime == NULL
-        ? NULL
-        : shadowspill_runtime_pool(runtime, runtime->execution_pool_id);
+    return shadowspill_runtime_pool(runtime, SHADOWSPILL_EXECUTION_POOL_ID);
 }
 
 const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
@@ -37,13 +35,15 @@ const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
 ) {
     return runtime == NULL
         ? NULL
-        : shadowspill_runtime_pool_const(runtime, runtime->execution_pool_id);
+        : shadowspill_runtime_pool_const(
+              runtime, SHADOWSPILL_EXECUTION_POOL_ID
+          );
 }
 
 ShadowSpillMemoryPool *shadowspill_spill_pool(ShadowSpillRuntime *runtime) {
     return runtime == NULL
         ? NULL
-        : shadowspill_runtime_pool(runtime, runtime->spill_pool_id);
+        : shadowspill_runtime_pool(runtime, SHADOWSPILL_SPILL_POOL_ID);
 }
 
 ShadowSpillObjectLocation *shadowspill_object_location(
@@ -63,7 +63,7 @@ ShadowSpillObjectLocation *shadowspill_execution_location(
 ) {
     return runtime == NULL
         ? NULL
-        : shadowspill_object_location(object, runtime->execution_pool_id);
+        : shadowspill_object_location(object, SHADOWSPILL_EXECUTION_POOL_ID);
 }
 
 ShadowSpillObjectLocation *shadowspill_spill_location(
@@ -72,7 +72,7 @@ ShadowSpillObjectLocation *shadowspill_spill_location(
 ) {
     return runtime == NULL
         ? NULL
-        : shadowspill_object_location(object, runtime->spill_pool_id);
+        : shadowspill_object_location(object, SHADOWSPILL_SPILL_POOL_ID);
 }
 
 static void cpu_relax(void) {
@@ -123,6 +123,34 @@ int shadowspill_memory_pool_initialize(
         }
         return -1;
     }
+    pool->allocation_index_bucket_count = 65536U;
+    pool->reusable_index_bucket_count = 8192U;
+    pool->leases_by_id = calloc(
+        (size_t)pool->allocation_index_bucket_count,
+        sizeof(*pool->leases_by_id)
+    );
+    pool->leases_by_pointer = calloc(
+        (size_t)pool->allocation_index_bucket_count,
+        sizeof(*pool->leases_by_pointer)
+    );
+    pool->reusable_leases_by_size = calloc(
+        (size_t)pool->reusable_index_bucket_count,
+        sizeof(*pool->reusable_leases_by_size)
+    );
+    if (pool->leases_by_id == NULL || pool->leases_by_pointer == NULL ||
+        pool->reusable_leases_by_size == NULL) {
+        free(pool->reusable_leases_by_size);
+        free(pool->leases_by_pointer);
+        free(pool->leases_by_id);
+        shadowspill_range_destroy(&pool->ranges);
+        pthread_cond_destroy(&pool->capacity_changed);
+        pthread_mutex_destroy(&pool->lock);
+        if (base != NULL) {
+            (void)backend->close(backend->context, base);
+        }
+        *pool = (ShadowSpillMemoryPool){0};
+        return -1;
+    }
     pool->backend = *backend;
     pool->base = base;
     pool->pool_id = pool_id;
@@ -131,6 +159,10 @@ int shadowspill_memory_pool_initialize(
     pool->next_release_sequence = 1U;
     atomic_init(&pool->foreground_waiters, 0U);
     atomic_init(&pool->reservation_waiters, 0U);
+    atomic_init(&pool->pending_retirements, 0U);
+    atomic_init(&pool->pending_capacity_actions, 0U);
+    atomic_init(&pool->free_bytes_snapshot, capacity);
+    atomic_init(&pool->largest_free_bytes_snapshot, capacity);
     pool->initialized = 1U;
     return 0;
 }
@@ -140,6 +172,9 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
         return;
     }
     shadowspill_range_destroy(&pool->ranges);
+    free(pool->reusable_leases_by_size);
+    free(pool->leases_by_pointer);
+    free(pool->leases_by_id);
     if (pool->base != NULL) {
         (void)pool->backend.close(pool->backend.context, pool->base);
     }
@@ -329,12 +364,12 @@ static int adopt_lease_locked(
     lease->causal_event = NULL;
     lease->causal_dependency_expected = 0U;
     lease->owns_pool_range = owns_pool_range;
-    lease->pool_next = pool->leases;
-    lease->pool_previous_link = &pool->leases;
+    lease->pool_next = pool->range_leases;
+    lease->pool_previous_link = &pool->range_leases;
     if (lease->pool_next != NULL) {
         lease->pool_next->pool_previous_link = &lease->pool_next;
     }
-    pool->leases = lease;
+    pool->range_leases = lease;
     return 0;
 }
 
@@ -493,7 +528,7 @@ int shadowspill_memory_pool_reserve_causal_successor_locked(
         alignment = pool->minimum_alignment;
     }
     ShadowSpillMemoryLease *selected = NULL;
-    for (ShadowSpillMemoryLease *candidate = pool->leases;
+    for (ShadowSpillMemoryLease *candidate = pool->range_leases;
          candidate != NULL; candidate = candidate->pool_next) {
         if (!candidate->owns_pool_range ||
             !lease_can_publish_causal_dependency(candidate) ||
@@ -544,7 +579,7 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
         return -1;
     }
     uint64_t candidate_count = 0U;
-    for (const ShadowSpillMemoryLease *lease = pool->leases;
+    for (const ShadowSpillMemoryLease *lease = pool->range_leases;
          lease != NULL; lease = lease->pool_next) {
         if (lease->owns_pool_range &&
             lease_can_publish_causal_dependency(lease) &&
@@ -597,7 +632,7 @@ int shadowspill_memory_pool_find_release_frontier_locked(
         return -1;
     }
     uint64_t candidate_count = 0U;
-    for (ShadowSpillMemoryLease *lease = pool->leases;
+    for (ShadowSpillMemoryLease *lease = pool->range_leases;
          lease != NULL; lease = lease->pool_next) {
         if (!lease->owns_pool_range ||
             !lease_can_publish_causal_dependency(lease) ||
@@ -844,7 +879,7 @@ void shadowspill_memory_pool_rebase_locked(
         return;
     }
     pool->base = new_base;
-    for (ShadowSpillMemoryLease *lease = pool->leases; lease != NULL;
+    for (ShadowSpillMemoryLease *lease = pool->range_leases; lease != NULL;
          lease = lease->pool_next) {
         lease->pointer = shadowspill_memory_pool_pointer(pool, lease->offset);
     }

@@ -107,7 +107,7 @@ static int reset_state(
         ) != 0) {
         return -1;
     }
-    state->pool.leases = NULL;
+    state->pool.range_leases = NULL;
     state->pool.backend = (ShadowSpillMemoryPoolBackend){0};
     state->pool.base = NULL;
     state->pool.pool_id = 0U;
@@ -209,7 +209,7 @@ static int collect_failure_live_leases(
     ShadowSpillAdmissionReplayResult *result
 ) {
     uint64_t lease_count = 0U;
-    for (ShadowSpillMemoryLease *lease = state->pool.leases;
+    for (ShadowSpillMemoryLease *lease = state->pool.range_leases;
          lease != NULL; lease = lease->pool_next) {
         state->blocking_order[lease_count++] = lease;
     }

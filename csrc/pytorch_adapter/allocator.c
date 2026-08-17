@@ -918,8 +918,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_resize_spill_pool(
         pthread_mutex_unlock(&adapter.mutex);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_resize_spill_pool(
-        adapter.runtime, spill_pool_bytes
+    ShadowSpillRuntimeStatus status = shadowspill_memory_pool_grow(
+        adapter.runtime, 1U, spill_pool_bytes
     );
     if (status == SHADOWSPILL_RUNTIME_OK) {
         adapter.admission.spill_pool_bytes = spill_pool_bytes;
@@ -1026,8 +1026,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_for_pointer(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_allocation_for_pointer(
-              runtime, (const void *)(uintptr_t)address, allocation
+        : shadowspill_memory_pool_allocation_for_pointer(
+              runtime, 0U, (const void *)(uintptr_t)address, allocation
           );
 }
 
@@ -1171,8 +1171,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_bind_registered_allocation(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
-        runtime, (const void *)(uintptr_t)address, &allocation
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime, 0U, (const void *)(uintptr_t)address, &allocation
     );
     if (status != SHADOWSPILL_RUNTIME_OK ||
         allocation.requested_bytes < size_bytes) {
@@ -1215,8 +1216,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_replace_registered_allocation(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
-        runtime, (const void *)(uintptr_t)address, &allocation
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime, 0U, (const void *)(uintptr_t)address, &allocation
     );
     if (status != SHADOWSPILL_RUNTIME_OK ||
         allocation.requested_bytes < size_bytes) {
@@ -1256,8 +1258,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_free(
-              runtime, allocation_id, shadowspill_cuda_wrap_stream(stream)
+        : shadowspill_memory_pool_free(
+              runtime, 0U, allocation_id, shadowspill_cuda_wrap_stream(stream)
           );
 }
 
@@ -1277,8 +1279,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_promote_allocation(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
-        runtime, (const void *)(uintptr_t)address, &allocation
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime, 0U, (const void *)(uintptr_t)address, &allocation
     );
     if (status != SHADOWSPILL_RUNTIME_OK ||
         allocation.requested_bytes < size_bytes) {
@@ -1665,7 +1668,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_begin(
     (void)device_ordinal;
     const ShadowSpillRuntimeStatus status = runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_allocation_scope_begin(runtime, scope_id);
+        : shadowspill_allocation_scope_begin(runtime, 0U, scope_id);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         end_task_range();
     }
@@ -1922,8 +1925,9 @@ void *shadowspill_pytorch_cuda_malloc_impl(
         return NULL;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocate(
+    ShadowSpillRuntimeStatus status = shadowspill_memory_pool_allocate(
         runtime,
+        0U,
         (uint64_t)bytes,
         256U,
         shadowspill_cuda_wrap_stream((uintptr_t)stream),
@@ -1963,8 +1967,9 @@ void shadowspill_pytorch_cuda_free(
         return;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
-        runtime, address, &allocation
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime, 0U, address, &allocation
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         pthread_mutex_lock(&adapter.mutex);
@@ -1973,8 +1978,9 @@ void shadowspill_pytorch_cuda_free(
         latch_failure(status, device_ordinal, address, (uint64_t)bytes);
         return;
     }
-    status = shadowspill_free(
+    status = shadowspill_memory_pool_free(
         runtime,
+        0U,
         allocation.allocation_id,
         shadowspill_cuda_wrap_stream((uintptr_t)stream)
     );
@@ -1999,8 +2005,9 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         return;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_allocation_for_pointer(
-        runtime, address, &allocation
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime, 0U, address, &allocation
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         pthread_mutex_lock(&adapter.mutex);
@@ -2009,8 +2016,9 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         latch_failure(status, device_ordinal, address, 0U);
         return;
     }
-    status = shadowspill_record_stream(
+    status = shadowspill_memory_pool_record_stream(
         runtime,
+        0U,
         allocation.allocation_id,
         shadowspill_cuda_wrap_stream((uintptr_t)stream)
     );

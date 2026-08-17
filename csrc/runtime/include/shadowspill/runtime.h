@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 31U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 32U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -176,6 +176,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
 );
 
 typedef struct ShadowSpillAllocation {
+    uint32_t pool_id;
     uint64_t allocation_id;
     uint64_t generation;
     uint64_t requested_bytes;
@@ -318,6 +319,7 @@ typedef struct ShadowSpillTaskDescription {
 
 typedef struct ShadowSpillAllocationEvent {
     uint64_t sequence;
+    uint32_t pool_id;
     uint64_t task_id;
     uint64_t allocation_id;
     uint64_t generation;
@@ -457,6 +459,7 @@ typedef struct ShadowSpillRuntimeStatistics {
 
 typedef struct ShadowSpillRuntimeFailure {
     uint32_t status;
+    uint32_t pool_id;
     uint64_t task_id;
     uint64_t object_id;
     uint64_t allocation_id;
@@ -586,8 +589,10 @@ SHADOWSPILL_RUNTIME_API void shadowspill_runtime_destroy(
  * pending work can make a suitable range available. Otherwise it returns and
  * latches NO_PROGRESS.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_allocate(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_memory_pool_allocate(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t bytes,
     uint64_t alignment,
     ShadowSpillBackendStream stream,
@@ -600,8 +605,9 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_allocate(
  * whose free/record-stream protocols carry an address rather than an ID.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_allocation_for_pointer(
+shadowspill_memory_pool_allocation_for_pointer(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     const void *pointer,
     ShadowSpillAllocation *allocation
 );
@@ -613,15 +619,18 @@ shadowspill_allocation_for_pointer(
  * recorded stream to retire. Plan-owned allocations ignore framework logical
  * free until a plan action releases or offloads the owning object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_free(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_memory_pool_free(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t allocation_id,
     ShadowSpillBackendStream stream
 );
 
 /* Adds a borrowed stream token to an allocation's retirement set. */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_record_stream(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_memory_pool_record_stream(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t allocation_id,
     ShadowSpillBackendStream stream
 );
@@ -830,6 +839,7 @@ shadowspill_abort_task_handle(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_allocation_scope_begin(
     ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t scope_id
 );
 
@@ -932,9 +942,10 @@ shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
  * admission. It is forbidden after frontend physical admission is sealed.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_runtime_resize_spill_pool(
+shadowspill_memory_pool_grow(
     ShadowSpillRuntime *runtime,
-    uint64_t spill_pool_bytes
+    uint32_t pool_id,
+    uint64_t capacity_bytes
 );
 
 /* Copies a lock-consistent telemetry snapshot into caller-owned storage. */

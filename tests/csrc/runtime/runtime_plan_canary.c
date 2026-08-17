@@ -5,6 +5,87 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+static int runtime_accepts_generic_and_sparse_topologies(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+
+    ShadowSpillMockRuntimeTopology single_pool;
+    shadowspill_mock_runtime_topology(
+        mock, 4096U, 4096U, 16U, 1000U, &single_pool
+    );
+    single_pool.runtime.pool_count = 1U;
+    single_pool.runtime.routes = NULL;
+    single_pool.runtime.route_count = 0U;
+    ShadowSpillRuntime *runtime = NULL;
+    int failed = shadowspill_runtime_create(&single_pool.runtime, &runtime) !=
+        SHADOWSPILL_RUNTIME_OK;
+    shadowspill_runtime_destroy(runtime);
+    runtime = NULL;
+
+    ShadowSpillMemoryPoolDescription pools[3] = {
+        {
+            .pool_id = 0U,
+            .capacity_bytes = 4096U,
+            .minimum_alignment = 16U,
+            .backend = shadowspill_mock_execution_pool_backend(mock),
+        },
+        {
+            .pool_id = 1U,
+            .capacity_bytes = 4096U,
+            .minimum_alignment = 16U,
+            .backend = shadowspill_mock_spill_pool_backend(mock),
+        },
+        {
+            .pool_id = 2U,
+            .capacity_bytes = 4096U,
+            .minimum_alignment = 16U,
+            .backend = shadowspill_mock_spill_pool_backend(mock),
+        },
+    };
+    const ShadowSpillTransferRouteDescription route = {
+        .route_id = 0U,
+        .name = "sparse_fetch",
+        .route = shadowspill_mock_fetch_route(mock, 2U, 0U),
+    };
+    const ShadowSpillRuntimeConfig sparse = {
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .pools = pools,
+        .pool_count = 3U,
+        .routes = &route,
+        .route_count = 1U,
+        .worker_poll_nanoseconds = 1000U,
+        .synchronization = shadowspill_mock_synchronization_backend(mock),
+    };
+    ShadowSpillPlan *plan = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillAllocation allocation = {0};
+    failed = failed || shadowspill_runtime_create(&sparse, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        shadowspill_memory_pool_allocate(
+            runtime, 2U, 64U, 16U, compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        allocation.pool_id != 2U ||
+        shadowspill_memory_pool_free(
+            runtime, 2U, allocation.allocation_id, compute
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create_for_pools(runtime, 0U, 2U, &plan) !=
+            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+        plan != NULL;
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -427,6 +508,10 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
 }
 
 int main(void) {
+    if (runtime_accepts_generic_and_sparse_topologies() != 0) {
+        fprintf(stderr, "runtime plan canary failed: generic topology\n");
+        return EXIT_FAILURE;
+    }
     if (shared_runtime_accepts_overlapping_plan_tasks() != 0) {
         fprintf(stderr, "runtime plan canary failed: shared runtime\n");
         return EXIT_FAILURE;

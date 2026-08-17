@@ -71,6 +71,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
         status = fixed == NULL
             ? shadowspill_create_execution_lease_locked(
                   runtime,
+                  pool,
                   action->object->size_bytes,
                   pool->minimum_alignment,
                   1,
@@ -88,6 +89,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
         if (fixed == NULL && status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
             status = shadowspill_create_execution_successor_locked(
                 runtime,
+                pool,
                 action->object->size_bytes,
                 pool->minimum_alignment,
                 action->task_id,
@@ -279,8 +281,9 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
     uint64_t *failure_allocation_id
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    for (ShadowSpillMemoryLease *allocation = runtime->active_execution_leases;
+    ShadowSpillMemoryPool *pool = record->plan_owner->execution_pool;
+    pthread_mutex_lock(&pool->lock);
+    for (ShadowSpillMemoryLease *allocation = pool->active_leases;
          allocation != NULL; allocation = allocation->active_next) {
         uint64_t source_id = allocation->handoff_head_object_id;
         uint64_t traversed = 0U;
@@ -310,7 +313,7 @@ static ShadowSpillRuntimeStatus validate_handoffs_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&pool->lock);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_failure_locked(
             runtime,
@@ -328,7 +331,11 @@ static uint64_t count_task_retirements_locked(
     uint64_t task_id
 ) {
     uint64_t count = 0U;
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    ShadowSpillMemoryPool *pool = shadowspill_current_allocation_pool(runtime);
+    if (pool == NULL) {
+        return 0U;
+    }
+    pthread_mutex_lock(&pool->lock);
     for (ShadowSpillMemoryLease *allocation =
              shadowspill_current_task_retirements(runtime);
          allocation != NULL;
@@ -340,7 +347,7 @@ static uint64_t count_task_retirements_locked(
             ++count;
         }
     }
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&pool->lock);
     return count;
 }
 
@@ -552,7 +559,11 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
     ShadowSpillEventLease *task_completion_event
 ) {
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+    ShadowSpillMemoryPool *pool = shadowspill_current_allocation_pool(runtime);
+    if (pool == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    pthread_mutex_lock(&pool->lock);
     for (ShadowSpillMemoryLease *allocation =
              shadowspill_current_task_retirements(runtime);
          allocation != NULL;
@@ -576,7 +587,7 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
             break;
         }
     }
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&pool->lock);
     return status;
 }
 
@@ -598,6 +609,11 @@ static void publish_action_batch_locked(
             queued->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
             (void)atomic_fetch_add_explicit(
                 &runtime->pending_capacity_actions, 1U, memory_order_release
+            );
+            (void)atomic_fetch_add_explicit(
+                &record->plan_owner->execution_pool->pending_capacity_actions,
+                1U,
+                memory_order_release
             );
         }
         pthread_mutex_lock(&queued->object->lock);
