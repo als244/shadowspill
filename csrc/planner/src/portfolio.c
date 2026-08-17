@@ -61,7 +61,7 @@ typedef struct ScheduleCacheEntry {
     uint8_t rule;
     uint8_t coalesced;
     uint8_t prefetch_headroom;
-    ShadowSpillDenseSchedule schedule;
+    ShadowSpillIndexedSchedule schedule;
 } ScheduleCacheEntry;
 
 typedef struct ScheduleCache {
@@ -73,7 +73,7 @@ typedef struct ScheduleCache {
 
 typedef struct SimulationCacheEntry {
     uint64_t hash;
-    ShadowSpillDenseSchedule schedule;
+    ShadowSpillIndexedSchedule schedule;
     ShadowSpillSimulationResult result;
     ShadowSpillAdmissionReplayResult admission;
     uint32_t admission_status;
@@ -359,7 +359,7 @@ static uint64_t schedule_cache_hash(
     return hash_bytes(hash, &prefetch_headroom, sizeof(prefetch_headroom));
 }
 
-static uint64_t dense_schedule_hash(const ShadowSpillDenseSchedule *schedule) {
+static uint64_t indexed_schedule_hash(const ShadowSpillIndexedSchedule *schedule) {
     uint64_t hash = UINT64_C(1469598103934665603);
     hash = hash_value(hash, schedule->action_count);
     hash = hash_bytes(
@@ -527,7 +527,7 @@ static void simulation_workspace_destroy(SimulationWorkspace *workspace) {
 
 static int simulate_schedule(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     SimulationWorkspace *workspace,
     ShadowSpillCandidateAdmissionWorkspace *admission_workspace,
     ShadowSpillSimulationResult *result,
@@ -544,9 +544,9 @@ static int simulate_schedule(
     *admission_status = SHADOWSPILL_ADMISSION_REPLAY_OK;
     memset(admission_result, 0, sizeof(*admission_result));
     if (context->admission == NULL) {
-        shadowspill_bind_dense_schedule(context->simulation, schedule, &program);
+        shadowspill_bind_indexed_schedule(context->simulation, schedule, &program);
     } else {
-        *admission_status = shadowspill_admit_dense_schedule(
+        *admission_status = shadowspill_admit_indexed_schedule(
             context,
             schedule,
             admission_workspace,
@@ -676,7 +676,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     free(workspace->schedule_cache.entries);
     free(workspace->schedule_cache.index.slots);
     for (uint32_t index = 0U; index < workspace->simulation_cache.count; ++index) {
-        ShadowSpillDenseSchedule *schedule =
+        ShadowSpillIndexedSchedule *schedule =
             &workspace->simulation_cache.entries[index].schedule;
         free(schedule->action_trigger_tasks);
         free(schedule->action_aliases);
@@ -1052,9 +1052,9 @@ static ScheduleCacheEntry *find_schedule_cache(
     return NULL;
 }
 
-static int clone_dense_schedule(
-    const ShadowSpillDenseSchedule *source,
-    ShadowSpillDenseSchedule *destination
+static int clone_indexed_schedule(
+    const ShadowSpillIndexedSchedule *source,
+    ShadowSpillIndexedSchedule *destination
 ) {
     memset(destination, 0, sizeof(*destination));
     uint32_t actions = source->action_count == 0U ? 1U : source->action_count;
@@ -1138,9 +1138,9 @@ static int clone_dense_schedule(
     return 0;
 }
 
-static int dense_schedule_equal(
-    const ShadowSpillDenseSchedule *left,
-    const ShadowSpillDenseSchedule *right
+static int indexed_schedule_equal(
+    const ShadowSpillIndexedSchedule *left,
+    const ShadowSpillIndexedSchedule *right
 ) {
     return left->action_count == right->action_count &&
         left->initial_count == right->initial_count &&
@@ -1211,7 +1211,7 @@ static SimulationCacheEntry *append_simulation_cache(
         cache->capacity = capacity;
     }
     SimulationCacheEntry *entry = &cache->entries[cache->count];
-    if (clone_dense_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
+    if (clone_indexed_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
         return NULL;
     }
     entry->result = *result;
@@ -1256,14 +1256,14 @@ static int simulate_cached(
     SimulationCacheEntry **selected_entry
 ) {
     SimulationCache *cache = &workspace->simulation_cache;
-    uint64_t hash = dense_schedule_hash(&workspace->schedule.value);
+    uint64_t hash = indexed_schedule_hash(&workspace->schedule.value);
     uint32_t slot = hash_index_start(&cache->index, hash);
     while (slot != UINT32_MAX &&
            cache->index.slots[slot].entry_plus_one != 0U) {
         HashSlot indexed = cache->index.slots[slot];
         SimulationCacheEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
-        if (indexed.hash == hash && dense_schedule_equal(
+        if (indexed.hash == hash && indexed_schedule_equal(
                 &entry->schedule,
                 &workspace->schedule.value
             )) {
@@ -1344,7 +1344,7 @@ static ScheduleCacheEntry *append_schedule_cache(
         cache->capacity = capacity;
     }
     ScheduleCacheEntry *entry = &cache->entries[cache->count];
-    if (clone_dense_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
+    if (clone_indexed_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
         memset(entry, 0, sizeof(*entry));
         return NULL;
     }
@@ -1403,7 +1403,7 @@ static int emit_cached(
         };
         return shadowspill_schedule_storage_copy(&workspace->schedule, &source);
     }
-    if (shadowspill_emit_dense_schedule(
+    if (shadowspill_emit_indexed_schedule(
             facts,
             resident,
             breaks,
@@ -1516,7 +1516,7 @@ static int simulation_failure_may_be_repairable(
 
 static int admission_failure_boundary(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillAdmissionAnnotation annotation,
     uint32_t *task,
     uint32_t *pressure_index,
@@ -1597,7 +1597,7 @@ static int delay_admission_prefetch(
     } else {
         return 0;
     }
-    return shadowspill_delay_dense_prefetch(
+    return shadowspill_delay_indexed_prefetch(
         facts, &projected, schedule, constraint
     );
 }
@@ -1615,7 +1615,7 @@ static int advance_admission_prefetch(
             SHADOWSPILL_MEMORY_PREFETCH) {
         return 0;
     }
-    return shadowspill_advance_dense_prefetch_to_release(
+    return shadowspill_advance_indexed_prefetch_to_release(
         facts, annotation.index, schedule, constraint
     );
 }
@@ -1626,7 +1626,7 @@ static int add_admission_repair_pressure(
     const ShadowSpillResidencyOptions *options,
     const ShadowSpillAdmissionReplayResult *failure,
     ShadowSpillAdmissionAnnotation annotation,
-    const ShadowSpillDenseSchedule *schedule
+    const ShadowSpillIndexedSchedule *schedule
 ) {
     uint32_t task = SHADOWSPILL_SIMULATOR_NO_INDEX;
     uint32_t pressure_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
@@ -1717,7 +1717,7 @@ static int force_admission_blockers_absent(
     CandidateWorkspace *workspace,
     const ShadowSpillAdmissionReplayResult *failure,
     ShadowSpillAdmissionAnnotation annotation,
-    const ShadowSpillDenseSchedule *schedule
+    const ShadowSpillIndexedSchedule *schedule
 ) {
     const uint64_t lease_count = failure->live_lease_count;
     const uint64_t capacity = context->admission->pool_capacity_bytes;
@@ -1911,7 +1911,7 @@ static int force_admission_blockers_absent(
 
 static void copy_admission_error(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     const ShadowSpillAdmissionReplayResult *failure,
     ShadowSpillAdmissionAnnotation annotation,
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
@@ -2053,7 +2053,7 @@ static int evaluate_candidate(
                     reduce_options.prefetch_headroom
                 );
             } else {
-                emitted = shadowspill_emit_dense_schedule(
+                emitted = shadowspill_emit_indexed_schedule(
                     facts,
                     workspace->resident,
                     workspace->breaks,
@@ -2249,7 +2249,7 @@ static int evaluate_candidate(
         if (repair_total(&diagnostic->repairs) <
             portfolio_options->max_repair_attempts) {
             ShadowSpillPrefetchTriggerConstraint constraint = {0};
-            int delayed = shadowspill_delay_dense_prefetch(
+            int delayed = shadowspill_delay_indexed_prefetch(
                 facts,
                 &simulation,
                 &workspace->schedule,
@@ -2308,8 +2308,8 @@ static int adopt_selected_schedule(
     ShadowSpillPressureFitContextResult *result,
     CandidateWorkspace *workspace
 ) {
-    ShadowSpillDenseSchedule *source = &workspace->selected.value;
-    ShadowSpillDenseSchedule *destination = &result->selected_schedule;
+    ShadowSpillIndexedSchedule *source = &workspace->selected.value;
+    ShadowSpillIndexedSchedule *destination = &result->selected_schedule;
     *destination = *source;
     memset(source, 0, sizeof(*source));
     workspace->selected.action_capacity = 0U;

@@ -1,4 +1,4 @@
-"""One-call dense C evaluation for a resolved recomputation context."""
+"""One-call indexed C evaluation for a resolved recomputation context."""
 
 from __future__ import annotations
 
@@ -94,10 +94,10 @@ class NativeCandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class NativeDenseSchedule:
-    """Copied dense indices for one context winner.
+class NativeIndexedSchedule:
+    """Copied contiguous indices for one context winner.
 
-    Keeping the context-local winner dense avoids constructing and validating
+    Keeping the context-local winner indexed avoids constructing and validating
     thousands of Python IR records that will be discarded when a different
     recomputation context wins the global portfolio.
     """
@@ -115,7 +115,7 @@ class NativeDenseSchedule:
 class NativeContextResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
-    selected_schedule: NativeDenseSchedule | None
+    selected_schedule: NativeIndexedSchedule | None
     candidates: tuple[NativeCandidateDiagnostic, ...]
     repairs: PressureFitRepairDiagnostics
     work: PressureFitWorkDiagnostics
@@ -133,8 +133,7 @@ class NativeContextResult:
         for name in candidate_work.__dataclass_fields__:
             if getattr(candidate_work, name) > getattr(self.work, name):
                 raise RuntimeError(
-                    "native PressureFit candidate work exceeds context work: "
-                    f"{name}"
+                    f"native PressureFit candidate work exceeds context work: {name}"
                 )
 
 
@@ -164,7 +163,7 @@ def decode_candidate_diagnostic(
     selection_id: str,
     simulation: CompiledSimulationTemplate,
 ) -> CandidateDiagnostic:
-    """Convert one dense diagnostic without changing its semantic fields."""
+    """Convert one indexed diagnostic without changing its semantic fields."""
 
     if value.status == 0:
         return CandidateDiagnostic(
@@ -280,9 +279,7 @@ def _decode_repairs(
         admission_prefetch_advance_attempts=int(
             value.admission_prefetch_advance_attempts
         ),
-        admission_prefetch_delay_attempts=int(
-            value.admission_prefetch_delay_attempts
-        ),
+        admission_prefetch_delay_attempts=int(value.admission_prefetch_delay_attempts),
         admission_pressure_boundary_attempts=int(
             value.admission_pressure_boundary_attempts
         ),
@@ -436,20 +433,18 @@ def validate_program_context_compiled(
     )
 
 
-def _copy_schedule(result: CPressureFitContextResult) -> NativeDenseSchedule:
+def _copy_schedule(result: CPressureFitContextResult) -> NativeIndexedSchedule:
     value = result.selected_schedule
-    return NativeDenseSchedule(
+    return NativeIndexedSchedule(
         action_trigger_tasks=tuple(
             int(value.action_trigger_tasks[index])
             for index in range(int(value.action_count))
         ),
         action_aliases=tuple(
-            int(value.action_aliases[index])
-            for index in range(int(value.action_count))
+            int(value.action_aliases[index]) for index in range(int(value.action_count))
         ),
         action_kinds=tuple(
-            int(value.action_kinds[index])
-            for index in range(int(value.action_count))
+            int(value.action_kinds[index]) for index in range(int(value.action_count))
         ),
         initial_aliases=tuple(
             int(value.initial_aliases[index])
@@ -460,18 +455,16 @@ def _copy_schedule(result: CPressureFitContextResult) -> NativeDenseSchedule:
             for index in range(int(value.initial_count))
         ),
         final_aliases=tuple(
-            int(value.final_aliases[index])
-            for index in range(int(value.final_count))
+            int(value.final_aliases[index]) for index in range(int(value.final_count))
         ),
         final_locations=tuple(
-            int(value.final_locations[index])
-            for index in range(int(value.final_count))
+            int(value.final_locations[index]) for index in range(int(value.final_count))
         ),
     )
 
 
 def decode_schedule(
-    value: NativeDenseSchedule,
+    value: NativeIndexedSchedule,
     simulation: CompiledSimulationTemplate,
 ) -> MemorySchedule:
     return MemorySchedule(
@@ -549,18 +542,14 @@ def _evaluate_native_context(
         for index in range(int(native_result.candidate_count)):
             value = native_result.candidates[index]
             variants_per_rule = 2 if options.evaluate_coalesced else 1
-            strategy = strategy_names[
-                index // (len(rule_names) * variants_per_rule)
-            ]
+            strategy = strategy_names[index // (len(rule_names) * variants_per_rule)]
             within_strategy = index % (
                 len(rule_names) * (2 if options.evaluate_coalesced else 1)
             )
             divisor = 2 if options.evaluate_coalesced else 1
             rule = rule_names[within_strategy // divisor]
             digest = (
-                bytes(value.schedule_digest).hex()
-                if int(value.status) == 0
-                else None
+                bytes(value.schedule_digest).hex() if int(value.status) == 0 else None
             )
             candidates.append(
                 NativeCandidateDiagnostic(
@@ -594,9 +583,7 @@ def _evaluate_native_context(
                 else int(native_result.selected_makespan_ns)
             ),
             selected_schedule=(
-                None
-                if selected == NO_INDEX
-                else _copy_schedule(native_result)
+                None if selected == NO_INDEX else _copy_schedule(native_result)
             ),
             candidates=tuple(candidates),
             repairs=_decode_repairs(native_result.repairs),
@@ -614,7 +601,7 @@ def evaluate_program_context_compiled(
     *,
     admission: CompiledAdmissionTopology | None = None,
 ) -> NativeContextResult | None:
-    """Derive dense planning facts and evaluate the portfolio entirely in C."""
+    """Derive indexed planning facts and evaluate the portfolio entirely in C."""
 
     return _evaluate_native_context(simulation, options, admission=admission)
 
@@ -623,7 +610,7 @@ __all__ = [
     "NativeCandidateDiagnostic",
     "NativeContextPreparationError",
     "NativeContextResult",
-    "NativeDenseSchedule",
+    "NativeIndexedSchedule",
     "NativePreflightResult",
     "decode_candidate_diagnostic",
     "decode_schedule",

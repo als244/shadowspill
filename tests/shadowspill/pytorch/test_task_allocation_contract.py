@@ -145,7 +145,7 @@ def test_task_allocation_contract_rejects_sparse_allocation_ordinals() -> None:
         ),
     )
 
-    with pytest.raises(ValueError, match="dense allocation ordinals"):
+    with pytest.raises(ValueError, match="contiguous allocation ordinals"):
         TaskAllocationContract(steps, "0" * 64)
 
 

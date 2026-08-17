@@ -96,12 +96,12 @@ typedef enum ShadowSpillInitialPlacement {
 } ShadowSpillInitialPlacement;
 
 /*
- * Dense schedule storage used by the complete compiled candidate evaluator.
- * Every identifier is the corresponding dense task or alias index in the
+ * Indexed schedule storage used by the complete compiled candidate evaluator.
+ * Every identifier is the corresponding contiguous task or alias index in the
  * supplied simulation program. Arrays are owned by the result and remain
  * valid until shadowspill_pressurefit_context_result_destroy().
  */
-typedef struct ShadowSpillDenseSchedule {
+typedef struct ShadowSpillIndexedSchedule {
     uint32_t action_count;
     uint32_t *action_trigger_tasks;
     uint32_t *action_aliases;
@@ -112,7 +112,7 @@ typedef struct ShadowSpillDenseSchedule {
     uint32_t final_count;
     uint32_t *final_aliases;
     uint8_t *final_locations;
-} ShadowSpillDenseSchedule;
+} ShadowSpillIndexedSchedule;
 
 /*
  * Schedule-invariant physical ownership facts for one execution pool.
@@ -172,7 +172,7 @@ typedef struct ShadowSpillPressureFitContextOptions {
 /*
  * Schedule-invariant input for the high-level compiled PressureFit path.
  * The simulation topology carries the selected tasks plus the declared
- * initial/final residency.  The planner derives the dense analytic residency
+ * initial/final residency.  The planner derives the indexed analytic residency
  * problem and initial seed internally before evaluating the unchanged
  * candidate portfolio.
  */
@@ -267,7 +267,7 @@ typedef struct ShadowSpillPressureFitContextResult {
     uint32_t status;
     uint32_t selected_candidate_index;
     uint64_t selected_makespan_ns;
-    ShadowSpillDenseSchedule selected_schedule;
+    ShadowSpillIndexedSchedule selected_schedule;
     ShadowSpillPressureFitCandidateDiagnostic *candidates;
     uint32_t candidate_count;
     ShadowSpillPressureFitRepairDiagnostics repairs;
@@ -349,7 +349,7 @@ SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_select_plan(
 );
 
 /*
- * Apply the PressureFit analytic residency reduction to dense boundary data.
+ * Apply the PressureFit analytic residency reduction to indexed boundary data.
  * All input arrays are borrowed for the call. Output buffers are caller-owned
  * and require alias_count * boundary_count bytes each. `breaks` records a
  * logical span boundary after a resident boundary; its final column is unused.
@@ -365,7 +365,7 @@ shadowspill_reduce_residency(
 /*
  * Evaluate the complete deterministic candidate portfolio for one already
  * resolved recomputation selection. The function performs no Python calls and
- * retains dense residency and schedule records throughout evaluation. Result
+ * retains indexed residency and schedule records throughout evaluation. Result
  * storage is owned by the caller after success or a no-feasible result and
  * must be released with the matching destroy function.
  */
@@ -377,7 +377,7 @@ shadowspill_evaluate_pressurefit_context(
 );
 
 /*
- * Derive one dense residency context from a selected simulation program and
+ * Derive one indexed residency context from a selected simulation program and
  * evaluate the complete deterministic PressureFit candidate portfolio.
  * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
  * explicitly, but avoids materializing alias-by-boundary matrices in Python.
@@ -399,7 +399,7 @@ SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
 shadowspill_evaluate_schedule_admission(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillScheduleAdmissionResult *result
 );
 

@@ -95,7 +95,7 @@ class CompiledTaskLayout:
         if len(self.contract_digest) != 64 or len(self.compatibility_digest) != 64:
             raise ValueError("compiled task layout digests must be SHA-256")
         if tuple(root.root_id for root in self.roots) != tuple(range(len(self.roots))):
-            raise ValueError("compiled root layouts must have dense IDs")
+            raise ValueError("compiled root layouts must have contiguous indices")
         leaves = tuple(view.leaf_index for view in self.output_views)
         if len(set(leaves)) != len(leaves):
             raise ValueError("compiled output leaf is bound more than once")

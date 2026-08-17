@@ -295,7 +295,7 @@ def _build_transfer_trace(
         RuntimeTraceEventKind.TRANSFER_COMPLETED,
     }
     selected_task_numbers = {
-        _dense_id(task_id, "task_") for task_id in timing.task_order
+        _plan_index(task_id, "task_") for task_id in timing.task_order
     }
     initial_dispatches = tuple(
         item
@@ -373,7 +373,7 @@ def _build_transfer_comparison(
             )
         dispatch = lane_dispatches[interval.sequence]
         completion = lane_completions[interval.sequence]
-        task_number = _dense_id(interval.trigger_task_id, "task_")
+        task_number = _plan_index(interval.trigger_task_id, "task_")
         object_number = bridge.runtime_object_id(interval.alias_group_id)
         _validate_transfer_event(interval, dispatch, task_number, object_number)
         _validate_transfer_event(interval, completion, task_number, object_number)
@@ -434,8 +434,8 @@ def _transfer_boundary_events(
     events: tuple[RuntimeTraceEvent, ...],
     kind: RuntimeTraceEventKind,
 ) -> defaultdict[tuple[int, int, int], deque[RuntimeTraceEvent]]:
-    grouped: defaultdict[tuple[int, int, int], deque[RuntimeTraceEvent]] = (
-        defaultdict(deque)
+    grouped: defaultdict[tuple[int, int, int], deque[RuntimeTraceEvent]] = defaultdict(
+        deque
     )
     for event in events:
         if (
@@ -467,16 +467,14 @@ def _validate_transfer_event(
         )
 
 
-def _event_seconds(
-    event: RuntimeTraceEvent | None, origin_ns: int
-) -> float | None:
+def _event_seconds(event: RuntimeTraceEvent | None, origin_ns: int) -> float | None:
     return None if event is None else (event.timestamp_ns - origin_ns) / 1e9
 
 
-def _dense_id(value: str, prefix: str) -> int:
+def _plan_index(value: str, prefix: str) -> int:
     suffix = value.removeprefix(prefix)
     if not value.startswith(prefix) or not suffix.isdigit():
-        raise RuntimeError(f"non-canonical dense identity {value!r}")
+        raise RuntimeError(f"non-canonical indexed identity {value!r}")
     return int(suffix)
 
 
@@ -576,9 +574,7 @@ def _build_step_summary(
         raise RuntimeError("execution trace omitted selected simulator evidence")
     profiled_task_seconds = sum(item.expected_profile_seconds for item in tasks)
     real_task_seconds = sum(item.gpu_duration_seconds for item in tasks)
-    simulated_intervals = {
-        item.task_id: item for item in simulation.task_intervals
-    }
+    simulated_intervals = {item.task_id: item for item in simulation.task_intervals}
     selected_intervals = tuple(
         simulated_intervals[item.task_id]
         for item in tasks

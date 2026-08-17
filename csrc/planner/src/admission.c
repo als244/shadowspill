@@ -177,7 +177,7 @@ static void free_action_buffers(
 
 static int reserve_candidate_buffers(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 ) {
     uint64_t lease_count = invariant_lease_count(context);
@@ -615,7 +615,7 @@ static int task_replaces_alias(
 
 static int build_script(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     ScriptState *state
 ) {
@@ -934,7 +934,7 @@ static int add_delta(int64_t *target, int64_t delta) {
 
 static int project_result(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     const ScriptState *state,
     const ShadowSpillAdmissionReplayResult *result
@@ -1059,9 +1059,9 @@ static int project_result(
     return 0;
 }
 
-ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
+ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     ShadowSpillSimulationProgram *program,
     ShadowSpillAdmissionReplayResult *replay_result
@@ -1108,7 +1108,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
         ) != 0) {
         return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
     }
-    shadowspill_bind_dense_schedule(context->simulation, schedule, program);
+    shadowspill_bind_indexed_schedule(context->simulation, schedule, program);
     workspace->physical_device = context->simulation->devices[0];
     workspace->physical_device.capacity_bytes =
         context->admission->pool_capacity_bytes;
@@ -1134,7 +1134,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
 ShadowSpillPlannerStatus shadowspill_evaluate_schedule_admission(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillScheduleAdmissionResult *result
 ) {
     if (result == NULL) {
@@ -1186,7 +1186,7 @@ ShadowSpillPlannerStatus shadowspill_evaluate_schedule_admission(
     ShadowSpillSimulationProgram admitted_program = {0};
     ShadowSpillAdmissionReplayResult replay = {0};
     const ShadowSpillAdmissionReplayStatus status =
-        shadowspill_admit_dense_schedule(
+        shadowspill_admit_indexed_schedule(
             &context,
             schedule,
             &workspace,

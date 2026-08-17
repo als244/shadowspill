@@ -30,7 +30,7 @@ Programs across budgets and transfer bandwidths.
 
 ```text
 src/shadowspill/
-├── ir/                    framework-neutral values and dense projections
+├── ir/                    framework-neutral values and indexed projections
 ├── planner/               PressureFit orchestration and compiled bindings
 ├── simulator/             compiled simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings

@@ -220,8 +220,7 @@ def _preflight_error(
     capacity = result.capacity_bytes
     if result.failure_kind == "workspace_capacity":
         return PressureFitInfeasibleError(
-            f"task workspace {required} exceeds capacity {capacity} "
-            f"on {device_id!r}",
+            f"task workspace {required} exceeds capacity {capacity} on {device_id!r}",
             kind="workspace_capacity",
             device_id=device_id,
             boundary_task_id=boundary_task_id,
@@ -388,9 +387,7 @@ def _finish_native_pressurefit(
             ),
             required_bytes=min(physical_slack) if physical_slack else None,
             capacity_bytes=(
-                config.devices[0].capacity_bytes
-                if len(config.devices) == 1
-                else None
+                config.devices[0].capacity_bytes if len(config.devices) == 1 else None
             ),
             diagnostics=frozen,
         )
@@ -399,9 +396,9 @@ def _finish_native_pressurefit(
     per_context = len(result.candidates)
     context_index, candidate_index = divmod(ordinal, per_context)
     context = contexts[context_index]
-    dense_schedule = result.selected_schedule
-    assert dense_schedule is not None
-    schedule = decode_schedule(dense_schedule, context.compiled_template)
+    indexed_schedule = result.selected_schedule
+    assert indexed_schedule is not None
+    schedule = decode_schedule(indexed_schedule, context.compiled_template)
     result_admission_calls = 0
     result_admission_time_ns = 0
     simulation_admission = None
@@ -410,7 +407,7 @@ def _finish_native_pressurefit(
         simulation_admission = evaluate_schedule_admission(
             context.compiled_template,
             context.compiled_admission,
-            dense_schedule,
+            indexed_schedule,
         ).simulation_admission
         result_admission_time_ns = time.perf_counter_ns() - admission_started
         result_admission_calls = 1

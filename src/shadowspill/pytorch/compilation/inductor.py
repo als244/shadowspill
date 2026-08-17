@@ -95,7 +95,9 @@ class ExecutableTaskManifest:
         if tuple(item.root_id for item in self.root_allocations) != tuple(
             range(len(self.storage_contract.roots))
         ):
-            raise ValueError("executable root allocations must have dense root IDs")
+            raise ValueError(
+                "executable root allocations must have contiguous root indices"
+            )
         for root, allocation in zip(
             self.storage_contract.roots, self.root_allocations, strict=True
         ):
@@ -975,15 +977,13 @@ def _project_visible_outputs(
         )
     inner_root_by_id = {root.root_id: root for root in inner_contract.roots}
     selected_root_ids = tuple(dict.fromkeys(view.root_id for view in visible_views))
-    dense_root_id = {
-        original: dense for dense, original in enumerate(selected_root_ids)
-    }
+    root_index = {original: index for index, original in enumerate(selected_root_ids)}
     roots = tuple(
-        _copy_root(inner_root_by_id[original], dense_root_id[original])
+        _copy_root(inner_root_by_id[original], root_index[original])
         for original in selected_root_ids
     )
     output_views = tuple(
-        _copy_view(executable, semantic.leaf_index, dense_root_id[executable.root_id])
+        _copy_view(executable, semantic.leaf_index, root_index[executable.root_id])
         for executable, semantic in zip(visible_views, semantic_views, strict=True)
     )
     return roots, output_views

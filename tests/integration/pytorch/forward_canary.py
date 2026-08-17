@@ -100,7 +100,9 @@ def main() -> int:
         if tuple(item.execution_ordinal for item in selected_task_diagnostics) != tuple(
             range(len(selected_task_diagnostics))
         ):
-            raise AssertionError("forward diagnostics are not chronologically dense")
+            raise AssertionError(
+                "forward diagnostics are not chronologically contiguous"
+            )
         for item in selected_task_diagnostics:
             if not item.semantic_contract_digest or not item.compiled_layout_digest:
                 raise AssertionError("forward task omitted lowering diagnostics")

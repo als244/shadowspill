@@ -80,9 +80,9 @@ void shadowspill_candidate_admission_workspace_destroy(
     ShadowSpillCandidateAdmissionWorkspace *workspace
 );
 
-ShadowSpillAdmissionReplayStatus shadowspill_admit_dense_schedule(
+ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     ShadowSpillSimulationProgram *program,
     ShadowSpillAdmissionReplayResult *replay_result

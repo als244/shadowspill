@@ -30,7 +30,7 @@ class SelectionCandidate:
 
 @dataclass(frozen=True, slots=True)
 class CompiledSelection:
-    """Dense result returned by the compiled selector."""
+    """Indexed result returned by the compiled selector."""
 
     selected_index: int
     selected_candidate_id: int

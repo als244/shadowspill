@@ -484,7 +484,7 @@ shadowspill_pytorch_object_snapshot(
 );
 
 /*
- * Copies one optional human-readable label per dense canonical task ID.
+ * Copies one optional human-readable label per canonical task index.
  * Configure labels only while no task is executing. Task NVTX ranges use the
  * label (normally execution_XXXXXX plus its semantic stage name) and retain
  * the canonical task ID only as fallback correlation metadata.

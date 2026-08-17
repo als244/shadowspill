@@ -60,7 +60,7 @@ The returned mapping must:
 - assign each label to one contiguous topological interval;
 - leave the supplied graph unchanged.
 
-Labels need not be dense; ShadowSpill normalizes them by first appearance.
+Labels need not be contiguous; ShadowSpill normalizes them by first appearance.
 Missing/extra nodes, noncontiguous reuse of a label, invalid values, graph
 mutation, or a policy exception becomes a `CaptureError` before compilation.
 
@@ -70,4 +70,3 @@ operator targets, and the source module, while preserving the same complete
 and contiguous contract. Partitioning only defines stages; graph-pair
 construction, recomputation selection, PressureFit, and physical admission
 remain unchanged.
-

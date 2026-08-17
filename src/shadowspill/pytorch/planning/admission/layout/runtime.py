@@ -1,4 +1,4 @@
-"""Project a semantic physical certificate into dense runtime identities."""
+"""Project a semantic physical certificate into indexed runtime identities."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def _initial_placements(
             fixed_by_lease[initial_leases[alias_id]],
             task_id=initial_task_id,
             ordinal=ordinal,
-            object_id=_dense_id(alias_id, "alias_"),
+            object_id=_plan_index(alias_id, "alias_"),
             kind=RuntimePlacementKind.ACTION_DESTINATION,
         )
         for ordinal, alias_id in enumerate(aliases)
@@ -157,7 +157,7 @@ def _task_placements(
             result.append(
                 _fixed_runtime_placement(
                     fixed,
-                    task_id=_dense_id(task_id, "task_"),
+                    task_id=_plan_index(task_id, "task_"),
                     ordinal=ordinal,
                     object_id=_NO_ID,
                     kind=RuntimePlacementKind.TASK_ALLOCATION,
@@ -169,7 +169,7 @@ def _task_placements(
             raise ValueError(f"task allocation lease {lease_id} has no policy")
         result.append(
             RuntimeFixedPlacement(
-                task_id=_dense_id(task_id, "task_"),
+                task_id=_plan_index(task_id, "task_"),
                 ordinal=ordinal,
                 object_id=_NO_ID,
                 offset=_NO_ID,
@@ -187,7 +187,7 @@ def _task_placements(
             )
         result.append(
             RuntimeFixedPlacement(
-                task_id=_dense_id(policy.task_id, "task_"),
+                task_id=_plan_index(policy.task_id, "task_"),
                 ordinal=policy.allocation_ordinal,
                 object_id=_NO_ID,
                 offset=_NO_ID,
@@ -281,7 +281,7 @@ def _runtime_dependencies(
             RuntimeFixedDependency(
                 predecessor_task_id=predecessor.task_id,
                 predecessor_action_ordinal=predecessor.ordinal,
-                successor_task_id=_dense_id(item.successor_task_id, "task_"),
+                successor_task_id=_plan_index(item.successor_task_id, "task_"),
                 successor_ordinal=min(ordinals),
                 successor_kind=RuntimePlacementKind.TASK_ALLOCATION,
             )
@@ -311,9 +311,9 @@ def _action_identities(
         ordinal = ordinals.get(action.trigger_task_id, 0)
         ordinals[action.trigger_task_id] = ordinal + 1
         result[index] = _ActionIdentity(
-            task_id=_dense_id(action.trigger_task_id, "task_"),
+            task_id=_plan_index(action.trigger_task_id, "task_"),
             ordinal=ordinal,
-            object_id=_dense_id(action.alias_group_id, "alias_"),
+            object_id=_plan_index(action.alias_group_id, "alias_"),
         )
         if action.kind is MemoryActionKind.RELEASE:
             continue
@@ -339,7 +339,7 @@ def _fixed_runtime_placement(
     )
 
 
-def _dense_id(value: str, prefix: str) -> int:
+def _plan_index(value: str, prefix: str) -> int:
     if not value.startswith(prefix):
         raise ValueError(f"runtime identity {value!r} lacks prefix {prefix!r}")
     suffix = value.removeprefix(prefix)

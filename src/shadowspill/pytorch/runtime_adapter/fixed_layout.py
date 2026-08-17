@@ -20,7 +20,7 @@ class RuntimePlacementKind(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class RuntimeFixedPlacement:
-    """One dense runtime identity and its fixed or dynamic allocation policy."""
+    """One indexed runtime identity and its fixed or dynamic allocation policy."""
 
     task_id: int
     ordinal: int
@@ -44,7 +44,7 @@ class RuntimeFixedDependency:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeFixedLayout:
-    """Dense, pointer-free fixed-layout certificate passed to the C runtime."""
+    """Indexed, pointer-free fixed-layout certificate passed to the C runtime."""
 
     slice_bytes: int
     placements: tuple[RuntimeFixedPlacement, ...]

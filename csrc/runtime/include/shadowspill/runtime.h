@@ -328,7 +328,7 @@ typedef struct ShadowSpillTransferCalibrationConfig {
 } ShadowSpillTransferCalibrationConfig;
 
 /*
- * One cell in the dense row-major pool-to-pool transfer matrix. Identity
+ * One cell in the complete row-major pool-to-pool transfer matrix. Identity
  * cells are available with zero latency and do not require a physical copy.
  * ``generation`` changes atomically whenever any selected route is
  * recalibrated.
@@ -470,7 +470,7 @@ typedef struct ShadowSpillObjectSnapshot {
  * Creates one runtime from explicit pool and directed-route registries, a
  * synchronization backend, profiler, and worker. Registry entries are copied;
  * backend contexts are borrowed and must outlive the runtime. Pool and route
- * IDs must equal their dense registry positions. On failure, output is set to
+ * IDs must equal their contiguous registry indices. On failure, output is set to
  * NULL and successfully created resources are reclaimed in reverse order.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
@@ -747,7 +747,7 @@ shadowspill_plan_admit_execution(
  * may outlive an execution plan; persistent frontend state is one such owner.
  * Ordinary caller-owned allocations are unaffected. This explicitly
  * synchronizing lifecycle boundary permits a later plan to reuse the same
- * dense task identities.
+ * contiguous task indices.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);

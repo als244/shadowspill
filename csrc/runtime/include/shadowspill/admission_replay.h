@@ -142,7 +142,7 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
 /*
  * Replays one ordered script through the production MemoryPool policy. Input
  * and output buffers are borrowed for the call. Lease and dependency IDs are
- * dense zero-based indices bounded by their respective counts. The function
+ * contiguous zero-based indices bounded by their respective counts. The function
  * performs no backend operations and owns no storage after it returns.
  */
 SHADOWSPILL_ADMISSION_REPLAY_API uint32_t shadowspill_admission_replay_abi_version(

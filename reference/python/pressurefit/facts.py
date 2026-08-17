@@ -70,16 +70,14 @@ def build_facts(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
 ) -> PlanningFacts:
-    """Validate planner inputs and derive dense alias/task boundary facts."""
+    """Validate planner inputs and derive indexed alias/task boundary facts."""
 
     tasks = program.selected_tasks(selections)
     task_index = {task.task_id: index for index, task in enumerate(tasks)}
     aliases = program.alias_groups
     alias_ids = tuple(item.alias_group_id for item in aliases)
     alias_index = {value: index for index, value in enumerate(alias_ids)}
-    zero_aliases = {
-        index for index, item in enumerate(aliases) if item.size_bytes == 0
-    }
+    zero_aliases = {index for index, item in enumerate(aliases) if item.size_bytes == 0}
     initial = _residency_map(initial_residency, field="initial_residency")
     final = _residency_map(final_residency, field="final_residency")
     for field, values in (("initial_residency", initial), ("final_residency", final)):
@@ -230,8 +228,7 @@ def build_facts(
         ),
         object_capacity_by_device=object_capacity,
         object_capacity_by_boundary={
-            device_id: tuple(values)
-            for device_id, values in boundary_capacity.items()
+            device_id: tuple(values) for device_id, values in boundary_capacity.items()
         },
         task_ideal_end_ns=tuple(ideal_end),
     )

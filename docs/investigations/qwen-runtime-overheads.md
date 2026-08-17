@@ -647,7 +647,7 @@ not to every pinned-host subrange.
 
 The admitted execution plan is immutable and needs no hot-path lock. Each task
 record stores direct retained object pointers, predecoded mutations/actions,
-the dense execution ID, and its semantic trace name.
+the contiguous execution index, and its semantic trace name.
 
 ```c
 typedef struct ShadowSpillTask {
@@ -663,7 +663,7 @@ typedef struct ShadowSpillTask {
 } ShadowSpillTask;
 ```
 
-This removes repeated dense-ID parsing, object hashing, alias deduplication,
+This removes repeated index parsing, object hashing, alias deduplication,
 and ctypes array construction from each invocation. NSYS ranges use
 `execution_XXXXXX` plus the semantic name; the canonical task ID remains
 secondary correlation metadata.

@@ -18,11 +18,11 @@ Scheduling and execution values:
 - `ResidencySpec`
 - `ExecutionPlan`, `EntrypointSpec`, `PhysicalAdmission`, `PlanPrediction`
 
-Dense compiled projections:
+Indexed compiled projections:
 
-- `DenseProgram`, `DenseMemorySchedule`, `DenseExecutionPlan`
-- `project_dense()`, `project_dense_schedule()`,
-  `project_dense_execution_plan()`
+- `IndexedProgram`, `IndexedMemorySchedule`, `IndexedExecutionPlan`
+- `index_program()`, `index_memory_schedule()`,
+  `index_execution_plan()`
 
 Invalid construction or cross-reference raises `ValidationError`.
 

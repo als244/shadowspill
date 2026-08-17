@@ -16,7 +16,7 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskProfile,
     TaskSpec,
-    project_dense,
+    index_program,
 )
 
 
@@ -28,7 +28,7 @@ from shadowspill.ir import (
         st.integers(min_value=0, max_value=1 << 50), min_size=1, max_size=20
     ),
 )
-def test_linear_programs_round_trip_with_stable_dense_ids(
+def test_linear_programs_round_trip_with_stable_plan_indexs(
     sizes: list[int],
     runtimes: list[int],
 ) -> None:
@@ -80,5 +80,5 @@ def test_linear_programs_round_trip_with_stable_dense_ids(
     restored = Program.from_json(program.to_json())
 
     assert restored == program
-    assert project_dense(restored) == project_dense(program)
+    assert index_program(restored) == index_program(program)
     schedule.validate(program)

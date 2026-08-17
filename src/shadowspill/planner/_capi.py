@@ -95,7 +95,7 @@ class CResidencyResult(ctypes.Structure):
     ]
 
 
-class CDenseSchedule(ctypes.Structure):
+class CIndexedSchedule(ctypes.Structure):
     _fields_ = [
         ("action_count", ctypes.c_uint32),
         ("action_trigger_tasks", ctypes.POINTER(ctypes.c_uint32)),
@@ -241,7 +241,7 @@ class CPressureFitContextResult(ctypes.Structure):
         ("status", ctypes.c_uint32),
         ("selected_candidate_index", ctypes.c_uint32),
         ("selected_makespan_ns", ctypes.c_uint64),
-        ("selected_schedule", CDenseSchedule),
+        ("selected_schedule", CIndexedSchedule),
         ("candidates", ctypes.POINTER(CPressureFitCandidateDiagnostic)),
         ("candidate_count", ctypes.c_uint32),
         ("repairs", CPressureFitRepairDiagnostics),
@@ -250,7 +250,7 @@ class CPressureFitContextResult(ctypes.Structure):
 
 
 class CScheduleAdmissionResult(ctypes.Structure):
-    """Caller-owned buffers for one exact dense-schedule admission."""
+    """Caller-owned buffers for one exact indexed-schedule admission."""
 
     _fields_ = [
         ("status", ctypes.c_uint32),
@@ -333,7 +333,7 @@ def load_planner_library() -> ctypes.CDLL:
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionTopology),
-        ctypes.POINTER(CDenseSchedule),
+        ctypes.POINTER(CIndexedSchedule),
         ctypes.POINTER(CScheduleAdmissionResult),
     ]
     library.shadowspill_evaluate_schedule_admission.restype = ctypes.c_uint32
@@ -351,7 +351,7 @@ __all__ = [
     "NO_INDEX",
     "CAdmissionTopology",
     "CCandidateResult",
-    "CDenseSchedule",
+    "CIndexedSchedule",
     "CPlanCandidate",
     "CPressureFitCandidateDiagnostic",
     "CPressureFitContext",

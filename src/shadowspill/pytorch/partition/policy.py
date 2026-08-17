@@ -17,7 +17,7 @@ class PartitionPolicy(Protocol):
 
     Implementations receive the captured graph and its source module and return
     a mapping from FX node name to an integer stage label. Labels need not be
-    dense, but every executable node must appear exactly once and each label
+    contiguous, but every executable node must appear exactly once and each label
     must occupy one contiguous topological interval.
     """
 
@@ -179,9 +179,7 @@ def _module_paths(node: Node) -> tuple[str, ...]:
 
 def _belongs_to_repeated_group(path: str, repeated_groups: tuple[str, ...]) -> bool:
     return any(
-        path == group
-        or path.startswith(f"{group}.")
-        or group.startswith(f"{path}.")
+        path == group or path.startswith(f"{group}.") or group.startswith(f"{path}.")
         for group in repeated_groups
     )
 

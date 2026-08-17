@@ -173,7 +173,7 @@ class TaskStorageContract:
 
     def __post_init__(self) -> None:
         if tuple(root.root_id for root in self.roots) != tuple(range(len(self.roots))):
-            raise ValueError("storage roots must have dense IDs")
+            raise ValueError("storage roots must have contiguous indices")
         root_by_id = {root.root_id: root for root in self.roots}
         leaves: set[int] = set()
         used_roots: set[int] = set()

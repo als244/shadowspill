@@ -738,7 +738,7 @@ class PlanDiagnostics:
 
     @property
     def tasks(self) -> Mapping[str, PlanTaskStage]:
-        """Selected tasks keyed by dense chronological execution identity."""
+        """Selected tasks keyed by contiguous chronological execution identity."""
 
         return MappingProxyType(
             {

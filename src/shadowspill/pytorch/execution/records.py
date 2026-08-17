@@ -28,7 +28,7 @@ class ExecutionTaskRecord:
     task: TaskSpec
     input_aliases: tuple[str, ...]
     actions: tuple[MemoryAction, ...]
-    dense_task_id: int
+    task_index: int
     execution_ordinal: int
     semantic_name: str
     trace_label: str
@@ -198,7 +198,7 @@ def _build_task_record(
         task=task,
         input_aliases=input_aliases,
         actions=actions,
-        dense_task_id=int(entrypoint.task_id.removeprefix("task_")),
+        task_index=int(entrypoint.task_id.removeprefix("task_")),
         execution_ordinal=execution_ordinal,
         semantic_name=semantic_name,
         trace_label=f"execution_{execution_ordinal:06d}.{semantic_name}",

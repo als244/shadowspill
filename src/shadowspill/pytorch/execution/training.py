@@ -904,7 +904,7 @@ class TrainingExecutor:
         if record.native_handle:
             return self._bridge.before_execution_and_acquire(
                 record.native_handle,
-                record.dense_task_id,
+                record.task_index,
                 self._state.device.index or 0,
                 tensors,
                 record.input_aliases,
@@ -1091,7 +1091,7 @@ class TrainingExecutor:
         try:
             return self._bridge.after_execution_and_update(
                 record.native_handle,
-                record.dense_task_id,
+                record.task_index,
                 self._state.device.index or 0,
                 processed.adopted,
                 dematerialized,

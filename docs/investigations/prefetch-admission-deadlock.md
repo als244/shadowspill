@@ -22,7 +22,7 @@ Llama 3 training qualification with optimized PyTorch operations. The operation
 provider is not relevant to the bug; it merely supplied a large, easily
 identifiable tensor allocation.
 
-The report uses semantic names first. Internal dense IDs are included only so
+The report uses semantic names first. Internal contiguous indices are included only so
 the evidence can be found in a trace:
 
 | Name used here | What it does | Internal ID |

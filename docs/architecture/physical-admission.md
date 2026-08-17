@@ -41,7 +41,7 @@ It returns `FixedLayoutAdmission`, which contains:
 - stable digests tying the layout to its Program, schedule, and topology.
 
 The admitted layout is pointer-free. Runtime materialization translates its
-semantic IDs to dense task, action, and object IDs only after the execution
+semantic IDs to contiguous task, action, and object indices only after the execution
 plan has been resolved.
 
 ## Capacity accounting
@@ -423,7 +423,7 @@ supported contract.
 | `shadowspill.pytorch.planning.admission.layout.placement` | Deterministic aligned interval placement. |
 | `shadowspill.pytorch.planning.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
 | `shadowspill.pytorch.planning.admission.refinement` | Rerun PressureFit at monotonically lower logical capacity until a layout fits. |
-| `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to dense runtime identities. |
+| `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to indexed runtime identities. |
 | `csrc/runtime/src/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/runtime/src/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 

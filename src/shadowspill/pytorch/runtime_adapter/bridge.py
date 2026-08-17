@@ -292,7 +292,7 @@ class RuntimeBridge:
         return handle
 
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
-        """Copy one dense physical-layout certificate into the C runtime."""
+        """Copy one indexed physical-layout certificate into the C runtime."""
 
         if self._admitted_tasks or self._admitted_action_tasks:
             raise RuntimeExecutionError(

@@ -114,7 +114,7 @@ guide](planning-cache.md) defines the directory and identity contract.
 ## Tasks are keyed by execution ID
 
 `execution_XXXXXX` is the primary runtime and diagnostics identity. It is a
-dense chronological ordinal after recomputation selection. The canonical IR
+contiguous chronological ordinal after recomputation selection. The canonical IR
 task ID remains available as `task_id` for stable Program lookup.
 
 ```python

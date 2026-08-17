@@ -275,7 +275,7 @@ inputs, outputs, and workspace cannot coexist before candidate search.
 PressureFit obtains the finite set of legal selections from the Program. The
 training-specific policy used to construct this set is documented separately
 in [Recomputation selection](recomputation-selection.md). Each context is
-projected into dense task, alias, simulation, and optional admission arrays.
+projected into indexed task, alias, simulation, and optional admission arrays.
 
 ### 3. Seed residency
 
@@ -341,7 +341,7 @@ contradiction is rejected directly.
 
 Each valid candidate has an exact simulated makespan and schedule digest. The
 planner selects the lowest `(makespan, candidate ordinal)` pair across all
-contexts, decodes that one dense schedule, evaluates its physical admission
+contexts, decodes that one indexed schedule, evaluates its physical admission
 once more, and materializes the full `SimulationResult`.
 
 If all otherwise logical candidates fail physical admission, the outer
@@ -363,7 +363,7 @@ PressureFit(program, initial, final, machine, options, admission):
     refinements = []
 
     loop:
-        contexts = compile_dense_contexts(
+        contexts = compile_indexed_contexts(
             program, portfolio, initial, final,
             machine.with_capacity(object_capacity), admission
         )
@@ -503,7 +503,7 @@ infeasibility was not established.
 | Layer | Responsibility |
 |---|---|
 | `shadowspill.planner.pressurefit()` | Input validation, context concurrency, winner materialization, and outer physical-capacity refinement. |
-| `csrc/planner/src/residency.c` | Dense anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
+| `csrc/planner/src/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/planner/src/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
 | `csrc/planner/src/portfolio.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |
 | `csrc/planner/src/admission.c` | Physical allocation and causal-reuse admission. |

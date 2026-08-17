@@ -1,4 +1,4 @@
-"""Stable integer projections for compiled component ABIs."""
+"""Stable integer projections for compiled component interfaces."""
 
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ MEMORY_ACTION_CODE = {
 
 
 @dataclass(frozen=True, slots=True)
-class DenseProgram:
-    """Dense lossless projection of a :class:`Program`."""
+class IndexedProgram:
+    """Indexed lossless projection of a :class:`Program`."""
 
     device_ids: tuple[str, ...]
     device_process_ids: tuple[str, ...]
@@ -80,8 +80,8 @@ class DenseProgram:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseMemorySchedule:
-    """Dense lossless projection of a :class:`MemorySchedule`."""
+class IndexedMemorySchedule:
+    """Indexed lossless projection of a :class:`MemorySchedule`."""
 
     initial_alias_groups: tuple[int, ...]
     initial_locations: tuple[int, ...]
@@ -93,11 +93,11 @@ class DenseMemorySchedule:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseExecutionPlan:
-    """Dense runtime admission projection of an :class:`ExecutionPlan`."""
+class IndexedExecutionPlan:
+    """Indexed runtime admission projection of an :class:`ExecutionPlan`."""
 
-    program: DenseProgram
-    schedule: DenseMemorySchedule
+    program: IndexedProgram
+    schedule: IndexedMemorySchedule
     selection_groups: tuple[int, ...]
     selection_options: tuple[int, ...]
     entrypoint_tasks: tuple[int, ...]
@@ -140,7 +140,7 @@ def _flatten_integers(
     return tuple(offsets), tuple(values)
 
 
-def project_dense(program: Program) -> DenseProgram:
+def index_program(program: Program) -> IndexedProgram:
     """Project a validated program without changing declared order."""
 
     device_ids = tuple(item.device_id for item in program.devices)
@@ -182,7 +182,7 @@ def project_dense(program: Program) -> DenseProgram:
     option_retained_alias_offsets, option_retained_aliases = _flatten_strings(
         tuple(option.retained_alias_group_ids for option in options), alias_index
     )
-    return DenseProgram(
+    return IndexedProgram(
         device_ids=device_ids,
         device_process_ids=tuple(item.process_id for item in program.devices),
         device_kinds=tuple(item.kind for item in program.devices),
@@ -252,17 +252,17 @@ def project_dense(program: Program) -> DenseProgram:
     )
 
 
-def project_dense_schedule(
+def index_memory_schedule(
     program: Program,
     schedule: MemorySchedule,
-) -> DenseMemorySchedule:
-    """Project schedule identities through a program's stable dense IDs."""
+) -> IndexedMemorySchedule:
+    """Project schedule identities through a program's stable contiguous indices."""
 
     alias_index = {
         item.alias_group_id: index for index, item in enumerate(program.alias_groups)
     }
     task_index = {item.task_id: index for index, item in enumerate(program.tasks)}
-    return DenseMemorySchedule(
+    return IndexedMemorySchedule(
         initial_alias_groups=tuple(
             alias_index[item.alias_group_id] for item in schedule.initial_residency
         ),
@@ -285,16 +285,16 @@ def project_dense_schedule(
     )
 
 
-def project_dense_execution_plan(plan: ExecutionPlan) -> DenseExecutionPlan:
+def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
     """Project all runtime-facing identities and admission values."""
 
-    dense_program = project_dense(plan.program)
+    indexed_program = index_program(plan.program)
     task_index = {
-        task_id: index for index, task_id in enumerate(dense_program.task_ids)
+        task_id: index for index, task_id in enumerate(indexed_program.task_ids)
     }
     group_index = {
         group_id: index
-        for index, group_id in enumerate(dense_program.recomputation_group_ids)
+        for index, group_id in enumerate(indexed_program.recomputation_group_ids)
     }
     option_index: dict[tuple[str, str], int] = {}
     next_option = 0
@@ -304,9 +304,9 @@ def project_dense_execution_plan(plan: ExecutionPlan) -> DenseExecutionPlan:
             next_option += 1
     admission = plan.admission
     prediction = plan.prediction
-    return DenseExecutionPlan(
-        program=dense_program,
-        schedule=project_dense_schedule(plan.program, plan.schedule),
+    return IndexedExecutionPlan(
+        program=indexed_program,
+        schedule=index_memory_schedule(plan.program, plan.schedule),
         selection_groups=tuple(group_index[item.group_id] for item in plan.selections),
         selection_options=tuple(
             option_index[(item.group_id, item.option_id)] for item in plan.selections
@@ -330,10 +330,10 @@ def project_dense_execution_plan(plan: ExecutionPlan) -> DenseExecutionPlan:
 
 
 __all__ = [
-    "DenseExecutionPlan",
-    "DenseMemorySchedule",
-    "DenseProgram",
-    "project_dense",
-    "project_dense_execution_plan",
-    "project_dense_schedule",
+    "IndexedExecutionPlan",
+    "IndexedMemorySchedule",
+    "IndexedProgram",
+    "index_execution_plan",
+    "index_memory_schedule",
+    "index_program",
 ]

@@ -66,20 +66,12 @@ _DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 def _u32_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:
     array_type = ctypes.c_uint32 * max(1, len(values))
-    return (
-        array_type.from_buffer_copy(array("I", values))
-        if values
-        else array_type()
-    )
+    return array_type.from_buffer_copy(array("I", values)) if values else array_type()
 
 
 def _u64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint64]:
     array_type = ctypes.c_uint64 * max(1, len(values))
-    return (
-        array_type.from_buffer_copy(array("Q", values))
-        if values
-        else array_type()
-    )
+    return array_type.from_buffer_copy(array("Q", values)) if values else array_type()
 
 
 def _i64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_int64]:
@@ -115,7 +107,7 @@ class _Projection:
 
 @dataclass(frozen=True, slots=True)
 class CompiledSimulationTemplate:
-    """Immutable dense topology reused across schedule candidates."""
+    """Immutable indexed topology reused across schedule candidates."""
 
     program: CProgram
     buffers: tuple[object, ...]
@@ -146,7 +138,7 @@ def compile_simulation_template(
     """Project schedule-invariant program geometry exactly once.
 
     The optional residency declarations describe the planning boundary, not a
-    candidate schedule.  They let the compiled planner derive dense planning
+    candidate schedule.  They let the compiled planner derive indexed planning
     facts directly from this immutable topology.  Candidate binding replaces
     these arrays with the selected schedule before simulation.
     """
@@ -266,8 +258,7 @@ def compile_simulation_template(
                 )
             if value.alias_group_id in seen:
                 raise ValueError(
-                    f"{field}[{index}] duplicates alias group "
-                    f"{value.alias_group_id!r}"
+                    f"{field}[{index}] duplicates alias group {value.alias_group_id!r}"
                 )
             seen.add(value.alias_group_id)
             aliases.append(alias_index[value.alias_group_id])
@@ -408,9 +399,7 @@ def _bind_schedule(
                 "simulation admission contains unknown task IDs: "
                 f"{sorted(unknown_tasks)}"
             )
-        action_deltas = {
-            item.action_index: item for item in admission.action_deltas
-        }
+        action_deltas = {item.action_index: item for item in admission.action_deltas}
         unknown_actions = set(action_deltas) - set(range(len(schedule.actions)))
         if unknown_actions:
             raise ValueError(
@@ -435,14 +424,10 @@ def _bind_schedule(
                         int(template.program.devices[index].capacity_bytes),
                     ),
                     int(
-                        template.program.devices[
-                            index
-                        ].fetch_bandwidth_bytes_per_second
+                        template.program.devices[index].fetch_bandwidth_bytes_per_second
                     ),
                     int(
-                        template.program.devices[
-                            index
-                        ].evict_bandwidth_bytes_per_second
+                        template.program.devices[index].evict_bandwidth_bytes_per_second
                     ),
                     int(template.program.devices[index].fetch_latency_ns),
                     int(template.program.devices[index].evict_latency_ns),
@@ -489,13 +474,11 @@ def _bind_schedule(
             predecessor = dependency.predecessor_action_index
             if predecessor >= len(schedule.actions):
                 raise ValueError(
-                    "memory-reuse predecessor action is unknown: "
-                    f"{predecessor}"
+                    f"memory-reuse predecessor action is unknown: {predecessor}"
                 )
             if schedule.actions[predecessor].kind is not MemoryActionKind.OFFLOAD:
                 raise ValueError(
-                    "memory-reuse predecessor must be an OFFLOAD action: "
-                    f"{predecessor}"
+                    f"memory-reuse predecessor must be an OFFLOAD action: {predecessor}"
                 )
             predecessor_actions.append(predecessor)
             if dependency.successor_task_id is None:
@@ -654,11 +637,9 @@ def simulate_compiled_template(
     *,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
-    """Replay a validated schedule using cached dense program geometry."""
+    """Replay a validated schedule using cached indexed program geometry."""
 
-    return _simulate_projection(
-        _bind_schedule(template, schedule, admission), schedule
-    )
+    return _simulate_projection(_bind_schedule(template, schedule, admission), schedule)
 
 
 def simulate_compiled_template_summary(

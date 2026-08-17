@@ -1,19 +1,19 @@
 """Framework-neutral logical programs and resolved execution plans."""
 
 from ._validation import ValidationError
-from .dense import (
-    DenseExecutionPlan,
-    DenseMemorySchedule,
-    DenseProgram,
-    project_dense,
-    project_dense_execution_plan,
-    project_dense_schedule,
-)
 from .execution import (
     EntrypointSpec,
     ExecutionPlan,
     PhysicalAdmission,
     PlanPrediction,
+)
+from .indexed import (
+    IndexedExecutionPlan,
+    IndexedMemorySchedule,
+    IndexedProgram,
+    index_execution_plan,
+    index_memory_schedule,
+    index_program,
 )
 from .program import (
     AliasGroupSpec,
@@ -41,12 +41,12 @@ from .schedule import (
 
 __all__ = [
     "AliasGroupSpec",
-    "DenseExecutionPlan",
-    "DenseMemorySchedule",
-    "DenseProgram",
     "DeviceSpec",
     "EntrypointSpec",
     "ExecutionPlan",
+    "IndexedExecutionPlan",
+    "IndexedMemorySchedule",
+    "IndexedProgram",
     "MemoryAction",
     "MemoryActionKind",
     "MemoryLocation",
@@ -67,7 +67,7 @@ __all__ = [
     "TaskProfile",
     "TaskSpec",
     "ValidationError",
-    "project_dense",
-    "project_dense_execution_plan",
-    "project_dense_schedule",
+    "index_execution_plan",
+    "index_memory_schedule",
+    "index_program",
 ]

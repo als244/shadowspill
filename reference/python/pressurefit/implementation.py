@@ -59,7 +59,7 @@ _ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
 def _scheduled_admission_refinement(attempt: int) -> int:
     """Return the deterministic reserve increment for one failed admission.
 
-    Early attempts double from 128 MiB through 1 GiB so obviously dense plans
+    Early attempts double from 128 MiB through 1 GiB so high-pressure plans
     converge quickly.  Later attempts grow linearly by 512 MiB, avoiding the
     multi-GiB jumps that would discard too much otherwise usable capacity.
     ``attempt`` is zero-based.
@@ -212,8 +212,7 @@ def validate_schedule_feasibility(
             != admission.object_capacity_bytes
         ):
             raise ValueError(
-                "feasibility capacity must equal AdmissionTopology object "
-                "capacity"
+                "feasibility capacity must equal AdmissionTopology object capacity"
             )
 
     failures: list[PressureFitInfeasibleError] = []
@@ -262,9 +261,10 @@ def _repair_pressure(
         boundary = task - 1 if error.kind == "task-device-capacity" else task
     used = error.used_bytes or 0
     requested = error.requested_bytes or 0
-    capacity = error.capacity_bytes or facts.object_capacity_by_boundary[device_id][
-        boundary + 1
-    ]
+    capacity = (
+        error.capacity_bytes
+        or facts.object_capacity_by_boundary[device_id][boundary + 1]
+    )
     excess = max(used + requested - capacity, 1)
     return (device_id, boundary), excess
 
@@ -401,9 +401,7 @@ def _evaluate_candidate(
 
     def repairs_value() -> PressureFitRepairDiagnostics:
         return PressureFitRepairDiagnostics(
-            simulation_prefetch_delay_attempts=(
-                simulation_prefetch_delay_attempts
-            ),
+            simulation_prefetch_delay_attempts=(simulation_prefetch_delay_attempts),
             simulation_pressure_boundary_attempts=(
                 simulation_pressure_boundary_attempts
             ),
@@ -830,9 +828,7 @@ def _pressurefit_once(
         context_outcomes = tuple(
             outcome for outcome in outcomes if outcome.spec.context is context
         )
-        context_candidates = tuple(
-            outcome.diagnostic for outcome in context_outcomes
-        )
+        context_candidates = tuple(outcome.diagnostic for outcome in context_outcomes)
         context_valid = tuple(
             outcome
             for outcome in context_outcomes
@@ -992,9 +988,7 @@ def pressurefit(
             ):
                 raise
             previous = current_admission.object_capacity_bytes
-            scheduled_increment = _scheduled_admission_refinement(
-                len(refinements)
-            )
+            scheduled_increment = _scheduled_admission_refinement(len(refinements))
             increment = max(
                 _round_up_admission_reserve(error.required_bytes),
                 scheduled_increment,

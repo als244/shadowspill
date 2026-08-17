@@ -1,4 +1,4 @@
-"""Dense one-time projection of admission topology for the C planner."""
+"""Indexed one-time projection of admission topology for the C planner."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from shadowspill.simulator._compiled import CompiledSimulationTemplate
 from ._capi import (
     ABI_VERSION,
     CAdmissionTopology,
-    CDenseSchedule,
+    CIndexedSchedule,
     CScheduleAdmissionResult,
     load_planner_library,
 )
@@ -60,14 +60,14 @@ def _flatten_rows(
 
 @dataclass(frozen=True, slots=True)
 class CompiledAdmissionTopology:
-    """Borrowed C topology plus Python owners for all dense arrays."""
+    """Borrowed C topology plus Python owners for all indexed arrays."""
 
     value: CAdmissionTopology
     buffers: tuple[object, ...]
     digest: str
 
 
-class DenseSchedule(Protocol):
+class IndexedSchedule(Protocol):
     """Structural interface shared with the native PressureFit winner."""
 
     @property
@@ -94,7 +94,7 @@ class DenseSchedule(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CompiledScheduleAdmission:
-    """Exact physical projection for one selected dense schedule."""
+    """Exact physical projection for one selected indexed schedule."""
 
     simulation_admission: SimulationAdmission
     decision_digest: int
@@ -104,8 +104,8 @@ class CompiledScheduleAdmission:
 
 
 @dataclass(frozen=True, slots=True)
-class EncodedDenseSchedule:
-    """Dense schedule projection accepted by compiled planner helpers."""
+class EncodedIndexedSchedule:
+    """Indexed schedule projection accepted by compiled planner helpers."""
 
     action_trigger_tasks: tuple[int, ...]
     action_aliases: tuple[int, ...]
@@ -132,10 +132,10 @@ _CompiledAllocationRow = tuple[tuple[int, int, int, int], ...]
 def encode_schedule(
     schedule: MemorySchedule,
     simulation: CompiledSimulationTemplate,
-) -> EncodedDenseSchedule:
+) -> EncodedIndexedSchedule:
     """Encode one public schedule against an immutable compiled topology."""
 
-    return EncodedDenseSchedule(
+    return EncodedIndexedSchedule(
         action_trigger_tasks=tuple(
             simulation.task_index[item.trigger_task_id] for item in schedule.actions
         ),
@@ -270,7 +270,7 @@ def _compile_allocation_rows(
     alias_index: dict[str, int],
     alias_sizes: tuple[int, ...],
 ) -> tuple[tuple[_CompiledAllocationRow, ...], int]:
-    """Assign dense lease slots while preserving each profiled task order."""
+    """Assign indexed lease slots while preserving each profiled task order."""
 
     rows: list[tuple[tuple[int, int, int, int], ...]] = []
     next_slot = 0
@@ -350,7 +350,7 @@ def _synthetic_allocation_steps(
 def evaluate_schedule_admission(
     simulation: CompiledSimulationTemplate,
     admission: CompiledAdmissionTopology,
-    schedule: DenseSchedule,
+    schedule: IndexedSchedule,
 ) -> CompiledScheduleAdmission:
     """Evaluate one selected schedule through compiled production-pool policy."""
 
@@ -360,7 +360,7 @@ def evaluate_schedule_admission(
         == len(schedule.action_aliases)
         == action_count
     ):
-        raise ValueError("dense admission schedule action arrays disagree")
+        raise ValueError("indexed admission schedule action arrays disagree")
     action_tasks = _u32(schedule.action_trigger_tasks)
     action_aliases = _u32(schedule.action_aliases)
     action_kinds = _u8(schedule.action_kinds)
@@ -368,7 +368,7 @@ def evaluate_schedule_admission(
     initial_locations = _u8(schedule.initial_locations)
     final_aliases = _u32(schedule.final_aliases)
     final_locations = _u8(schedule.final_locations)
-    dense = CDenseSchedule(
+    indexed = CIndexedSchedule(
         action_count=action_count,
         action_trigger_tasks=action_tasks,
         action_aliases=action_aliases,
@@ -406,7 +406,7 @@ def evaluate_schedule_admission(
         library.shadowspill_evaluate_schedule_admission(
             ctypes.byref(simulation.program),
             ctypes.byref(admission.value),
-            ctypes.byref(dense),
+            ctypes.byref(indexed),
             ctypes.byref(result),
         )
     )
@@ -480,7 +480,7 @@ def evaluate_schedule_admission(
 __all__ = [
     "CompiledAdmissionTopology",
     "CompiledScheduleAdmission",
-    "EncodedDenseSchedule",
+    "EncodedIndexedSchedule",
     "compile_admission_topology",
     "encode_schedule",
     "evaluate_schedule_admission",

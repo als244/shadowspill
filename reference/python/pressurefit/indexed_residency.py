@@ -1,4 +1,4 @@
-"""Dense projection for the compiled PressureFit residency reducer."""
+"""Indexed projection for the compiled PressureFit residency reducer."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _array(ctype: Any, values: list[int]) -> Any:
     elif ctype is ctypes.c_uint64:
         payload = array("Q", values)
     else:  # pragma: no cover - private helper accepts only the cases above.
-        raise TypeError(f"unsupported dense array type: {ctype!r}")
+        raise TypeError(f"unsupported indexed-array type: {ctype!r}")
     return array_type.from_buffer_copy(payload)
 
 

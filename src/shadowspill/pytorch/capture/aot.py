@@ -172,7 +172,7 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
 def _export_mutations(
     signature: ExportGraphSignature,
 ) -> tuple[ExportMutation, ...]:
-    """Normalize Export's target/name mutation maps into dense positions."""
+    """Normalize Export's target/name mutation maps into contiguous positions."""
 
     input_specs = tuple(signature.input_specs)
     output_specs = tuple(signature.output_specs)
@@ -257,9 +257,7 @@ def capture_training_objective(
     except (CaptureError, ObjectiveError):
         raise
     except BaseException as error:
-        raise CaptureError(
-            f"training objective capture failed: {error}"
-        ) from error
+        raise CaptureError(f"training objective capture failed: {error}") from error
     return TrainingObjectiveCapture(
         exported=exported,
         capture_module=capture_module,
@@ -419,9 +417,7 @@ def _min_cut_partitioner(
                 joint_inputs,
                 **kwargs,
             )
-        with functorch_config.patch(
-            activation_memory_budget=activation_memory_budget
-        ):
+        with functorch_config.patch(activation_memory_budget=activation_memory_budget):
             return min_cut_rematerialization_partition(
                 joint_module,
                 joint_inputs,

@@ -1067,7 +1067,7 @@ static int copy_actions(
     return 0;
 }
 
-int shadowspill_delay_dense_prefetch(
+int shadowspill_delay_indexed_prefetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
     ShadowSpillScheduleStorage *storage,
@@ -1149,7 +1149,7 @@ int shadowspill_delay_dense_prefetch(
     return sort_storage_actions(storage) == 0 ? 1 : -1;
 }
 
-int shadowspill_advance_dense_prefetch_to_release(
+int shadowspill_advance_indexed_prefetch_to_release(
     const ShadowSpillScheduleFacts *facts,
     uint32_t action_index,
     ShadowSpillScheduleStorage *storage,
@@ -1388,7 +1388,7 @@ static int reserve_departures(
     return 0;
 }
 
-int shadowspill_emit_dense_schedule(
+int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
@@ -1642,9 +1642,9 @@ int shadowspill_emit_dense_schedule(
     return 0;
 }
 
-void shadowspill_bind_dense_schedule(
+void shadowspill_bind_indexed_schedule(
     const ShadowSpillSimulationProgram *topology,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillSimulationProgram *program
 ) {
     *program = *topology;

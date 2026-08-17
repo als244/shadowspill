@@ -62,11 +62,11 @@ records:
 The chronological execution ID is the primary diagnostics key. Semantic names
 are human-readable labels; canonical IR IDs remain secondary provenance.
 
-## Dense projections
+## Indexed projections
 
-`DenseProgram`, `DenseMemorySchedule`, and `DenseExecutionPlan` are compact
-index-based projections used by compiled components. `project_dense()`,
-`project_dense_schedule()`, and `project_dense_execution_plan()` validate and
+`IndexedProgram`, `IndexedMemorySchedule`, and `IndexedExecutionPlan` are compact
+index-based projections used by compiled components. `index_program()`,
+`index_memory_schedule()`, and `index_execution_plan()` validate and
 translate the public IR without changing its semantics.
 
 ## Validation

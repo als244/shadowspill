@@ -383,7 +383,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
     assert fetched_output.bytes == 8
 
 
-def test_fixed_layout_projects_eviction_reuse_to_dense_runtime_ids() -> None:
+def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(

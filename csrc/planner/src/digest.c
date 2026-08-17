@@ -192,7 +192,7 @@ static void append_residency(
 
 void shadowspill_schedule_digest(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES]
 ) {
     Sha256 hash;

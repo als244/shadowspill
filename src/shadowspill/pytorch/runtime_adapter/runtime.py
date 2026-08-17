@@ -111,7 +111,7 @@ class TransferProfile:
 
 @dataclass(frozen=True, slots=True)
 class TransferCapabilities:
-    """Immutable dense transfer matrix published by one runtime generation."""
+    """Immutable indexed transfer matrix published by one runtime generation."""
 
     generation: int
     pool_names: tuple[str, ...]
@@ -341,9 +341,7 @@ class Runtime:
             self._next_persistent_object_id = limit
             return tuple(range(first, limit))
 
-    def _retain_persistent_state(
-        self, *, allow_in_progress_plan: bool = False
-    ) -> None:
+    def _retain_persistent_state(self, *, allow_in_progress_plan: bool = False) -> None:
         with self._lock:
             self._require_state_operation_allowed(
                 allow_in_progress_plan=allow_in_progress_plan
@@ -362,8 +360,7 @@ class Runtime:
         with self._lock:
             self._require_open()
             if self._active_plan_handles or (
-                self._planning_plan_handle is not None
-                and not allow_in_progress_plan
+                self._planning_plan_handle is not None and not allow_in_progress_plan
             ):
                 raise RuntimeConfigurationError(
                     "persistent state import requires an idle Runtime"
@@ -486,9 +483,7 @@ class Runtime:
         """Release cold-path execution records after a failed planning call."""
 
         with self._lock:
-            target = (
-                self._planning_plan_handle if plan_handle is None else plan_handle
-            )
+            target = self._planning_plan_handle if plan_handle is None else plan_handle
             if target is None or self._planning_plan_handle != target:
                 raise RuntimeError("Runtime planning ownership underflow")
             try:
@@ -524,9 +519,7 @@ class Runtime:
             error.diagnostics if isinstance(error, RuntimeExecutionError) else None
         )
         if diagnostics is None:
-            diagnostics = read_allocator_failure(
-                self._installed.library, operation
-            )
+            diagnostics = read_allocator_failure(self._installed.library, operation)
         if diagnostics is not None:
             self._record_failure(diagnostics)
         elif not synchronize_unlatched:
@@ -650,9 +643,7 @@ class Runtime:
                 concurrent_bandwidth_bytes_per_second=int(
                     item.concurrent_bandwidth_bytes_per_second
                 ),
-                solo_measurement_nanoseconds=int(
-                    item.solo_measurement_nanoseconds
-                ),
+                solo_measurement_nanoseconds=int(item.solo_measurement_nanoseconds),
                 concurrent_measurement_nanoseconds=int(
                     item.concurrent_measurement_nanoseconds
                 ),

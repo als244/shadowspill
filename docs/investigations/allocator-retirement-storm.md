@@ -19,7 +19,7 @@ The incident establishes a general allocator rule:
 > A tensor freed on the same CUDA stream that used it can be reused on that
 > stream immediately. CUDA stream order is already the dependency. Creating,
 > recording, polling, and destroying one CUDA event per free is unnecessary
-> and can dominate allocation-dense PyTorch code.
+> and can dominate allocation-heavy PyTorch code.
 
 The correction has now passed a complete five-step Qwen qualification plus a
 two-step checkpoint replay. The allocator hot path, the profiling boundary,
@@ -30,7 +30,7 @@ left PressureFit calibrated with fictitious multi-second tasks.
 The example is the pure-PyTorch Qwen 3.5 numerical qualification. Its linear
 attention uses an explicit recurrent reference implementation behind a normal
 registered PyTorch custom operation. This implementation is intentionally
-allocation-dense, which made the allocator defect unusually visible. The same
+allocation-heavy, which made the allocator defect unusually visible. The same
 defect applies to arbitrary PyTorch graphs that create many temporaries.
 
 ## Workload and comparison
@@ -369,7 +369,7 @@ pool exhaustion is a plan/runtime violation rather than permission to call
 
 ### The same recurrence after the fix
 
-The allocation/free trace is intentionally still dense: PyTorch made the same
+The allocation/free trace is intentionally still complete: PyTorch made the same
 calls and ran the same operators. What disappeared was the work per callback.
 
 | Structural task signature | Original median | Corrected median | Allocation/free events | Speedup |

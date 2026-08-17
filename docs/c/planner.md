@@ -13,7 +13,7 @@ are separate frontend/planner concerns. Exact range placement is documented in
 
 ## Data model
 
-`ShadowSpillResidencyProblem` contains dense aliases, boundaries, initial and
+`ShadowSpillResidencyProblem` contains indexed aliases, boundaries, initial and
 final locations, task access, transfer cost, and per-boundary capacity.
 `ShadowSpillAdmissionTopology` adds task workspace extents, fresh outputs,
 replacements, handoffs, and task-allocation slots.
@@ -23,7 +23,7 @@ replacements, handoffs, and task-allocation slots.
 simulation Program and derives residency inputs internally.
 
 Candidate options select residency strategy, fetch rule, coalescing, repair
-limit, and initial placement. Results contain the selected dense schedule,
+limit, and initial placement. Results contain the selected indexed schedule,
 every candidate status, exact repair counters, component work counters,
 timings, and failure boundary.
 
@@ -31,7 +31,7 @@ timings, and failure boundary.
 
 - `shadowspill_select_plan()` selects from an explicitly supplied candidate
   set.
-- `shadowspill_reduce_residency()` solves the dense residency problem.
+- `shadowspill_reduce_residency()` solves the indexed residency problem.
 - `shadowspill_evaluate_pressurefit_context()` evaluates all policies for one
   derived context.
 - `shadowspill_evaluate_pressurefit_program_context()` derives and evaluates a

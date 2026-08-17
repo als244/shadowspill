@@ -7,7 +7,7 @@
 #include <shadowspill/planner.h>
 
 typedef struct ShadowSpillScheduleStorage {
-    ShadowSpillDenseSchedule value;
+    ShadowSpillIndexedSchedule value;
     uint32_t action_capacity;
     uint32_t initial_capacity;
     uint32_t final_capacity;
@@ -68,7 +68,7 @@ int shadowspill_extend_interval_entries(
     uint8_t *breaks
 );
 
-int shadowspill_emit_dense_schedule(
+int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
@@ -78,14 +78,14 @@ int shadowspill_emit_dense_schedule(
     ShadowSpillScheduleStorage *storage
 );
 
-int shadowspill_delay_dense_prefetch(
+int shadowspill_delay_indexed_prefetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
     ShadowSpillScheduleStorage *storage,
     ShadowSpillPrefetchTriggerConstraint *constraint
 );
 
-int shadowspill_advance_dense_prefetch_to_release(
+int shadowspill_advance_indexed_prefetch_to_release(
     const ShadowSpillScheduleFacts *facts,
     uint32_t action_index,
     ShadowSpillScheduleStorage *storage,
@@ -99,15 +99,15 @@ int shadowspill_apply_prefetch_trigger_constraints(
     ShadowSpillScheduleStorage *storage
 );
 
-void shadowspill_bind_dense_schedule(
+void shadowspill_bind_indexed_schedule(
     const ShadowSpillSimulationProgram *topology,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillSimulationProgram *program
 );
 
 void shadowspill_schedule_digest(
     const ShadowSpillPressureFitContext *context,
-    const ShadowSpillDenseSchedule *schedule,
+    const ShadowSpillIndexedSchedule *schedule,
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES]
 );
 

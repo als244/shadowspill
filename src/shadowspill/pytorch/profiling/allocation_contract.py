@@ -208,7 +208,9 @@ class TaskAllocationContract:
         if tuple(step.operation_index for step in self.steps) != tuple(
             range(len(self.steps))
         ):
-            raise ValueError("task allocation contract operation indices must be dense")
+            raise ValueError(
+                "task allocation contract operation indices must be contiguous"
+            )
         _validate_steps(self.steps)
         if self.compatibility_digest != _digest_steps(self.steps):
             raise ValueError("task allocation contract digest does not match its steps")
@@ -809,7 +811,7 @@ def _validate_steps(steps: tuple[TaskAllocationContractStep, ...]) -> None:
         if step.operation is TaskAllocationOperation.ALLOCATE:
             if ordinal != next_allocation_ordinal:
                 raise ValueError(
-                    "task allocation contract requires dense allocation ordinals"
+                    "task allocation contract requires contiguous allocation ordinals"
                 )
             next_allocation_ordinal += 1
             if ordinal in live or ordinal in retired:

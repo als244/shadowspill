@@ -78,7 +78,7 @@ def _measurement(artifact: object) -> TaskMeasurement:
     )
 
 
-def test_forward_lowering_is_dense_alias_aware_and_plannable() -> None:
+def test_forward_lowering_is_indexed_alias_aware_and_plannable() -> None:
     lowered = _lowered()
     assert len(lowered.program.tasks) == 3
     assert len(lowered.program.profiles) == 2

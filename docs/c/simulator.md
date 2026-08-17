@@ -5,7 +5,7 @@ standalone evaluator for an already selected schedule.
 
 ## Input
 
-`ShadowSpillSimulationProgram` contains dense arrays for:
+`ShadowSpillSimulationProgram` contains indexed arrays for:
 
 - device capacity, directional bandwidth, and latency;
 - aliases, sizes, versions, and retained spill copies;
@@ -32,7 +32,7 @@ spill capacity, and physical memory reuse.
 
 ## Functions
 
-- `shadowspill_simulate()` validates and evaluates one dense program.
+- `shadowspill_simulate()` validates and evaluates one indexed program.
 - `shadowspill_simulator_abi_version()` reports the loaded ABI.
 - `shadowspill_simulation_status_string()` maps a status to a stable category.
 
