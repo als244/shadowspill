@@ -37,12 +37,10 @@ ShadowSpillRuntimeStatus shadowspill_allocation_scope_end(
     if (pool == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    pthread_mutex_lock(&pool->lock);
     const ShadowSpillRuntimeStatus retirement_status =
-        shadowspill_publish_task_retirement_event_locked(
+        shadowspill_publish_task_retirement_event(
             runtime, scope_id, stream
         );
-    pthread_mutex_unlock(&pool->lock);
     if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
         shadowspill_latch_task_failure(
             runtime,

@@ -85,11 +85,6 @@ static void latch_failure(
     );
     pthread_cond_broadcast(&runtime->condition);
     shadowspill_idle_notify(runtime);
-    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
-        if (runtime->pools[pool_id].initialized) {
-            pthread_cond_broadcast(&runtime->pools[pool_id].capacity_changed);
-        }
-    }
 }
 
 void shadowspill_latch_failure_locked(
@@ -323,7 +318,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
     shadowspill_memory_pool_unlock_foreground(pool);
     if (status == SHADOWSPILL_RUNTIME_OK) {
         pthread_cond_broadcast(&runtime->condition);
-        pthread_cond_broadcast(&pool->capacity_changed);
         shadowspill_idle_notify(runtime);
         shadowspill_notify_worker(runtime);
     }

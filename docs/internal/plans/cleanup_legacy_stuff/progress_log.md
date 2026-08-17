@@ -873,3 +873,26 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Non-sleeping pool-capacity progress
+
+- Removed the `MemoryPool` condition variable and every capacity-path
+  `pthread_cond_wait`. Successful range release or causal range handoff now
+  advances a monotonic atomic capacity epoch.
+- Foreground allocator and task-action reservation paths retain their existing
+  priority declaration, release the pool lock, and actively poll the epoch
+  with `cpu_relax` while the always-active worker reclaims or coalesces ranges.
+  They continue to inspect the latched failure and worker-stop state on every
+  pass; no sleep, futex, or scheduler yield was introduced.
+- Split task-retirement fence publication so event creation, backend event
+  record, and completion submission occur outside the pool lock. Only the
+  final lease-dependency attachment and retirement-queue publication reacquire
+  pool ownership.
+- The first focused run returned transient `OUT_OF_MEMORY` immediately because
+  the new polling branch retained the failed probe status instead of entering
+  its progress state. Resetting that local status before polling fixed the
+  defect; delayed cross-stream reclamation and injected worker-query failure
+  now both exercise and pass the epoch path.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.

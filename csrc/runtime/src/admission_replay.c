@@ -649,14 +649,10 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
         shadowspill_admission_replay_workspace_destroy(created);
         return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
     }
-    if (pthread_cond_init(&created->state.pool.capacity_changed, NULL) != 0) {
-        pthread_mutex_destroy(&created->state.pool.lock);
-        shadowspill_admission_replay_workspace_destroy(created);
-        return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
-    }
     created->synchronization_initialized = 1U;
     atomic_init(&created->state.pool.foreground_waiters, 0U);
     atomic_init(&created->state.pool.reservation_waiters, 0U);
+    atomic_init(&created->state.pool.capacity_epoch, 0U);
     *workspace = created;
     return SHADOWSPILL_ADMISSION_REPLAY_OK;
 }
@@ -668,7 +664,6 @@ void shadowspill_admission_replay_workspace_destroy(
         return;
     }
     if (workspace->synchronization_initialized != 0U) {
-        pthread_cond_destroy(&workspace->state.pool.capacity_changed);
         pthread_mutex_destroy(&workspace->state.pool.lock);
     }
     free(workspace->range_nodes);

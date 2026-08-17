@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include <shadowspill/backend_mock.h>
@@ -62,13 +63,39 @@ int main(void) {
         .status = SHADOWSPILL_RUNTIME_INVALID_STATE,
     };
     pthread_t thread;
-    if (pthread_create(&thread, NULL, allocate_from_thread, &request) != 0 ||
-        pthread_join(thread, NULL) != 0 ||
+    const int create_status = pthread_create(
+        &thread, NULL, allocate_from_thread, &request
+    );
+    const int join_status = create_status == 0
+        ? pthread_join(thread, NULL) : -1;
+    const ShadowSpillRuntimeStatus free_status =
+        request.status == SHADOWSPILL_RUNTIME_OK
+        ? shadowspill_memory_pool_free(
+              runtime,
+              0U,
+              request.allocation.allocation_id,
+              first_stream
+          )
+        : request.status;
+    const ShadowSpillRuntimeStatus wait_status =
+        free_status == SHADOWSPILL_RUNTIME_OK
+        ? shadowspill_runtime_wait_idle(runtime) : free_status;
+    if (create_status != 0 || join_status != 0 ||
         request.status != SHADOWSPILL_RUNTIME_OK ||
         request.allocation.pointer == NULL ||
-        shadowspill_memory_pool_free(runtime, 0U, request.allocation.allocation_id, first_stream
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        free_status != SHADOWSPILL_RUNTIME_OK ||
+        wait_status != SHADOWSPILL_RUNTIME_OK) {
+        fprintf(
+            stderr,
+            "blocking statuses: create=%d join=%d allocate=%u pointer=%p "
+            "free=%u wait=%u\n",
+            create_status,
+            join_status,
+            (unsigned)request.status,
+            request.allocation.pointer,
+            (unsigned)free_status,
+            (unsigned)wait_status
+        );
         return EXIT_FAILURE;
     }
     ShadowSpillRuntimeStatistics statistics = {0};

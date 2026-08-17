@@ -35,14 +35,13 @@ static int initialize_pool(ShadowSpillMemoryPool *pool) {
         .next_request_sequence = 1U,
         .next_release_sequence = 1U,
     };
+    atomic_init(&pool->capacity_epoch, 0U);
     return pthread_mutex_init(&pool->lock, NULL) != 0 ||
-        pthread_cond_init(&pool->capacity_changed, NULL) != 0 ||
         shadowspill_range_initialize(&pool->ranges, 128U) != 0;
 }
 
 static void destroy_pool(ShadowSpillMemoryPool *pool) {
     shadowspill_range_destroy(&pool->ranges);
-    pthread_cond_destroy(&pool->capacity_changed);
     pthread_mutex_destroy(&pool->lock);
 }
 
