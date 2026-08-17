@@ -66,7 +66,7 @@ static int ordered_task_capture(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_bind_object(runtime, object.object_id, second.allocation_id) !=
+        shadowspill_test_publish_initial(runtime, object.object_id, second.pointer, NULL) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocation_scope_end(runtime, 42U, compute) !=
             SHADOWSPILL_RUNTIME_OK ||

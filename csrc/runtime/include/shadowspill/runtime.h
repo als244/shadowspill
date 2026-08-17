@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 35U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 36U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -712,48 +712,6 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_object(
     uint32_t pool_id,
     void *destination,
     uint64_t bytes
-);
-
-/*
- * Promotes an ordinary live allocation to plan ownership. The allocation must
- * cover the object and may be bound only once. Object identity survives later
- * address and generation changes.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_bind_object(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    uint64_t allocation_id
-);
-
-/*
- * Replaces an EXECUTION_READY object's current lease with one fresh ordinary
- * allocation created by the active task. The prior lease is retired behind
- * that task's completion fence; no payload copy is performed. The returned
- * binding names the new canonical generation. This operation is valid only
- * inside a task scope and is used for functional mutation outputs.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_replace_object_allocation(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    ShadowSpillObjectBinding *binding
-);
-
-/*
- * Transfers one settled EXECUTION_READY generation to ordinary caller
- * ownership while preserving the registered object record for recurrent
- * execution. Pending actions are drained before handoff so immutable
- * task records never retain a stale object identity. The object becomes
- * RELEASED and may bind a new generation on the next invocation. The
- * framework's eventual logical free and recorded streams govern range reuse.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_transfer_object_to_caller(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    ShadowSpillBackendStream consumer_stream,
-    ShadowSpillAllocation *allocation
 );
 
 /* Admit one immutable task and return its direct repeated-path handle. */
