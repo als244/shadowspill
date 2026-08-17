@@ -2,9 +2,12 @@
 
 ## Create the runtime
 
-Construct `Runtime` before PyTorch performs any accelerator allocation. The
-runtime installs the process allocator, creates the execution and spill pools,
-starts its C worker, and calibrates transfer capabilities.
+Construct `Runtime` before constructing or loading model state and before
+PyTorch performs any accelerator allocation. The runtime installs the process
+allocator, creates and registers the execution and spill pools, starts its C
+worker, and calibrates transfers directly between those real pool addresses.
+Registering a large pinned spill arena after anonymous model state has claimed
+host pages can change its physical DMA mapping and measured bandwidth.
 
 ```python
 from shadowspill.memory import device, pinned_host, transfer_route
@@ -24,6 +27,9 @@ runtime = Runtime(
 
 Pool names are user-defined. `execution="device"` and `spill="spill"` in the
 examples below select those names; they are not reserved strings.
+
+Only after `Runtime(...)` returns should the process construct or load the
+model and import its registered state into the spill pool.
 
 ## Import model state
 

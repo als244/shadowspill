@@ -484,6 +484,21 @@ def _planned_worker(
         optimizer_ordering=optimizer_ordering,
         steps=steps,
     )
+    if not reference_artifact_exists(reference_path):
+        raise RuntimeError(
+            "compiled reference is incomplete; expected both "
+            f"{reference_path} and {reference_inputs_path(reference_path)}"
+        )
+    runtime = Runtime(
+        pools={
+            "execution": device(physical_capacity=device_budget),
+            "spill": pinned_host(capacity=_HOST_BUDGET),
+        },
+        routes={
+            "fetch": transfer_route(source="spill", destination="execution"),
+            "evict": transfer_route(source="execution", destination="spill"),
+        },
+    )
     case = build_case(
         family,
         model_implementation=model_implementation,
@@ -493,11 +508,6 @@ def _planned_worker(
         case_factory=case_factory,
         case_options=case_options,
     )
-    if not reference_artifact_exists(reference_path):
-        raise RuntimeError(
-            "compiled reference is incomplete; expected both "
-            f"{reference_path} and {reference_inputs_path(reference_path)}"
-        )
     reference_inputs = torch.load(
         reference_inputs_path(reference_path),
         map_location="cpu",
@@ -511,16 +521,6 @@ def _planned_worker(
         )
     with case.implementations():
         workload_metadata = _profiling_metadata(case, profiling_metadata)
-        runtime = Runtime(
-            pools={
-                "execution": device(physical_capacity=device_budget),
-                "spill": pinned_host(capacity=_HOST_BUDGET),
-            },
-            routes={
-                "fetch": transfer_route(source="spill", destination="execution"),
-                "evict": transfer_route(source="execution", destination="spill"),
-            },
-        )
         case = import_case_model(case, runtime=runtime)
         model = case.model
         planning_started = time.perf_counter()
@@ -604,6 +604,10 @@ def _planned_worker(
                 step_diagnostics.append(diagnostics.as_dict())
             values = [float(item) for item in step_result.objectives]
             losses.append(values)
+            # Objective tensors are caller-owned device outputs.  The scalar
+            # evidence above is sufficient for qualification, so release each
+            # StepResult before a later explicit Runtime.close().
+            del step_result
             print(
                 f"shadowspill {model_implementation}/{family} "
                 f"step {step + 1}/{steps}: {timings[-1]:.3f}s",
@@ -628,6 +632,7 @@ def _planned_worker(
             step_result.diagnostics.result()
             physical_statuses.append(_check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
+            del step_result
             print(
                 f"shadowspill {model_implementation}/{family} replay "
                 f"{replay_step + 1}/{replay_steps}: "
