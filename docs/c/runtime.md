@@ -19,8 +19,11 @@ worker, trace buffers, and first-failure state.
   lease-use record begins as one distinct stream attribution and is converted
   in place into its retirement requirement; neither task release nor the
   worker copies that list. Physical range release returns both record types to
-  the pool owner. Exhaustion after sealing fails closed instead of allocating
-  process-heap metadata.
+  the pool owner. The same cold call reserves the pool's prospective-release
+  frontier and range workspace, so a pressure-driven destination reservation
+  can test coalescing pending ranges without allocating under the pool lock.
+  Exhaustion after sealing fails closed instead of allocating process-heap
+  metadata.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.

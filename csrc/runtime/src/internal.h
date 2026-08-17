@@ -152,6 +152,9 @@ typedef struct ShadowSpillMemoryPool {
     struct ShadowSpillMemoryLease **leases_by_id;
     struct ShadowSpillMemoryLease **leases_by_pointer;
     struct ShadowSpillMemoryLease **reusable_leases_by_size;
+    /* Cold-reserved workspace for prospective causal-release queries. */
+    struct ShadowSpillMemoryLease **release_frontier_workspace;
+    ShadowSpillRange *release_range_workspace;
     ShadowSpillMemoryPoolBackend backend;
     void *base;
     uint32_t pool_id;
@@ -161,6 +164,8 @@ typedef struct ShadowSpillMemoryPool {
     uint64_t reserved_bytes;
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
+    uint64_t release_frontier_capacity;
+    uint64_t release_range_capacity;
     uint64_t requested_allocated_bytes;
     uint64_t peak_requested_allocated_bytes;
     uint64_t live_allocations;
@@ -721,6 +726,13 @@ int shadowspill_range_clone_extended(
     const ShadowSpillRangeAllocator *source,
     uint64_t capacity,
     ShadowSpillRangeAllocator *destination
+);
+int shadowspill_range_clone_extended_with_nodes(
+    const ShadowSpillRangeAllocator *source,
+    uint64_t capacity,
+    ShadowSpillRangeAllocator *destination,
+    ShadowSpillRange *nodes,
+    uint64_t node_capacity
 );
 void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator);
 int shadowspill_range_allocate(

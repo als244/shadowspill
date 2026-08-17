@@ -124,7 +124,11 @@ without an artificial delay.
 
 Cold plan adoption reserves reusable neutral event records and backend event
 handles, retirement queue entries, `MemoryLease` records, and lease-use
-records. A lease-use record names one distinct stream while its lease is live;
+records. It also sizes one pool-owned release-frontier workspace from the
+sealed lease inventory. This workspace dry-runs pending-range coalescing
+inside a bounded borrowed range-node arena; destination reservation never
+builds a heap array or clones heap-owned range nodes while holding the pool.
+A lease-use record names one distinct stream while its lease is live;
 an asynchronous free records the completion event directly into that same
 record and gives the immutable list to the retirement queue. There is no
 stream snapshot or copied event-wrapper list. A later callable sharing the

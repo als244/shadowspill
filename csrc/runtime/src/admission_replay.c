@@ -23,7 +23,9 @@ typedef struct ReplayState {
 struct ShadowSpillAdmissionReplayWorkspace {
     ReplayState state;
     ShadowSpillRange *range_nodes;
+    ShadowSpillRange *release_range_nodes;
     uint64_t range_node_capacity;
+    uint64_t release_range_node_capacity;
     uint64_t lease_capacity;
     uint64_t dependency_capacity;
     uint8_t synchronization_initialized;
@@ -115,6 +117,11 @@ static int reset_state(
     state->pool.next_request_sequence = 1U;
     state->pool.next_release_sequence = 1U;
     state->pool.reserved_bytes = 0U;
+    state->pool.release_frontier_workspace = state->release_frontier;
+    state->pool.release_frontier_capacity = workspace->lease_capacity;
+    state->pool.release_range_workspace = workspace->release_range_nodes;
+    state->pool.release_range_capacity =
+        workspace->release_range_node_capacity;
     state->pool.initialized = 1U;
     atomic_store_explicit(
         &state->pool.foreground_waiters, 0U, memory_order_relaxed
@@ -600,7 +607,8 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
     ShadowSpillAdmissionReplayWorkspace **workspace
 ) {
     if (workspace == NULL || lease_capacity > SIZE_MAX ||
-        dependency_capacity > SIZE_MAX || lease_capacity == UINT64_MAX) {
+        dependency_capacity > SIZE_MAX ||
+        lease_capacity > (UINT64_MAX - 2U) / 2U) {
         return SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT;
     }
     *workspace = NULL;
@@ -611,6 +619,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
     created->lease_capacity = lease_capacity;
     created->dependency_capacity = dependency_capacity;
     created->range_node_capacity = lease_capacity + 1U;
+    created->release_range_node_capacity = 2U * lease_capacity + 2U;
     created->state.leases = calloc(
         lease_capacity == 0U ? 1U : (size_t)lease_capacity,
         sizeof(*created->state.leases)
@@ -639,12 +648,16 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
         (size_t)created->range_node_capacity,
         sizeof(*created->range_nodes)
     );
+    created->release_range_nodes = calloc(
+        (size_t)created->release_range_node_capacity,
+        sizeof(*created->release_range_nodes)
+    );
     if (created->state.leases == NULL || created->state.events == NULL ||
         created->state.expected_dependency_ids == NULL ||
         created->state.release_frontier == NULL ||
         created->state.blocking_order == NULL ||
         created->state.retirement_completed_early == NULL ||
-        created->range_nodes == NULL ||
+        created->range_nodes == NULL || created->release_range_nodes == NULL ||
         pthread_mutex_init(&created->state.pool.lock, NULL) != 0) {
         shadowspill_admission_replay_workspace_destroy(created);
         return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
@@ -666,6 +679,7 @@ void shadowspill_admission_replay_workspace_destroy(
     if (workspace->synchronization_initialized != 0U) {
         pthread_mutex_destroy(&workspace->state.pool.lock);
     }
+    free(workspace->release_range_nodes);
     free(workspace->range_nodes);
     free(workspace->state.events);
     free(workspace->state.leases);

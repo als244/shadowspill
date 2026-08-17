@@ -1179,3 +1179,27 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   ASan signal handler still fails before `main` intermittently and emits its
   known repeated `DEADLYSIGNAL` output; the debugger-run binaries reported no
   program memory error.
+
+## 2026-08-17 — Cold-reserved release-frontier workspace
+
+- Audited the remaining pressure-driven `after_task()` reservation path and
+  found that `shadowspill_memory_pool_can_reserve_after_releases_locked()`
+  allocated a candidate-pointer array and cloned the complete free-range list
+  with heap nodes while holding the destination pool lock. The amount of work
+  therefore varied with pool population precisely when the dispatcher was
+  already blocked on capacity.
+- Extended the generic pool's existing cold metadata seal to reserve one
+  candidate frontier and one bounded range-node arena sized from the complete
+  sealed `MemoryLease` inventory. Prospective coalescing now reuses those
+  buffers and performs no process-heap allocation. A zero-candidate query
+  remains a constant-state no-progress result and needs no workspace.
+- Added a range-clone operation that borrows caller-owned nodes. Production
+  pools use their sealed workspace; `AdmissionReplay` uses an independent
+  workspace allocated once at replay-workspace creation. Both paths continue
+  to call the same release-order and best-fit allocator logic.
+- A new two-predecessor coalescing canary requires the exact release frontier
+  while using only the cold-reserved workspace. Validation passed the
+  warnings-as-errors build, all 28 native/CUDA/PyTorch canaries, the complete
+  Python suite with four expected skips, Ruff, strict mypy over 178 installed
+  source files, and focused ASan MemoryPool, AdmissionReplay, and runtime
+  telemetry canaries.

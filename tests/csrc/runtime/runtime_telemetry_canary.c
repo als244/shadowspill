@@ -306,7 +306,10 @@ static int all_completed_retirements_precede_action_admission(void) {
             mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        shadowspill_runtime_reserve_memory_lease_records(
+            runtime, 0U, 8U
+        ) != SHADOWSPILL_RUNTIME_OK;
     const ShadowSpillObjectDescription object = {
         .object_id = 30U,
         .size_bytes = 96U,

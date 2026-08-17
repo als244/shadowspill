@@ -143,7 +143,7 @@ int shadowspill_range_initialize_with_nodes(
     return 0;
 }
 
-int shadowspill_range_clone_extended(
+static int clone_extended_contents(
     const ShadowSpillRangeAllocator *source,
     uint64_t capacity,
     ShadowSpillRangeAllocator *destination
@@ -151,15 +151,14 @@ int shadowspill_range_clone_extended(
     if (source == NULL || destination == NULL || capacity < source->capacity) {
         return -1;
     }
-    *destination = (ShadowSpillRangeAllocator){
-        .capacity = capacity,
-        .allocated = source->allocated,
-        .peak_allocated = source->peak_allocated,
-    };
+    destination->capacity = capacity;
+    destination->allocated = source->allocated;
+    destination->peak_allocated = source->peak_allocated;
+    destination->free_ranges = NULL;
     ShadowSpillRange **tail = &destination->free_ranges;
     for (const ShadowSpillRange *range = source->free_ranges; range != NULL;
          range = range->next) {
-        ShadowSpillRange *copy = calloc(1U, sizeof(*copy));
+        ShadowSpillRange *copy = acquire_node(destination);
         if (copy == NULL) {
             shadowspill_range_destroy(destination);
             return -1;
@@ -183,7 +182,7 @@ int shadowspill_range_clone_extended(
         last->bytes += extension;
         return 0;
     }
-    ShadowSpillRange *created = calloc(1U, sizeof(*created));
+    ShadowSpillRange *created = acquire_node(destination);
     if (created == NULL) {
         shadowspill_range_destroy(destination);
         return -1;
@@ -196,6 +195,33 @@ int shadowspill_range_clone_extended(
         last->next = created;
     }
     return 0;
+}
+
+int shadowspill_range_clone_extended(
+    const ShadowSpillRangeAllocator *source,
+    uint64_t capacity,
+    ShadowSpillRangeAllocator *destination
+) {
+    if (destination == NULL) {
+        return -1;
+    }
+    *destination = (ShadowSpillRangeAllocator){0};
+    return clone_extended_contents(source, capacity, destination);
+}
+
+int shadowspill_range_clone_extended_with_nodes(
+    const ShadowSpillRangeAllocator *source,
+    uint64_t capacity,
+    ShadowSpillRangeAllocator *destination,
+    ShadowSpillRange *nodes,
+    uint64_t node_capacity
+) {
+    if (destination == NULL || nodes == NULL || node_capacity == 0U) {
+        return -1;
+    }
+    *destination = (ShadowSpillRangeAllocator){0};
+    initialize_node_arena(destination, nodes, node_capacity);
+    return clone_extended_contents(source, capacity, destination);
 }
 
 void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator) {
