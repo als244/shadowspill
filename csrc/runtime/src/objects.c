@@ -1063,16 +1063,18 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     if (runtime == NULL || snapshot == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    ShadowSpillObject *object = shadowspill_find_object(runtime, object_id);
+    ShadowSpillObject *object = shadowspill_object_table_acquire(
+        &runtime->objects, object_id
+    );
     if (object == NULL) {
-        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
-        pthread_mutex_unlock(&runtime->mutex);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
-        shadowspill_execution_pool(runtime), object->allocation_id
+    pthread_mutex_lock(&object->lock);
+    const ShadowSpillObjectLocation *execution = shadowspill_execution_location(
+        runtime, object
+    );
+    const ShadowSpillObjectLocation *spill = shadowspill_spill_location(
+        runtime, object
     );
     *snapshot = (ShadowSpillObjectSnapshot){
         .object_id = object->object_id,
@@ -1080,20 +1082,19 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
         .generation = object->generation,
         .allocation_id = object->allocation_id,
         .authoritative_version = object->authoritative_version,
-        .execution_version = shadowspill_execution_location(runtime, object)->version,
-        .spill_version = shadowspill_spill_location(runtime, object)->version,
+        .execution_version = execution == NULL ? 0U : execution->version,
+        .spill_version = spill == NULL ? 0U : spill->version,
         .residency = object->residency,
-        .spill_current = shadowspill_spill_location(runtime, object)->current,
-        .has_spill_lease =
-            shadowspill_spill_location(runtime, object)->lease != NULL,
-        .execution_pointer = allocation == NULL ? NULL : allocation->pointer,
-        .spill_pointer = shadowspill_spill_location(runtime, object)->lease == NULL
-            ? NULL
-            : shadowspill_spill_location(runtime, object)->lease->pointer,
+        .spill_current = spill == NULL ? 0U : spill->current,
+        .has_spill_lease = spill != NULL && spill->lease != NULL,
+        .execution_pointer = execution == NULL || execution->lease == NULL
+            ? NULL : execution->lease->pointer,
+        .spill_pointer = spill == NULL || spill->lease == NULL
+            ? NULL : spill->lease->pointer,
         .retired_generation = object->retired_generation,
         .retired_execution_pointer = object->retired_execution_pointer,
     };
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
-    pthread_mutex_unlock(&runtime->mutex);
+    pthread_mutex_unlock(&object->lock);
+    shadowspill_object_release(object);
     return SHADOWSPILL_RUNTIME_OK;
 }
