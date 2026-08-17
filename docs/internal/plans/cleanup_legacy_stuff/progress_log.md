@@ -639,3 +639,19 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   `git diff --check`.
 - Passing structural commit: `a2e01e6` (`Remove raw task and default-plan
   APIs`).
+
+## 2026-08-17 — Current-only trace and benchmark evidence
+
+- Removed the NSYS extractor's old `shadowspill.task.<phase>.task_*` parser.
+  Task extraction now requires the semantic
+  `shadowspill.pytorch.task.execution_*.<semantic-name>` label and correlates
+  every boundary segment with that same execution identity.
+- Removed frontier-summary reconstruction of incomplete point records from
+  request and case sidecars. Aggregation now requires the current complete
+  point record and rejects missing embedded request or case identity.
+- Replaced compatibility fixtures with current semantic ranges and explicit
+  fail-closed coverage for incomplete benchmark records.
+- Validation passed: focused NSYS, benchmark, and documentation suites; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
+- Passing structural commit: `aae4156` (`Remove legacy trace and benchmark
+  readers`).
