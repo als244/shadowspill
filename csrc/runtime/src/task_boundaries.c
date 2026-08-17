@@ -642,6 +642,67 @@ static void publish_action_batch_locked(
     *batch = (ShadowSpillActionBatch){0};
 }
 
+static ShadowSpillRuntimeStatus await_worker_submission(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionRecord *record
+) {
+    if (record->action_count == 0U) {
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    ShadowSpillExecutionRecord *mutable_record =
+        (ShadowSpillExecutionRecord *)record;
+    const uint64_t sequence = atomic_fetch_add_explicit(
+        &runtime->next_worker_submission_sequence, 1U, memory_order_acq_rel
+    ) + 1U;
+    atomic_store_explicit(
+        &mutable_record->submission_invocation,
+        shadowspill_current_task_invocation(runtime),
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &mutable_record->submission_sequence, sequence, memory_order_release
+    );
+
+    ShadowSpillExecutionRecord *expected = NULL;
+    while (!atomic_compare_exchange_weak_explicit(
+        &runtime->worker_submission,
+        &expected,
+        mutable_record,
+        memory_order_release,
+        memory_order_acquire
+    )) {
+        expected = NULL;
+        const ShadowSpillRuntimeStatus status =
+            shadowspill_failure_status(runtime);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+        if (atomic_load_explicit(
+                &runtime->worker_stop, memory_order_acquire
+            ) != 0U) {
+            return SHADOWSPILL_RUNTIME_CLOSED;
+        }
+        shadowspill_cpu_relax();
+    }
+
+    while (atomic_load_explicit(
+        &mutable_record->acknowledgement_sequence, memory_order_acquire
+    ) < sequence) {
+        const ShadowSpillRuntimeStatus status =
+            shadowspill_failure_status(runtime);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+        if (atomic_load_explicit(
+                &runtime->worker_stop, memory_order_acquire
+            ) != 0U) {
+            return SHADOWSPILL_RUNTIME_CLOSED;
+        }
+        shadowspill_cpu_relax();
+    }
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
@@ -692,6 +753,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
         if (status == SHADOWSPILL_RUNTIME_OK) {
             publish_action_batch_locked(runtime, record, &batch);
             shadowspill_notify_worker(runtime);
+            status = await_worker_submission(runtime, record);
         }
     }
     if (status != SHADOWSPILL_RUNTIME_OK) {

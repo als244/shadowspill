@@ -5,7 +5,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <time.h>
 
 static int submit_transfer_copy(
     ShadowSpillRuntime *runtime,
@@ -37,23 +36,7 @@ static ShadowSpillRouteState *route_for_action(
 }
 
 void shadowspill_notify_worker(ShadowSpillRuntime *runtime) {
-    pthread_mutex_lock(&runtime->mutex);
-    pthread_cond_broadcast(&runtime->condition);
-    pthread_mutex_unlock(&runtime->mutex);
-}
-
-static void wait_while_idle(ShadowSpillRuntime *runtime) {
-    struct timespec deadline;
-    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
-        return;
-    }
-    uint64_t nanoseconds = (uint64_t)deadline.tv_nsec + UINT64_C(1000000);
-    deadline.tv_sec += (time_t)(nanoseconds / UINT64_C(1000000000));
-    deadline.tv_nsec = (long)(nanoseconds % UINT64_C(1000000000));
-    (void)pthread_cond_timedwait(
-        &runtime->condition, &runtime->mutex, &deadline
-    );
+    (void)runtime;
 }
 
 static void unlink_action_locked(
@@ -201,17 +184,6 @@ static void release_action_claim(
     pthread_mutex_lock(&runtime->actions.lock);
     action->processing = 0U;
     pthread_mutex_unlock(&runtime->actions.lock);
-}
-
-static void wait_for_failure_recovery_or_close(ShadowSpillRuntime *runtime) {
-    pthread_mutex_lock(&runtime->mutex);
-    while (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK &&
-           atomic_load_explicit(
-               &runtime->worker_stop, memory_order_acquire
-           ) == 0U) {
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
-    }
-    pthread_mutex_unlock(&runtime->mutex);
 }
 
 static int event_complete_locked(
@@ -810,6 +782,7 @@ static int handle_action(
                     return -1;
                 }
                 const int trigger_complete =
+                    action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
                     shadowspill_event_lease_is_complete(action->trigger_event);
                 if (!trigger_complete) {
                     pthread_mutex_unlock(&object->lock);
@@ -1117,6 +1090,97 @@ static int handle_actions(ShadowSpillRuntime *runtime) {
     return changed;
 }
 
+static int handle_submission_actions(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillExecutionRecord *record,
+    uint64_t invocation
+) {
+    int changed = 0;
+    for (uint32_t index = 0U; index < record->action_count; ++index) {
+        ShadowSpillQueuedAction *action = &record->queued_actions[index];
+        pthread_mutex_lock(&runtime->actions.lock);
+        const int claim = action->active && !action->processing &&
+            action->activation_generation == invocation;
+        if (claim) {
+            action->processing = 1U;
+        }
+        pthread_mutex_unlock(&runtime->actions.lock);
+        if (!claim) {
+            continue;
+        }
+        const int action_status = handle_action(runtime, action);
+        if (action_status < 2) {
+            release_action_claim(runtime, action);
+        }
+        if (action_status != 0) {
+            changed = 1;
+        }
+        if (action_status < 0) {
+            break;
+        }
+    }
+    return changed;
+}
+
+static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
+    ShadowSpillExecutionRecord *record = atomic_load_explicit(
+        &runtime->worker_submission, memory_order_acquire
+    );
+    if (record == NULL) {
+        return 0;
+    }
+    const uint64_t sequence = atomic_load_explicit(
+        &record->submission_sequence, memory_order_acquire
+    );
+    const uint64_t invocation = atomic_load_explicit(
+        &record->submission_invocation, memory_order_relaxed
+    );
+
+    /* Attempt only this predecoded batch before testing acknowledgement. */
+    const int changed = handle_submission_actions(
+        runtime, record, invocation
+    );
+    int fetches_published = 1;
+    for (uint32_t index = 0U; index < record->action_count; ++index) {
+        ShadowSpillQueuedAction *action = &record->queued_actions[index];
+        if (action->kind != SHADOWSPILL_RUNTIME_PREFETCH) {
+            continue;
+        }
+        ShadowSpillObject *object = action->object;
+        if (pthread_mutex_trylock(&object->lock) != 0) {
+            fetches_published = 0;
+            break;
+        }
+        const int published =
+            (action->active && action->activation_generation == invocation &&
+             action->state != SHADOWSPILL_ACTION_QUEUED) ||
+            (!action->active &&
+             action->completed_generation == invocation);
+        pthread_mutex_unlock(&object->lock);
+        if (!published) {
+            fetches_published = 0;
+            break;
+        }
+    }
+    if (!fetches_published &&
+        shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK) {
+        return changed;
+    }
+
+    atomic_store_explicit(
+        &record->acknowledgement_sequence, sequence, memory_order_release
+    );
+    ShadowSpillExecutionRecord *expected = record;
+    (void)atomic_compare_exchange_strong_explicit(
+        &runtime->worker_submission,
+        &expected,
+        NULL,
+        memory_order_release,
+        memory_order_relaxed
+    );
+    return 1;
+}
+
 void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     shadowspill_profiler_name_current_thread(
@@ -1125,6 +1189,9 @@ void *shadowspill_worker_main(void *pointer) {
     while (atomic_load_explicit(
         &runtime->worker_stop, memory_order_acquire
     ) == 0U) {
+        /* Observe one dispatcher batch and publish every fetch readiness event. */
+        const int submission_changed =
+            handle_newly_published_submission(runtime);
         uint64_t next_completion_poll = 0U;
         uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -1152,37 +1219,14 @@ void *shadowspill_worker_main(void *pointer) {
             shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK) {
             (void)handle_actions(runtime);
         }
-        /* Failed actions remain parked until recovery or teardown. */
+        /* Failed actions remain parked while the always-active worker polls. */
         if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
-            pthread_cond_broadcast(&runtime->condition);
-            wait_for_failure_recovery_or_close(runtime);
+            shadowspill_cpu_relax();
             continue;
         }
-        /*
-         * Park only when no work exists. With actions or retirements active,
-         * immediately run another nonblocking pass. Completion polling checks
-         * each stream's FIFO head at a short fixed cadence and drains its
-         * already-complete prefix, so an actionable transition incurs neither
-         * exponential backoff nor a sleep/wake round trip.
-         */
-        if (atomic_load_explicit(
-            &runtime->worker_stop, memory_order_acquire
-        ) == 0U) {
-            const int idle = atomic_load_explicit(
-                &runtime->actions.count, memory_order_acquire
-            ) == 0U && !shadowspill_has_actionable_retirement(runtime);
-            if (idle) {
-                pthread_mutex_lock(&runtime->mutex);
-                const int still_idle = atomic_load_explicit(
-                    &runtime->actions.count, memory_order_acquire
-                ) == 0U && !shadowspill_has_actionable_retirement(runtime);
-                if (still_idle && atomic_load_explicit(
-                        &runtime->worker_stop, memory_order_acquire
-                    ) == 0U) {
-                    wait_while_idle(runtime);
-                }
-                pthread_mutex_unlock(&runtime->mutex);
-            }
+        if (!submission_changed && completion_status == 0 &&
+            !retirement_work.pool_busy) {
+            shadowspill_cpu_relax();
         }
     }
     return NULL;

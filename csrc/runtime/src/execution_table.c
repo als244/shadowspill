@@ -6,22 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static void wait_for_object_state_change(ShadowSpillObject *object) {
-    struct timespec deadline = {0};
-    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
-        pthread_cond_wait(&object->state_changed, &object->lock);
-        return;
-    }
-    const uint64_t nanoseconds =
-        (uint64_t)deadline.tv_nsec + UINT64_C(1000000);
-    deadline.tv_sec += (time_t)(nanoseconds / UINT64_C(1000000000));
-    deadline.tv_nsec = (long)(nanoseconds % UINT64_C(1000000000));
-    (void)pthread_cond_timedwait(
-        &object->state_changed, &object->lock, &deadline
-    );
-}
 
 char *shadowspill_copy_action_trace_label(
     const ShadowSpillRuntimeAction *action,
@@ -269,6 +253,9 @@ static ShadowSpillExecutionRecord *create_record(
     record->plan_owner = plan;
     record->task_id = description->task_id;
     atomic_init(&record->invocation_count, 0U);
+    atomic_init(&record->submission_sequence, 0U);
+    atomic_init(&record->submission_invocation, 0U);
+    atomic_init(&record->acknowledgement_sequence, 0U);
     record->input_count = description->input_count;
     record->update_count = description->update_count;
     record->action_count = description->action_count;
@@ -744,8 +731,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
          ++index) {
         ShadowSpillObject *object = record->unique_inputs[index];
         pthread_mutex_lock(&object->lock);
-        while (status == SHADOWSPILL_RUNTIME_OK &&
-               shadowspill_object_has_unpublished_fetch_locked(object)) {
+        if (shadowspill_object_has_unpublished_fetch_locked(object)) {
             shadowspill_append_trace_event_locked(
                 runtime,
                 SHADOWSPILL_TRACE_READINESS_WAIT,
@@ -758,14 +744,18 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
                     &runtime->actions.count, memory_order_acquire
                 )
             );
-            /*
-             * Normal readiness publication wakes this condition directly.
-             * The bounded wait additionally guarantees that a failure latched
-             * for another object is observed even when no further transition
-             * can signal this particular object.
-             */
-            wait_for_object_state_change(object);
-            status = shadowspill_current_status_locked(runtime);
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            const uint64_t allocation_id = object->allocation_id;
+            const uint64_t size_bytes = object->size_bytes;
+            pthread_mutex_unlock(&object->lock);
+            shadowspill_latch_failure_locked(
+                runtime,
+                status,
+                object->object_id,
+                allocation_id,
+                size_bytes
+            );
+            break;
         }
         ShadowSpillMemoryLease *lease = shadowspill_execution_location(runtime, object)->lease;
         if (status != SHADOWSPILL_RUNTIME_OK) {
