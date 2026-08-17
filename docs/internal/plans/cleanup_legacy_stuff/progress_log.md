@@ -672,3 +672,32 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   strict mypy over 177 installed source files; and `git diff --check`.
 - Passing structural commit: `264cf44` (`Use task terminology for admitted
   records`).
+
+## 2026-08-17 — Memory-pool-owned allocation state
+
+- Moved lease ownership, active/reusable indexes, requested/live/peak
+  accounting, waiter counts, and lock-free geometry snapshots out of the
+  runtime-wide execution allocator and into each generic `MemoryPool`.
+- Replaced the role-specific allocation/free/lookup/stream-recording and pool
+  growth entry points with APIs that require an explicit pool ID. Allocation
+  telemetry and structured failures now record that pool identity.
+- Made allocation IDs and residency generations runtime-wide atomics so
+  independent pools retain globally unambiguous diagnostic identities without
+  sharing allocator metadata or locks.
+- During the source audit, found that an allocator waiting in one pool could
+  mistake a pending retirement or capacity action in another pool for usable
+  future progress. Added per-pool progress counters and made the retirement
+  worker reclaim through the lease's owning pool. This preserves immediate
+  no-progress failure when only an unrelated pool can change.
+- Added construction coverage for a one-pool runtime with no routes, a
+  three-pool runtime with a sparse route graph, rejection of a plan missing its
+  reverse route, and real allocate/free/retirement through the third pool.
+- Runtime-global execution/spill statistics and object-location helpers remain
+  explicitly transitional; the next milestone replaces them with pool- and
+  plan-owned views rather than presenting this commit as complete topology
+  generalization.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
+- Passing structural commit: `e7124e1` (`Move allocation ownership into memory
+  pools`).
