@@ -27,12 +27,14 @@ An alias group may declare one runtime-global shared-residency policy:
 | Policy | Contract |
 |---|---|
 | `SHARED_READ_ONLY` | The execution-pool lease is shared by callables and may never be mutated or replaced. |
+| `SHARED_WRITABLE_CAUSAL` | The lease is shared; every reader/writer acquires the current generation and its readiness dependency. |
 | `SHARED_WRITABLE_UNORDERED` | The lease is shared and may be mutated in place; cross-callable read/write visibility is intentionally unordered. |
 
 Shared aliases are not plan-owned residency. They cannot appear in memory
 actions, initial/final schedule residency, or recomputation-retained sets.
-Replacement outputs are forbidden for both policies because changing the
-backing lease would invalidate another callable's storage binding.
+Only the causal policy may publish task outputs, because each consumer
+re-acquires and rebinds the resulting generation. The read-only policy accepts
+inputs only. The unordered policy requires stable-address in-place writes.
 
 ## Recomputation
 

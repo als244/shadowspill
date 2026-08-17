@@ -21,6 +21,12 @@ memory plus bounded dynamic regions for caller-owned terminal outputs and
 optional scratch. The spill pool remains dynamically allocated and is checked
 against its simulated physical peak.
 
+Runtime-global shared leases lie outside a callable's physical layout. Their
+bytes are subtracted before constructing the callable-owned pool slice, while
+diagnostics preserve both the shared footprint and residual movable capacity.
+Admission never assigns a second offset or transfer destination to a shared
+alias.
+
 ## Inputs and output
 
 Physical admission consumes:
@@ -52,7 +58,8 @@ Let:
 - $F$ be process-persistent execution bytes excluded before callable
   admission, including initialized provider state and profiled retained
   provider/custom-operation growth;
-- $P=B_e-F$ be the callable's physical execution-pool capacity;
+- $H$ be runtime-global shared execution-resident bytes;
+- $P=B_e-F-H$ be the callable's physical execution-pool capacity;
 - $C$ be the logical object capacity presented to PressureFit;
 - $B_s$ be the public spill-memory budget.
 

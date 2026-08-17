@@ -15,6 +15,7 @@ from shadowspill.ir import (
     ResidencySpec,
     ResourceKind,
     TaskSpec,
+    shared_residency_footprint,
 )
 
 from ._capi import (
@@ -103,6 +104,8 @@ class _Projection:
     alias_ids: tuple[str, ...]
     device_ids: tuple[str, ...]
     task_resources: tuple[tuple[ResourceKind, int], ...]
+    shared_device_bytes: tuple[int, ...]
+    shared_spill_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +120,8 @@ class CompiledSimulationTemplate:
     alias_index: dict[str, int]
     device_ids: tuple[str, ...]
     task_resources: tuple[tuple[ResourceKind, int], ...]
+    shared_device_bytes: tuple[int, ...]
+    shared_spill_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +154,20 @@ def compile_simulation_template(
         raise ValueError(
             "simulation devices must exactly match Program devices; "
             f"expected {sorted(device_ids)}, got {sorted(configured)}"
+        )
+    shared = shared_residency_footprint(program)
+    shared_device_bytes = tuple(shared.for_device(item) for item in device_ids)
+    for device_id, shared_bytes in zip(device_ids, shared_device_bytes, strict=True):
+        capacity = configured[device_id].capacity_bytes
+        if shared_bytes > capacity:
+            raise ValueError(
+                f"shared residency requires {shared_bytes} bytes on "
+                f"{device_id!r}, exceeding capacity {capacity}"
+            )
+    if shared.spill_bytes > config.host_capacity_bytes:
+        raise ValueError(
+            "shared spill residency exceeds host capacity: "
+            f"shared={shared.spill_bytes}, capacity={config.host_capacity_bytes}"
         )
     alias_ids = tuple(item.alias_group_id for item in program.alias_groups)
     alias_index = {value: index for index, value in enumerate(alias_ids)}
@@ -193,7 +212,7 @@ def compile_simulation_template(
     c_devices = (CDevice * len(device_ids))(
         *(
             CDevice(
-                configured[device_id].capacity_bytes,
+                configured[device_id].capacity_bytes - shared.for_device(device_id),
                 configured[device_id].fetch_bandwidth_bytes_per_second,
                 configured[device_id].evict_bandwidth_bytes_per_second,
                 configured[device_id].fetch_latency_ns,
@@ -222,9 +241,19 @@ def compile_simulation_template(
     alias_device = u32(
         tuple(device_index[item.device_id] for item in program.alias_groups)
     )
-    alias_size = u64(tuple(item.size_bytes for item in program.alias_groups))
+    alias_size = u64(
+        tuple(
+            0 if item.shared_residency is not None else item.size_bytes
+            for item in program.alias_groups
+        )
+    )
     alias_version = u64(tuple(item.initial_version for item in program.alias_groups))
-    alias_host = u8(tuple(int(item.retain_spill_copy) for item in program.alias_groups))
+    alias_host = u8(
+        tuple(
+            int(item.retain_spill_copy and item.shared_residency is None)
+            for item in program.alias_groups
+        )
+    )
     task_device = u32(tuple(device_index[item.resource.device_id] for item in tasks))
     task_kind = u8(tuple(_RESOURCE_CODE[item.resource.kind] for item in tasks))
     task_lane = u32(tuple(item.resource.lane for item in tasks))
@@ -292,7 +321,7 @@ def compile_simulation_template(
         mutation_count=len(mutation_values),
         reuse_dependency_count=0,
         use_admission_accounting=0,
-        host_capacity_bytes=config.host_capacity_bytes,
+        host_capacity_bytes=config.host_capacity_bytes - shared.spill_bytes,
         devices=c_devices,
         alias_device=alias_device,
         alias_size_bytes=alias_size,
@@ -337,6 +366,8 @@ def compile_simulation_template(
         alias_index,
         device_ids,
         tuple((item.resource.kind, item.resource.lane) for item in tasks),
+        shared_device_bytes,
+        shared.spill_bytes,
     )
 
 
@@ -554,6 +585,8 @@ def _bind_schedule(
         template.alias_ids,
         template.device_ids,
         template.task_resources,
+        template.shared_device_bytes,
+        template.shared_spill_bytes,
     )
 
 
@@ -743,9 +776,15 @@ def _simulate_projection(
     device_peaks = tuple(
         DeviceMemoryPeak(
             device_id=device_id,
-            object_bytes=int(peak_buffer[index].object_bytes),
+            object_bytes=(
+                int(peak_buffer[index].object_bytes)
+                + projection.shared_device_bytes[index]
+            ),
             workspace_bytes=int(peak_buffer[index].workspace_bytes),
-            total_bytes=int(peak_buffer[index].total_bytes),
+            total_bytes=(
+                int(peak_buffer[index].total_bytes)
+                + projection.shared_device_bytes[index]
+            ),
         )
         for index, device_id in enumerate(projection.device_ids)
     )
@@ -754,7 +793,7 @@ def _simulate_projection(
         task_intervals=task_intervals,
         transfer_intervals=transfer_intervals,
         device_peaks=device_peaks,
-        host_peak_bytes=int(result.host_peak_bytes),
+        host_peak_bytes=int(result.host_peak_bytes) + projection.shared_spill_bytes,
     )
 
 

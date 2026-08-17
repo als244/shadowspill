@@ -6,6 +6,12 @@ physical admission. It never invokes the planner. [PressureFit](pressurefit.md)
 calls it while evaluating candidates, and the same public API can evaluate a
 supplied schedule independently.
 
+Runtime-global shared aliases retain their true sizes in the `Program`, but
+are projected out of the callable's movable alias set. Their execution and
+retained-spill footprints are subtracted from available capacity before the C
+simulation runs and added back to decoded physical peaks. They therefore
+consume real budget exactly once without acquiring plan-owned actions.
+
 ## Resources and intervals
 
 The model includes:

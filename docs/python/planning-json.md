@@ -6,7 +6,7 @@ for corpus collection, budget sweeps, inspection, and reproducible planning.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `Program` | `shadowspill.program/v2` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
+| `Program` | `shadowspill.program/v3` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
 | `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, admission topology, and search options. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v2` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
@@ -54,7 +54,7 @@ An abridged `Program` has this shape:
 
 ```json
 {
-  "schema": "shadowspill.program/v2",
+  "schema": "shadowspill.program/v3",
   "devices": [
     {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
   ],
@@ -153,7 +153,7 @@ shadowspill.pressurefit_program/v1
 ├── role
 ├── program
 │   ├── digest
-│   └── value                 complete shadowspill.program/v2
+│   └── value                 complete shadowspill.program/v3
 ├── residency
 │   ├── initial
 │   └── final

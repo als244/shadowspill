@@ -6,7 +6,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from shadowspill.ir import ExecutionPlan, MemoryAction, Program, TaskProfile
+from shadowspill.ir import (
+    AliasGroupSpec,
+    ExecutionPlan,
+    MemoryAction,
+    Program,
+    TaskProfile,
+    shared_residency_footprint,
+)
 from shadowspill.planner import PressureFitDiagnostics, PressureFitResult
 from shadowspill.pytorch.runtime_adapter import TransferCapabilities, TransferProfile
 
@@ -850,6 +857,39 @@ class PlanReport:
     @property
     def predicted_makespan_ns(self) -> int:
         return self.execution_plan.prediction.makespan_ns
+
+    @property
+    def shared_aliases(self) -> tuple[AliasGroupSpec, ...]:
+        """Runtime-global aliases charged outside this callable's schedule."""
+
+        return tuple(
+            item for item in self.program.alias_groups if item.shared_residency
+        )
+
+    @property
+    def shared_execution_bytes(self) -> int:
+        """Execution-pool bytes retained by shared runtime objects."""
+
+        footprint = shared_residency_footprint(self.program)
+        return footprint.for_device(self.program.devices[0].device_id)
+
+    @property
+    def shared_spill_bytes(self) -> int:
+        """Spill-pool bytes retained by shared runtime objects."""
+
+        return shared_residency_footprint(self.program).spill_bytes
+
+    @property
+    def callable_execution_budget_bytes(self) -> int:
+        """Execution capacity remaining for this callable's admitted layout."""
+
+        return self.execution_budget_bytes - self.shared_execution_bytes
+
+    @property
+    def callable_spill_budget_bytes(self) -> int:
+        """Spill capacity remaining for this callable's movable objects."""
+
+        return self.spill_budget_bytes - self.shared_spill_bytes
 
     @property
     def fetch_profile(self) -> TransferProfile:

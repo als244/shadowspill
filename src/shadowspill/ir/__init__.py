@@ -39,6 +39,7 @@ from .schedule import (
     MemorySchedule,
     ResidencySpec,
 )
+from .sharing import SharedResidencyFootprint, shared_residency_footprint
 
 __all__ = [
     "AliasGroupSpec",
@@ -65,6 +66,7 @@ __all__ = [
     "ResidencySpec",
     "ResourceKind",
     "ResourceSpec",
+    "SharedResidencyFootprint",
     "SharedResidencyPolicy",
     "TaskProfile",
     "TaskSpec",
@@ -72,4 +74,5 @@ __all__ = [
     "index_execution_plan",
     "index_memory_schedule",
     "index_program",
+    "shared_residency_footprint",
 ]

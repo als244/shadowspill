@@ -10,6 +10,7 @@ Logical program values:
 - `Program`, `TaskSpec`, `TaskProfile`
 - `ObjectSpec`, `ObjectRole`, `Persistence`, `AliasGroupSpec`, `MutationSpec`
 - `SharedResidencyPolicy`
+- `SharedResidencyFootprint`, `shared_residency_footprint()`
 - `ResourceSpec`, `ResourceKind`, `DeviceSpec`
 - `RecomputationGroup`, `RecomputationOption`, `RecomputationSelection`
 

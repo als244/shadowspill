@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, replace
 
-from shadowspill.ir import Program, ResidencySpec
+from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
 from shadowspill.planner import AdmissionTopology, PressureFitOptions
 from shadowspill.simulator import SimulationConfig
 
@@ -152,14 +152,21 @@ class PressureFitProgram:
             raise ValueError("capacity deductions must be non-negative")
         if self.dynamic_scratch_reserve_bytes < 0:
             raise ValueError("dynamic scratch reserve must be non-negative")
-        expected_pool = self.source_execution_budget_bytes - self.fixed_execution_bytes
+        shared = shared_residency_footprint(self.program)
+        shared_execution = shared.for_device(device.device_id)
+        expected_pool = (
+            self.source_execution_budget_bytes
+            - self.fixed_execution_bytes
+            - shared_execution
+        )
         if self.admission_topology.pool_capacity_bytes != expected_pool:
             raise ValueError(
                 "source execution budget does not reconcile with admission pool"
             )
         expected_object = expected_pool - self.object_reserve_bytes
-        if device.capacity_bytes != expected_object or (
-            self.admission_topology.object_capacity_bytes != expected_object
+        if (
+            device.capacity_bytes - shared_execution != expected_object
+            or self.admission_topology.object_capacity_bytes != expected_object
         ):
             raise ValueError(
                 "object reserve does not reconcile with simulation/admission capacity"
@@ -212,12 +219,15 @@ class PressureFitProgram:
                 "spill budget exceeds the runtime pool used for profiling: "
                 f"requested={spill_budget}, maximum={self.maximum_spill_budget_bytes}"
             )
-        pool_capacity = execution_budget - self.fixed_execution_bytes
+        shared = shared_residency_footprint(self.program)
+        shared_execution = shared.for_device(self.admission_topology.device_id)
+        pool_capacity = execution_budget - self.fixed_execution_bytes - shared_execution
         object_capacity = pool_capacity - self.object_reserve_bytes
         if pool_capacity <= 0 or object_capacity <= 0:
             raise ValueError(
                 "execution budget leaves no positive pool/object capacity: "
                 f"budget={execution_budget}, fixed={self.fixed_execution_bytes}, "
+                f"shared={shared_execution}, "
                 f"object_reserve={self.object_reserve_bytes}"
             )
         selected_transfer = transfer_bandwidths or self.transfer_bandwidths
@@ -226,7 +236,7 @@ class PressureFitProgram:
             (
                 replace(
                     source_device,
-                    capacity_bytes=object_capacity,
+                    capacity_bytes=object_capacity + shared_execution,
                     fetch_bandwidth_bytes_per_second=(
                         selected_transfer.fetch_bytes_per_second
                     ),

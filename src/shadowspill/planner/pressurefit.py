@@ -8,7 +8,12 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
-from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
+from shadowspill.ir import (
+    Program,
+    RecomputationSelection,
+    ResidencySpec,
+    shared_residency_footprint,
+)
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._capi import load_simulator_library
 from shadowspill.simulator._compiled import (
@@ -105,13 +110,20 @@ def _validate_pressurefit_inputs(
         raise TypeError("admission must be an AdmissionTopology")
     admission.validate(program)
     configured = {item.device_id: item for item in config.devices}
+    shared = shared_residency_footprint(program)
+    movable_capacity = (
+        configured[admission.device_id].capacity_bytes
+        - shared.for_device(admission.device_id)
+        if admission.device_id in configured
+        else None
+    )
     if (
         admission.device_id not in configured
-        or configured[admission.device_id].capacity_bytes
-        != admission.object_capacity_bytes
+        or movable_capacity != admission.object_capacity_bytes
     ):
         raise ValueError(
-            "feasibility capacity must equal AdmissionTopology object capacity"
+            "feasibility capacity after shared residency must equal "
+            "AdmissionTopology object capacity"
         )
 
 
@@ -532,9 +544,14 @@ def _with_object_capacity(
     config: SimulationConfig,
     admission: AdmissionTopology,
     capacity_bytes: int,
+    *,
+    shared_execution_bytes: int,
 ) -> tuple[SimulationConfig, AdmissionTopology]:
     devices = tuple(
-        replace(device, capacity_bytes=capacity_bytes)
+        replace(
+            device,
+            capacity_bytes=capacity_bytes + shared_execution_bytes,
+        )
         if device.device_id == admission.device_id
         else device
         for device in config.devices
@@ -627,6 +644,9 @@ def pressurefit(
                 current_config,
                 current_admission,
                 capacity,
+                shared_execution_bytes=shared_residency_footprint(program).for_device(
+                    current_admission.device_id
+                ),
             )
 
 

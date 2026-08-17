@@ -619,7 +619,7 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## StepProgram format",
         "## AnnotatedProgramPlan format",
         "## Loading and validation",
-        "shadowspill.program/v2",
+        "shadowspill.program/v3",
         "shadowspill.pressurefit_program/v1",
         "shadowspill.step_program/v1",
         "shadowspill.annotated_program_plan/v2",

@@ -24,7 +24,8 @@ PERSISTENCE_CODE = {value: index for index, value in enumerate(Persistence)}
 SHARED_RESIDENCY_CODE = {
     None: 0,
     SharedResidencyPolicy.SHARED_READ_ONLY: 1,
-    SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED: 2,
+    SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL: 2,
+    SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED: 3,
 }
 MEMORY_LOCATION_CODE = {
     MemoryLocation.DEVICE: 0,

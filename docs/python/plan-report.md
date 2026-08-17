@@ -40,7 +40,7 @@ The top-level fields are grouped below.
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
 | Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan and optional first-step plan for lazy state. |
 | Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_host_peak_bytes` | Simulator result after physical admission. |
-| Capacity | `execution_pool`, `spill_pool`, `execution_budget_bytes`, `spill_budget_bytes`, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, public budgets, process-persistent deductions, and requested scratch floor. |
+| Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
 | Selection | `pressurefit_result`, `initial_pressurefit_result` | PressureFit winner, schedule, selections, and search evidence. |
@@ -57,6 +57,9 @@ Always verify these before interpreting a predicted makespan:
 ```python
 print(report.execution_pool, report.execution_budget_bytes)
 print(report.spill_pool, report.spill_budget_bytes)
+print(report.shared_aliases)
+print(report.shared_execution_bytes, report.shared_spill_bytes)
+print(report.callable_execution_budget_bytes, report.callable_spill_budget_bytes)
 
 print(report.fetch_profile)
 print(report.evict_profile)
@@ -75,6 +78,12 @@ fixed/provider memory removed before callable admission; it is not the
 callable's `fixed_slice_bytes`. The physical-layout diagnostics explain how
 the remaining pool is divided among logical object capacity, the fixed
 callable slice, terminal dynamic outputs, and bounded dynamic scratch.
+
+Shared aliases are runtime-global objects that may be bound by several
+callables. Their physical bytes are charged once against the public pool
+budgets and excluded from each callable's movable schedule. The
+`callable_*_budget_bytes` properties expose the residual capacities used for
+that callable's PressureFit and physical-layout admission.
 
 ## Planning wall time and cache use
 

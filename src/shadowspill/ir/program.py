@@ -29,7 +29,7 @@ from ._validation import (
     require_tuple,
 )
 
-PROGRAM_SCHEMA = "shadowspill.program/v2"
+PROGRAM_SCHEMA = "shadowspill.program/v3"
 
 
 class ObjectRole(StrEnum):
@@ -54,6 +54,7 @@ class SharedResidencyPolicy(StrEnum):
     """Runtime-global residency and mutation policy for one storage root."""
 
     SHARED_READ_ONLY = "shared_read_only"
+    SHARED_WRITABLE_CAUSAL = "shared_writable_causal"
     SHARED_WRITABLE_UNORDERED = "shared_writable_unordered"
 
 
@@ -678,14 +679,16 @@ class Program:
                     )
             for output in task.outputs:
                 output_alias = object_by_id[output].alias_group_id
-                require(
-                    alias_by_id[output_alias].shared_residency is None,
-                    f"{path}.outputs",
-                    (
-                        f"shared alias group {output_alias!r} cannot be replaced by "
-                        "a task output"
-                    ),
-                )
+                output_sharing = alias_by_id[output_alias].shared_residency
+                if output_sharing not in {
+                    None,
+                    SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL,
+                }:
+                    fail(
+                        f"{path}.outputs",
+                        f"shared alias group {output_alias!r} uses "
+                        f"{output_sharing.value!r} and cannot publish task outputs",
+                    )
                 previous_writers = produced_by.setdefault(output, [])
                 require(
                     all(

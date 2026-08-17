@@ -15,6 +15,7 @@ from shadowspill.ir import (
     ResidencySpec,
     SharedResidencyPolicy,
     ValidationError,
+    index_program,
 )
 
 from ._examples import SAVE_SELECTION, representative_program
@@ -31,15 +32,25 @@ def _with_shared_weight(policy: SharedResidencyPolicy):
     return replace(program, alias_groups=aliases)
 
 
-def test_shared_policy_round_trips_and_is_indexed() -> None:
-    program = _with_shared_weight(SharedResidencyPolicy.SHARED_READ_ONLY)
+@pytest.mark.parametrize(
+    ("policy", "expected_code"),
+    [
+        (SharedResidencyPolicy.SHARED_READ_ONLY, 1),
+        (SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL, 2),
+        (SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED, 3),
+    ],
+)
+def test_shared_policy_round_trips_and_is_indexed(
+    policy: SharedResidencyPolicy,
+    expected_code: int,
+) -> None:
+    program = _with_shared_weight(policy)
 
     restored = type(program).from_json(program.to_json())
 
     assert restored == program
-    assert restored.alias_groups[1].shared_residency is (
-        SharedResidencyPolicy.SHARED_READ_ONLY
-    )
+    assert restored.alias_groups[1].shared_residency is policy
+    assert index_program(program).alias_shared_residency[1] == expected_code
 
 
 def test_shared_read_only_rejects_mutation() -> None:
@@ -71,15 +82,20 @@ def test_shared_writable_unordered_accepts_in_place_mutation() -> None:
     assert mutated.tasks[0].mutations == (MutationSpec("weight"),)
 
 
-def test_shared_alias_cannot_be_replaced_or_recomputation_retained() -> None:
-    program = _with_shared_weight(SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED)
+def test_causal_shared_alias_can_be_published_but_not_recomputation_retained() -> None:
+    program = _with_shared_weight(SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL)
     first = program.tasks[0]
 
-    with pytest.raises(ValidationError, match="cannot be replaced"):
-        replace(
-            program,
-            tasks=(replace(first, outputs=("weight",)), *program.tasks[1:]),
-        )
+    published = replace(
+        program,
+        tasks=(
+            replace(first, inputs=("input",), outputs=("weight",)),
+            *program.tasks[1:2],
+        ),
+        recomputation_groups=(),
+    )
+
+    assert published.tasks[0].outputs == ("weight",)
 
     group = RecomputationGroup(
         "shared_retention",
@@ -87,6 +103,30 @@ def test_shared_alias_cannot_be_replaced_or_recomputation_retained() -> None:
     )
     with pytest.raises(ValidationError, match="runtime-resident"):
         replace(program, recomputation_groups=(group,))
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        SharedResidencyPolicy.SHARED_READ_ONLY,
+        SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED,
+    ],
+)
+def test_noncausal_shared_alias_cannot_publish_task_outputs(
+    policy: SharedResidencyPolicy,
+) -> None:
+    program = _with_shared_weight(policy)
+    first = program.tasks[0]
+
+    with pytest.raises(ValidationError, match="cannot publish task outputs"):
+        replace(
+            program,
+            tasks=(
+                replace(first, inputs=("input",), outputs=("weight",)),
+                *program.tasks[1:2],
+            ),
+            recomputation_groups=(),
+        )
 
 
 def test_schedule_treats_shared_input_as_runtime_resident() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from shadowspill.ir import Program, TaskSpec
+from shadowspill.ir import Program, TaskSpec, shared_residency_footprint
 from shadowspill.planner import (
     AdmissionTopology,
     StorageHandoff,
@@ -112,6 +112,16 @@ def build_admission_topology(
         )
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
     alias_size = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
+    shared = shared_residency_footprint(program)
+    shared_execution_bytes = shared.for_device(program.devices[0].device_id)
+    movable_pool_bytes = execution_pool_bytes - shared_execution_bytes
+    movable_object_bytes = object_capacity_bytes - shared_execution_bytes
+    if movable_pool_bytes <= 0 or movable_object_bytes <= 0:
+        raise ValueError(
+            "shared residency leaves no positive callable-owned capacity: "
+            f"pool={execution_pool_bytes}, object={object_capacity_bytes}, "
+            f"shared={shared_execution_bytes}"
+        )
     profile_by_id = {item.profile_id: item for item in program.profiles}
     profiled_extents = dict(workspace_extents_by_compatibility or {})
     profiled_traces = dict(allocation_traces_by_compatibility or {})
@@ -198,8 +208,8 @@ def build_admission_topology(
         )
     topology = AdmissionTopology(
         device_id=program.devices[0].device_id,
-        pool_capacity_bytes=execution_pool_bytes,
-        object_capacity_bytes=object_capacity_bytes,
+        pool_capacity_bytes=movable_pool_bytes,
+        object_capacity_bytes=movable_object_bytes,
         minimum_alignment=alignment,
         tasks=tuple(task_specs),
     )

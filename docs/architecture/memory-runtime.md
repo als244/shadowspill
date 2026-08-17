@@ -22,12 +22,12 @@ Generations prevent stale events, frees, bindings, or worker completions from
 modifying a successor.
 
 Runtime-global shared leases are physically charged once and retained outside
-any one callable's movable-object schedule. `SHARED_READ_ONLY` rejects all
-writes. `SHARED_WRITABLE_UNORDERED` permits stable-address in-place mutation
-without introducing cross-callable ordering; readers may therefore observe an
-older, newer, or concurrently changing value. Neither policy permits a
-replacement allocation because all callables must continue referencing the
-same lease.
+any one callable's movable-object schedule. `SHARED_READ_ONLY` accepts only
+existing inputs and rejects all writes. `SHARED_WRITABLE_CAUSAL` orders each
+generation and allows producers to publish a replacement lease.
+`SHARED_WRITABLE_UNORDERED` permits stable-address in-place mutation without
+introducing cross-callable ordering; readers may therefore observe an older,
+newer, or concurrently changing value.
 
 Lease states have one meaning across execution and spill pools:
 
