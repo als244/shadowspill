@@ -43,12 +43,13 @@ void shadowspill_completion_tracker_destroy(
     ShadowSpillCompletionStream *stream = tracker->streams;
     while (stream != NULL) {
         ShadowSpillCompletionStream *next_stream = stream->next;
-        ShadowSpillCompletionRecord *record = stream->head;
-        while (record != NULL) {
-            ShadowSpillCompletionRecord *next_record = record->next;
-            (void)shadowspill_event_lease_release(runtime, record->event);
-            free(record);
-            record = next_record;
+        ShadowSpillEventLease *event = stream->head;
+        while (event != NULL) {
+            ShadowSpillEventLease *next_event = event->completion_next;
+            event->completion_next = NULL;
+            event->completion_linked = 0U;
+            (void)shadowspill_event_lease_release(runtime, event);
+            event = next_event;
         }
         free(stream);
         stream = next_stream;
@@ -68,17 +69,12 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
     if (runtime == NULL || event == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillCompletionRecord *record = calloc(1U, sizeof(*record));
-    if (record == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
-    record->event = event;
-    record->object_id = object_id;
-    record->allocation_id = allocation_id;
-    shadowspill_event_lease_retain(event);
-
     ShadowSpillCompletionTracker *tracker = &runtime->completions;
     pthread_mutex_lock(&tracker->lock);
+    if (event->completion_linked) {
+        pthread_mutex_unlock(&tracker->lock);
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     ShadowSpillCompletionStream *owner = tracker->streams;
     while (owner != NULL && !stream_equal(owner->stream, stream)) {
         owner = owner->next;
@@ -87,20 +83,23 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
         owner = calloc(1U, sizeof(*owner));
         if (owner == NULL) {
             pthread_mutex_unlock(&tracker->lock);
-            (void)shadowspill_event_lease_release(runtime, event);
-            free(record);
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
         owner->stream = stream;
         owner->next = tracker->streams;
         tracker->streams = owner;
     }
+    event->completion_object_id = object_id;
+    event->completion_allocation_id = allocation_id;
+    event->completion_next = NULL;
+    event->completion_linked = 1U;
+    shadowspill_event_lease_retain(event);
     if (owner->tail == NULL) {
-        owner->head = record;
+        owner->head = event;
     } else {
-        owner->tail->next = record;
+        owner->tail->completion_next = event;
     }
-    owner->tail = record;
+    owner->tail = event;
     ++tracker->pending;
     pthread_mutex_unlock(&tracker->lock);
     return SHADOWSPILL_RUNTIME_OK;
@@ -129,13 +128,13 @@ int shadowspill_completion_poll(
     while (stream != NULL) {
         for (;;) {
             pthread_mutex_lock(&tracker->lock);
-            ShadowSpillCompletionRecord *record = stream->head;
+            ShadowSpillEventLease *event = stream->head;
             const uint64_t due = stream->next_poll_timestamp_ns;
-            if (record != NULL && (due == 0U || due <= now)) {
-                shadowspill_event_lease_retain(record->event);
+            if (event != NULL && (due == 0U || due <= now)) {
+                shadowspill_event_lease_retain(event);
             }
             pthread_mutex_unlock(&tracker->lock);
-            if (record == NULL) {
+            if (event == NULL) {
                 break;
             }
             if (due != 0U && due > now) {
@@ -149,19 +148,19 @@ int shadowspill_completion_poll(
 
             int complete = 0;
             const int query_status = shadowspill_event_lease_query(
-                runtime, record->event, &complete
+                runtime, event, &complete
             );
             pthread_mutex_lock(&tracker->lock);
-            if (stream->head != record) {
+            if (stream->head != event) {
                 pthread_mutex_unlock(&tracker->lock);
-                (void)shadowspill_event_lease_release(runtime, record->event);
+                (void)shadowspill_event_lease_release(runtime, event);
                 continue;
             }
             if (query_status != 0) {
-                *failure_object_id = record->object_id;
-                *failure_allocation_id = record->allocation_id;
+                *failure_object_id = event->completion_object_id;
+                *failure_allocation_id = event->completion_allocation_id;
                 pthread_mutex_unlock(&tracker->lock);
-                (void)shadowspill_event_lease_release(runtime, record->event);
+                (void)shadowspill_event_lease_release(runtime, event);
                 return -1;
             }
             if (!complete) {
@@ -172,21 +171,22 @@ int shadowspill_completion_poll(
                     *next_poll_nanoseconds = delay;
                 }
                 pthread_mutex_unlock(&tracker->lock);
-                (void)shadowspill_event_lease_release(runtime, record->event);
+                (void)shadowspill_event_lease_release(runtime, event);
                 break;
             }
-            stream->head = record->next;
+            stream->head = event->completion_next;
             if (stream->head == NULL) {
                 stream->tail = NULL;
             }
+            event->completion_next = NULL;
+            event->completion_linked = 0U;
             stream->next_poll_timestamp_ns = 0U;
             if (tracker->pending != 0U) {
                 --tracker->pending;
             }
             pthread_mutex_unlock(&tracker->lock);
-            (void)shadowspill_event_lease_release(runtime, record->event);
-            (void)shadowspill_event_lease_release(runtime, record->event);
-            free(record);
+            (void)shadowspill_event_lease_release(runtime, event);
+            (void)shadowspill_event_lease_release(runtime, event);
             changed = 1;
         }
         stream = stream->next;
