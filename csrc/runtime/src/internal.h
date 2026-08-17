@@ -1154,7 +1154,7 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
-    uint64_t allocation_id,
+    const void *pointer,
     const ShadowSpillTaskRecord *task,
     ShadowSpillObjectBinding *binding
 );
@@ -1162,7 +1162,7 @@ ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
-    uint64_t allocation_id,
+    const void *pointer,
     ShadowSpillObjectBinding *binding
 );
 void shadowspill_task_table_destroy(ShadowSpillTaskTable *table);
