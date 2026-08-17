@@ -896,3 +896,22 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Fine-grained output publication
+
+- Removed the runtime-global mutex from task output publication. Binding now
+  snapshots the lease's direct prior owner, locks the target and prior owner in
+  deterministic pointer order, then validates and commits beneath only the
+  plan-selected pool lock.
+- Changed internal bind and replacement helpers to accept the compiled output
+  pointer directly. This removes the prior pointer-to-allocation lookup followed
+  by a second allocation-ID lookup; replacement performs one pointer-index
+  lookup, while zero-copy bind performs one snapshot lookup and one protected
+  revalidation because it must discover which admitted release record owns the
+  handoff.
+- The repeated path performs no runtime object-table lookup and never calls a
+  backend while holding an object or pool lock. Public logical object identity
+  remains unchanged; only the generation's physical lease is rebound.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
