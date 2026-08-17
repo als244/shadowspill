@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -50,6 +51,15 @@ def test_allocation_probe_matrix_is_part_of_profile_identity() -> None:
     )
 
     assert len({first.digest, more_seeds.digest, more_repetitions.digest}) == 3
+
+
+def test_task_measurement_rejects_legacy_allocation_schema() -> None:
+    measurement = TaskMeasurement(1, 0, 0, (), (1,), "test")
+    legacy = measurement.to_dict()
+    legacy["allocation_abi"] = legacy.pop("allocation_contract")
+
+    with pytest.raises(ValueError, match="invalid schema"):
+        TaskMeasurement.from_dict(legacy)
 
 
 class _Repeated(nn.Module):
