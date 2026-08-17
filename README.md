@@ -12,9 +12,10 @@ From a fresh checkout:
 ./scripts/setup.sh
 ```
 
-The script creates `.venv`, installs the supported PyTorch and CUDA stack,
-builds the C planner, simulator, runtime, backend, and PyTorch adapter, and
-verifies the installation. To use an existing virtual or Conda environment:
+The script creates `.venv`, installs the supported PyTorch and device-backend
+stack, builds the C planner, simulator, runtime, backend, and PyTorch adapter,
+and verifies the installation. To use an existing virtual or Conda
+environment:
 
 ```bash
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"

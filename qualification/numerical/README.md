@@ -35,8 +35,9 @@ records all tolerances and planning phase timings used for that run. Physical
 qualification checks the sealed cap
 after planning, after each of the five steps, and after both replay steps. It
 also requires the observed process high-water to remain within the public cap,
-one initial CUDA slab allocation, no steady-state device or pinned allocation,
-bounded slab/host peaks, and no allocator callback or pointer-lookup failure.
+one initial execution-pool arena allocation, no steady-state pool-arena
+allocation, bounded execution/spill peaks, and no allocator callback or
+pointer-lookup failure.
 By default, the JSON contains compact correctness, physical-budget, planning,
 and step-summary evidence and planning artifacts are not retained. Add
 `--detailed-artifacts` to write the complete PlanReport, per-task traces, and

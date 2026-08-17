@@ -153,10 +153,9 @@ publication, releases, and action submission. A transfer dependency is placed
 on the compute stream instead of making the dispatcher wait on the host when
 stream ordering can express the dependency.
 
-The supported topology has one execution-device pool, one registered
-pinned-host spill pool, independent fetch and evict lanes, and one C worker.
-The worker services lane submission, completion frontiers, and deferred
-releases. It does not hold a general-purpose global runtime mutex.
+The runtime composes execution and spill pools with directed fetch and evict
+lanes. Its worker services lane submission, completion frontiers, and deferred
+releases without holding a general-purpose global runtime mutex.
 
 ## Component ownership
 
@@ -171,8 +170,8 @@ releases. It does not hold a general-purpose global runtime mutex.
 | Backend | Provider allocation, copy, stream, event, and profiler operations | Object or schedule policy |
 
 The framework-neutral IR, planner, simulator, admission engine, and runtime do
-not import PyTorch. CUDA driver calls and NVTX implementation remain inside the
-CUDA backend or PyTorch allocator adapter.
+not import PyTorch. Provider driver and profiler calls remain inside concrete
+backends or framework adapters.
 
 ## One logical object through the system
 
@@ -226,20 +225,19 @@ Pointers therefore describe current placement, not semantic identity.
 | Physical admission | Proof that task allocations, object generations, transfers, and causal reuse fit the selected pools. |
 | Memory lease | Ownership of one pool range for one residency generation. |
 
-## Supported scope
+## Planning contract
 
-| Capability | Current contract |
+| Capability | Contract |
 |---|---|
 | Graph geometry | Fixed shape and stride under captured guards |
 | Capture | Strict Export/AOTAutograd/Inductor with no graph breaks |
 | Custom operations | Supported when fake/meta and alias/mutation schemas are complete |
 | Data-dependent outputs | Unbounded output geometry is rejected during planning |
-| Execution backend | PyTorch on one CUDA execution device |
-| Spill backend | One registered pinned-host pool |
-| Runtime ownership | One process runtime and one active planned callable |
-| Transfer topology | One worker with independent fetch and evict lanes |
+| Execution pools | Framework-accessible memory supplied by configured device backends |
+| Spill pools | Runtime-configured memory pools connected by directed transfer routes |
+| Runtime ownership | Runtime-owned pools, objects, leases, and callable registrations |
+| Transfer topology | Backend-provided ordered lanes serviced by the runtime worker |
 | Allocation variability | Admitted strict core plus bounded optional dynamic scratch |
-| Cross-step residency | Not represented; startup fetches and final cooldown remain visible |
 
 Unsupported behavior fails during capture, compilation, profiling, or
 admission instead of selecting a heuristic semantic fallback.

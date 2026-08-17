@@ -24,10 +24,10 @@ neutral runtime and translates Python/ATen-facing values into runtime handles.
 - `shadowspill_pytorch_cuda_record_stream()`
 - `shadowspill_pytorch_allocation_for_pointer()`
 
-The `cuda` spelling on callback symbols matches PyTorch's allocator hook. The
-neutral runtime and pool API do not use provider names. A nonzero allocation
-failure is surfaced as a typed frontend exception before compiled code can use
-an invalid address.
+The provider-specific spelling on these callback symbols matches PyTorch's
+allocator hook. The neutral runtime and pool API do not use provider names. A
+nonzero allocation failure is surfaced as a typed frontend exception before
+compiled code can use an invalid address.
 
 ## Objects and storage
 

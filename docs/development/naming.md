@@ -19,15 +19,15 @@
 
 ## Provider boundaries
 
-`host`, `device`, `CUDA`, `ROCm`, and provider API names are used only for
-concrete pool/backend implementations, hardware identity, physical-accounting
-reports, or framework adapter edges. They do not define generic pool, lease,
-route, planner, simulator, or runtime semantics.
+Provider and hardware API names are used only for concrete pool/backend
+implementations, hardware identity, physical-accounting reports, or framework
+adapter edges. They do not define generic pool, lease, route, planner,
+simulator, or runtime semantics.
 
 The supported default execution-pool factory is named `device()` because its
-contract is accelerator memory usable by PyTorch. CUDA-specific APIs remain in
-the CUDA backend. The PyTorch allocator callback symbols retain `cuda` where
-that spelling is required by the framework hook.
+contract is accelerator memory usable by PyTorch. Provider-specific APIs
+remain in their backend. PyTorch allocator callback symbols retain the
+provider spelling required by the framework hook.
 
 ## Avoid
 

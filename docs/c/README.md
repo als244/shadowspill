@@ -52,6 +52,7 @@ diagnostics.
 ## Build boundaries
 
 The simulator, planner, neutral runtime, and mock backend build without
-PyTorch or CUDA. Provider code is confined to runtime backend directories and
-the PyTorch adapter. See the [compiled component guide](../../csrc/README.md)
-for source layout and build dependencies.
+PyTorch or a device-provider SDK. Provider code is confined to runtime backend
+directories and the PyTorch adapter. See the
+[compiled component guide](../../csrc/README.md) for source layout and build
+dependencies.

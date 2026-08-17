@@ -65,7 +65,7 @@ csrc/
 ├── runtime/
 │   ├── include/shadowspill/{runtime,admission_replay,backend,profiler}.h
 │   ├── src/internal/
-│   └── backends/{mock,cuda}/
+│   └── backends/{mock,<provider>}/
 ├── planner/
 │   ├── include/shadowspill/planner.h
 │   └── src/
@@ -85,7 +85,7 @@ The test tree mirrors the boundary under test:
 ```text
 tests/
 ├── shadowspill/           package tests matching src/shadowspill subpackages
-├── csrc/                  C, mock-backend, sanitizer, and CUDA canaries
+├── csrc/                  C, mock-backend, sanitizer, and device canaries
 ├── integration/           fresh-process framework/backend integration
 ├── tools/                 source-tree tool tests
 ├── workloads/             workload definition tests
@@ -105,8 +105,9 @@ suite.
 
 The script creates `.venv`, installs PyTorch with the machine accelerator
 backend, builds and installs every compiled component, installs development
-dependencies, and verifies the GPU, component libraries, ABI loading, and
-PyTorch storage adapter. To use an existing virtual or Conda environment:
+dependencies, and verifies the device backend, component libraries, ABI
+loading, and PyTorch storage adapter. To use an existing virtual or Conda
+environment:
 
 ```bash
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
@@ -131,8 +132,8 @@ cmake --build build/dev --parallel
 ctest --test-dir build/dev --output-on-failure
 ```
 
-CUDA integration tests require an installed CUDA/PyTorch toolchain and are
-marked `cuda`. Accelerator-free runtime tests use the mock backend.
+Device integration tests require a matching provider/PyTorch toolchain.
+Accelerator-free runtime tests use the mock backend.
 
 ## Documentation changes
 

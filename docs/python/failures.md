@@ -131,10 +131,10 @@ when the failing request already has those identities.
 ShadowSpill replaces a secondary provider error only when its own allocator or
 execution contract already identified the cause. Examples are a no-progress
 OOM, an allocation-envelope violation, and an allocation-ABI mismatch. This
-prevents a later invalid-address or null-pointer CUDA error from hiding the
+prevents a later invalid-address or null-pointer device error from hiding the
 actionable failure.
 
-An unrelated kernel, compiler, CUDA, or provider failure remains the primary
+An unrelated kernel, compiler, device-backend, or provider failure remains the primary
 exception. ShadowSpill records cleanup problems as notes but does not relabel a
 bad kernel as an allocator OOM.
 

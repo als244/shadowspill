@@ -38,7 +38,7 @@ The resolved `StepDiagnostics` has seven main views:
 | `transfers` | Selected actions, real transfer events, totals, and per-transfer comparison. |
 | `allocator` | Ordered allocation/free events and terminal pool geometry. |
 | `runtime` | Runtime counters, queue state, failure counts, and trace integrity. |
-| `timing` | Call-level host/GPU phase totals and the same task mapping. |
+| `timing` | Call-level host/device phase totals and the same task mapping. |
 
 Task dictionaries are keyed by chronological `execution_XXXXXX`, matching
 `PlanReport.diagnostics.tasks`.
@@ -236,7 +236,8 @@ contains:
 | Deltas | simulated-versus-real start, end, and duration |
 
 The real interval is the host worker's observed transfer frontier, aligned to
-the first scheduled transfer. It is not a CUDA-event bandwidth microbenchmark.
+the first scheduled transfer. It is not a backend-event bandwidth
+microbenchmark.
 Use an NSYS trace when exact provider API nesting or wire overlap is required.
 
 Check action identity and byte totals before interpreting timing. A mismatch
@@ -312,7 +313,7 @@ plan and has no `from_json()` planning constructor.
 |---|---|
 | Real span is slower than simulated | Summary task-event delta versus inter-task-gap delta. |
 | One task is slower than profiled | Per-task duration comparison, then allocator events within that task. |
-| GPU has gaps between graph tasks | Real task start/end sequence, readiness gaps, and complete host boundary costs. |
+| Device execution has gaps between graph tasks | Real task start/end sequence, readiness gaps, and complete host boundary costs. |
 | Fetch appears late | Per-transfer simulated/real start, queue/reservation time, worker dispatch, and prior FIFO transfers. |
 | Memory unexpectedly fills | Charged allocator events, peak bytes, largest free range, pending retirements, and action destinations. |
 | A step appears to leak | Compare before/after live bytes and repeat across steps; include terminal caller-owned outputs in the interpretation. |

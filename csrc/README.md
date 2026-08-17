@@ -15,7 +15,8 @@ csrc/
 Public C headers live under each component's `include/shadowspill/` directory.
 Implementation files and private headers live under `src/`. The runtime alone
 has backend implementations: `mock` supports accelerator-free testing and
-`cuda` supplies device pools, streams, events, copies, and NVTX profiling.
+provider backends supply device pools, streams, events, copies, and profiler
+annotations.
 The [C API guide](../docs/c/README.md) documents ownership, threading, and each
 public component boundary.
 
@@ -30,6 +31,6 @@ runtime ───┘
 ```
 
 The simulator never calls the planner. The runtime has no PyTorch dependency.
-Only `runtime/backends/cuda/` and `pytorch_adapter/` require the CUDA/PyTorch
-toolchains; the simulator, planner, runtime, and mock backend build without
-them.
+Only concrete provider backends and `pytorch_adapter/` require their device and
+PyTorch toolchains; the simulator, planner, runtime, and mock backend build
+without them.

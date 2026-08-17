@@ -489,9 +489,7 @@ It does not guarantee:
 - a global minimum over arbitrary residency intervals or transfer triggers;
 - exhaustive selection of large Program-alternative products;
 - feasibility after runtime behavior violates the admitted allocation
-  contract;
-- prediction of cross-step cyclic residency, which is outside the current
-  Program schedule.
+  contract.
 
 `PressureFitInfeasibleError` means a necessary-condition preflight failed or
 every candidate in the bounded evaluated portfolio was rejected without a

@@ -54,8 +54,8 @@ can compare, execution by execution and transfer by transfer:
 - simulated and real selected-task span.
 
 Simulator fidelity is evaluated on warmed execution. Startup fetches and final
-cooldown are reported separately because cross-step cyclic residency is not
-yet part of the schedule model.
+cooldown are reported separately so their transfer and readiness costs remain
+visible rather than being folded into selected-task timing.
 
 The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span

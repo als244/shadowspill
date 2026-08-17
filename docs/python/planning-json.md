@@ -56,10 +56,10 @@ An abridged `Program` has this shape:
 {
   "schema": "shadowspill.program/v1",
   "devices": [
-    {"device_id": "cuda_0", "process_id": "process_0", "kind": "cuda", "index": 0}
+    {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
   ],
   "alias_groups": [
-    {"alias_group_id": "alias_0", "device_id": "cuda_0", "size_bytes": 4096,
+    {"alias_group_id": "alias_0", "device_id": "device_0", "size_bytes": 4096,
      "initial_version": 0, "retain_spill_copy": false}
   ],
   "objects": [
@@ -71,7 +71,7 @@ An abridged `Program` has this shape:
      "compatibility_digest": "..."}
   ],
   "tasks": [
-    {"task_id": "task_0", "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+    {"task_id": "task_0", "resource": {"device_id": "device_0", "kind": "compute", "lane": 0},
      "profile_id": "profile_0", "dependencies": [], "inputs": [],
      "outputs": ["activation_0"], "mutations": [], "phase": "forward",
      "requires_entrypoint": true}

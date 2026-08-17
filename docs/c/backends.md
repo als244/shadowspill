@@ -57,6 +57,6 @@ threads and must keep submitted memory valid through the recorded completion.
 Missing callbacks are no-ops and cannot affect execution semantics. Runtime
 code uses this interface rather than importing NVTX or another provider API.
 
-The CUDA backend implements device and registered-host pools, fetch and evict
-streams, events, copies, and NVTX annotations. The mock backend implements the
-same neutral contracts for accelerator-free unit and sanitizer tests.
+Device-provider backends implement execution and spill pools, fetch and evict
+lanes, events, copies, and profiler annotations. The mock backend implements
+the same neutral contracts for accelerator-free unit and sanitizer tests.

@@ -657,6 +657,26 @@ def test_current_contract_docs_avoid_historical_version_language() -> None:
     assert not violations, f"historical language in current-contract docs: {violations}"
 
 
+def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
+    forbidden = re.compile(
+        r"\b(?:CUDA|ROCm)\b|"
+        r"\b(?:one|single) (?:GPU|execution(?:-device)? pool|execution device)\b|"
+        r"\b(?:cross-step )?cyclic residency\b",
+        re.IGNORECASE,
+    )
+    violations = {
+        path.relative_to(ROOT).as_posix(): sorted(
+            set(forbidden.findall(path.read_text()))
+        )
+        for path in _normative_markdown_files()
+    }
+    violations = {path: values for path, values in violations.items() if values}
+    assert not violations, (
+        "provider or topology language in current-contract docs: "
+        f"{violations}"
+    )
+
+
 def test_investigations_are_marked_non_normative() -> None:
     reports = tuple(
         path
