@@ -334,12 +334,6 @@ class CandidateDiagnostic:
         object.__setattr__(self, "prefetch_rule", rule)
         object.__setattr__(self, "coalesced", coalesced)
 
-    @property
-    def repair_attempts(self) -> int:
-        """Compatibility shorthand for the categorized repair total."""
-
-        return self.repairs.total_attempts
-
     def to_dict(self) -> dict[str, object]:
         return {
             "candidate_policy": {
@@ -362,8 +356,6 @@ class CandidateDiagnostic:
     @classmethod
     def from_value(cls, value: object, path: str) -> CandidateDiagnostic:
         data = _mapping(value, path)
-        if "candidate_policy" not in data:
-            return cls._from_legacy_value(data, path)
         policy = _mapping(data.get("candidate_policy"), f"{path}.candidate_policy")
         outcome = _mapping(data.get("outcome"), f"{path}.outcome")
         result = cls(
@@ -416,31 +408,6 @@ class CandidateDiagnostic:
                 f"{path}.candidate_policy fields do not match candidate_id"
             )
         return result
-
-    @classmethod
-    def _from_legacy_value(
-        cls, data: dict[str, object], path: str
-    ) -> CandidateDiagnostic:
-        candidate_id = _string(data.get("candidate_id"), f"{path}.candidate_id")
-        attempts = _integer(data.get("repair_attempts", 0), f"{path}.repair_attempts")
-        return cls(
-            candidate_id=candidate_id,
-            selection_id=_string(data.get("selection_id"), f"{path}.selection_id"),
-            status=_string(data.get("status"), f"{path}.status"),
-            makespan_ns=_optional_integer(
-                data.get("makespan_ns"), f"{path}.makespan_ns"
-            ),
-            schedule_digest=_optional_string(
-                data.get("schedule_digest"), f"{path}.schedule_digest"
-            ),
-            failure_kind=_optional_string(
-                data.get("failure_kind"), f"{path}.failure_kind"
-            ),
-            failure_detail=_optional_string(
-                data.get("failure_detail"), f"{path}.failure_detail"
-            ),
-            repairs=PressureFitRepairDiagnostics(unclassified_attempts=attempts),
-        )
 
     def with_selection_id(self, selection_id: str) -> CandidateDiagnostic:
         """Attach the containing recomputation context after deserialization."""
@@ -688,10 +655,7 @@ class PressureFitDiagnostics:
         if context.selected_makespan_ns != self.selected_makespan_ns:
             raise ValueError("global and context selected makespans disagree")
 
-    @property
-    def candidates(self) -> tuple[CandidateDiagnostic, ...]:
-        """Flattened compatibility view of all policy evaluations."""
-
+    def _candidate_evaluations(self) -> tuple[CandidateDiagnostic, ...]:
         return tuple(
             candidate
             for context in self.recomputation_contexts
@@ -704,15 +668,17 @@ class PressureFitDiagnostics:
 
     @property
     def candidate_policy_count(self) -> int:
-        return len({item.candidate_id for item in self.candidates})
+        return len({item.candidate_id for item in self._candidate_evaluations()})
 
     @property
     def candidate_evaluation_count(self) -> int:
-        return len(self.candidates)
+        return len(self._candidate_evaluations())
 
     @property
     def valid_candidate_evaluation_count(self) -> int:
-        return sum(item.status == "valid" for item in self.candidates)
+        return sum(
+            item.status == "valid" for item in self._candidate_evaluations()
+        )
 
     @property
     def valid_recomputation_context_count(self) -> int:
@@ -722,27 +688,21 @@ class PressureFitDiagnostics:
         )
 
     @property
-    def candidate_count(self) -> int:
-        """Compatibility alias for candidate-evaluation count."""
-
-        return self.candidate_evaluation_count
-
-    @property
-    def valid_candidate_count(self) -> int:
-        """Compatibility alias for valid candidate-evaluation count."""
-
-        return self.valid_candidate_evaluation_count
-
-    @property
     def repairs(self) -> PressureFitRepairDiagnostics:
         result = PressureFitRepairDiagnostics()
-        for candidate in self.candidates:
+        for candidate in self._candidate_evaluations():
             result += candidate.repairs
         return result
 
     @property
     def candidate_status_counts(self) -> dict[str, int]:
-        return dict(sorted(Counter(item.status for item in self.candidates).items()))
+        return dict(
+            sorted(
+                Counter(
+                    item.status for item in self._candidate_evaluations()
+                ).items()
+            )
+        )
 
     def with_selected_makespan(self, makespan_ns: int) -> PressureFitDiagnostics:
         """Replace the selected policy's admission-aware timing consistently."""
@@ -826,7 +786,7 @@ class PressureFitDiagnostics:
     def from_value(cls, value: object, path: str) -> PressureFitDiagnostics:
         data = _mapping(value, path)
         if data.get("schema") != cls.SCHEMA:
-            return cls._from_legacy_value(data, path)
+            raise ValueError(f"{path}.schema: unsupported schema")
         selection = _mapping(data.get("selection"), f"{path}.selection")
         summary = _mapping(data.get("summary"), f"{path}.summary")
         refinement = _mapping(
@@ -917,103 +877,6 @@ class PressureFitDiagnostics:
                 raise ValueError(f"{path}.summary.{name} does not reconcile")
         return result
 
-    @classmethod
-    def _from_legacy_value(
-        cls, data: dict[str, object], path: str
-    ) -> PressureFitDiagnostics:
-        raw_candidates = _list(data.get("candidates"), f"{path}.candidates")
-        candidates = tuple(
-            CandidateDiagnostic.from_value(item, f"{path}.candidates[{index}]")
-            for index, item in enumerate(raw_candidates)
-        )
-        grouped: dict[str, list[CandidateDiagnostic]] = {}
-        for candidate in candidates:
-            grouped.setdefault(candidate.selection_id, []).append(candidate)
-        selected_selection_id = _string(
-            data.get("selected_selection_id"), f"{path}.selected_selection_id"
-        )
-        selected_candidate_id = _string(
-            data.get("selected_candidate_id"), f"{path}.selected_candidate_id"
-        )
-        selected_makespan_ns = _integer(
-            data.get("selected_makespan_ns"), f"{path}.selected_makespan_ns"
-        )
-        contexts = tuple(
-            RecomputationContextDiagnostics(
-                selection_id=selection_id,
-                choices=_parse_selection_choices(selection_id),
-                selected_candidate_id=(
-                    selected_candidate_id
-                    if selection_id == selected_selection_id
-                    else _best_candidate_id(items)
-                ),
-                selected_makespan_ns=(
-                    selected_makespan_ns
-                    if selection_id == selected_selection_id
-                    else _best_candidate_makespan(items)
-                ),
-                candidate_evaluations=tuple(items),
-            )
-            for selection_id, items in grouped.items()
-        )
-        result = cls(
-            selected_candidate_id=_string(
-                data.get("selected_candidate_id"), f"{path}.selected_candidate_id"
-            ),
-            selected_selection_id=selected_selection_id,
-            selected_makespan_ns=selected_makespan_ns,
-            recomputation_contexts=contexts,
-            admission_refinements=tuple(
-                AdmissionRefinement(
-                    attempt=_integer(
-                        item.get("attempt"),
-                        f"{path}.admission_refinements[{index}].attempt",
-                    ),
-                    previous_object_capacity_bytes=_integer(
-                        item.get("previous_object_capacity_bytes"),
-                        f"{path}.admission_refinements[{index}].previous_object_capacity_bytes",
-                    ),
-                    required_additional_slack_bytes=_integer(
-                        item.get("required_additional_slack_bytes"),
-                        f"{path}.admission_refinements[{index}].required_additional_slack_bytes",
-                    ),
-                    reserve_increment_bytes=_integer(
-                        item.get("reserve_increment_bytes"),
-                        f"{path}.admission_refinements[{index}].reserve_increment_bytes",
-                    ),
-                    object_capacity_bytes=_integer(
-                        item.get("object_capacity_bytes"),
-                        f"{path}.admission_refinements[{index}].object_capacity_bytes",
-                    ),
-                )
-                for index, raw in enumerate(
-                    _list(
-                        data.get("admission_refinements", []),
-                        f"{path}.admission_refinements",
-                    )
-                )
-                for item in (
-                    _mapping(raw, f"{path}.admission_refinements[{index}]"),
-                )
-            ),
-            effective_object_capacity_bytes=_optional_integer(
-                data.get("effective_object_capacity_bytes"),
-                f"{path}.effective_object_capacity_bytes",
-            ),
-        )
-        declared_count = _integer(
-            data.get("candidate_count"), f"{path}.candidate_count"
-        )
-        declared_valid = _integer(
-            data.get("valid_candidate_count"), f"{path}.valid_candidate_count"
-        )
-        if declared_count != result.candidate_evaluation_count:
-            raise ValueError(f"{path}.candidate_count does not reconcile")
-        if declared_valid != result.valid_candidate_evaluation_count:
-            raise ValueError(f"{path}.valid_candidate_count does not reconcile")
-        return result
-
-
 def _parse_candidate_id(value: str) -> tuple[str, str, bool]:
     coalesced = value.endswith("-coalesced")
     base = value[: -len("-coalesced")] if coalesced else value
@@ -1021,48 +884,6 @@ def _parse_candidate_id(value: str) -> tuple[str, str, bool]:
     if not separator:
         return "unknown", "unknown", coalesced
     return strategy, rule, coalesced
-
-
-def _parse_selection_choices(
-    selection_id: str,
-) -> tuple[RecomputationChoiceDiagnostic, ...]:
-    if selection_id == "none":
-        return ()
-    choices: list[RecomputationChoiceDiagnostic] = []
-    for index, item in enumerate(selection_id.split(",")):
-        group_id, separator, option_id = item.partition("=")
-        if not separator or not group_id or not option_id:
-            return (
-                RecomputationChoiceDiagnostic(
-                    group_id=f"legacy_selection_{index}",
-                    option_id=item,
-                ),
-            )
-        choices.append(RecomputationChoiceDiagnostic(group_id, option_id))
-    return tuple(choices)
-
-
-def _best_candidate(
-    candidates: list[CandidateDiagnostic],
-) -> CandidateDiagnostic | None:
-    valid = tuple(
-        item
-        for item in candidates
-        if item.status == "valid" and item.makespan_ns is not None
-    )
-    if not valid:
-        return None
-    return min(valid, key=lambda item: (item.makespan_ns, item.candidate_id))
-
-
-def _best_candidate_id(candidates: list[CandidateDiagnostic]) -> str | None:
-    best = _best_candidate(candidates)
-    return None if best is None else best.candidate_id
-
-
-def _best_candidate_makespan(candidates: list[CandidateDiagnostic]) -> int | None:
-    best = _best_candidate(candidates)
-    return None if best is None else best.makespan_ns
 
 
 def _mapping(value: object, path: str) -> dict[str, object]:

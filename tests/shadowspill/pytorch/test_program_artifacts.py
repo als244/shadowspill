@@ -152,15 +152,17 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     assert cached.pressurefit_cache_hit
     assert cached.digest == selected.digest
 
-    legacy = dict(encoded)
-    legacy["timing"] = {
+    old_timing = dict(encoded)
+    old_timing["timing"] = {
         "pressurefit_and_admission_wall_time_ns": selected.wall_time_ns
     }
-    restored_legacy = AnnotatedProgramPlan.from_dict(legacy)
-    assert restored_legacy.digest == selected.digest
-    assert restored_legacy.wall_time_ns == selected.wall_time_ns
-    assert restored_legacy.pressurefit_wall_time_ns == 0
-    assert restored_legacy.physical_admission_wall_time_ns == 0
+    with pytest.raises(ValueError, match="refinement_attempts"):
+        AnnotatedProgramPlan.from_dict(old_timing)
+
+    old_schema = dict(encoded)
+    old_schema["schema"] = "shadowspill.annotated_program_plan/v1"
+    with pytest.raises(ValueError, match="unsupported schema"):
+        AnnotatedProgramPlan.from_dict(old_schema)
 
 
 def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:

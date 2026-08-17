@@ -597,3 +597,21 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Strict current planning artifacts and diagnostics
+
+- Removed annotated-plan schema-v1 acceptance and the old aggregate timing
+  reconstruction. Deserialization now requires schema v2, complete per-attempt
+  PressureFit/admission timings, and reconciled timing totals.
+- Removed the flat PressureFit-diagnostics reader that reconstructed
+  recomputation contexts from selection strings, including its synthesized
+  `legacy_selection_*` identities. Candidate records likewise require the
+  current nested policy/outcome/repair/work shape.
+- Removed flattened diagnostics compatibility aliases. Callers now inspect the
+  explicit recomputation-context and candidate-evaluation hierarchy; repair
+  totals are read from their categorized repair diagnostics.
+- Added fail-closed tests for old annotated-plan, timing, candidate, and
+  PressureFit-diagnostics shapes.
+- Validation passed: the complete Python suite with four expected skips; the
+  focused planner, artifact, admission, and documentation suites; Ruff; strict
+  mypy over 177 installed source files; and `git diff --check`.
