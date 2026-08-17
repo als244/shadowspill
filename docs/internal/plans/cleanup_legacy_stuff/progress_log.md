@@ -851,3 +851,25 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Direct zero-copy handoff records
+
+- Removed the `after_task()` scan over every active execution-pool lease and
+  the object-ID handoff chains that scan consumed. Its sole invariant was that
+  a compiled output reusing another logical object's lease must release the
+  prior logical owner in the same admitted task.
+- Task admission now builds a sorted direct map from retained object pointer
+  to its predecoded release action. Output publication performs one direct
+  lookup, records the exact lease pointer and generation on that action, and
+  fails before changing either object when the release is absent.
+- Replaced each lease's numeric bound-object identity with a stable direct
+  object reference. The worker validates the generation-matched handoff lease
+  directly and never hashes a runtime object ID or walks a logical-owner
+  chain. Chained zero-copy publication remains valid even while earlier
+  release fences are pending.
+- Added native coverage proving a missing admitted release produces
+  `PLAN_VIOLATION` at publication with no partial binding, in addition to the
+  existing one-hop and chained handoff cases.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.

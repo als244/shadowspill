@@ -571,12 +571,18 @@ static int output_allocation_handoff(void) {
         .object_id = source.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
+    const ShadowSpillTaskPublicationDescription publication = {
+        .object_id = target.object_id,
+        .kind = SHADOWSPILL_TASK_PUBLICATION_BIND,
+    };
     const ShadowSpillTaskDescription task = {
         .task_id = 9U,
         .input_object_ids = &input_id,
         .input_count = 1U,
         .actions = &release,
         .action_count = 1U,
+        .publications = &publication,
+        .publication_count = 1U,
     };
     int result = 0;
     if (shadowspill_register_object(fixture.runtime, &source) !=
@@ -592,8 +598,12 @@ static int output_allocation_handoff(void) {
             SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, task.task_id, fixture.compute, &input, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_test_publish_initial(
-            fixture.runtime, target.object_id, allocation.pointer, NULL
+        shadowspill_task_publish_allocation(
+            fixture.runtime,
+            shadowspill_test_task_handle(fixture.runtime, task.task_id),
+            0U,
+            allocation.pointer,
+            &input
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_test_after_task(
             fixture.runtime, task.task_id, fixture.compute
@@ -622,6 +632,73 @@ static int output_allocation_handoff(void) {
 done:
     fixture_destroy(&fixture);
     return result;
+}
+
+static int output_handoff_requires_admitted_release(void) {
+    Fixture fixture = {0};
+    if (fixture_create(&fixture) != 0) {
+        return -1;
+    }
+    const ShadowSpillObjectDescription source = {
+        .object_id = 11U,
+        .size_bytes = 32U,
+    };
+    const ShadowSpillObjectDescription target = {
+        .object_id = 12U,
+        .size_bytes = 32U,
+    };
+    const uint64_t input_id = source.object_id;
+    const ShadowSpillTaskPublicationDescription publication = {
+        .object_id = target.object_id,
+        .kind = SHADOWSPILL_TASK_PUBLICATION_BIND,
+    };
+    const ShadowSpillTaskDescription task = {
+        .task_id = 19U,
+        .input_object_ids = &input_id,
+        .input_count = 1U,
+        .publications = &publication,
+        .publication_count = 1U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillObjectBinding binding = {0};
+    int failed = shadowspill_register_object(fixture.runtime, &source) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(fixture.runtime, &target) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_memory_pool_allocate(
+            fixture.runtime, 0U, 32U, 1U, fixture.compute, &allocation
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_test_publish_initial(
+            fixture.runtime, source.object_id, allocation.pointer, NULL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_test_admit_task(fixture.runtime, &task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_test_before_task(
+            fixture.runtime, task.task_id, fixture.compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_task_publish_allocation(
+            fixture.runtime,
+            shadowspill_test_task_handle(fixture.runtime, task.task_id),
+            0U,
+            allocation.pointer,
+            &binding
+        ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION ||
+        shadowspill_abort_task_handle(
+            fixture.runtime,
+            shadowspill_test_task_handle(fixture.runtime, task.task_id)
+        ) != SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillObjectSnapshot source_snapshot = {0};
+    ShadowSpillObjectSnapshot target_snapshot = {0};
+    failed = failed || shadowspill_object_snapshot(
+            fixture.runtime, source.object_id, &source_snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            fixture.runtime, target.object_id, &target_snapshot
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        source_snapshot.execution_pointer != allocation.pointer ||
+        target_snapshot.execution_pointer != NULL;
+    fixture_destroy(&fixture);
+    return failed ? -1 : 0;
 }
 
 static int chained_output_allocation_handoff(void) {
@@ -664,12 +741,22 @@ static int chained_output_allocation_handoff(void) {
         .object_id = 2U,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
+    const ShadowSpillTaskPublicationDescription first_publication = {
+        .object_id = 2U,
+        .kind = SHADOWSPILL_TASK_PUBLICATION_BIND,
+    };
+    const ShadowSpillTaskPublicationDescription second_publication = {
+        .object_id = 3U,
+        .kind = SHADOWSPILL_TASK_PUBLICATION_BIND,
+    };
     const ShadowSpillTaskDescription first_execution = {
         .task_id = 9U,
         .input_object_ids = &first_input,
         .input_count = 1U,
         .actions = &first_release,
         .action_count = 1U,
+        .publications = &first_publication,
+        .publication_count = 1U,
     };
     const ShadowSpillTaskDescription second_execution = {
         .task_id = 10U,
@@ -677,6 +764,8 @@ static int chained_output_allocation_handoff(void) {
         .input_count = 1U,
         .actions = &second_release,
         .action_count = 1U,
+        .publications = &second_publication,
+        .publication_count = 1U,
     };
     int failed = 0;
     for (uint32_t index = 0U; index < 3U; ++index) {
@@ -692,14 +781,22 @@ static int chained_output_allocation_handoff(void) {
             runtime, &second_execution
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, 9U, compute, &binding, 1U
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_publish_initial(
-            runtime, 2U, allocation.pointer, NULL
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_task_publish_allocation(
+            runtime,
+            shadowspill_test_task_handle(runtime, 9U),
+            0U,
+            allocation.pointer,
+            &binding
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             runtime, 9U, compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, 10U, compute, &binding, 1U
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_publish_initial(
-            runtime, 3U, allocation.pointer, NULL
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_task_publish_allocation(
+            runtime,
+            shadowspill_test_task_handle(runtime, 10U),
+            0U,
+            allocation.pointer,
+            &binding
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             runtime, 10U, compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(runtime) !=
@@ -2267,6 +2364,7 @@ int main(void) {
     REQUIRE_CANARY(invalid_before_task(1U));
     REQUIRE_CANARY(duplicate_action());
     REQUIRE_CANARY(output_allocation_handoff());
+    REQUIRE_CANARY(output_handoff_requires_admitted_release());
     REQUIRE_CANARY(chained_output_allocation_handoff());
     REQUIRE_CANARY(valid_transition_paths());
     REQUIRE_CANARY(prefetch_window_is_submitted_without_wire_blocking());

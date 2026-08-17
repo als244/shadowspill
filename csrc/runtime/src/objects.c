@@ -98,10 +98,10 @@ static ShadowSpillRuntimeStatus release_object_residency(
             lease->allocation_id == object->allocation_id;
         if (is_execution_generation) {
             if (lease->logical_freed ||
-                lease->bound_object_id != object->object_id) {
+                lease->bound_object != object) {
                 status = SHADOWSPILL_RUNTIME_INVALID_STATE;
             } else {
-                lease->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+                lease->bound_object = NULL;
                 lease->plan_owned = 0U;
                 object->retired_generation = object->generation;
                 object->retired_execution_pointer = lease->pointer;
@@ -305,9 +305,6 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->authoritative_version = description->initial_version;
     created->retain_spill_copy = description->retain_spill_copy;
     created->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_destination_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_next_source_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->residency = description->initially_resident
         ? SHADOWSPILL_OBJECT_SPILL_ONLY
         : SHADOWSPILL_OBJECT_RELEASED;
@@ -576,6 +573,7 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
     uint64_t allocation_id,
+    const ShadowSpillTaskRecord *task,
     ShadowSpillObjectBinding *binding
 ) {
     if (runtime == NULL || pool == NULL || object == NULL) {
@@ -597,24 +595,19 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
-    ShadowSpillObject *previous_owner = NULL;
-    if (allocation->bound_object_id != SHADOWSPILL_RUNTIME_NO_ID) {
-        previous_owner = shadowspill_find_object(
-            runtime, allocation->bound_object_id
-        );
-        if (previous_owner == NULL || previous_owner == object ||
-            previous_owner->allocation_id != allocation_id) {
-            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-            goto done;
-        }
-    }
+    ShadowSpillObject *previous_owner = allocation->bound_object;
+    ShadowSpillQueuedAction *handoff_action = previous_owner == NULL
+        ? NULL : shadowspill_task_release_action(task, previous_owner);
     const uint64_t task_id = shadowspill_current_task_id(runtime);
     if (previous_owner != NULL &&
-        (previous_owner->handoff_task_id != SHADOWSPILL_RUNTIME_NO_ID ||
-         task_id == SHADOWSPILL_RUNTIME_NO_ID ||
+        (previous_owner == object ||
+         previous_owner->allocation_id != allocation_id ||
+         task == NULL || task->task_id != task_id ||
+         handoff_action == NULL || handoff_action->active ||
+         handoff_action->handoff_lease != NULL ||
          (previous_owner->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
           previous_owner->residency != SHADOWSPILL_OBJECT_PREFETCHING))) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         goto done;
     }
     allocation->plan_owned = 1;
@@ -630,33 +623,13 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
         goto done;
     }
     if (previous_owner != NULL) {
-        ShadowSpillObject *tail = NULL;
-        if (allocation->handoff_tail_object_id !=
-                SHADOWSPILL_RUNTIME_NO_ID) {
-            tail = shadowspill_find_object(
-                runtime, allocation->handoff_tail_object_id
-            );
-            if (tail == NULL || tail->handoff_next_source_object_id !=
-                    SHADOWSPILL_RUNTIME_NO_ID) {
-                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-                goto done;
-            }
-        }
-        previous_owner->handoff_destination_object_id = object->object_id;
-        previous_owner->handoff_task_id = task_id;
-        previous_owner->handoff_next_source_object_id =
-            SHADOWSPILL_RUNTIME_NO_ID;
-        if (tail == NULL) {
-            allocation->handoff_head_object_id = previous_owner->object_id;
-        } else {
-            tail->handoff_next_source_object_id = previous_owner->object_id;
-        }
-        allocation->handoff_tail_object_id = previous_owner->object_id;
+        handoff_action->handoff_lease = allocation;
+        handoff_action->handoff_generation = allocation->generation;
     }
     object->allocation_id = allocation_id;
     location->lease = allocation;
     location->current = 1U;
-    allocation->bound_object_id = object->object_id;
+    allocation->bound_object = object;
     object->generation = allocation->generation;
     location->version = object->authoritative_version;
     object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
@@ -706,6 +679,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_publish_initial_allocation(
             plan->execution_pool,
             object,
             allocation.allocation_id,
+            NULL,
             binding
         );
     }
@@ -749,7 +723,7 @@ ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
         prior->generation != object->generation || replacement == NULL ||
         replacement == prior || replacement->pointer == NULL ||
         replacement->logical_freed || replacement->plan_owned ||
-        replacement->bound_object_id != SHADOWSPILL_RUNTIME_NO_ID ||
+        replacement->bound_object != NULL ||
         replacement->requested_bytes < object->size_bytes) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
@@ -757,7 +731,7 @@ ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
 
     replacement->plan_owned = 1;
     replacement->ever_plan_owned = 1;
-    replacement->bound_object_id = object->object_id;
+    replacement->bound_object = object;
     replacement->state = SHADOWSPILL_LEASE_IN_USE;
     shadowspill_append_allocation_event_locked(
         runtime,
@@ -769,13 +743,13 @@ ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
         status = shadowspill_failure_status(runtime);
         replacement->plan_owned = 0;
         replacement->ever_plan_owned = 0;
-        replacement->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        replacement->bound_object = NULL;
         goto done;
     }
 
     object->retired_generation = object->generation;
     object->retired_execution_pointer = prior->pointer;
-    prior->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    prior->bound_object = NULL;
     prior->release_task_id = task_id;
     prior->logical_freed = 1;
     if (shadowspill_memory_pool_begin_retirement_locked(
@@ -877,6 +851,7 @@ ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
         record->plan_owner->execution_pool,
         publication->object,
         allocation.allocation_id,
+        record,
         binding
     );
 }
@@ -1036,7 +1011,7 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     }
     record->framework_free_seen = 0;
     record->plan_owned = 0;
-    record->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    record->bound_object = NULL;
     object->retired_generation = object->generation;
     object->retired_execution_pointer = record->pointer;
     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
