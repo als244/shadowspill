@@ -4,6 +4,13 @@ Include `<shadowspill/planner.h>`. The compiled planner evaluates one
 PressureFit candidate context or a complete predecoded Program context using
 the simulator and exact schedule admission.
 
+The framework-neutral problem formulation and complete algorithm are in the
+[PressureFit architecture page](../architecture/pressurefit.md). Training
+[graph-pair construction](../architecture/graph-pair-construction.md) and
+[complete recomputation selection](../architecture/recomputation-selection.md)
+are separate frontend/planner concerns. Exact range placement is documented in
+[physical admission](../architecture/physical-admission.md).
+
 ## Data model
 
 `ShadowSpillResidencyProblem` contains dense aliases, boundaries, initial and

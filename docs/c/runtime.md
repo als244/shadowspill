@@ -71,6 +71,8 @@ object references and predecoded actions for the complete plan lifetime.
 Physical placement is installed with `shadowspill_admit_fixed_layout()` and
 made immutable by `shadowspill_seal_fixed_layout()`. Allocation callbacks then
 validate task/ordinal/size/ownership before returning the admitted offset.
+See [Physical admission and offset handling](../architecture/physical-admission.md)
+for the layout certificate and offset coordinate systems.
 
 ## Telemetry and failure
 

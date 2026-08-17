@@ -60,7 +60,9 @@ Task and admitted-execution calls mirror the neutral runtime:
 - `shadowspill_pytorch_clear_execution_plan()`
 
 Fixed placement uses `shadowspill_pytorch_admit_fixed_layout()` and
-`shadowspill_pytorch_seal_fixed_layout()`.
+`shadowspill_pytorch_seal_fixed_layout()`. The certificate and its runtime
+projection are described in [Physical admission and offset
+handling](../architecture/physical-admission.md).
 
 ## Profiling and tracing
 

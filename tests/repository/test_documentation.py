@@ -320,6 +320,10 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "architecture/overview.md",
         "architecture/ir.md",
         "architecture/lowering.md",
+        "architecture/graph-pair-construction.md",
+        "architecture/pressurefit.md",
+        "architecture/recomputation-selection.md",
+        "architecture/physical-admission.md",
         "architecture/planning.md",
         "architecture/simulation.md",
         "architecture/memory-runtime.md",
@@ -431,6 +435,64 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
     assert not failures, "invalid documented Python examples:\n" + "\n".join(
         failures
     )
+
+
+def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
+    reference = (DOCS / "architecture" / "pressurefit.md").read_text()
+    for required in (
+        "## Inputs",
+        "## Output",
+        "## Mathematical formulation",
+        "## Current algorithm",
+        "## Pseudocode",
+        "PressureFitOptions",
+        "PressureFitResult",
+        "AdmissionTopology",
+        "PressureFitInfeasibleError",
+        "PressureFitSearchExhaustedError",
+    ):
+        assert required in reference
+
+    recomputation = (
+        DOCS / "architecture" / "recomputation-selection.md"
+    ).read_text()
+    for required in (
+        "## Inputs and output",
+        "## Current portfolio algorithm",
+        "## Pseudocode",
+        "RecomputationGroup",
+        "RecomputationOption",
+        "RecomputationSelection",
+    ):
+        assert required in recomputation
+
+    graph_pairs = (
+        DOCS / "architecture" / "graph-pair-construction.md"
+    ).read_text()
+    for required in (
+        "## Inputs and output",
+        "## Saved-value accounting",
+        "## Compilation and profiling",
+        "## Lowering into Program alternatives",
+        "GraphPairPortfolio",
+        "GraphPairVariant",
+        "RecomputationOption",
+    ):
+        assert required in graph_pairs
+
+    admission = (DOCS / "architecture" / "physical-admission.md").read_text()
+    for required in (
+        "## Inputs and output",
+        "## Capacity accounting",
+        "## Fixed placement",
+        "## Causal reuse dependencies",
+        "## Offset vocabulary",
+        "## Runtime adoption and validation",
+        "FixedPhysicalLayout",
+        "TaskAllocationABI",
+        "AdmissionTopology",
+    ):
+        assert required in admission
 
 
 def test_current_contract_docs_avoid_historical_version_language() -> None:

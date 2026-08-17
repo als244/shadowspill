@@ -1,4 +1,4 @@
-# Planning and physical admission
+# Planning orchestration
 
 Planning is a sequence of reusable artifact transformations. The public
 orchestrators are intentionally small; each artifact can also be constructed
@@ -6,10 +6,13 @@ or consumed independently. These transformations select and physically admit
 the [logical Program](ir.md); they do not recapture or execute the model.
 
 ```text
-capture/export and graph lowering
+capture/export and stage partitioning
+        -> graph-pair construction
         -> structural compilation and profiling
-        -> canonical StepProgram
+        -> canonical Program lowering
+        -> StepProgram
         -> PressureFitProgram
+        -> complete recomputation-selection portfolio
         -> pressurefit()
         -> fixed physical layout and admission
         -> AnnotatedProgramPlan
@@ -20,60 +23,31 @@ capture/export and graph lowering
 that saved program with new budgets or transfer bandwidths, so budget sweeps do
 not repeat capture, compilation, or profiling.
 
-## Recomputation portfolio
+## Policy selection
 
-For a small product of graph-pair choices, PressureFit evaluates every
-selection. For large binary save/recompute programs, the bounded
-portfolio tests evenly distributed 0%, 25%, 50%, 75%, and 100% recomputation
-across flexible groups. Forward-DAG sink groups are pinned to a save option so
-terminal heads are not needlessly recomputed. Non-binary groups retain a
-deterministic within-group memory-quantile fallback.
-
-Each recomputation selection becomes a parent context whose child
-candidates vary residency, eviction, fetch-trigger, and coalescing policies.
-Diagnostics retain both levels separately.
-
-## PressureFit
+[Recomputation selection](recomputation-selection.md) constructs the finite set
+of legal task-alternative contexts. [PressureFit](pressurefit.md) evaluates
+residency, eviction, fetch-trigger, and coalescing candidates within each
+context. The two levels remain separate in diagnostics.
 
 PressureFit works on logical object capacity after provider/fixed-service and
-allocator allowances. It evaluates candidate schedules through the required C
-planner and simulator. Missing or ABI-incompatible compiled libraries fail;
-there is no silent Python fallback. Python simulation remains an explicit
-timeline/debugging oracle.
-
-Candidate diagnostics include:
-
-- recomputation context and choice counts;
-- candidate policy identity;
-- simulation calls and pressure-boundary repairs;
-- feasibility or rejection reason;
-- predicted makespan, transfer bytes, stalls, and peak memory;
-- aggregate and per-context planning work.
+allocator allowances. It uses the required C planner and simulator; missing or
+ABI-incompatible libraries fail closed. Its dedicated page defines the full
+input/output contract, mathematical problem, bounded algorithm, repair rules,
+and pseudocode.
 
 ## Physical admission
 
-The selected logical schedule is not callable until a complete physical
-layout passes. The layout builder combines:
+The selected logical schedule is not callable until physical admission
+assigns its execution-pool ranges, proves every shared-range dependency, and
+re-simulates the resulting schedule. If it does not fit, orchestration lowers
+logical object capacity, reruns PressureFit, and retries against the unchanged
+physical pool.
 
-- initial object placement;
-- each selected task's strict allocation ABI core;
-- output promotion and mutation replacement;
-- task-completion retirements;
-- triggered transfer reservations;
-- causal reuse dependencies;
-- caller handoff and terminal residency.
-
-It assigns deterministic offsets, emits reuse dependencies, and re-simulates
-the physical schedule. If the layout does not fit, planning reduces logical
-object capacity in monotonic increments, reruns PressureFit, and retries
-admission. The frontend refinement uses 256 MiB increments through the
-first GiB and 512 MiB thereafter. The final report records every attempt and
-why it failed or succeeded.
-
-The admitted layout is a certificate for the profiled fixed-shape allocation
-contract. Runtime divergence fails before unsafe backend use. Optional scratch
-paths remain bounded rather than pretending that all opaque provider behavior
-has a compiler proof.
+The complete capacity equations, allocation lifetimes, deterministic placement
+algorithm, offset coordinate systems, fixed-core/dynamic-scratch boundary,
+runtime sealing, refinement sequence, and diagnostics are documented in
+[Physical admission and offset handling](physical-admission.md).
 
 ## Transfer bandwidths
 
@@ -92,5 +66,5 @@ profile measurements, cache artifacts, transfer calibration, and phase times.
 Verbose console output is only presentation; disabling it does not remove the
 report.
 
-Previous: [PyTorch capture and lowering](lowering.md). Next:
+Previous: [Physical admission and offset handling](physical-admission.md). Next:
 [Simulation](simulation.md).

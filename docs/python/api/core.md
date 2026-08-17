@@ -29,8 +29,13 @@ Invalid construction or cross-reference raises `ValidationError`.
 ## `shadowspill.planner`
 
 Call `pressurefit()` to select recomputation and a memory schedule. Call
-`validate_schedule_feasibility()` to check a supplied schedule against the
-same logical constraints.
+`validate_schedule_feasibility()` to check whether at least one legal Program
+selection satisfies the required task-by-task residency floor. Use
+`simulate()` to validate an explicit schedule. See the [PressureFit
+formulation and algorithm](../../architecture/pressurefit.md) and the separate
+[recomputation selector](../../architecture/recomputation-selection.md). The
+task-allocation topology and exact range certificate are described in
+[physical admission](../../architecture/physical-admission.md).
 
 Configuration and results:
 

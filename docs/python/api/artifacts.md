@@ -82,6 +82,10 @@ annotated = pressurefit_program(
 diagnostic evidence. `from_json()` revalidates digests, residency, simulation,
 layout identity, and timing reconciliation.
 
+See [Physical admission and offset
+handling](../../architecture/physical-admission.md) for the fixed layout,
+dynamic reserves, causal reuse edges, and capacity-refinement contract.
+
 ## Small value objects
 
 `MemoryBudgets` records physical execution and spill byte budgets.

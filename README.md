@@ -104,6 +104,10 @@ ordered reading path from capture through execution. It defines the artifact
 ladder, component ownership, correctness invariants, supported scope, and one
 complete logical-object walkthrough.
 
+- [Graph-pair construction](docs/architecture/graph-pair-construction.md)
+- [Recomputation selection](docs/architecture/recomputation-selection.md)
+- [PressureFit formulation and algorithm](docs/architecture/pressurefit.md)
+- [Physical admission and offset handling](docs/architecture/physical-admission.md)
 - [Python documentation](docs/python/README.md)
 - [C API documentation](docs/c/README.md)
 - [Development guide](docs/development/README.md)

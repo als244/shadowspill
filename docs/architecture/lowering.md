@@ -5,6 +5,11 @@ This prevents incidental FakeTensor storage or allocator callback identity
 from merging or splitting logical objects. The output is the canonical
 [framework-neutral Program](ir.md), not a PyTorch execution trace.
 
+For training, stage partitioning is followed by the dedicated
+[graph-pair construction](graph-pair-construction.md) phase. That phase creates
+the forward/backward alternatives whose individual task contracts, compiled
+layouts, and measurements are consumed by the lowering described here.
+
 ```text
 Export/AOT FX semantics
         |
@@ -97,5 +102,5 @@ operations work when their fake/meta behavior and alias/mutation schemas are
 correct. Opaque external workspace may still require measurement because it
 is not fully represented in FX or Inductor's visible buffer graph.
 
-Previous: [Intermediate representation](ir.md). Next: [Planning and physical
-admission](planning.md).
+Previous: [Intermediate representation](ir.md). Next:
+[Graph-pair construction](graph-pair-construction.md).

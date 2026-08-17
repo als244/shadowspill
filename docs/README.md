@@ -22,11 +22,20 @@ statement applies to Python, C, or the framework-neutral design.
    recomputation, schedules, and execution plans.
 3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
    executable storage, profiling, and canonical objects.
-4. [Planning and physical admission](architecture/planning.md) — PressureFit,
-   fixed layout, transfer inputs, and PlanReport.
-5. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
+4. [Graph-pair construction](architecture/graph-pair-construction.md) —
+   structural forward/backward alternatives, saved-value accounting, and
+   profiling.
+5. [Recomputation selection](architecture/recomputation-selection.md) — bounded
+   complete selections across occurrence-level graph-pair options.
+6. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
+   inputs/outputs, bounded policy search, repair, and pseudocode.
+7. [Physical admission and offset handling](architecture/physical-admission.md)
+   — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
+8. [Planning orchestration](architecture/planning.md) — reusable artifacts,
+   transfer inputs, callable publication, and PlanReport.
+9. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
    causal-dependency replay.
-6. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+10. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
    task boundaries, failure, and tracing.
 
 ## Historical evidence

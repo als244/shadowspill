@@ -63,6 +63,11 @@ The scratch reserve is derived from profiling. A user may raise it with
 Runtime fixed-service headroom, provider/context headroom, task workspace, and
 dynamic scratch are distinct accounting categories.
 
+The full admission formulation, placement algorithm, offset coordinate
+systems, causal certificate, capacity refinement, and report fields are in
+[Physical admission and offset handling](physical-admission.md). This page
+focuses on how the runtime consumes that certificate.
+
 ## Causal reuse
 
 A released range is not reusable merely because its logical owner is done.
