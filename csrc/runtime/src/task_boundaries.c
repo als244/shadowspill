@@ -1,5 +1,4 @@
 #include "internal.h"
-#include "internal/task_boundaries.h"
 
 #include <stdlib.h>
 
@@ -703,7 +702,7 @@ static ShadowSpillRuntimeStatus await_worker_submission(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_after_execution_record(
+ShadowSpillRuntimeStatus shadowspill_after_task_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record,
     ShadowSpillBackendStream compute_stream
@@ -816,80 +815,4 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_record(
     }
     shadowspill_leave_task_scope(runtime);
     return status;
-}
-
-ShadowSpillRuntimeStatus shadowspill_before_task(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream,
-    const uint64_t *input_object_ids,
-    uint32_t input_count,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-) {
-    return shadowspill_before_task_legacy(
-        runtime,
-        task_id,
-        compute_stream,
-        input_object_ids,
-        input_count,
-        bindings,
-        binding_capacity
-    );
-}
-
-ShadowSpillRuntimeStatus shadowspill_after_task(
-    ShadowSpillRuntime *runtime,
-    uint64_t task_id,
-    ShadowSpillBackendStream compute_stream,
-    const ShadowSpillObjectUpdate *updates,
-    uint32_t update_count,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count
-) {
-    const ShadowSpillExecutionDescription description = {
-        .task_id = task_id,
-        .updates = updates,
-        .update_count = update_count,
-        .actions = actions,
-        .action_count = action_count,
-    };
-    ShadowSpillRuntimeStatus status = shadowspill_admit_execution(
-        runtime, &description
-    );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        /*
-         * An allocator callback may have latched this failure inside the
-         * active task. Publish completion for its logical frees even though
-         * failure state prevents admitting a new execution record.
-         */
-        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-        const ShadowSpillRuntimeStatus retirement_status =
-            shadowspill_publish_task_retirement_event_locked(
-                runtime, task_id, compute_stream
-            );
-        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
-        if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
-            shadowspill_latch_failure_locked(
-                runtime,
-                retirement_status,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                0U
-            );
-        }
-        shadowspill_leave_task_scope(runtime);
-        return status;
-    }
-    const ShadowSpillExecutionHandle *handle = NULL;
-    status = shadowspill_plan_resolve_execution(
-        runtime->default_plan, task_id, &handle
-    );
-    if (status != SHADOWSPILL_RUNTIME_OK || handle == NULL) {
-        shadowspill_leave_task_scope(runtime);
-        return status == SHADOWSPILL_RUNTIME_OK
-            ? SHADOWSPILL_RUNTIME_INVALID_STATE : status;
-    }
-    const ShadowSpillExecutionRecord *record = handle;
-    return shadowspill_after_execution_record(runtime, record, compute_stream);
 }

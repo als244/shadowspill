@@ -22,6 +22,24 @@ TASK_ID = 17
 CONTRACT_MISMATCH = 11
 
 
+def _admit_task(library: object, description: ExecutionDescription) -> int:
+    plan = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(plan)))
+    if status != 0 or plan.value == 0:
+        raise AssertionError(
+            f"allocation-contract plan creation failed with status {status}"
+        )
+    task = ctypes.c_size_t()
+    status = int(
+        library.shadowspill_pytorch_plan_admit_task(
+            plan.value, ctypes.byref(description), ctypes.byref(task)
+        )
+    )
+    if status != 0 or task.value == 0:
+        raise AssertionError(f"execution admission failed with status {status}")
+    return int(task.value)
+
+
 def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
@@ -58,9 +76,7 @@ def main() -> int:
         live_requested_allocation_limit_bytes=8192,
         live_charged_allocation_limit_bytes=8192,
     )
-    status = int(library.shadowspill_pytorch_admit_execution(ctypes.byref(description)))
-    if status != 0:
-        raise AssertionError(f"execution admission failed with status {status}")
+    task_handle = _admit_task(library, description)
     labels = (ctypes.c_char_p * (TASK_ID + 1))()
     labels[TASK_ID] = b"execution_000017.canary.stage_0000.forward"
     status = int(library.shadowspill_pytorch_task_labels_configure(labels, TASK_ID + 1))
@@ -68,8 +84,8 @@ def main() -> int:
         raise AssertionError(f"task label configuration failed with status {status}")
     stream = torch.cuda.current_stream()
     status = int(
-        library.shadowspill_pytorch_before_execution(
-            TASK_ID, stream.cuda_stream, None, 0
+        library.shadowspill_pytorch_before_task_handle(
+            task_handle, TASK_ID, stream.cuda_stream, None, 0
         )
     )
     if status != 0:
@@ -93,7 +109,15 @@ def main() -> int:
                 raise AssertionError(
                     f"direct contract failure omitted {expected_text!r}: {message}"
                 ) from cause
-        library.shadowspill_pytorch_abort_task_range()
+        status = int(
+            library.shadowspill_pytorch_abort_task_handle(
+                task_handle, TASK_ID
+            )
+        )
+        if status != 0:
+            raise AssertionError(
+                f"failed to abort allocation-contract task: status={status}"
+            ) from None
         diagnostics = read_allocator_failure(
             library,
             "execute mismatched allocation task",

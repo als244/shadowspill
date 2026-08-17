@@ -36,9 +36,6 @@ static void unlink_plan(ShadowSpillPlan *plan) {
         plan->ownership_next = NULL;
         plan->ownership_previous_link = NULL;
     }
-    if (runtime->default_plan == plan) {
-        runtime->default_plan = NULL;
-    }
     pthread_mutex_unlock(&runtime->plans_lock);
 }
 
@@ -215,7 +212,6 @@ void shadowspill_plan_destroy_all(ShadowSpillRuntime *runtime) {
     pthread_mutex_lock(&runtime->plans_lock);
     ShadowSpillPlan *plan = runtime->plans;
     runtime->plans = NULL;
-    runtime->default_plan = NULL;
     pthread_mutex_unlock(&runtime->plans_lock);
     while (plan != NULL) {
         ShadowSpillPlan *next = plan->ownership_next;

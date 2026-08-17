@@ -803,22 +803,3 @@ ShadowSpillRuntimeStatus shadowspill_plan_seal_fixed_layout(
     }
     return SHADOWSPILL_RUNTIME_OK;
 }
-
-ShadowSpillRuntimeStatus shadowspill_admit_fixed_layout(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillFixedLayoutDescription *description
-) {
-    return runtime == NULL || runtime->default_plan == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
-        : shadowspill_plan_admit_fixed_layout(
-              runtime->default_plan, description
-          );
-}
-
-ShadowSpillRuntimeStatus shadowspill_seal_fixed_layout(
-    ShadowSpillRuntime *runtime
-) {
-    return runtime == NULL || runtime->default_plan == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
-        : shadowspill_plan_seal_fixed_layout(runtime->default_plan);
-}

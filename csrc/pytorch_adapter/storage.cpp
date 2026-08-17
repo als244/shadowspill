@@ -343,13 +343,17 @@ std::vector<int64_t> before_task_storages(
       shadowspill_runtime_status_string(status));
 
   struct TaskScopeGuard {
+    uintptr_t task_handle;
+    uint64_t task_id;
     bool active = true;
     ~TaskScopeGuard() {
       if (active) {
-        shadowspill_pytorch_abort_task_range();
+        (void)shadowspill_pytorch_abort_task_handle(task_handle, task_id);
       }
     }
-  } scope_guard;
+  } scope_guard{
+      static_cast<uintptr_t>(task_handle),
+      static_cast<uint64_t>(task_id)};
   std::vector<uint64_t> current_addresses;
   std::vector<int64_t> generations;
   current_addresses.reserve(count);

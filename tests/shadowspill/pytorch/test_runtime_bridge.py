@@ -20,8 +20,11 @@ from tests.shadowspill.ir._examples import representative_program
 
 
 class _AbortLibrary:
-    def shadowspill_pytorch_abort_task_range(self) -> None:
-        self.aborted = True
+    def shadowspill_pytorch_abort_task_handle(
+        self, task_handle: int, task_id: int
+    ) -> int:
+        self.aborted = (task_handle, task_id)
+        return 0
 
 
 class _Installed:
@@ -50,9 +53,9 @@ def test_abort_task_only_closes_the_native_scope() -> None:
     library = _AbortLibrary()
     bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
 
-    bridge.abort_task()
+    bridge.abort_task(37, 11)
 
-    assert library.aborted
+    assert library.aborted == (37, 11)
 
 
 def test_execution_buffers_project_pointer_free_allocation_contract() -> None:

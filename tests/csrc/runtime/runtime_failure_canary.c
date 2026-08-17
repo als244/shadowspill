@@ -70,7 +70,7 @@ static int impossible_oom(void) {
             SHADOWSPILL_RUNTIME_OK) {
         result = -1;
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     shadowspill_mock_backend_destroy(mock);
     return result;
@@ -144,7 +144,7 @@ static int worker_failure(void) {
         failure.allocation_id != allocation.allocation_id) {
         result = -1;
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     (void)shadowspill_mock_destroy_compute_stream(mock, other_stream);
     shadowspill_mock_backend_destroy(mock);
@@ -184,9 +184,9 @@ static int worker_submission_failure_reaches_dispatcher(void) {
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_admit_execution(runtime, &trigger) !=
+        shadowspill_test_admit_task(runtime, &trigger) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             runtime, trigger.task_id, stream, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK) {
         result = -1;
@@ -195,7 +195,7 @@ static int worker_submission_failure_reaches_dispatcher(void) {
 
     shadowspill_mock_fail_next_operation(mock);
     const ShadowSpillRuntimeStatus submission_status =
-        shadowspill_after_execution(runtime, trigger.task_id, stream);
+        shadowspill_test_after_task(runtime, trigger.task_id, stream);
     ShadowSpillRuntimeFailure failure = {0};
     if (submission_status != SHADOWSPILL_RUNTIME_BACKEND_FAILURE ||
         shadowspill_runtime_failure(runtime, &failure) !=
@@ -205,7 +205,7 @@ static int worker_submission_failure_reaches_dispatcher(void) {
     }
 
 done:
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (stream.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     }
@@ -268,7 +268,7 @@ static int fragmented_oom(void) {
     }
 
 done:
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (stream.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     }
@@ -289,14 +289,16 @@ static int failed_task_retirement_recovery(void) {
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation impossible = {0};
     ShadowSpillAllocation recovered = {0};
+    const ShadowSpillExecutionDescription task = {.task_id = 41U};
     int result = 0;
     if (shadowspill_test_create_runtime(
             mock, 128U, 1U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
-        shadowspill_before_task(
-            runtime, 41U, stream, NULL, 0U, NULL, 0U
+        shadowspill_test_admit_task(runtime, &task) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, task.task_id, stream, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(runtime, 128U, 1U, stream, &live) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -314,8 +316,8 @@ static int failed_task_retirement_recovery(void) {
         statistics.retirement_records_unfenced != 1U ||
         shadowspill_runtime_recover_no_progress(runtime) !=
             SHADOWSPILL_RUNTIME_INVALID_STATE ||
-        shadowspill_after_task(
-            runtime, 41U, stream, NULL, 0U, NULL, 0U
+        shadowspill_test_after_task(
+            runtime, task.task_id, stream
         ) != SHADOWSPILL_RUNTIME_NO_PROGRESS ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -338,7 +340,7 @@ static int failed_task_retirement_recovery(void) {
     }
 
 done:
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (stream.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     }
@@ -383,14 +385,14 @@ static int failed_prefetch_reports_trigger_reservation_oom(void) {
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_admit_execution(runtime, &execution) !=
+        shadowspill_test_admit_task(runtime, &execution) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             runtime, execution.task_id, stream, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(runtime, 128U, 1U, stream, &temporary) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(runtime, execution.task_id, stream) !=
+        shadowspill_test_after_task(runtime, execution.task_id, stream) !=
             SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         result = -1;
         goto done;
@@ -423,7 +425,7 @@ static int failed_prefetch_reports_trigger_reservation_oom(void) {
     }
 
 done:
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (stream.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, stream);
     }

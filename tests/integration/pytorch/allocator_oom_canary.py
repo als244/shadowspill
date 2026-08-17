@@ -21,6 +21,22 @@ NO_PROGRESS = 4
 REQUEST_BYTES = 128 << 20
 
 
+def _admit_task(library: object, description: ExecutionDescription) -> tuple[int, int]:
+    plan = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(plan)))
+    if status != 0 or plan.value == 0:
+        raise AssertionError(f"failed to create OOM canary plan: status={status}")
+    task = ctypes.c_size_t()
+    status = int(
+        library.shadowspill_pytorch_plan_admit_task(
+            plan.value, ctypes.byref(description), ctypes.byref(task)
+        )
+    )
+    if status != 0 or task.value == 0:
+        raise AssertionError(f"failed to admit OOM canary task: status={status}")
+    return int(plan.value), int(task.value)
+
+
 def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
@@ -58,20 +74,12 @@ def main() -> int:
         live_requested_allocation_limit_bytes=0,
         live_charged_allocation_limit_bytes=0,
     )
-    if (
-        int(
-            installed.library.shadowspill_pytorch_admit_execution(
-                ctypes.byref(description)
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("failed to admit OOM canary task")
+    plan_handle, task_handle = _admit_task(installed.library, description)
     stream = torch.cuda.current_stream()
     if (
         int(
-            installed.library.shadowspill_pytorch_before_execution(
-                task_id, stream.cuda_stream, None, 0
+            installed.library.shadowspill_pytorch_before_task_handle(
+                task_handle, task_id, stream.cuda_stream, None, 0
             )
         )
         != 0
@@ -92,7 +100,13 @@ def main() -> int:
                 raise AssertionError(
                     f"direct OOM omitted {expected!r}: {message}"
                 ) from error
-        installed.library.shadowspill_pytorch_abort_task_range()
+        status = int(
+            installed.library.shadowspill_pytorch_abort_task_handle(
+                task_handle, task_id
+            )
+        )
+        if status != 0:
+            raise AssertionError(f"failed to abort OOM task: status={status}") from None
     else:
         raise AssertionError("failed callback returned a tensor to its caller")
     failure = AdapterFailure()
@@ -153,6 +167,9 @@ def main() -> int:
     probe = torch.empty((1024,), dtype=torch.uint8, device="cuda")
     if probe.data_ptr() == 0:
         raise AssertionError("allocator remained unusable after recovery")
+    if int(installed.library.shadowspill_pytorch_plan_close(plan_handle)) != 0:
+        raise AssertionError("failed to close OOM canary plan")
+    installed.library.shadowspill_pytorch_plan_destroy(plan_handle)
     return 0
 
 

@@ -11,6 +11,7 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
+    ExecutionDescription,
     ObjectBinding,
     ObjectSnapshot,
     RuntimeAction,
@@ -55,26 +56,105 @@ def _snapshot(library: object, object_id: int) -> ObjectSnapshot:
     return snapshot
 
 
-def _after_task(
+def _create_plan(library: object) -> int:
+    handle = ctypes.c_size_t()
+    _require_ok(
+        int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(handle))),
+        "plan creation",
+    )
+    if handle.value == 0:
+        raise AssertionError("plan creation returned a null handle")
+    return int(handle.value)
+
+
+def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
+    handle = ctypes.c_size_t()
+    _require_ok(
+        int(
+            library.shadowspill_pytorch_object_handle_acquire(
+                object_id, ctypes.byref(handle)
+            )
+        ),
+        "object handle acquisition",
+    )
+    try:
+        _require_ok(
+            int(
+                library.shadowspill_pytorch_plan_bind_object(
+                    plan, object_id, handle.value, 0
+                )
+            ),
+            "plan object binding",
+        )
+    finally:
+        library.shadowspill_pytorch_object_handle_release(handle.value)
+
+
+def _submit_actions(
     library: object,
-    task_id: int,
+    plan: int,
+    batch_id: int,
     stream: int,
     actions: tuple[RuntimeAction, ...],
 ) -> None:
+    for object_id in dict.fromkeys(action.object_id for action in actions):
+        _bind_plan_object(library, plan, object_id)
     action_array = (RuntimeAction * len(actions))(*actions)
+    handle = ctypes.c_size_t()
     _require_ok(
         int(
-            library.shadowspill_pytorch_after_task(
-                task_id,
-                stream,
-                None,
-                0,
+            library.shadowspill_pytorch_plan_admit_action_batch(
+                plan,
+                batch_id,
                 action_array,
                 len(actions),
+                ctypes.byref(handle),
             )
         ),
-        "after_task",
+        "action admission",
     )
+    _require_ok(
+        int(
+            library.shadowspill_pytorch_submit_action_batch_handle(
+                handle.value, stream
+            )
+        ),
+        "action submission",
+    )
+
+
+def _admit_task(
+    library: object,
+    plan: int,
+    task_id: int,
+    inputs: tuple[int, ...],
+    actions: tuple[RuntimeAction, ...],
+) -> int:
+    for object_id in dict.fromkeys(
+        (*inputs, *(action.object_id for action in actions))
+    ):
+        _bind_plan_object(library, plan, object_id)
+    input_array = (ctypes.c_uint64 * len(inputs))(*inputs)
+    action_array = (RuntimeAction * len(actions))(*actions)
+    description = ExecutionDescription(
+        task_id=task_id,
+        input_object_ids=input_array,
+        input_count=len(inputs),
+        actions=action_array,
+        action_count=len(actions),
+    )
+    handle = ctypes.c_size_t()
+    _require_ok(
+        int(
+            library.shadowspill_pytorch_plan_admit_task(
+                plan, ctypes.byref(description), ctypes.byref(handle)
+            )
+        ),
+        "task admission",
+    )
+    if handle.value == 0:
+        raise AssertionError("task admission returned a null handle")
+    return int(handle.value)
 
 
 def _action(
@@ -102,6 +182,7 @@ def main() -> int:
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library
+    plan = _create_plan(library)
     _require_ok(
         int(library.shadowspill_pytorch_profiler_annotations_set(1)),
         "enable profiler annotations",
@@ -123,8 +204,9 @@ def main() -> int:
     torch.ops.shadowspill._rebind_storage(
         third, 0, third_binding.object_id, third_binding.generation
     )
-    _after_task(
+    _submit_actions(
         library,
+        plan,
         200,
         stream_address,
         (
@@ -162,8 +244,9 @@ def main() -> int:
     with torch.cuda.stream(overlap_compute):
         torch.cuda._sleep(3_000_000_000)
     torch.cuda._sleep(500_000_000)
-    _after_task(
+    _submit_actions(
         library,
+        plan,
         201,
         stream_address,
         (
@@ -191,17 +274,24 @@ def main() -> int:
         ),
     )
 
-    object_ids = (ctypes.c_uint64 * 2)(
-        second_binding.object_id, third_binding.object_id
+    release_actions = (
+        RuntimeAction(object_id=second_binding.object_id, kind=0),
+        RuntimeAction(object_id=third_binding.object_id, kind=0),
+    )
+    consumer = _admit_task(
+        library,
+        plan,
+        202,
+        (second_binding.object_id, third_binding.object_id),
+        release_actions,
     )
     rebound = (ObjectBinding * 2)()
     _require_ok(
         int(
-            library.shadowspill_pytorch_before_task(
+            library.shadowspill_pytorch_before_task_handle(
+                consumer,
                 202,
                 stream_address,
-                object_ids,
-                2,
                 rebound,
                 2,
             )
@@ -268,14 +358,13 @@ def main() -> int:
     torch.ops.shadowspill._rebind_storage(
         third, 0, rebound[1].object_id, rebound[1].generation
     )
-    _after_task(
-        library,
-        203,
-        stream_address,
-        (
-            RuntimeAction(object_id=second_binding.object_id, kind=0),
-            RuntimeAction(object_id=third_binding.object_id, kind=0),
+    _require_ok(
+        int(
+            library.shadowspill_pytorch_after_task_handle(
+                consumer, 202, stream_address
+            )
         ),
+        "consumer publication",
     )
     _require_ok(
         int(library.shadowspill_pytorch_allocator_wait_idle()),
@@ -285,6 +374,8 @@ def main() -> int:
         int(library.shadowspill_pytorch_profiler_annotations_set(0)),
         "disable profiler annotations",
     )
+    _require_ok(int(library.shadowspill_pytorch_plan_close(plan)), "plan close")
+    library.shadowspill_pytorch_plan_destroy(plan)
     return 0
 
 

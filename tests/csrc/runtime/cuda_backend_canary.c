@@ -107,36 +107,55 @@ int main(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
+    ShadowSpillPlan *plan = NULL;
+    ShadowSpillObjectHandle *object_handle = NULL;
+    const ShadowSpillActionBatchHandle *initial_actions = NULL;
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_write_spill_object(
             runtime, object.object_id, original, PAYLOAD_BYTES
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 0U, compute, NULL, 0U, &prefetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_create_for_pools(
+            runtime, 0U, 1U, &plan
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_handle_acquire(
+            runtime, object.object_id, &object_handle
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_bind_object(
+            plan, object.object_id, object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_handle_release(
+            object_handle
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_admit_action_batch(
+            plan, 0U, &prefetch, 1U, &initial_actions
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_submit_action_batch_handle(
+            runtime, initial_actions, compute
         ) != SHADOWSPILL_RUNTIME_OK) {
         FAIL("initial object registration or fetch submission");
     }
     const uint64_t input_object_id = object.object_id;
+    const ShadowSpillRuntimeAction offload = {
+        .object_id = object.object_id,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillExecutionDescription task = {
+        .task_id = 1U,
+        .input_object_ids = &input_object_id,
+        .input_count = 1U,
+        .actions = &offload,
+        .action_count = 1U,
+    };
+    const ShadowSpillTaskHandle *task_handle = NULL;
     ShadowSpillObjectBinding binding = {0};
-    if (shadowspill_before_task(
+    if (shadowspill_plan_admit_task(plan, &task, &task_handle) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_before_task_handle(
             runtime,
-            1U,
+            task_handle,
             compute,
-            &input_object_id,
-            1U,
             &binding,
             1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         binding.pointer == NULL || binding.authoritative_version != 1U) {
         FAIL("fetch readiness");
     }
-    const ShadowSpillRuntimeAction offload = {
-        .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
-    };
-    const ShadowSpillRuntimeStatus after_status = shadowspill_after_task(
-        runtime, 1U, compute, NULL, 0U, &offload, 1U
+    const ShadowSpillRuntimeStatus after_status = shadowspill_after_task_handle(
+        runtime, task_handle, compute
     );
     const ShadowSpillRuntimeStatus idle_status = after_status ==
             SHADOWSPILL_RUNTIME_OK
@@ -193,7 +212,8 @@ int main(void) {
         cuda_statistics.bytes_evicted != PAYLOAD_BYTES) {
         FAIL("backend transfer statistics");
     }
-    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_plan_close(plan) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
         routes[0].route.destroy_lane(routes[0].route.context, compute) != 0) {
         FAIL("runtime close");
     }
@@ -216,6 +236,7 @@ int main(void) {
     }
     free(original);
     free(restored);
+    shadowspill_plan_destroy(plan);
     shadowspill_runtime_destroy(runtime);
     shadowspill_cuda_backend_destroy(cuda);
     return EXIT_SUCCESS;

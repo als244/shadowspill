@@ -41,7 +41,7 @@ static int fixture_create(Fixture *fixture) {
 }
 
 static void fixture_destroy(Fixture *fixture) {
-    shadowspill_runtime_destroy(fixture->runtime);
+    shadowspill_test_destroy_runtime(fixture->runtime);
     if (fixture->compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(
             fixture->mock, fixture->compute
@@ -111,8 +111,9 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
             before_statistics.registered_objects || shadowspill_read_spill_object(
             fixture.runtime, plan_id, restored, sizeof(restored)
         ) != SHADOWSPILL_RUNTIME_OK ||
-        memcmp(payload, restored, sizeof(payload)) != 0 || shadowspill_after_task(
-            fixture.runtime, 1U, fixture.compute, NULL, 0U, &fetch, 1U
+        memcmp(payload, restored, sizeof(payload)) != 0 ||
+        shadowspill_test_submit_actions(
+            fixture.runtime, 1U, fixture.compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
@@ -142,7 +143,7 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -158,8 +159,8 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &objects[1]) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, actions, 2U
+        shadowspill_test_submit_actions(
+            runtime, 1U, compute, actions, 2U
         ) != SHADOWSPILL_RUNTIME_OK;
     sleep_milliseconds(5U);
     ShadowSpillRuntimeStatistics statistics = {0};
@@ -175,12 +176,18 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         statistics.allocated_bytes != 64U ||
         statistics.fetch_transfers != 2U;
     const uint64_t input = 2U;
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 2U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
     ShadowSpillObjectBinding binding = {0};
     struct timespec started = {0};
     struct timespec finished = {0};
     (void)clock_gettime(CLOCK_MONOTONIC, &started);
-    failed = failed || shadowspill_before_task(
-            runtime, 2U, compute, &input, 1U, &binding, 1U
+    failed = failed || shadowspill_test_admit_task(runtime, &consumer) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, consumer.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
     (void)clock_gettime(CLOCK_MONOTONIC, &finished);
     const uint64_t elapsed_nanoseconds =
@@ -188,7 +195,10 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         (uint64_t)finished.tv_nsec - (uint64_t)started.tv_nsec;
     failed = failed || elapsed_nanoseconds > 30000000U ||
         binding.object_id != 2U;
-    shadowspill_abort_task(runtime);
+    failed = failed || shadowspill_abort_task_handle(
+            runtime,
+            shadowspill_test_task_handle(runtime, consumer.task_id)
+        ) != SHADOWSPILL_RUNTIME_OK;
     failed = failed || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_statistics(runtime, &statistics) !=
@@ -204,7 +214,7 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
             (unsigned long long)statistics.fetch_transfers
         );
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
     return failed ? -1 : 0;
@@ -227,7 +237,7 @@ static int inflight_prefetch_transfers_to_caller(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -244,16 +254,21 @@ static int inflight_prefetch_transfers_to_caller(void) {
     ShadowSpillAllocation caller = {0};
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
+    const ShadowSpillExecutionDescription consumer = {
+        .task_id = 2U,
+        .input_object_ids = &object.object_id,
+        .input_count = 1U,
+    };
     int failed = shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, &fetch, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_task(
-            runtime, 2U, compute, &object.object_id, 1U, &binding, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 2U, compute, NULL, 0U, NULL, 0U
+        shadowspill_test_submit_actions(
+            runtime, 1U, compute, &fetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
+            runtime, &consumer
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, consumer.task_id, compute, &binding, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
+            runtime, consumer.task_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_transfer_object_to_caller(
             runtime, object.object_id, compute, &caller
@@ -271,7 +286,7 @@ static int inflight_prefetch_transfers_to_caller(void) {
             SHADOWSPILL_RUNTIME_OK ||
         statistics.fetch_transfers != 1U ||
         statistics.live_allocations != 0U;
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
     return failed ? -1 : 0;
@@ -294,7 +309,7 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -319,8 +334,8 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
                 allocations[index].allocation_id
             ) != SHADOWSPILL_RUNTIME_OK;
     }
-    failed = failed || shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, actions, 2U
+    failed = failed || shadowspill_test_submit_actions(
+            runtime, 1U, compute, actions, 2U
         ) != SHADOWSPILL_RUNTIME_OK;
     sleep_milliseconds(5U);
     ShadowSpillRuntimeStatistics statistics = {0};
@@ -347,7 +362,7 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
             (unsigned long long)statistics.evict_transfers
         );
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     shadowspill_mock_backend_destroy(mock);
     return failed ? -1 : 0;
@@ -370,8 +385,8 @@ static int trigger_reservation_failure_reports_no_progress(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(fixture.runtime, &objects[1]) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            fixture.runtime, 1U, fixture.compute, NULL, 0U, actions, 2U
+        shadowspill_test_submit_actions(
+            fixture.runtime, 1U, fixture.compute, actions, 2U
         ) != SHADOWSPILL_RUNTIME_NO_PROGRESS;
     ShadowSpillRuntimeFailure failure = {0};
     failed = failed || shadowspill_runtime_failure(
@@ -416,8 +431,8 @@ static int invalid_action(
     int result = 0;
     if (shadowspill_register_object(fixture.runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            fixture.runtime, 1U, fixture.compute, NULL, 0U, &action, 1U
+        shadowspill_test_submit_actions(
+            fixture.runtime, 1U, fixture.compute, &action, 1U
         ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
         result = -1;
     }
@@ -442,12 +457,18 @@ static int invalid_before_task(uint8_t initially_spill_resident) {
         .initially_spill_resident = initially_spill_resident,
     };
     const uint64_t input = object.object_id;
+    const ShadowSpillExecutionDescription task = {
+        .task_id = 1U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
     ShadowSpillObjectBinding binding = {0};
     int result = 0;
     if (shadowspill_register_object(fixture.runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_task(
-            fixture.runtime, 1U, fixture.compute, &input, 1U, &binding, 1U
+        shadowspill_test_admit_task(fixture.runtime, &task) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            fixture.runtime, task.task_id, fixture.compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
         result = -1;
     }
@@ -479,8 +500,8 @@ static int duplicate_action(void) {
         shadowspill_bind_object(
             fixture.runtime, object.object_id, allocation.allocation_id
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            fixture.runtime, 1U, fixture.compute, NULL, 0U, actions, 2U
+        shadowspill_test_submit_actions(
+            fixture.runtime, 1U, fixture.compute, actions, 2U
         ) != SHADOWSPILL_RUNTIME_PLAN_VIOLATION) {
         result = -1;
     }
@@ -508,6 +529,13 @@ static int output_allocation_handoff(void) {
         .object_id = source.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
+    const ShadowSpillExecutionDescription task = {
+        .task_id = 9U,
+        .input_object_ids = &input_id,
+        .input_count = 1U,
+        .actions = &release,
+        .action_count = 1U,
+    };
     int result = 0;
     if (shadowspill_register_object(fixture.runtime, &source) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -519,14 +547,15 @@ static int output_allocation_handoff(void) {
         shadowspill_bind_object(
             fixture.runtime, source.object_id, allocation.allocation_id
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_task(
-            fixture.runtime, 9U, fixture.compute, &input_id, 1U, &input, 1U
+        shadowspill_test_admit_task(fixture.runtime, &task) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            fixture.runtime, task.task_id, fixture.compute, &input, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(
             fixture.runtime, target.object_id, allocation.allocation_id
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            fixture.runtime, 9U, fixture.compute, NULL, 0U, &release, 1U
+        shadowspill_test_after_task(
+            fixture.runtime, task.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(fixture.runtime) !=
             SHADOWSPILL_RUNTIME_OK) {
@@ -572,7 +601,7 @@ static int chained_output_allocation_handoff(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -617,21 +646,21 @@ static int chained_output_allocation_handoff(void) {
             runtime, 32U, 1U, compute, &allocation
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
             runtime, 1U, allocation.allocation_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             runtime, &first_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             runtime, &second_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, 9U, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
             runtime, 2U, allocation.allocation_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             runtime, 9U, compute
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, 10U, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
             runtime, 3U, allocation.allocation_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             runtime, 10U, compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK;
@@ -648,7 +677,7 @@ static int chained_output_allocation_handoff(void) {
         snapshots[2].execution_pointer != allocation.pointer ||
         snapshots[2].allocation_id != allocation.allocation_id;
 
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }
@@ -698,8 +727,8 @@ static int valid_transition_paths(void) {
         .object_id = retained.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    if (shadowspill_after_task(
-            fixture.runtime, 1U, fixture.compute, NULL, 0U, &release, 1U
+    if (shadowspill_test_submit_actions(
+            fixture.runtime, 1U, fixture.compute, &release, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_RUNTIME_OK) {
         result = -1;
@@ -728,9 +757,9 @@ static int valid_transition_paths(void) {
         result = -1;
         goto done;
     }
-    /* The compatibility plan owns every object referenced by its admitted
+    /* The explicit test plan owns every object referenced by its admitted
      * records. Drop that owner before asserting final-registration release. */
-    if (shadowspill_clear_execution_plan(fixture.runtime) !=
+    if (shadowspill_test_clear_plan(fixture.runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_unregister_object(
             fixture.runtime, retained.object_id
@@ -756,8 +785,8 @@ static int valid_transition_paths(void) {
         .object_id = temporary_host.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    if (shadowspill_after_task(
-            fixture.runtime, 2U, fixture.compute, NULL, 0U, &prefetch, 1U
+    if (shadowspill_test_submit_actions(
+            fixture.runtime, 2U, fixture.compute, &prefetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
@@ -830,7 +859,6 @@ static int immutable_execution_admission(void) {
         .task_id = execution.task_id,
     };
     ShadowSpillObjectBinding binding = {0};
-    const ShadowSpillExecutionHandle *handle = NULL;
     int failed = shadowspill_register_object(
             fixture.runtime, &description
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
@@ -838,27 +866,18 @@ static int immutable_execution_admission(void) {
             &allocation
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
             fixture.runtime, description.object_id, allocation.allocation_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &conflict
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK || binding.object_id != description.object_id ||
         binding.allocation_id != allocation.allocation_id ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_resolve_execution(
-            fixture.runtime, execution.task_id, &handle
-        ) != SHADOWSPILL_RUNTIME_OK || handle == NULL ||
-        shadowspill_before_execution_handle(
-            fixture.runtime, handle, fixture.compute, &binding, 1U
-        ) != SHADOWSPILL_RUNTIME_OK || binding.object_id != description.object_id ||
-        binding.allocation_id != allocation.allocation_id ||
-        shadowspill_after_execution_handle(
-            fixture.runtime, handle, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
@@ -892,9 +911,9 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
         .action_count = 1U,
     };
     int failed = shadowspill_register_object(fixture.runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &evict_task
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &fetch_task
         ) != SHADOWSPILL_RUNTIME_OK;
     for (uint32_t invocation = 0U; !failed && invocation < 2U; ++invocation) {
@@ -905,13 +924,13 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
                 fixture.runtime, object.size_bytes, 1U, fixture.compute, &produced
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
                 fixture.runtime, object.object_id, produced.allocation_id
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
                 fixture.runtime, evict_task.task_id, fixture.compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
                 fixture.runtime, evict_task.task_id, fixture.compute
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
                 fixture.runtime, fetch_task.task_id, fixture.compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
                 fixture.runtime, fetch_task.task_id, fixture.compute
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_transfer_object_to_caller(
                 fixture.runtime, object.object_id, fixture.compute, &caller
@@ -985,29 +1004,29 @@ static int shared_task_completion_event_survives_action_reuse(void) {
         .actions = fetches,
         .action_count = OBJECT_COUNT,
     };
-    failed = failed || shadowspill_admit_execution(
+    failed = failed || shadowspill_test_admit_task(
             fixture.runtime, &evict_task
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &fetch_task
         ) != SHADOWSPILL_RUNTIME_OK;
     for (uint32_t invocation = 0U;
          !failed && invocation < INVOCATION_COUNT;
          ++invocation) {
-        failed = shadowspill_before_execution(
+        failed = shadowspill_test_before_task(
                 fixture.runtime,
                 evict_task.task_id,
                 fixture.compute,
                 NULL,
                 0U
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
                 fixture.runtime, evict_task.task_id, fixture.compute
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
                 fixture.runtime,
                 fetch_task.task_id,
                 fixture.compute,
                 NULL,
                 0U
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
                 fixture.runtime, fetch_task.task_id, fixture.compute
             ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
                 fixture.runtime
@@ -1041,9 +1060,9 @@ static int admitted_task_allocates_dynamic_ranges(void) {
     ShadowSpillAllocation first_workspace = {0};
     ShadowSpillAllocation output = {0};
     ShadowSpillAllocation second_workspace = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 40U, 1U, fixture.compute, &first_workspace
@@ -1054,7 +1073,7 @@ static int admitted_task_allocates_dynamic_ranges(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         (uintptr_t)first_workspace.pointer >= (uintptr_t)output.pointer ||
         (uintptr_t)output.pointer >= (uintptr_t)second_workspace.pointer ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
@@ -1083,31 +1102,31 @@ static int admitted_reuse_reacquires_retired_dynamic_range(void) {
     ShadowSpillAllocation first = {0};
     ShadowSpillAllocation reacquired = {0};
     ShadowSpillRuntimeStatistics retired = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &first_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &reuse_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, first_execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 64U, 1U, fixture.compute, &first
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_free(
             fixture.runtime, first.allocation_id, fixture.compute
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             fixture.runtime, first_execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
             fixture.runtime, &retired
         ) != SHADOWSPILL_RUNTIME_OK || retired.allocated_bytes != 0U ||
-        retired.pending_retirements != 0U || shadowspill_before_execution(
+        retired.pending_retirements != 0U || shadowspill_test_before_task(
             fixture.runtime, reuse_execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 64U, 1U, fixture.compute, &reacquired
         ) != SHADOWSPILL_RUNTIME_OK || reacquired.pointer != first.pointer ||
         reacquired.allocation_id == first.allocation_id || shadowspill_free(
             fixture.runtime, reacquired.allocation_id, fixture.compute
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             fixture.runtime, reuse_execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
@@ -1138,17 +1157,17 @@ static int admitted_allocation_without_progress_reports_no_progress(void) {
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation blocked = {0};
     ShadowSpillRuntimeFailure failure = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &first_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &reuse_execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, first_execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 128U, 1U, fixture.compute, &live
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             fixture.runtime, first_execution.task_id, fixture.compute
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, reuse_execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 64U, 1U, fixture.compute, &blocked
@@ -1158,7 +1177,12 @@ static int admitted_allocation_without_progress_reports_no_progress(void) {
         failure.status != SHADOWSPILL_RUNTIME_NO_PROGRESS ||
         failure.task_id != reuse_execution.task_id ||
         failure.requested_bytes != 64U;
-    shadowspill_abort_task(fixture.runtime);
+    failed = failed || shadowspill_abort_task_handle(
+            fixture.runtime,
+            shadowspill_test_task_handle(
+                fixture.runtime, reuse_execution.task_id
+            )
+        ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
@@ -1177,9 +1201,9 @@ static int admitted_dynamic_allocations_use_deterministic_low_ranges(void) {
     };
     ShadowSpillAllocation dynamic = {0};
     ShadowSpillAllocation exact = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 32U, 1U, fixture.compute, &dynamic
@@ -1187,7 +1211,7 @@ static int admitted_dynamic_allocations_use_deterministic_low_ranges(void) {
             fixture.runtime, 32U, 1U, fixture.compute, &exact
         ) != SHADOWSPILL_RUNTIME_OK ||
         (uintptr_t)exact.pointer != (uintptr_t)dynamic.pointer + 32U ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
@@ -1209,9 +1233,9 @@ static int admitted_task_rejects_envelope_excess(void) {
     ShadowSpillAllocation expected = {0};
     ShadowSpillAllocation unexpected = {0};
     ShadowSpillRuntimeFailure failure = {0};
-    const int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 32U, 1U, fixture.compute, &expected
@@ -1265,10 +1289,10 @@ static int admitted_task_accepts_exact_allocation_contract(void) {
         .live_charged_allocation_limit_bytes = 32U,
     };
     ShadowSpillAllocation allocation = {0};
-    const ShadowSpillRuntimeStatus admit_status = shadowspill_admit_execution(
+    const ShadowSpillRuntimeStatus admit_status = shadowspill_test_admit_task(
         fixture.runtime, &execution
     );
-    const ShadowSpillRuntimeStatus before_status = shadowspill_before_execution(
+    const ShadowSpillRuntimeStatus before_status = shadowspill_test_before_task(
         fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
     );
     const ShadowSpillRuntimeStatus allocate_status = shadowspill_allocate(
@@ -1277,7 +1301,7 @@ static int admitted_task_accepts_exact_allocation_contract(void) {
     const ShadowSpillRuntimeStatus free_status = shadowspill_free(
         fixture.runtime, allocation.allocation_id, fixture.compute
     );
-    const ShadowSpillRuntimeStatus after_status = shadowspill_after_execution(
+    const ShadowSpillRuntimeStatus after_status = shadowspill_test_after_task(
         fixture.runtime, execution.task_id, fixture.compute
     );
     const ShadowSpillRuntimeStatus idle_status = shadowspill_runtime_wait_idle(
@@ -1330,19 +1354,19 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
     };
     ShadowSpillAllocation first = {0};
     ShadowSpillAllocation second = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(
             fixture.runtime, 32U, 1U, fixture.compute, &first
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(
@@ -1351,7 +1375,7 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
         shadowspill_free(
             fixture.runtime, first.allocation_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_free(
@@ -1387,9 +1411,9 @@ static int admitted_task_rejects_allocation_contract_geometry_mismatch(void) {
     };
     ShadowSpillAllocation allocation = {0};
     ShadowSpillRuntimeFailure failure = {0};
-    const int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 16U, 1U, fixture.compute, &allocation
@@ -1408,7 +1432,10 @@ static int admitted_task_rejects_allocation_contract_geometry_mismatch(void) {
             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
         failure.task_allocation_actual_operation !=
             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE;
-    shadowspill_abort_task(fixture.runtime);
+    failed = failed || shadowspill_abort_task_handle(
+            fixture.runtime,
+            shadowspill_test_task_handle(fixture.runtime, execution.task_id)
+        ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
     return failed ? -1 : 0;
 }
@@ -1446,13 +1473,13 @@ static int admitted_task_rejects_incomplete_allocation_contract(void) {
     };
     ShadowSpillAllocation allocation = {0};
     ShadowSpillRuntimeFailure failure = {0};
-    const int failed = shadowspill_admit_execution(
+    const int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 32U, 1U, fixture.compute, &allocation
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH ||
         shadowspill_runtime_failure(
@@ -1498,10 +1525,10 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
     ShadowSpillAllocation matched = {0};
     ShadowSpillAllocation inserted_second = {0};
     ShadowSpillAllocation required = {0};
-    int failed = shadowspill_admit_execution(
+    int failed = shadowspill_test_admit_task(
             fixture.runtime, &execution
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(
@@ -1525,7 +1552,7 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
         shadowspill_allocate(
             fixture.runtime, 48U, 1U, fixture.compute, &required
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_execution(
+        shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_free(
@@ -1555,8 +1582,8 @@ static int admitted_prefetch_reserves_dynamic_capacity(void) {
     ShadowSpillAllocation following = {0};
     int failed = shadowspill_register_object(
             fixture.runtime, &description
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_task(
-            fixture.runtime, 52U, fixture.compute, NULL, 0U, &prefetch, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_submit_actions(
+            fixture.runtime, 52U, fixture.compute, &prefetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
@@ -1588,19 +1615,18 @@ static int execution_plan_lifecycle(void) {
     const ShadowSpillExecutionDescription second_plan = {
         .task_id = first_plan.task_id,
     };
-    const ShadowSpillExecutionHandle *handle = NULL;
     int failed = shadowspill_register_object(fixture.runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &first_plan
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_clear_plan(
             fixture.runtime
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_resolve_execution(
-            fixture.runtime, first_plan.task_id, &handle
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            fixture.runtime, first_plan.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE || shadowspill_unregister_object(
             fixture.runtime, object.object_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &second_plan
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_clear_execution_plan(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_clear_plan(
             fixture.runtime
         ) != SHADOWSPILL_RUNTIME_OK;
     fixture_destroy(&fixture);
@@ -1646,9 +1672,9 @@ static int functional_mutation_replaces_lease_without_copy(void) {
             fixture.runtime, description.size_bytes, 1U, fixture.compute, &prior
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_bind_object(
             fixture.runtime, description.object_id, prior.allocation_id
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_admit_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             fixture.runtime, &execution
-        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             fixture.runtime, execution.task_id, fixture.compute, &acquired, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, description.size_bytes, 1U, fixture.compute,
@@ -1670,7 +1696,7 @@ static int functional_mutation_replaces_lease_without_copy(void) {
             fixture.runtime, probe.allocation_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_mock_enqueue_compute(
             fixture.mock, fixture.compute, 100000U
-        ) != 0 || shadowspill_after_execution(
+        ) != 0 || shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
@@ -1708,7 +1734,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
             SHADOWSPILL_RUNTIME_OK || shadowspill_mock_create_compute_stream(
             mock, &compute
         ) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -1747,16 +1773,16 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
     ShadowSpillAllocation replacement = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
     int failed = shadowspill_register_object(runtime, &description) !=
-            SHADOWSPILL_RUNTIME_OK || shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, &fetch, 1U
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_submit_actions(
+            runtime, 1U, compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
     sleep_milliseconds(75U);
     failed = failed || shadowspill_object_snapshot(
             runtime, description.object_id, &during_fetch
         ) != SHADOWSPILL_RUNTIME_OK ||
         during_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
-        shadowspill_admit_execution(runtime, &execution) !=
-            SHADOWSPILL_RUNTIME_OK || shadowspill_before_execution(
+        shadowspill_test_admit_task(runtime, &execution) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
             runtime, execution.task_id, compute, &acquired, 1U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             runtime, description.size_bytes, 1U, compute, &replacement
@@ -1767,7 +1793,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
             &replaced
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_mock_enqueue_compute(
             mock, compute, 1000000U
-        ) != 0 || shadowspill_after_execution(
+        ) != 0 || shadowspill_test_after_task(
             runtime, execution.task_id, compute
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(runtime) !=
             SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
@@ -1782,7 +1808,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
         statistics.pending_retirements != 0U ||
         statistics.wait_events_inserted != 1U;
 
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }
@@ -1807,7 +1833,7 @@ static int queued_release_causally_precedes_fetch(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -1845,20 +1871,19 @@ static int queued_release_causally_precedes_fetch(void) {
         shadowspill_bind_object(
             runtime, description.object_id, allocation.allocation_id
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_admit_execution(runtime, &consumer) !=
+        shadowspill_test_admit_task(runtime, &consumer) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_enqueue_compute(mock, compute, 100000000U) != 0 ||
-        shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, &release, 1U
+        shadowspill_test_submit_actions(
+            runtime, 1U, compute, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_submit_actions(
+            runtime, 2U, compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 2U, compute, NULL, 0U, &fetch, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             runtime, consumer.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         binding.allocation_id == allocation.allocation_id ||
-        shadowspill_after_execution(runtime, consumer.task_id, compute) !=
+        shadowspill_test_after_task(runtime, consumer.task_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
@@ -1890,7 +1915,7 @@ static int queued_release_causally_precedes_fetch(void) {
         );
     }
 
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }
@@ -1916,7 +1941,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -1941,13 +1966,22 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         .version_delta = 1U,
     };
     const uint64_t input = description.object_id;
+    const ShadowSpillExecutionDescription task = {
+        .task_id = 2U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .updates = &update,
+        .update_count = 1U,
+        .actions = &offload,
+        .action_count = 1U,
+    };
     ShadowSpillObjectBinding binding = {0};
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
     int failed = shadowspill_register_object(runtime, &description) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, &fetch, 1U
+        shadowspill_test_submit_actions(
+            runtime, 1U, compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
 
     for (uint32_t attempt = 0U; !failed && attempt < 500U; ++attempt) {
@@ -1960,12 +1994,13 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         sleep_milliseconds(1U);
     }
     failed = failed || snapshot.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
-        shadowspill_before_task(
-            runtime, 2U, compute, &input, 1U, &binding, 1U
+        shadowspill_test_admit_task(runtime, &task) !=
+            SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
+            runtime, task.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_enqueue_compute(mock, compute, 1000000U) != 0 ||
-        shadowspill_after_task(
-            runtime, 2U, compute, &update, 1U, &offload, 1U
+        shadowspill_test_after_task(
+            runtime, task.task_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
@@ -1997,7 +2032,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
             (unsigned long long)statistics.spill_allocated_bytes
         );
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }
@@ -2022,7 +2057,7 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -2050,11 +2085,10 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
         shadowspill_bind_object(
             runtime, target.object_id, target_allocation.allocation_id
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 1U, compute, NULL, 0U, &target_offload, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 2U, compute, NULL, 0U, &target_fetch, 1U
+        shadowspill_test_submit_actions(
+            runtime, 1U, compute, &target_offload, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_submit_actions(
+            runtime, 2U, compute, &target_fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
 
     ShadowSpillObjectSnapshot submitted = {0};
@@ -2086,7 +2120,7 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
         );
     }
 
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }
@@ -2111,7 +2145,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
         ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        shadowspill_runtime_destroy(runtime);
+        shadowspill_test_destroy_runtime(runtime);
         shadowspill_mock_backend_destroy(mock);
         return -1;
     }
@@ -2143,10 +2177,10 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
     ShadowSpillRuntimeStatistics statistics = {0};
     int failed = shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_admit_execution(runtime, &consumer) !=
+        shadowspill_test_admit_task(runtime, &consumer) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 70U, compute, NULL, 0U, &fetch, 1U
+        shadowspill_test_submit_actions(
+            runtime, 70U, compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK;
 
     for (uint32_t attempt = 0U; !failed && attempt < 500U; ++attempt) {
@@ -2161,17 +2195,16 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
     }
     failed = failed ||
         first_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
-        shadowspill_after_task(
-            runtime, 71U, compute, NULL, 0U, &release, 1U
+        shadowspill_test_submit_actions(
+            runtime, 71U, compute, &release, 1U
+        ) != SHADOWSPILL_RUNTIME_OK || shadowspill_test_submit_actions(
+            runtime, 72U, compute, &fetch, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(
-            runtime, 72U, compute, NULL, 0U, &fetch, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_execution(
+        shadowspill_test_before_task(
             runtime, consumer.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_RUNTIME_OK ||
         binding.allocation_id == first_fetch.allocation_id ||
-        shadowspill_after_execution(runtime, consumer.task_id, compute) !=
+        shadowspill_test_after_task(runtime, consumer.task_id, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
@@ -2195,7 +2228,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
             (unsigned long long)statistics.fetch_transfers
         );
     }
-    shadowspill_runtime_destroy(runtime);
+    shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
     }

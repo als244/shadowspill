@@ -89,8 +89,6 @@ class _Library:
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
     shadowspill_pytorch_allocation_scope_abort = _Function()
-    shadowspill_pytorch_before_task = _Function()
-    shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_plan_create = _Function()
     shadowspill_pytorch_plan_close = _Function()
     shadowspill_pytorch_plan_destroy = _Function()
@@ -98,30 +96,19 @@ class _Library:
     shadowspill_pytorch_object_handle_release = _Function()
     shadowspill_pytorch_object_release_generation = _Function()
     shadowspill_pytorch_plan_bind_object = _Function()
-    shadowspill_pytorch_plan_admit_execution = _Function()
     shadowspill_pytorch_plan_admit_task = _Function()
     shadowspill_pytorch_plan_admit_fixed_layout = _Function()
     shadowspill_pytorch_plan_seal_fixed_layout = _Function()
     shadowspill_pytorch_plan_clear_execution = _Function()
-    shadowspill_pytorch_plan_resolve_execution = _Function()
     shadowspill_pytorch_plan_admit_object_acquisition = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_plan_admit_action_batch = _Function()
     shadowspill_pytorch_submit_action_batch_handle = _Function()
-    shadowspill_pytorch_admit_execution = _Function()
-    shadowspill_pytorch_admit_fixed_layout = _Function()
-    shadowspill_pytorch_seal_fixed_layout = _Function()
-    shadowspill_pytorch_clear_execution_plan = _Function()
-    shadowspill_pytorch_resolve_execution = _Function()
-    shadowspill_pytorch_before_execution = _Function()
-    shadowspill_pytorch_after_execution = _Function()
-    shadowspill_pytorch_before_execution_handle = _Function()
-    shadowspill_pytorch_after_execution_handle = _Function()
     shadowspill_pytorch_before_task_handle = _Function()
     shadowspill_pytorch_after_task_handle = _Function()
     shadowspill_pytorch_object_snapshot = _Function()
     shadowspill_pytorch_validate_spill_binding = _Function()
-    shadowspill_pytorch_abort_task_range = _Function()
+    shadowspill_pytorch_abort_task_handle = _Function()
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
@@ -168,11 +155,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_check_physical_budget.argtypes == []
-    assert library.shadowspill_pytorch_clear_execution_plan.argtypes == []
-    assert library.shadowspill_pytorch_admit_fixed_layout.argtypes == [
-        ctypes.POINTER(FixedLayoutDescription)
-    ]
-    assert library.shadowspill_pytorch_seal_fixed_layout.argtypes == []
     assert library.shadowspill_pytorch_allocator_bootstrap.argtypes == [
         ctypes.POINTER(AdapterConfig)
     ]
@@ -282,22 +264,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.POINTER(ObjectBinding),
     ]
-    assert library.shadowspill_pytorch_before_task.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ctypes.c_uint64),
-        ctypes.c_uint32,
-        ctypes.POINTER(ObjectBinding),
-        ctypes.c_uint32,
-    ]
-    assert library.shadowspill_pytorch_after_task.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(ObjectUpdate),
-        ctypes.c_uint32,
-        ctypes.POINTER(RuntimeAction),
-        ctypes.c_uint32,
-    ]
     assert library.shadowspill_pytorch_allocation_scope_begin.argtypes == [
         ctypes.c_uint64
     ]
@@ -306,7 +272,10 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_size_t,
     ]
     assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
-    assert library.shadowspill_pytorch_abort_task_range.argtypes == []
+    assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+    ]
 
 
 def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:

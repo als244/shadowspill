@@ -13,6 +13,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterCapabilities,
     AdapterStatistics,
     Allocation,
+    ExecutionDescription,
     ObjectBinding,
     ObjectSnapshot,
     PhysicalMemory,
@@ -22,6 +23,93 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     install_allocator,
     resize_spill_pool,
 )
+
+
+def _create_plan(library: object) -> int:
+    handle = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(handle)))
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"plan creation failed with status {status}")
+    return int(handle.value)
+
+
+def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
+    handle = ctypes.c_size_t()
+    status = int(
+        library.shadowspill_pytorch_object_handle_acquire(
+            object_id, ctypes.byref(handle)
+        )
+    )
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"object handle acquisition failed with status {status}")
+    try:
+        status = int(
+            library.shadowspill_pytorch_plan_bind_object(
+                plan, object_id, handle.value, 0
+            )
+        )
+        if status != 0:
+            raise AssertionError(f"plan object binding failed with status {status}")
+    finally:
+        library.shadowspill_pytorch_object_handle_release(handle.value)
+
+
+def _submit_actions(
+    library: object,
+    plan: int,
+    batch_id: int,
+    stream: int,
+    actions: tuple[RuntimeAction, ...],
+) -> None:
+    for object_id in dict.fromkeys(action.object_id for action in actions):
+        _bind_plan_object(library, plan, object_id)
+    encoded = (RuntimeAction * len(actions))(*actions)
+    handle = ctypes.c_size_t()
+    status = int(
+        library.shadowspill_pytorch_plan_admit_action_batch(
+            plan, batch_id, encoded, len(actions), ctypes.byref(handle)
+        )
+    )
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"action admission failed with status {status}")
+    status = int(
+        library.shadowspill_pytorch_submit_action_batch_handle(
+            handle.value, stream
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"action submission failed with status {status}")
+
+
+def _admit_task(
+    library: object,
+    plan: int,
+    task_id: int,
+    inputs: tuple[int, ...],
+    actions: tuple[RuntimeAction, ...] = (),
+) -> int:
+    for object_id in dict.fromkeys(
+        (*inputs, *(action.object_id for action in actions))
+    ):
+        _bind_plan_object(library, plan, object_id)
+    encoded_inputs = (ctypes.c_uint64 * len(inputs))(*inputs)
+    encoded_actions = (RuntimeAction * len(actions))(*actions)
+    description = ExecutionDescription(
+        task_id=task_id,
+        input_object_ids=encoded_inputs if inputs else None,
+        input_count=len(inputs),
+        actions=encoded_actions if actions else None,
+        action_count=len(actions),
+    )
+    handle = ctypes.c_size_t()
+    status = int(
+        library.shadowspill_pytorch_plan_admit_task(
+            plan, ctypes.byref(description), ctypes.byref(handle)
+        )
+    )
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"task admission failed with status {status}")
+    return int(handle.value)
 
 
 def main() -> int:
@@ -95,6 +183,7 @@ def main() -> int:
     gc.collect()
     torch.cuda.synchronize()
     library = installed.library
+    plan = _create_plan(library)
     library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("allocator did not become idle")
@@ -192,18 +281,7 @@ def main() -> int:
     offload = (RuntimeAction * 1)(
         RuntimeAction(object_id=binding.object_id, kind=1)
     )
-    status = int(
-        library.shadowspill_pytorch_after_task(
-            100,
-            compute_stream,
-            None,
-            0,
-            offload,
-            1,
-        )
-    )
-    if status != 0:
-        raise AssertionError(f"offload submission failed with status {status}")
+    _submit_actions(library, plan, 100, compute_stream, tuple(offload))
     torch.ops.shadowspill._rebind_storage(
         parameter, 0, binding.object_id, binding.generation
     )
@@ -229,26 +307,23 @@ def main() -> int:
     prefetch = (RuntimeAction * 1)(
         RuntimeAction(object_id=binding.object_id, kind=2)
     )
-    status = int(
-        library.shadowspill_pytorch_after_task(
-            101,
-            compute_stream,
-            None,
-            0,
-            prefetch,
-            1,
-        )
+    _submit_actions(library, plan, 101, compute_stream, tuple(prefetch))
+    release = (RuntimeAction * 1)(
+        RuntimeAction(object_id=binding.object_id, kind=0)
     )
-    if status != 0:
-        raise AssertionError(f"prefetch submission failed with status {status}")
-    object_ids = (ctypes.c_uint64 * 1)(binding.object_id)
+    consumer = _admit_task(
+        library,
+        plan,
+        102,
+        (binding.object_id,),
+        tuple(release),
+    )
     rebound = (ObjectBinding * 1)()
     status = int(
-        library.shadowspill_pytorch_before_task(
+        library.shadowspill_pytorch_before_task_handle(
+            consumer,
             102,
             compute_stream,
-            object_ids,
-            1,
             rebound,
             1,
         )
@@ -276,17 +351,9 @@ def main() -> int:
     torch.testing.assert_close(parameter.cpu(), expected)
 
     torch.cuda._sleep(100_000_000)
-    release = (RuntimeAction * 1)(
-        RuntimeAction(object_id=binding.object_id, kind=0)
-    )
     status = int(
-        library.shadowspill_pytorch_after_task(
-            103,
-            compute_stream,
-            None,
-            0,
-            release,
-            1,
+        library.shadowspill_pytorch_after_task_handle(
+            consumer, 102, compute_stream
         )
     )
     if status != 0:
@@ -346,36 +413,22 @@ def main() -> int:
     if status != 0:
         raise AssertionError(f"registered allocation bind failed with status {status}")
     host_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
-    if (
-        int(
-            library.shadowspill_pytorch_after_task(
-                300, compute_stream, None, 0, host_release, 1
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("initial placeholder release failed")
+    _submit_actions(library, plan, 300, compute_stream, tuple(host_release))
     torch.ops.shadowspill._rebind_storage(
         host_tensor, 0, host_binding.object_id, host_binding.generation
     )
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("host placeholder release did not drain")
     host_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
-    if (
-        int(
-            library.shadowspill_pytorch_after_task(
-                301, compute_stream, None, 0, host_prefetch, 1
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("direct host prefetch failed")
-    host_ids = (ctypes.c_uint64 * 1)(3001)
+    _submit_actions(library, plan, 301, compute_stream, tuple(host_prefetch))
+    host_consumer = _admit_task(
+        library, plan, 302, (3001,), tuple(host_release)
+    )
     host_rebound = (ObjectBinding * 1)()
     if (
         int(
-            library.shadowspill_pytorch_before_task(
-                302, compute_stream, host_ids, 1, host_rebound, 1
+            library.shadowspill_pytorch_before_task_handle(
+                host_consumer, 302, compute_stream, host_rebound, 1
             )
         )
         != 0
@@ -390,8 +443,8 @@ def main() -> int:
     torch.testing.assert_close(host_tensor.cpu(), host_source)
     if (
         int(
-            library.shadowspill_pytorch_after_task(
-                302, compute_stream, None, 0, host_release, 1
+            library.shadowspill_pytorch_after_task_handle(
+                host_consumer, 302, compute_stream
             )
         )
         != 0
@@ -467,7 +520,7 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
-    if int(library.shadowspill_pytorch_clear_execution_plan()) != 0:
+    if int(library.shadowspill_pytorch_plan_clear_execution(plan)) != 0:
         raise AssertionError("execution-plan clear failed after physical sealing")
     cleared_statistics = AdapterStatistics()
     if (
@@ -490,6 +543,9 @@ def main() -> int:
         > installed.admission.device_budget_bytes
     ):
         raise AssertionError("physical peak exceeded the device cap")
+    if int(library.shadowspill_pytorch_plan_close(plan)) != 0:
+        raise AssertionError("plan close failed")
+    library.shadowspill_pytorch_plan_destroy(plan)
     return 0
 
 

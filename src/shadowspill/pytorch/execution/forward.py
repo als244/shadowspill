@@ -100,7 +100,7 @@ class _ExecutingStage(nn.Module):
             )
         except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task()
+                self._bridge.abort_task(self._task_handle, self._task_index)
             raise
 
     def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
@@ -189,7 +189,7 @@ class _ExecutingStage(nn.Module):
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task()
+            self._bridge.abort_task(self._task_handle, self._task_index)
 
 
 class ForwardExecutor:

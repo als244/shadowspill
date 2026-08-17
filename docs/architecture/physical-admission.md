@@ -285,10 +285,11 @@ state a callable-relative address.
 
 Runtime adoption has two cold-path phases:
 
-1. `shadowspill_admit_fixed_layout()` copies the pointer-free certificate and
-   reserves the parent execution-pool slice.
+1. `shadowspill_plan_admit_fixed_layout()` copies the pointer-free certificate
+   and reserves the parent execution-pool slice.
 2. After objects and immutable execution records exist,
-   `shadowspill_seal_fixed_layout()` resolves every placement and dependency.
+   `shadowspill_plan_seal_fixed_layout()` resolves every placement and
+   dependency.
 
 Sealing verifies:
 
