@@ -263,7 +263,15 @@ typedef struct ShadowSpillRetirementRecord {
     uint32_t event_count;
     ShadowSpillEventLease *task_completion_event;
     struct ShadowSpillRetirementRecord *next;
+    struct ShadowSpillRetirementRecord *free_next;
+    uint8_t pool_owned;
 } ShadowSpillRetirementRecord;
+
+typedef struct ShadowSpillRetirementRecordBlock {
+    ShadowSpillRetirementRecord *records;
+    uint64_t count;
+    struct ShadowSpillRetirementRecordBlock *next;
+} ShadowSpillRetirementRecordBlock;
 
 /*
  * Producers publish only fully described retirements.  The worker thread
@@ -275,8 +283,16 @@ typedef struct ShadowSpillRetirementQueue {
     pthread_mutex_t lock;
     ShadowSpillRetirementRecord *head;
     ShadowSpillRetirementRecord *tail;
+    ShadowSpillRetirementRecord *free_head;
+    ShadowSpillRetirementRecordBlock *blocks;
     _Atomic uint64_t count;
+    uint64_t capacity;
+    uint64_t available;
+    uint64_t in_use;
+    uint64_t peak_in_use;
+    uint64_t growth_rejections;
     uint8_t lock_initialized;
+    uint8_t sealed;
 } ShadowSpillRetirementQueue;
 
 typedef struct ShadowSpillRetirementWork {
@@ -1023,6 +1039,10 @@ void shadowspill_finalize_aborted_task_retirements(
 );
 int shadowspill_retirement_queue_initialize(
     ShadowSpillRetirementQueue *queue
+);
+ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
+    ShadowSpillRetirementQueue *queue,
+    uint64_t minimum_free_records
 );
 void shadowspill_retirement_queue_destroy(
     ShadowSpillRuntime *runtime,

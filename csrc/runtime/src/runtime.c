@@ -455,6 +455,25 @@ ShadowSpillRuntimeStatus shadowspill_runtime_reserve_event_leases(
     );
 }
 
+ShadowSpillRuntimeStatus shadowspill_runtime_reserve_retirement_records(
+    ShadowSpillRuntime *runtime,
+    uint64_t minimum_free_records
+) {
+    if (runtime == NULL || minimum_free_records == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    return shadowspill_retirement_queue_reserve(
+        &runtime->retirements, minimum_free_records
+    );
+}
+
 ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 ) {
@@ -659,6 +678,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     pthread_mutex_lock(&execution_pool->lock);
     pthread_mutex_lock(&spill_pool->lock);
     pthread_mutex_lock(&runtime->events.lock);
+    pthread_mutex_lock(&runtime->retirements.lock);
     uint64_t retirement_records_fenced = 0U;
     uint64_t retirement_records_evented = 0U;
     uint64_t retirement_records_preparing = 0U;
@@ -735,7 +755,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .event_lease_in_use = runtime->events.in_use,
         .event_lease_peak_in_use = runtime->events.peak_in_use,
         .event_lease_growth_rejections = runtime->events.growth_rejections,
+        .retirement_record_capacity = runtime->retirements.capacity,
+        .retirement_record_in_use = runtime->retirements.in_use,
+        .retirement_record_peak_in_use = runtime->retirements.peak_in_use,
+        .retirement_record_growth_rejections =
+            runtime->retirements.growth_rejections,
     };
+    pthread_mutex_unlock(&runtime->retirements.lock);
     pthread_mutex_unlock(&runtime->events.lock);
     pthread_mutex_unlock(&spill_pool->lock);
     pthread_mutex_unlock(&execution_pool->lock);

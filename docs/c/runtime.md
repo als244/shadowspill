@@ -11,6 +11,9 @@ worker, trace buffers, and first-failure state.
 - `shadowspill_runtime_reserve_event_leases()` grows and seals the neutral
   event-record inventory at an idle cold-plan boundary. Repeated calls support
   additional callables sharing the same runtime without racing existing work.
+- `shadowspill_runtime_reserve_retirement_records()` does the same for the
+  immutable records queued between logical release and physical reclamation.
+  A sealed inventory never falls back to `malloc` on the task or worker path.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.
@@ -154,7 +157,9 @@ Runtime tracing uses:
 - `shadowspill_trace_end()`
 - `shadowspill_trace_read()`
 
-`shadowspill_runtime_statistics()` returns aggregate pool and action counters.
+`shadowspill_runtime_statistics()` returns aggregate pool and action counters,
+including capacity, current/peak use, and rejected growth for both neutral
+event leases and retirement records.
 `shadowspill_runtime_failure()` returns the first latched failure.
 `shadowspill_runtime_recover_no_progress()` performs the explicit recovery
 operation defined by the header; it does not hide an infeasible request.
