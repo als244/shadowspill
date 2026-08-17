@@ -335,6 +335,30 @@ def test_documentation_index_exposes_reading_paths() -> None:
         assert f"]({target})" in index
 
 
+def test_root_readme_remains_a_minimal_entrypoint() -> None:
+    readme = (ROOT / "README.md").read_text()
+    sections = re.findall(r"^## (.+)$", readme, re.MULTILINE)
+    assert sections == [
+        "Installation",
+        "Minimal example",
+        "Project structure",
+        "Documentation",
+    ]
+    assert len(readme.splitlines()) <= 110
+
+
+def test_architecture_overview_starts_with_purpose_and_visuals() -> None:
+    overview = (DOCS / "architecture" / "overview.md").read_text()
+    for required in (
+        "## Why ShadowSpill exists",
+        "## System at a glance",
+        "## How planning responsibilities differ",
+        "## Runtime interaction",
+    ):
+        assert required in overview
+    assert overview.count("```mermaid") >= 3
+
+
 def test_every_public_python_export_appears_on_its_api_page() -> None:
     missing = {
         page.relative_to(ROOT).as_posix(): sorted(
