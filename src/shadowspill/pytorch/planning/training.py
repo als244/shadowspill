@@ -552,10 +552,6 @@ def build_training_programs(
                 lowered.program,
                 execution_pool_bytes=execution_pool_bytes,
                 object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
-                workspace_extents_by_compatibility={
-                    digest: measurement.workspace_extent_bytes
-                    for digest, measurement in measurements_by_profile.items()
-                },
                 allocation_traces_by_compatibility={
                     digest: measurement.allocation_trace
                     for digest, measurement in measurements_by_profile.items()

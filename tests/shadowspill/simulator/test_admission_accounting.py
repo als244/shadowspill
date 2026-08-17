@@ -20,6 +20,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.planner import AdmissionTopology, TaskAdmissionSpec
 from shadowspill.pytorch.planning.admission import (
     replay_admission,
     simulation_admission_from_replay,
@@ -136,9 +137,7 @@ def _admission() -> SimulationAdmission:
             TaskPhysicalDelta("fetch_trigger", 0, 0),
             TaskPhysicalDelta("consumer", 0, 0),
         ),
-        reuse_dependencies=(
-            MemoryReuseDependency(0, successor_action_index=1),
-        ),
+        reuse_dependencies=(MemoryReuseDependency(0, successor_action_index=1),),
     )
 
 
@@ -150,10 +149,17 @@ def test_logical_double_residency_requires_physical_reuse_certificate() -> None:
 
 
 def test_causal_reuse_preserves_peak_and_delays_wire_start() -> None:
+    program = _program()
     replay = replay_admission(
-        _program(),
+        program,
         _schedule(),
-        execution_pool_bytes=96,
+        topology=AdmissionTopology(
+            "cuda_0",
+            96,
+            96,
+            1,
+            tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+        ),
     )
     admission = simulation_admission_from_replay(
         replay,

@@ -98,7 +98,6 @@ def build_admission_topology(
     execution_pool_bytes: int,
     object_capacity_bytes: int,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
-    workspace_extents_by_compatibility: Mapping[str, tuple[int, ...]] | None = None,
     allocation_traces_by_compatibility: Mapping[str, tuple[TaskAllocationEvent, ...]]
     | None = None,
     alignment: int = 256,
@@ -123,7 +122,6 @@ def build_admission_topology(
             f"shared={shared_execution_bytes}"
         )
     profile_by_id = {item.profile_id: item for item in program.profiles}
-    profiled_extents = dict(workspace_extents_by_compatibility or {})
     profiled_traces = dict(allocation_traces_by_compatibility or {})
     bindings_by_task = dict(output_bindings or {})
     task_specs: list[TaskAdmissionSpec] = []
@@ -162,35 +160,28 @@ def build_admission_topology(
                 f"charge: replacements={replacement_bytes}, "
                 f"workspace={profiled_workspace}"
             )
-        anonymous_workspace = profiled_workspace - replacement_bytes
-        workspace_extents = profiled_extents.get(profile.compatibility_digest)
-        if workspace_extents is None:
-            workspace_extents = (
-                () if anonymous_workspace == 0 else (anonymous_workspace,)
+        try:
+            trace = profiled_traces[profile.compatibility_digest]
+        except KeyError as error:
+            raise ValueError(
+                f"task {task.task_id} lacks explicit physical allocation "
+                f"evidence for profile {profile.compatibility_digest!r}"
+            ) from error
+        allocation_steps = _task_allocation_steps(
+            task.task_id,
+            trace,
+            bindings,
+            persistent_aliases=set(fresh_aliases) | set(replacements),
+        )
+        workspace_extents = _anonymous_peak_extents(allocation_steps)
+        expected_workspace = profiled_workspace - replacement_bytes
+        if sum(workspace_extents) != expected_workspace:
+            raise ValueError(
+                f"task {task.task_id} physical allocation trace and Program "
+                "workspace disagree: "
+                f"trace_peak={sum(workspace_extents)}, "
+                f"program_workspace={expected_workspace}"
             )
-        else:
-            measured_workspace = sum(workspace_extents)
-            if measured_workspace > anonymous_workspace:
-                raise ValueError(
-                    f"task {task.task_id} workspace extents exceed its "
-                    "anonymous workspace charge: "
-                    f"extents={measured_workspace}, "
-                    f"workspace={anonymous_workspace}"
-                )
-            residual = anonymous_workspace - measured_workspace
-            if residual:
-                workspace_extents = (
-                    *workspace_extents,
-                    *_unclassified_workspace_extents(
-                        task,
-                        residual,
-                        alias_by_object=alias_by_object,
-                        alias_size=alias_size,
-                        persistent_destinations=(
-                            set(replacements) | handoff_destinations
-                        ),
-                    ),
-                )
         task_specs.append(
             TaskAdmissionSpec(
                 task_id=task.task_id,
@@ -198,12 +189,7 @@ def build_admission_topology(
                 fresh_output_aliases=fresh_aliases,
                 replacement_aliases=replacements,
                 storage_handoffs=handoffs,
-                allocation_steps=_task_allocation_steps(
-                    task.task_id,
-                    profiled_traces.get(profile.compatibility_digest),
-                    bindings,
-                    persistent_aliases=set(fresh_aliases) | set(replacements),
-                ),
+                allocation_steps=allocation_steps,
             )
         )
     topology = AdmissionTopology(
@@ -219,7 +205,7 @@ def build_admission_topology(
 
 def _task_allocation_steps(
     task_id: str,
-    trace: tuple[TaskAllocationEvent, ...] | None,
+    trace: tuple[TaskAllocationEvent, ...],
     bindings: tuple[TaskOutputBinding, ...],
     *,
     persistent_aliases: set[str],
@@ -231,8 +217,6 @@ def _task_allocation_steps(
     persistent output allocations remain live for ownership publication.
     """
 
-    if trace is None:
-        return ()
     alias_by_leaf = {item.leaf_index: item.alias_group_id for item in bindings}
     live: dict[int, str | None] = {}
     steps: list[TaskAllocationStep] = []
@@ -289,44 +273,26 @@ def _task_allocation_steps(
     return tuple(steps)
 
 
-def _unclassified_workspace_extents(
-    task: TaskSpec,
-    residual_bytes: int,
-    *,
-    alias_by_object: Mapping[str, str],
-    alias_size: Mapping[str, int],
-    persistent_destinations: set[str],
+def _anonymous_peak_extents(
+    steps: tuple[TaskAllocationStep, ...],
 ) -> tuple[int, ...]:
-    """Recover transient mutation extents hidden by a scalar task profile.
+    """Return the exact anonymous live-set peak encoded by one task trace."""
 
-    Recurrent gradient accumulation keeps the existing gradient objects live
-    while a compiled backward returns one contribution allocation per mutated
-    alias. Training lowering charges those contributions in ``workspace_bytes``
-    so the simulator sees the correct total overlap. They remain separate
-    allocator requests and must not become one synthetic contiguous lease.
-
-    Replacement and handoff destinations are admitted as persistent object
-    generations elsewhere. Any remaining bytes are physical transition
-    padding whose individual geometry is not otherwise represented.
-    """
-
-    mutation_aliases = tuple(
-        dict.fromkeys(
-            alias_by_object[item.object_id]
-            for item in task.mutations
-            if alias_by_object[item.object_id] not in persistent_destinations
-            and alias_size[alias_by_object[item.object_id]] != 0
-        )
-    )
-    mutation_extents = tuple(alias_size[item] for item in mutation_aliases)
-    classified_bytes = sum(mutation_extents)
-    if classified_bytes > residual_bytes:
-        # The mutations are in-place or their transition storage is already
-        # represented by another physical binding. Preserve the conservative
-        # residual without inventing a partial decomposition.
-        return (residual_bytes,)
-    padding = residual_bytes - classified_bytes
-    return (*mutation_extents, *((padding,) if padding else ()))
+    live: dict[int, int] = {}
+    peak: tuple[int, ...] = ()
+    live_bytes = 0
+    peak_bytes = 0
+    for step in steps:
+        if step.kind is TaskAllocationStepKind.ALLOCATE:
+            if step.output_alias_group_id is None:
+                live[step.allocation_ordinal] = step.charged_bytes
+                live_bytes += step.charged_bytes
+        else:
+            live_bytes -= live.pop(step.allocation_ordinal, 0)
+        if live_bytes > peak_bytes:
+            peak_bytes = live_bytes
+            peak = tuple(sorted(live.values()))
+    return peak
 
 
 __all__ = [

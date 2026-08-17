@@ -100,21 +100,15 @@ class SelectedAdmission:
 def admit_selected_schedule(
     selected: PressureFitResult,
     *,
-    execution_pool_bytes: int,
-    alignment: int = 256,
-    topology: AdmissionTopology | None = None,
-    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
+    topology: AdmissionTopology,
 ) -> AdmissionReplay:
     """Run timing-free cross-task admission for one selected schedule."""
 
     return replay_admission(
         selected.program,
         selected.schedule,
-        execution_pool_bytes=execution_pool_bytes,
         selections=selected.selections,
         topology=topology,
-        output_bindings=output_bindings,
-        alignment=alignment,
     )
 
 
@@ -122,26 +116,21 @@ def build_selected_admission(
     selected: PressureFitResult,
     measurements: Mapping[str, TaskMeasurement],
     *,
-    execution_pool_bytes: int,
-    alignment: int = 256,
-    topology: AdmissionTopology | None = None,
+    topology: AdmissionTopology,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
 ) -> SelectedAdmission:
     """Combine cross-task admission with fail-closed task envelopes."""
 
     admission = admit_selected_schedule(
         selected,
-        execution_pool_bytes=execution_pool_bytes,
-        alignment=alignment,
         topology=topology,
-        output_bindings=output_bindings,
     )
     simulation_admission = simulation_admission_from_replay(
         admission,
         selected.program,
         selected.schedule,
         selections=selected.selections,
-        device_capacity_bytes=execution_pool_bytes,
+        device_capacity_bytes=topology.pool_capacity_bytes,
     )
     return SelectedAdmission(
         task_envelopes=_selected_task_envelopes(

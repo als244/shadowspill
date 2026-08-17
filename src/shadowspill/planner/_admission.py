@@ -27,7 +27,6 @@ from ._capi import (
 from .admission import (
     AdmissionTopology,
     TaskAdmissionSpec,
-    TaskAllocationStep,
     TaskAllocationStepKind,
 )
 
@@ -205,10 +204,6 @@ def compile_admission_topology(
     allocation_rows, allocation_slot_count = _compile_allocation_rows(
         tasks,
         alias_index=alias_index,
-        alias_sizes=tuple(
-            int(simulation.program.alias_size_bytes[index])
-            for index in range(len(simulation.alias_ids))
-        ),
     )
     allocation_offsets, allocation_kinds = _flatten_rows(
         tuple(tuple(item[0] for item in row) for row in allocation_rows)
@@ -268,17 +263,13 @@ def _compile_allocation_rows(
     tasks: tuple[TaskAdmissionSpec, ...],
     *,
     alias_index: dict[str, int],
-    alias_sizes: tuple[int, ...],
 ) -> tuple[tuple[_CompiledAllocationRow, ...], int]:
     """Assign indexed lease slots while preserving each profiled task order."""
 
     rows: list[tuple[tuple[int, int, int, int], ...]] = []
     next_slot = 0
     for task in tasks:
-        if task.allocation_steps:
-            steps = task.allocation_steps
-        else:
-            steps = _synthetic_allocation_steps(task, alias_index, alias_sizes)
+        steps = task.allocation_steps
         slot_by_ordinal: dict[int, int] = {}
         row: list[tuple[int, int, int, int]] = []
         for step in steps:
@@ -305,46 +296,6 @@ def _compile_allocation_rows(
             )
         rows.append(tuple(row))
     return tuple(rows), next_slot
-
-
-def _synthetic_allocation_steps(
-    task: TaskAdmissionSpec,
-    alias_index: dict[str, int],
-    alias_sizes: tuple[int, ...],
-) -> tuple[TaskAllocationStep, ...]:
-    """Construct the legacy task-boundary envelope for hand-authored IR."""
-
-    steps: list[TaskAllocationStep] = []
-    ordinal = 0
-    workspace_ordinals: list[int] = []
-    for extent in task.workspace_extents:
-        steps.append(
-            TaskAllocationStep(
-                ordinal,
-                TaskAllocationStepKind.ALLOCATE,
-                extent,
-            )
-        )
-        workspace_ordinals.append(ordinal)
-        ordinal += 1
-    for alias_id in (*task.fresh_output_aliases, *task.replacement_aliases):
-        alias_bytes = alias_sizes[alias_index[alias_id]]
-        if alias_bytes == 0:
-            continue
-        steps.append(
-            TaskAllocationStep(
-                ordinal,
-                TaskAllocationStepKind.ALLOCATE,
-                alias_bytes,
-                alias_id,
-            )
-        )
-        ordinal += 1
-    steps.extend(
-        TaskAllocationStep(item, TaskAllocationStepKind.RELEASE)
-        for item in workspace_ordinals
-    )
-    return tuple(steps)
 
 
 def evaluate_schedule_admission(

@@ -177,6 +177,15 @@ class TaskAdmissionSpec:
 
     def _validate_allocation_steps(self) -> None:
         if not self.allocation_steps:
+            if (
+                self.workspace_extents
+                or self.fresh_output_aliases
+                or self.replacement_aliases
+            ):
+                raise ValueError(
+                    f"task {self.task_id} physical admission requires explicit "
+                    "allocation steps for workspace and allocated outputs"
+                )
             return
         live: set[int] = set()
         allocations: dict[int, TaskAllocationStep] = {}
@@ -329,7 +338,7 @@ class AdmissionTopology:
             "minimum_alignment": self.minimum_alignment,
             "object_capacity_bytes": self.object_capacity_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
-            "schema": "shadowspill.admission_topology/v2",
+            "schema": "shadowspill.admission_topology/v3",
             "tasks": [item.to_dict() for item in self.tasks],
         }
 
@@ -340,7 +349,7 @@ class AdmissionTopology:
     def from_dict(cls, value: object) -> AdmissionTopology:
         data = _mapping(value, "admission")
         schema = _string(data.get("schema"), "admission.schema")
-        if schema != "shadowspill.admission_topology/v2":
+        if schema != "shadowspill.admission_topology/v3":
             raise ValueError(f"admission.schema: unsupported schema {schema!r}")
         return cls(
             device_id=_string(data.get("device_id"), "admission.device_id"),

@@ -101,19 +101,30 @@ check the selected spill traffic and residency.
 shared by candidate evaluation and layout construction. Each
 `TaskAdmissionSpec` describes:
 
-- individual workspace extents;
+- the exact anonymous live-set peak derived from its allocation trace;
 - fresh persistent output aliases;
 - mutation-replacement aliases;
 - zero-copy storage handoffs;
-- an ordered allocation/free trace when exact physical observations exist.
+- the complete ordered allocation/free trace observed for that executable
+  profile.
 
 Allocation steps contain charged bytes, an allocation ordinal, optional output
 ownership, and any same-task ordinal reuse. They contain no observed pointer
 and no planned offset.
 
-For hand-authored neutral Programs without allocation steps, admission uses
-the declared workspace extents and output/replacement aliases as a
-deterministic synthetic allocation sequence.
+There is no synthetic physical sequence. Creating an executable topology
+requires an explicit trace for every structural profile, including an
+explicitly empty trace for a task that performs no allocation. Workspace
+extents are computed from the trace after persistent outputs and replacements
+are identified; returned but unretained tensors therefore remain anonymous
+workspace for their real lifetime. A nonempty workspace, fresh output, or
+replacement without corresponding allocation steps fails before PressureFit.
+
+A hand-authored logical `Program` can still use PressureFit and the simulator
+without an `AdmissionTopology`. It becomes executable only after a frontend
+provides complete physical evidence. The serialized topology uses only the
+current `shadowspill.admission_topology/v3` schema; older synthetic forms are
+rejected rather than migrated.
 
 ## From a schedule to physical lifetimes
 

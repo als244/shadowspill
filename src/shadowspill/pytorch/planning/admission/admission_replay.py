@@ -1,8 +1,8 @@
 """Cross-task physical admission through the production ``MemoryPool``.
 
-This module deliberately operates at the same abstraction as the simulator:
-one task-workspace envelope, persistent object generations, and ordered memory
-actions.  It never consumes task-local allocator callback traces.
+This module combines exact task-allocation evidence with persistent object
+generations and ordered memory actions. It translates that causal script into
+the same production ``MemoryPool`` decisions used by compiled admission.
 """
 
 from __future__ import annotations
@@ -37,8 +37,6 @@ from shadowspill.runtime import (
     AdmissionReuseDependency,
     run_admission_replay,
 )
-
-from .bindings import TaskOutputBinding, build_admission_topology
 
 
 class AdmissionReplayPurpose(StrEnum):
@@ -260,8 +258,6 @@ class _AdmissionScriptBuilder:
         admission: TaskAdmissionSpec,
     ) -> tuple[tuple[int, ...], dict[str, int]]:
         allocation_steps = admission.allocation_steps
-        if not allocation_steps:
-            return self._acquire_synthetic_task_allocations(task_id, admission)
         leases_by_ordinal: dict[int, int] = {}
         reusable_leases: dict[int, int] = {}
         output_leases: dict[str, int] = {}
@@ -309,42 +305,6 @@ class _AdmissionScriptBuilder:
                 f"{sorted(reusable_leases)}"
             )
         return tuple(terminal_leases), output_leases
-
-    def _acquire_synthetic_task_allocations(
-        self,
-        task_id: str,
-        admission: TaskAdmissionSpec,
-    ) -> tuple[tuple[int, ...], dict[str, int]]:
-        """Retain a deterministic fallback for hand-authored neutral Programs."""
-
-        workspace_leases = tuple(
-            self._acquire_task(
-                extent,
-                _LeaseProvenance(
-                    AdmissionReplayPurpose.TASK_WORKSPACE,
-                    task_id=task_id,
-                ),
-            )
-            for extent in admission.workspace_extents
-        )
-        output_leases: dict[str, int] = {}
-        for alias_id in admission.fresh_output_aliases:
-            output_leases[alias_id] = self._acquire_alias(
-                task_id, alias_id, AdmissionReplayPurpose.TASK_OUTPUT
-            )
-        for alias_id in admission.replacement_aliases:
-            if self.alias_size[alias_id] == 0:
-                continue
-            if alias_id not in self.active_aliases:
-                raise ValueError(
-                    f"task {task_id} replaces nonresident alias {alias_id!r}"
-                )
-            output_leases[alias_id] = self._acquire_alias(
-                task_id,
-                alias_id,
-                AdmissionReplayPurpose.MUTATION_REPLACEMENT,
-            )
-        return workspace_leases, output_leases
 
     def _validate_task_inputs(self, task: TaskSpec) -> None:
         required = dict.fromkeys(
@@ -646,38 +606,18 @@ def replay_admission(
     program: Program,
     schedule: MemorySchedule,
     *,
-    execution_pool_bytes: int,
+    topology: AdmissionTopology,
     selections: tuple[RecomputationSelection, ...] = (),
-    topology: AdmissionTopology | None = None,
-    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
-    alignment: int = 256,
 ) -> AdmissionReplay:
-    """Certify one schedule's task-boundary geometry with no timing inputs."""
+    """Certify one schedule's exact causal allocation geometry."""
 
-    if execution_pool_bytes < 0:
-        raise ValueError("execution pool bytes must be non-negative")
-    if alignment <= 0:
-        raise ValueError("admission replay alignment must be positive")
     schedule.validate(program, selections)
-    selected_topology = topology or build_admission_topology(
-        program,
-        execution_pool_bytes=execution_pool_bytes,
-        object_capacity_bytes=execution_pool_bytes,
-        output_bindings=output_bindings,
-        alignment=alignment,
-    )
-    selected_topology.validate(program)
-    if selected_topology.pool_capacity_bytes != execution_pool_bytes:
-        raise ValueError(
-            "admission topology and replay capacities differ: "
-            f"topology={selected_topology.pool_capacity_bytes}, "
-            f"replay={execution_pool_bytes}"
-        )
+    topology.validate(program)
     builder = _AdmissionScriptBuilder(
         program,
         schedule,
         selections,
-        selected_topology,
+        topology,
     )
     (
         annotated_operations,
@@ -690,11 +630,11 @@ def replay_admission(
     ) = builder.build()
     operations = tuple(item.operation for item in annotated_operations)
     pool = run_admission_replay(
-        selected_topology.pool_capacity_bytes,
+        topology.pool_capacity_bytes,
         operations,
         lease_count=lease_count,
         dependency_count=dependency_count,
-        minimum_alignment=selected_topology.minimum_alignment,
+        minimum_alignment=topology.minimum_alignment,
     )
     pending_by_lease = {item.lease_id: item for item in pending_retirements}
     provenance_by_lease = builder.lease_provenance
@@ -712,7 +652,7 @@ def replay_admission(
         selections,
         annotated_operations,
         ownership_transitions,
-        selected_topology.digest,
+        topology.digest,
         pool.decision_digest,
     )
     return AdmissionReplay(

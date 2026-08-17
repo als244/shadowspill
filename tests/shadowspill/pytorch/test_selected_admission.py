@@ -12,7 +12,14 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import (
+    AdmissionTopology,
+    PressureFitOptions,
+    TaskAdmissionSpec,
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+    pressurefit,
+)
 from shadowspill.pytorch.planning.admission.bindings import build_admission_topology
 from shadowspill.pytorch.planning.admission.selection import (
     _task_memory_envelope,
@@ -49,11 +56,59 @@ def _selected():  # type: ignore[no-untyped-def]
     )
 
 
+def _selected_topology() -> AdmissionTopology:
+    return AdmissionTopology(
+        "cuda_0",
+        122,
+        122,
+        1,
+        (
+            TaskAdmissionSpec("task0"),
+            TaskAdmissionSpec(
+                "task1",
+                fresh_output_aliases=("temporary",),
+                allocation_steps=(
+                    TaskAllocationStep(
+                        0,
+                        TaskAllocationStepKind.ALLOCATE,
+                        61,
+                        "temporary",
+                    ),
+                ),
+            ),
+            TaskAdmissionSpec("task2"),
+        ),
+    )
+
+
+def _workspace_trace(extents: tuple[int, ...]) -> tuple[TaskAllocationEvent, ...]:
+    allocations = tuple(
+        TaskAllocationEvent(
+            ordinal,
+            TaskAllocationOperation.ALLOCATE,
+            extent,
+            extent,
+            alignment_bytes=1,
+        )
+        for ordinal, extent in enumerate(extents)
+    )
+    releases = tuple(
+        TaskAllocationEvent(
+            ordinal,
+            TaskAllocationOperation.FREE,
+            extent,
+            extent,
+            alignment_bytes=1,
+        )
+        for ordinal, extent in enumerate(extents)
+    )
+    return (*allocations, *releases)
+
+
 def test_selected_schedule_replays_only_task_boundary_state() -> None:
     replay = admit_selected_schedule(
         _selected(),
-        execution_pool_bytes=122,
-        alignment=1,
+        topology=_selected_topology(),
     )
 
     assert replay.pool.peak_allocated_bytes == 122
@@ -70,13 +125,14 @@ def test_admission_topology_preserves_workspace_extent_multiset() -> None:
     program = replace(
         program,
         profiles=(replace(program.profiles[0], workspace_bytes=96),),
+        tasks=tuple(replace(task, outputs=()) for task in program.tasks),
     )
 
     topology = build_admission_topology(
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=160,
-        workspace_extents_by_compatibility={"task_abi": (32, 64)},
+        allocation_traces_by_compatibility={"task_abi": _workspace_trace((32, 64))},
         alignment=1,
     )
 
@@ -87,7 +143,7 @@ def test_admission_topology_preserves_workspace_extent_multiset() -> None:
     )
 
 
-def test_admission_topology_preserves_gradient_contribution_extents() -> None:
+def test_admission_topology_derives_gradient_contribution_extents_from_trace() -> None:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(
@@ -118,7 +174,9 @@ def test_admission_topology_preserves_gradient_contribution_extents() -> None:
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=128,
-        workspace_extents_by_compatibility={"backward_abi": (16,)},
+        allocation_traces_by_compatibility={
+            "backward_abi": _workspace_trace((16, 32, 64))
+        },
         alignment=1,
     )
 
@@ -130,8 +188,7 @@ def test_selected_admission_requires_every_task_envelope_measurement() -> None:
         build_selected_admission(
             _selected(),
             {},
-            execution_pool_bytes=122,
-            alignment=1,
+            topology=_selected_topology(),
         )
 
 
@@ -148,8 +205,7 @@ def test_selected_admission_replaces_prediction_without_changing_schedule() -> N
     admitted = build_selected_admission(
         selected,
         {"task_abi": measurement},
-        execution_pool_bytes=122,
-        alignment=1,
+        topology=_selected_topology(),
     )
 
     adjusted = admitted.apply_prediction(selected)
