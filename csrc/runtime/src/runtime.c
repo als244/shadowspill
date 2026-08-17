@@ -691,9 +691,14 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
     uint64_t retirement_records_evented = 0U;
     uint64_t retirement_records_preparing = 0U;
     uint64_t retirement_records_unfenced = 0U;
+    uint64_t caller_owned_allocations = 0U;
     for (const ShadowSpillMemoryLease *allocation =
              execution_pool->active_leases;
          allocation != NULL; allocation = allocation->active_next) {
+        if (allocation->pointer != NULL && allocation->ever_plan_owned &&
+            !allocation->plan_owned && !allocation->framework_free_seen) {
+            ++caller_owned_allocations;
+        }
         if (!allocation->logical_freed || allocation->pointer == NULL) {
             continue;
         }
@@ -792,6 +797,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .lease_use_record_growth_rejections =
             execution_pool->use_record_growth_rejections +
             spill_pool->use_record_growth_rejections,
+        .caller_owned_allocations = caller_owned_allocations,
     };
     pthread_mutex_unlock(&runtime->retirements.lock);
     pthread_mutex_unlock(&runtime->events.lock);

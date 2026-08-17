@@ -22,6 +22,7 @@ function(shadowspill_add_pytorch_canary name timeout)
 endfunction()
 
 shadowspill_add_pytorch_canary(allocator 60)
+shadowspill_add_pytorch_canary(runtime_close 60)
 shadowspill_add_pytorch_canary(overlap 20)
 shadowspill_add_pytorch_canary(physical_failure 60)
 shadowspill_add_pytorch_canary(allocator_oom 60)

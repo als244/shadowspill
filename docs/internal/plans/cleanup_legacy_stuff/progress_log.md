@@ -1328,3 +1328,35 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   strict mypy over 178 installed source files, documentation/source-boundary
   tests, `git diff --check`, the warnings-as-errors build, and all 28
   native/CUDA/PyTorch canaries.
+
+## 2026-08-17 — Deterministic PyTorch runtime teardown
+
+- Found that Python `Runtime.close()` only waited for idle work. The neutral C
+  runtime, continuously active worker, route lanes, registered pinned arena,
+  and device arena remained alive until process-exit cleanup. This violated
+  the accepted ownership contract and made explicit close misleading.
+- Added one idempotent adapter close operation. It first closes allocator
+  admission, atomically unpublishes the runtime, waits for any allocator
+  callback that already retained it, then closes/destroys the neutral runtime
+  and concrete backend. Neutral close stops and joins the worker before it
+  closes routes and pools in reverse ownership order.
+- The PyTorch allocator shim necessarily remains selected for the process.
+  After explicit close, a nonzero device allocation raises a typed
+  `SHADOWSPILL_RUNTIME_CLOSED` error; late framework frees and record-stream
+  calls are harmless because the owned arenas have already been released.
+  Bootstrap is permanently single-use.
+- The first complete canary run exposed a real ownership precondition that the
+  old process-lifetime teardown had hidden: a plain PyTorch output still held
+  a caller-owned range after its callable closed. Explicit close now counts
+  those exact promoted leases and rejects teardown without unpublishing the
+  runtime. Once the caller releases the tensors, the same Runtime closes
+  normally. Process-exit cleanup remains forceful because the process cannot
+  observe those objects afterward.
+- Corrected the adapter's empty first-failure sentinel so a post-close
+  allocation is not falsely attributed to `task_000000`. Added a fresh-process
+  canary covering repeated close, worker/backend teardown, and the closed-shim
+  failure.
+- Validation passed the complete Python suite with four expected skips, Ruff,
+  strict mypy over 178 installed source files, `git diff --check`, the
+  warnings-as-errors build, all 29 native/CUDA/PyTorch canaries, and focused
+  ASan plan, completion, and telemetry canaries.

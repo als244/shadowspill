@@ -39,9 +39,12 @@ routes and atomically publishes a new `TransferCapabilities` matrix. Callers
 may coordinate several processes and invoke calibration concurrently to
 measure contended links.
 
-`Runtime.close()` rejects new frontend work after verifying that no planning,
-callable, or persistent imported state remains. The installed process
-allocator itself remains process-owned because PyTorch cannot uninstall it.
+`Runtime.close()` verifies that no planning, callable, persistent imported
+state, public object reference, or caller-owned device output remains; stops
+and joins the runtime worker; and closes every route and pool backend. Release
+or copy ordinary device outputs before this call. PyTorch's process-global
+allocator shim cannot be uninstalled, so it remains in a permanently closed
+state and rejects subsequent device allocations.
 
 The immutable runtime values are:
 

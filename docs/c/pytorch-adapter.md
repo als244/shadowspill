@@ -8,6 +8,9 @@ neutral runtime and translates Python/ATen-facing values into runtime handles.
 
 - `shadowspill_pytorch_allocator_bootstrap()` installs the allocator and
   process-owned runtime.
+- `shadowspill_pytorch_allocator_close()` permanently closes the installed
+  runtime, joins its worker, and releases its routes, pools, and backend. The
+  PyTorch allocator shim remains installed and rejects future allocations.
 - `shadowspill_pytorch_adapter_capabilities()` reports the adapter contract.
 - `shadowspill_pytorch_physical_memory()`,
   `shadowspill_pytorch_physical_admission()`,
@@ -104,8 +107,6 @@ and offset handling](../architecture/physical-admission.md).
   `shadowspill_pytorch_profile_range_end()` manage explicit ranges.
 - `shadowspill_pytorch_abort_task_handle()` closes the matching admitted task
   scope and its profiler range after frontend execution aborts.
-- `shadowspill_pytorch_task_labels_configure()` installs semantic execution
-  labels.
 - `shadowspill_pytorch_debug_task_timing_enable()`,
   `shadowspill_pytorch_debug_task_timing_read()`, and
   `shadowspill_pytorch_debug_task_timing_disable()` manage task events.
@@ -124,7 +125,7 @@ and offset handling](../architecture/physical-admission.md).
 `shadowspill_pytorch_recover_no_progress()` performs the documented recovery
 operation.
 
-The adapter registers process-exit cleanup that destroys the neutral runtime,
-joins its worker, and closes all pool backends. Python callables must still be
-closed explicitly so errors and ownership violations are reported at the
-correct boundary.
+`shadowspill_pytorch_allocator_close()` performs deterministic teardown and is
+idempotent. The adapter also registers the same cleanup at process exit as a
+last resort. Python callables must still be closed explicitly so errors and
+ownership violations are reported at the correct boundary.

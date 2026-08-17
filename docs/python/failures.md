@@ -169,13 +169,14 @@ planned callable
   -> Runtime
 ```
 
-`Runtime.close()` rejects an active callable, an in-progress plan, or
-persistent imported state. This makes ownership leaks visible. The selected
-PyTorch allocator is process-global and cannot be uninstalled, so the neutral
-C runtime remains process-owned until registered exit cleanup stops and joins
-the worker and closes each memory-pool backend. Explicit close is still the
-supported path because it provides timely validation and deterministic release
-of pinned and device memory.
+`Runtime.close()` rejects an active callable, an in-progress plan, persistent
+imported state, a live public object reference, or caller-owned device output.
+This makes ownership leaks visible rather than invalidating live tensor
+storage. It then stops and joins the worker and closes every route and pool
+backend. The selected PyTorch allocator shim is process-global and cannot be
+uninstalled; it remains installed in a permanently closed state and rejects
+future allocations. Registered process-exit cleanup invokes the same
+idempotent teardown only as a last resort.
 
 See the [frontend API](api/frontend.md) for exported exception classes, the
 [allocator guide](allocator.md) for callback behavior, and the [memory runtime
