@@ -183,9 +183,10 @@ class RuntimeBridge:
         self._runtime_object_ids: dict[str, int] = {}
         self._debug_task_timing_capacity = 0
         self._admitted_tasks: dict[str, tuple[int, tuple[str, ...]]] = {}
-        self._admitted_action_tasks: dict[
+        self._admitted_action_batches: dict[
             int, tuple[int, tuple[tuple[str, MemoryActionKind], ...]]
         ] = {}
+        self._admitted_acquisitions: dict[tuple[str, ...], int] = {}
         self._fixed_layout_installed = False
 
     def _runtime_object_id(self, alias_id: str) -> int:
@@ -367,7 +368,7 @@ class RuntimeBridge:
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
         """Copy one indexed physical-layout certificate into the C runtime."""
 
-        if self._admitted_tasks or self._admitted_action_tasks:
+        if self._admitted_tasks or self._admitted_action_batches:
             raise RuntimeExecutionError(
                 "fixed layout must be admitted before execution tasks"
             )
@@ -434,22 +435,22 @@ class RuntimeBridge:
         task_number: int,
         action_trace_labels: tuple[str, ...] | None = None,
     ) -> int:
-        """Admit one reusable action-only execution for initial placement."""
+        """Admit one reusable initial-placement action batch."""
 
         labels = _action_labels(actions, action_trace_labels)
         action_pairs = self._runtime_actions(actions, labels)
         expected = tuple(
             (action.alias_group_id, action.kind) for action, _label in action_pairs
         )
-        existing = self._admitted_action_tasks.get(task_number)
+        existing = self._admitted_action_batches.get(task_number)
         if existing is not None:
-            handle, admitted = existing
+            existing_handle, admitted = existing
             if admitted != expected:
                 raise RuntimeExecutionError(
                     "initial action admission changed for an existing task: "
                     f"task={task_number}, expected={admitted}, observed={expected}"
                 )
-            return handle
+            return existing_handle
         for action, _label in action_pairs:
             self.register_placeholder(action.alias_group_id)
         self._bind_plan_objects(
@@ -470,23 +471,24 @@ class RuntimeBridge:
                 )
             )
         )
-        description = ExecutionDescription(
-            task_id=task_number,
-            actions=runtime_actions if action_pairs else None,
-            action_count=len(action_pairs),
-        )
+        action_batch_handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_admit_execution(
-                self.plan_handle, ctypes.byref(description)
+            self.library.shadowspill_pytorch_plan_admit_action_batch(
+                self.plan_handle,
+                task_number,
+                runtime_actions if action_pairs else None,
+                len(action_pairs),
+                ctypes.byref(action_batch_handle),
             ),
-            f"admit initial action execution {task_number}",
+            f"admit initial action batch {task_number}",
         )
-        handle = self._resolve_task_handle_number(task_number)
-        self._admitted_action_tasks[task_number] = (
-            handle,
-            expected,
-        )
-        return handle
+        if action_batch_handle.value == 0:
+            raise RuntimeExecutionError(
+                "runtime returned a null initial action batch handle"
+            )
+        resolved = int(action_batch_handle.value)
+        self._admitted_action_batches[task_number] = (resolved, expected)
+        return resolved
 
     def seal_fixed_layout(self) -> None:
         """Resolve the installed certificate after execution admission."""
@@ -938,50 +940,77 @@ class RuntimeBridge:
         alias_ids: tuple[str, ...],
         tensors: tuple[torch.Tensor, ...],
         *,
-        task_number: int,
+        acquisition_handle: int,
     ) -> tuple[ObjectBinding, ...]:
-        """Wait/rebind final caller outputs without host synchronization."""
+        """Acquire an admitted public-object set without opening a task."""
 
         if len(alias_ids) != len(tensors):
             raise RuntimeExecutionError("caller output binding count differs")
         runtime_aliases = tuple(
             alias_id for alias_id in alias_ids if self.requires_storage(alias_id)
         )
+        if not runtime_aliases:
+            if acquisition_handle != 0:
+                raise RuntimeExecutionError(
+                    "zero-byte caller outputs must not own an acquisition handle"
+                )
+            return self._expand_bindings(alias_ids, (), ())
+        admitted = self._admitted_acquisitions.get(runtime_aliases)
+        if admitted != acquisition_handle or acquisition_handle == 0:
+            raise RuntimeExecutionError(
+                "caller output acquisition does not match its admitted object set"
+            )
         stream = torch.cuda.current_stream()
-        identifiers = (ctypes.c_uint64 * len(runtime_aliases))(
-            *(self._runtime_object_id(value) for value in runtime_aliases)
-        )
         bindings = (ObjectBinding * len(runtime_aliases))()
-        task_open = False
-        try:
-            self._require(
-                self.library.shadowspill_pytorch_before_task(
-                    task_number,
-                    stream.cuda_stream,
-                    identifiers if runtime_aliases else None,
-                    len(runtime_aliases),
-                    bindings if runtime_aliases else None,
-                    len(runtime_aliases),
-                ),
-                "acquire caller outputs",
+        self._require(
+            self.library.shadowspill_pytorch_acquire_objects_handle(
+                acquisition_handle,
+                stream.cuda_stream,
+                bindings if runtime_aliases else None,
+                len(runtime_aliases),
+            ),
+            "acquire caller outputs",
+        )
+        expanded = self._expand_bindings(alias_ids, runtime_aliases, bindings)
+        for alias_id, tensor, binding in zip(
+            alias_ids, tensors, expanded, strict=True
+        ):
+            self.rebind(tensor, alias_id, binding)
+        return expanded
+
+    def admit_caller_acquisition(self, alias_ids: tuple[str, ...]) -> int:
+        """Admit one immutable ordered public-object acquisition handle."""
+
+        runtime_aliases = tuple(
+            alias_id for alias_id in alias_ids if self.requires_storage(alias_id)
+        )
+        existing = self._admitted_acquisitions.get(runtime_aliases)
+        if existing is not None:
+            return existing
+        if not runtime_aliases:
+            return 0
+        for alias_id in dict.fromkeys(runtime_aliases):
+            self.register_placeholder(alias_id)
+        self._bind_plan_objects(runtime_aliases)
+        identifiers = (ctypes.c_uint64 * len(runtime_aliases))(
+            *(_plan_local_id(value, "alias_") for value in runtime_aliases)
+        )
+        handle = ctypes.c_size_t()
+        self._require(
+            self.library.shadowspill_pytorch_plan_admit_object_acquisition(
+                self.plan_handle,
+                identifiers,
+                len(runtime_aliases),
+                ctypes.byref(handle),
+            ),
+            "admit caller output acquisition",
+        )
+        if handle.value == 0:
+            raise RuntimeExecutionError(
+                "runtime returned a null caller output acquisition handle"
             )
-            task_open = True
-            expanded = self._expand_bindings(alias_ids, runtime_aliases, bindings)
-            for alias_id, tensor, binding in zip(
-                alias_ids, tensors, expanded, strict=True
-            ):
-                self.rebind(tensor, alias_id, binding)
-            self._require(
-                self.library.shadowspill_pytorch_after_task(
-                    task_number, stream.cuda_stream, None, 0, None, 0
-                ),
-                "close caller output acquisition",
-            )
-            task_open = False
-            return expanded
-        finally:
-            if task_open:
-                self.abort_task()
+        self._admitted_acquisitions[runtime_aliases] = int(handle.value)
+        return int(handle.value)
 
     def submit_initial_actions(
         self,
@@ -995,7 +1024,7 @@ class RuntimeBridge:
         if not runtime_actions_values:
             return
         stream = torch.cuda.current_stream()
-        admitted = self._admitted_action_tasks.get(task_number)
+        admitted = self._admitted_action_batches.get(task_number)
         if admitted is None:
             raise RuntimeExecutionError(
                 f"initial action batch {task_number} was not admitted"
@@ -1007,28 +1036,15 @@ class RuntimeBridge:
         )
         if observed != expected:
             raise RuntimeExecutionError(
-                "initial action execution changed after admission: "
+                "initial action batch changed after admission: "
                 f"task={task_number}, expected={expected}, observed={observed}"
             )
-        task_open = False
-        try:
-            self._require(
-                self.library.shadowspill_pytorch_before_execution_handle(
-                    handle, task_number, stream.cuda_stream, None, 0
-                ),
-                "begin admitted initial actions",
-            )
-            task_open = True
-            self._require(
-                self.library.shadowspill_pytorch_after_execution_handle(
-                    handle, task_number, stream.cuda_stream
-                ),
-                "submit admitted initial actions",
-            )
-            task_open = False
-        finally:
-            if task_open:
-                self.abort_task()
+        self._require(
+            self.library.shadowspill_pytorch_submit_action_batch_handle(
+                handle, stream.cuda_stream
+            ),
+            "submit admitted initial actions",
+        )
 
     def clear_execution_plan(self) -> None:
         """Discard immutable execution records and their fixed layout."""
@@ -1038,7 +1054,8 @@ class RuntimeBridge:
             "clear execution plan",
         )
         self._admitted_tasks.clear()
-        self._admitted_action_tasks.clear()
+        self._admitted_action_batches.clear()
+        self._admitted_acquisitions.clear()
         self._fixed_layout_installed = False
 
     def transfer_outputs_to_caller(

@@ -26,6 +26,9 @@ extern "C" {
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
+typedef struct ShadowSpillExecutionRecord ShadowSpillActionBatchHandle;
+typedef struct ShadowSpillObjectAcquisitionRecord
+    ShadowSpillObjectAcquisitionHandle;
 typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
 
 /*
@@ -827,6 +830,51 @@ shadowspill_plan_resolve_execution(
     ShadowSpillPlan *plan,
     uint64_t task_id,
     const ShadowSpillExecutionHandle **handle
+);
+
+/*
+ * Admit one immutable ordered object set for non-execution acquisition, such
+ * as returning public outputs to a frontend. Duplicate identities are
+ * expanded from one retained snapshot and one readiness wait. The borrowed
+ * handle remains valid until the plan is cleared or destroyed.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_admit_object_acquisition(
+    ShadowSpillPlan *plan,
+    const uint64_t *object_ids,
+    uint32_t object_count,
+    const ShadowSpillObjectAcquisitionHandle **handle
+);
+
+/* Admit an immutable action-only trigger batch without creating a task. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_admit_action_batch(
+    ShadowSpillPlan *plan,
+    uint64_t batch_id,
+    const ShadowSpillRuntimeAction *actions,
+    uint32_t action_count,
+    const ShadowSpillActionBatchHandle **handle
+);
+
+/* Publish an admitted batch and wait only for worker submission acknowledgement. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_submit_action_batch_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillActionBatchHandle *handle,
+    ShadowSpillBackendStream trigger_stream
+);
+
+/*
+ * Snapshot an admitted object set and insert any published readiness-event
+ * waits on consumer_stream. This does not open an allocation or task scope.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_acquire_objects_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillObjectAcquisitionHandle *handle,
+    ShadowSpillBackendStream consumer_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
 );
 
 /* Execute an admitted boundary without resupplying or decoding its topology. */

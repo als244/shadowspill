@@ -47,6 +47,7 @@ static void destroy_plan_record(ShadowSpillPlan *plan) {
         return;
     }
     shadowspill_fixed_layout_destroy(plan);
+    shadowspill_object_acquisitions_clear(plan);
     if (plan->execution_initialized) {
         shadowspill_execution_table_destroy(&plan->execution);
         plan->execution_initialized = 0U;

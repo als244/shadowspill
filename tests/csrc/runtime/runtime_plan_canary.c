@@ -338,6 +338,92 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
     return failed ? -1 : 0;
 }
 
+static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *plan = NULL;
+    ShadowSpillObjectHandle *object_handle = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    const ShadowSpillObjectDescription object = {
+        .object_id = 3003U,
+        .size_bytes = 64U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = 9U,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const uint64_t requested_objects[2] = {9U, 9U};
+    const ShadowSpillActionBatchHandle *batch = NULL;
+    const ShadowSpillObjectAcquisitionHandle *acquisition = NULL;
+    const ShadowSpillExecutionHandle *not_a_task = NULL;
+    ShadowSpillObjectBinding bindings[2] = {{0}};
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, object.object_id, &object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &plan) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_action_batch(
+            plan, 77U, &fetch, 1U, &batch
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        batch == NULL ||
+        shadowspill_plan_resolve_execution(plan, 77U, &not_a_task) !=
+            SHADOWSPILL_RUNTIME_INVALID_STATE ||
+        not_a_task != NULL ||
+        shadowspill_plan_admit_object_acquisition(
+            plan, requested_objects, 2U, &acquisition
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        acquisition == NULL ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    if (!failed) {
+        failed = shadowspill_submit_action_batch_handle(
+                runtime, batch, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_acquire_objects_handle(
+                runtime, acquisition, compute, bindings, 2U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            bindings[0].object_id != object.object_id ||
+            bindings[0].pointer == NULL ||
+            bindings[0].pointer != bindings[1].pointer ||
+            bindings[0].generation != bindings[1].generation ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    }
+    if (object_handle != NULL) {
+        (void)shadowspill_object_handle_release(object_handle);
+    }
+    shadowspill_plan_destroy(plan);
+    if (runtime != NULL) {
+        (void)shadowspill_unregister_object(runtime, object.object_id);
+    }
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (shared_runtime_accepts_overlapping_plan_tasks() != 0) {
         fprintf(stderr, "runtime plan canary failed: shared runtime\n");
@@ -353,6 +439,10 @@ int main(void) {
     }
     if (runtime_objects_survive_until_their_final_owner_closes() != 0) {
         fprintf(stderr, "runtime plan canary failed: object ownership\n");
+        return EXIT_FAILURE;
+    }
+    if (dedicated_action_and_acquisition_handles_are_not_tasks() != 0) {
+        fprintf(stderr, "runtime plan canary failed: dedicated boundaries\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

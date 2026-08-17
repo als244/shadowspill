@@ -96,6 +96,7 @@ class PlanRun:
     initial_prefetches: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
     initial_task_id: int | None = None
+    caller_acquisition_handle: int = 0
 
 
 def build_plan_run(

@@ -62,6 +62,10 @@ semantics:
 - `shadowspill_pytorch_plan_destroy()`
 - `shadowspill_pytorch_plan_bind_object()`
 - `shadowspill_pytorch_plan_admit_execution()`
+- `shadowspill_pytorch_plan_admit_action_batch()` and
+  `shadowspill_pytorch_submit_action_batch_handle()`
+- `shadowspill_pytorch_plan_admit_object_acquisition()` and
+  `shadowspill_pytorch_acquire_objects_handle()`
 - `shadowspill_pytorch_plan_admit_fixed_layout()`
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
 - `shadowspill_pytorch_plan_clear_execution()`

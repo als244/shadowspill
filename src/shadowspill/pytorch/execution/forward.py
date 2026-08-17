@@ -230,8 +230,8 @@ class ForwardExecutor:
             self._initial_prefetch_action(alias_id)
             for alias_id in self._initial_prefetches
         )
-        # Materialization uses short-lived legacy action records.  They are
-        # idle now and must not become part of the immutable execution plan.
+        # Materialization uses a short-lived action batch. It is idle now and
+        # must not become part of the immutable execution plan.
         bridge.clear_execution_plan()
         bridge.admit_fixed_layout(fixed_layout)
         bridge.admit_initial_actions(
@@ -311,6 +311,9 @@ class ForwardExecutor:
                 if index not in shared_indices
             )
         )
+        self._caller_acquisition_handle = bridge.admit_caller_acquisition(
+            self._caller_output_aliases
+        )
         self._active_shared_outputs: dict[int, TensorRef] = {}
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
@@ -358,7 +361,7 @@ class ForwardExecutor:
             bindings = self._bridge.acquire_for_caller(
                 self._caller_output_aliases,
                 caller_tensors,
-                task_number=(1 << 59) + self._invocations,
+                acquisition_handle=self._caller_acquisition_handle,
             )
             self._bridge.transfer_outputs_to_caller(
                 self._caller_output_aliases, caller_tensors, bindings
