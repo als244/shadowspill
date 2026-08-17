@@ -284,11 +284,11 @@ def _csv_row(
 
 
 def _point_request(path: Path, point: dict[str, Any]) -> dict[str, Any]:
-    """Read canonical request data, including pre-fix timeout evidence."""
+    """Read the complete request embedded in one current point record."""
 
     request = _mapping(point.get("request"))
     if not request:
-        request = read_object(path.parent / "request.json")
+        raise ValueError(f"frontier point has no embedded request at {path}")
     expected_digest = point.get("request_digest")
     actual = FrontierPointRequest.from_value(request)
     if actual.digest != expected_digest:
@@ -297,16 +297,12 @@ def _point_request(path: Path, point: dict[str, Any]) -> dict[str, Any]:
 
 
 def _point_case(path: Path, point: dict[str, Any]) -> dict[str, Any]:
-    """Read canonical case data, including pre-fix timeout evidence."""
+    """Read the complete case identity embedded in one current point record."""
 
     case = _mapping(point.get("case"))
     if case:
         return case
-    case_record = read_object(path.parents[2] / "case.json")
-    case = _mapping(case_record.get("case"))
-    if not case:
-        raise ValueError(f"frontier point has no case identity at {path}")
-    return case
+    raise ValueError(f"frontier point has no embedded case identity at {path}")
 
 
 def _bandwidth(request: dict[str, Any], direction: str) -> int:

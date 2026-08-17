@@ -338,9 +338,8 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         {"fetch_bytes_per_second": 50, "evict_bytes_per_second": 40}
     ]
 
-    # Controller timeouts produced this reduced v1 record before the recovery
-    # path was fixed.  The summary remains able to index an interrupted
-    # baseline by validating its immutable request/case sidecars.
+    # Incomplete historical point shapes are rejected rather than rebuilt from
+    # sidecars. Only the current complete point record is a source of truth.
     (directory / "point.json").write_text(
         json.dumps(
             {
@@ -355,15 +354,12 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
             }
         )
     )
-    legacy_summary = write_frontier_summary(
-        paths,
-        expected_programs=1,
-        expected_points_per_program=1,
-    )
-    assert legacy_summary["status_counts"] == {"error": 1}
-    assert legacy_summary["observed_transfer_bandwidth_combinations"] == [
-        {"fetch_bytes_per_second": 50, "evict_bytes_per_second": 40}
-    ]
+    with pytest.raises(ValueError, match="has no embedded request"):
+        write_frontier_summary(
+            paths,
+            expected_programs=1,
+            expected_points_per_program=1,
+        )
 
 
 def test_worker_output_is_streamed_to_worker_main_log_and_stdout(

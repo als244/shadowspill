@@ -10,7 +10,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-_TASK = re.compile(r"^shadowspill\.task\.(forward|backward|optimizer)\.(task_[0-9]+)$")
 _SEMANTIC_TASK = re.compile(
     r"^shadowspill\.pytorch\.task\."
     r"(execution_[0-9]+)\.(.+)$"
@@ -178,21 +177,12 @@ def extract_trace(path: Path) -> dict[str, object]:
                     _semantic_phase(semantic_name),
                     semantic_name,
                 )
-                continue
-            legacy_match = _TASK.fullmatch(name)
-            if legacy_match is not None:
-                phase, task_id = legacy_match.groups()
-                task_ranges[task_id] = (item, phase, task_id)
 
         tasks: list[dict[str, object]] = []
         all_kernels: set[tuple[int, int, int, str]] = set()
         phase_kernel_ns: dict[str, int] = defaultdict(int)
         for task_id, (item, phase, semantic_name) in task_ranges.items():
-            segment_key = (
-                f"{task_id}.{semantic_name}"
-                if task_id.startswith("execution_")
-                else task_id
-            )
+            segment_key = f"{task_id}.{semantic_name}"
             compiled = segment_by_task.get((segment_key, "compiled_call"))
             kernels = (
                 []
