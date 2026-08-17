@@ -403,6 +403,12 @@ typedef struct ShadowSpillTaskUpdate {
     uint64_t version_delta;
 } ShadowSpillTaskUpdate;
 
+typedef struct ShadowSpillTaskPublication {
+    ShadowSpillObject *object;
+    uint64_t plan_object_id;
+    uint8_t kind;
+} ShadowSpillTaskPublication;
+
 typedef struct ShadowSpillTaskAction {
     ShadowSpillObject *object;
     uint64_t plan_object_id;
@@ -423,6 +429,8 @@ typedef struct ShadowSpillTaskRecord {
     uint32_t *unique_first_positions;
     ShadowSpillTaskUpdate *updates;
     uint32_t update_count;
+    ShadowSpillTaskPublication *publications;
+    uint32_t publication_count;
     ShadowSpillTaskAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;

@@ -571,22 +571,26 @@ read_done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_bind_object(
+static ShadowSpillRuntimeStatus bind_object_allocation(
     ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    uint64_t allocation_id
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillObject *object,
+    uint64_t allocation_id,
+    ShadowSpillObjectBinding *binding
 ) {
-    if (runtime == NULL) {
+    if (runtime == NULL || pool == NULL || object == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
-    ShadowSpillObject *object = shadowspill_find_object(runtime, object_id);
+    pthread_mutex_lock(&pool->lock);
     ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
-        shadowspill_execution_pool(runtime), allocation_id
+        pool, allocation_id
+    );
+    ShadowSpillObjectLocation *location = shadowspill_object_location(
+        object, pool->pool_id
     );
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    if (object == NULL || allocation == NULL || allocation->logical_freed ||
+    if (location == NULL || allocation == NULL || allocation->logical_freed ||
         allocation->pointer == NULL || object->allocation_id !=
             SHADOWSPILL_RUNTIME_NO_ID ||
         allocation->requested_bytes < object->size_bytes) {
@@ -650,30 +654,35 @@ ShadowSpillRuntimeStatus shadowspill_bind_object(
         allocation->handoff_tail_object_id = previous_owner->object_id;
     }
     object->allocation_id = allocation_id;
-    shadowspill_execution_location(runtime, object)->lease = allocation;
+    location->lease = allocation;
+    location->current = 1U;
     allocation->bound_object_id = object->object_id;
     object->generation = allocation->generation;
-    shadowspill_execution_location(runtime, object)->version = object->authoritative_version;
+    location->version = object->authoritative_version;
     object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
+    if (binding != NULL) {
+        *binding = (ShadowSpillObjectBinding){
+            .object_id = object->object_id,
+            .generation = object->generation,
+            .allocation_id = object->allocation_id,
+            .authoritative_version = object->authoritative_version,
+            .pointer = allocation->pointer,
+        };
+    }
 
 done:
-    pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+    pthread_mutex_unlock(&pool->lock);
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
+ShadowSpillRuntimeStatus shadowspill_bind_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
-    uint64_t allocation_id,
-    ShadowSpillObjectBinding *binding
+    uint64_t allocation_id
 ) {
-    if (runtime == NULL || binding == NULL) {
+    if (runtime == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-    }
-    const uint64_t task_id = shadowspill_current_task_id(runtime);
-    if (task_id == SHADOWSPILL_RUNTIME_NO_ID) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     ShadowSpillObject *object = shadowspill_object_table_acquire(
         &runtime->objects, object_id
@@ -681,17 +690,80 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     if (object == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
+    ShadowSpillRuntimeStatus status = bind_object_allocation(
+        runtime,
+        shadowspill_execution_pool(runtime),
+        object,
+        allocation_id,
+        NULL
+    );
+    shadowspill_object_release(object);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_plan_publish_initial_allocation(
+    ShadowSpillPlan *plan,
+    uint64_t plan_object_id,
+    const void *pointer,
+    ShadowSpillObjectBinding *binding
+) {
+    if (plan == NULL || pointer == NULL || binding == NULL ||
+        plan->runtime == NULL || plan->execution_pool == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObject *object = shadowspill_plan_object_acquire(
+        plan, plan_object_id, NULL
+    );
+    if (object == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            plan->runtime,
+            plan->execution_pool->pool_id,
+            pointer,
+            &allocation
+        );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = bind_object_allocation(
+            plan->runtime,
+            plan->execution_pool,
+            object,
+            allocation.allocation_id,
+            binding
+        );
+    }
+    shadowspill_object_release(object);
+    return status;
+}
+
+static ShadowSpillRuntimeStatus replace_object_allocation(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillObject *object,
+    uint64_t allocation_id,
+    ShadowSpillObjectBinding *binding
+) {
+    if (runtime == NULL || pool == NULL || object == NULL || binding == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    const uint64_t task_id = shadowspill_current_task_id(runtime);
+    if (task_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
 
     ShadowSpillEventLease *retired_readiness = NULL;
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     pthread_mutex_lock(&object->lock);
-    shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
+    shadowspill_memory_pool_lock_foreground(pool);
     ShadowSpillMemoryLease *replacement = shadowspill_find_execution_lease(
-        shadowspill_execution_pool(runtime), allocation_id
+        pool, allocation_id
     );
-    ShadowSpillMemoryLease *prior = shadowspill_execution_location(
-        runtime, object
-    )->lease;
+    ShadowSpillObjectLocation *location = shadowspill_object_location(
+        object, pool->pool_id
+    );
+    ShadowSpillMemoryLease *prior = location == NULL ? NULL : location->lease;
     if (status != SHADOWSPILL_RUNTIME_OK) {
         goto done;
     }
@@ -754,12 +826,9 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
         &prior->pool->pending_retirements, 1U, memory_order_acq_rel
     );
 
-    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
-        runtime, object
-    );
-    execution->lease = replacement;
-    execution->version = object->authoritative_version;
-    execution->current = 1U;
+    location->lease = replacement;
+    location->version = object->authoritative_version;
+    location->current = 1U;
     object->allocation_id = replacement->allocation_id;
     object->generation = replacement->generation;
     object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
@@ -778,15 +847,119 @@ ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
     pthread_cond_broadcast(&object->state_changed);
 
 done:
-    shadowspill_memory_pool_unlock_foreground(shadowspill_execution_pool(runtime));
+    shadowspill_memory_pool_unlock_foreground(pool);
     pthread_mutex_unlock(&object->lock);
-    shadowspill_object_release(object);
     if (retired_readiness != NULL &&
         shadowspill_event_lease_release(runtime, retired_readiness) != 0 &&
         status == SHADOWSPILL_RUNTIME_OK) {
         status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
     return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    ShadowSpillObjectBinding *binding
+) {
+    if (runtime == NULL || binding == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObject *object = shadowspill_object_table_acquire(
+        &runtime->objects, object_id
+    );
+    if (object == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    ShadowSpillRuntimeStatus status = replace_object_allocation(
+        runtime,
+        shadowspill_execution_pool(runtime),
+        object,
+        allocation_id,
+        binding
+    );
+    shadowspill_object_release(object);
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    uint32_t publication_ordinal,
+    const void *pointer,
+    ShadowSpillObjectBinding *binding
+) {
+    const ShadowSpillTaskRecord *record = handle;
+    if (runtime == NULL || record == NULL || pointer == NULL || binding == NULL ||
+        record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
+        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK ||
+        publication_ordinal >= record->publication_count) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (shadowspill_current_plan(runtime) != record->plan_owner ||
+        shadowspill_current_task_id(runtime) != record->task_id) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    const ShadowSpillTaskPublication *publication =
+        &record->publications[publication_ordinal];
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillRuntimeStatus status =
+        shadowspill_memory_pool_allocation_for_pointer(
+            runtime,
+            record->plan_owner->execution_pool->pool_id,
+            pointer,
+            &allocation
+        );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    if (publication->kind == SHADOWSPILL_TASK_PUBLICATION_REPLACE) {
+        return replace_object_allocation(
+            runtime,
+            record->plan_owner->execution_pool,
+            publication->object,
+            allocation.allocation_id,
+            binding
+        );
+    }
+    return bind_object_allocation(
+        runtime,
+        record->plan_owner->execution_pool,
+        publication->object,
+        allocation.allocation_id,
+        binding
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_task_validate_publication_binding(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    uint32_t publication_ordinal,
+    const void *pointer,
+    uint64_t generation
+) {
+    const ShadowSpillTaskRecord *record = handle;
+    if (runtime == NULL || record == NULL || pointer == NULL ||
+        record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
+        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK ||
+        publication_ordinal >= record->publication_count) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObject *object = record->publications[publication_ordinal].object;
+    pthread_mutex_lock(&object->lock);
+    const ShadowSpillObjectLocation *location = shadowspill_object_location(
+        object, record->plan_owner->execution_pool->pool_id
+    );
+    const int current_matches = object->generation == generation &&
+        location != NULL && location->lease != NULL &&
+        location->lease->pointer == pointer;
+    const int retired_matches = object->retired_generation == generation &&
+        object->retired_execution_pointer == pointer;
+    pthread_mutex_unlock(&object->lock);
+    return current_matches || retired_matches
+        ? SHADOWSPILL_RUNTIME_OK
+        : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }
 
 ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(

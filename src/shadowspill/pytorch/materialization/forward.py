@@ -537,7 +537,7 @@ class MaterializedForwardState:
             self.object_store[alias_id] = representative
             self.generations[alias_id] = shared_items[0].reference.generation
             return
-        binding = self.bridge.bind_registered_tensor(alias_id, owner)
+        binding = self.bridge.publish_initial_tensor(alias_id, owner)
         self.object_store[alias_id] = representative
         self.generations[alias_id] = binding.generation
         task_number = (1 << 61) + ordinal

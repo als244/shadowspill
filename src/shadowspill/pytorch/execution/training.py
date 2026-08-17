@@ -42,6 +42,7 @@ from shadowspill.pytorch.optimizer import (
     restore_optimizer_checkpoint_structure,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import (
+    PublishedStorage,
     RuntimeBridge,
     TaskMemoryEnvelope,
 )
@@ -102,7 +103,7 @@ class _TaskCall:
 @dataclass(frozen=True, slots=True)
 class _ProcessedTaskOutputs:
     outputs: tuple[torch.Tensor, ...]
-    adopted: tuple[tuple[torch.Tensor, str], ...]
+    adopted: tuple[PublishedStorage, ...]
     replacements: tuple[ReplacementStorageViews, ...]
     optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
 
@@ -244,13 +245,12 @@ class TrainingExecutor:
                         record.actions,
                         labels.labels_for(record.actions),
                         record.memory_envelope,
+                        publications=record.publications,
                     ),
                 )
             )
         caller_aliases = tuple(
-            alias_id
-            for values in run.public_by_microbatch
-            for alias_id in values
+            alias_id for values in run.public_by_microbatch for alias_id in values
         )
         caller_acquisition_handle = self._bridge.admit_caller_acquisition(
             caller_aliases
@@ -855,10 +855,7 @@ class TrainingExecutor:
         timing: _ArmedTaskTiming | None,
     ) -> torch.cuda.Stream | None:
         started_ns = time.perf_counter_ns() if timing is not None else 0
-        needs_python_stream = (
-            timing is not None
-            or self._armed_span_timing is not None
-        )
+        needs_python_stream = timing is not None or self._armed_span_timing is not None
         stream = torch.cuda.current_stream() if needs_python_stream else None
         if timing is not None:
             timing.host_stream_resolution_ns = time.perf_counter_ns() - started_ns
@@ -1122,12 +1119,9 @@ class TrainingExecutor:
         generations: tuple[int, ...],
     ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        replacement_by_alias = {
-            item.alias_id: item for item in processed.replacements
-        }
-        for (_tensor, alias_id), generation in zip(
-            processed.adopted, generations, strict=True
-        ):
+        replacement_by_alias = {item.alias_id: item for item in processed.replacements}
+        for publication, generation in zip(processed.adopted, generations, strict=True):
+            alias_id = publication.alias_id
             if alias_id in processed.replacement_aliases:
                 self._state.publish_replacement_generation(
                     replacement_by_alias[alias_id], generation
@@ -1137,7 +1131,7 @@ class TrainingExecutor:
         if processed.optimizer_bindings:
             generation_by_alias = dict(
                 zip(
-                    (alias_id for _tensor, alias_id in processed.adopted),
+                    (item.alias_id for item in processed.adopted),
                     generations,
                     strict=True,
                 )
@@ -1165,7 +1159,7 @@ class TrainingExecutor:
         raw_outputs: object,
     ) -> _ProcessedTaskOutputs:
         outputs: tuple[torch.Tensor, ...] = ()
-        adopted: tuple[tuple[torch.Tensor, str], ...] = ()
+        adopted: tuple[PublishedStorage, ...] = ()
         replacement_aliases: frozenset[str] = frozenset()
         optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
         entrypoint = prepared.record.entrypoint
@@ -1207,7 +1201,8 @@ class TrainingExecutor:
             del leaves
         replacements = tuple(
             self._state.replacement_storage_views(alias_id)
-            for _tensor, alias_id in adopted
+            for item in adopted
+            for alias_id in (item.alias_id,)
             if alias_id in replacement_aliases
         )
         return _ProcessedTaskOutputs(
@@ -1247,14 +1242,22 @@ class TrainingExecutor:
         record: _ExecutionTaskRecord,
         outputs: tuple[torch.Tensor, ...],
         timing: _ArmedTaskTiming | None,
-    ) -> tuple[tuple[tuple[torch.Tensor, str], ...], frozenset[str]]:
+    ) -> tuple[tuple[PublishedStorage, ...], frozenset[str]]:
         started_ns = time.perf_counter_ns() if timing is not None else 0
-        adopted: list[tuple[torch.Tensor, str]] = []
+        adopted: list[PublishedStorage] = []
         replacements: set[str] = set()
         for item in record.forward_outputs:
             tensor = outputs[item.leaf_index]
             if item.adopt:
-                adopted.append((tensor, item.alias_id))
+                adopted.append(
+                    PublishedStorage(
+                        tensor,
+                        item.alias_id,
+                        -1
+                        if item.publication_ordinal is None
+                        else item.publication_ordinal,
+                    )
+                )
             if item.replace:
                 replacements.add(item.alias_id)
             else:
@@ -1269,11 +1272,11 @@ class TrainingExecutor:
         record: _ExecutionTaskRecord,
         leaves: list[object],
         timing: _ArmedTaskTiming | None,
-    ) -> tuple[tuple[torch.Tensor, str], ...]:
+    ) -> tuple[PublishedStorage, ...]:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         contributions: list[torch.Tensor] = []
         destinations: list[torch.Tensor] = []
-        first: list[tuple[str, str, torch.Tensor]] = []
+        first: list[tuple[str, str, torch.Tensor, int | None]] = []
         for item in record.gradient_outputs:
             values = [leaves[index] for index in item.leaf_indices]
             if not all(isinstance(value, torch.Tensor) for value in values):
@@ -1285,7 +1288,14 @@ class TrainingExecutor:
                 contribution.add_(additional)
             destination = self._state.object_store.get(item.alias_id)
             if destination is None:
-                first.append((item.object_id, item.alias_id, contribution))
+                first.append(
+                    (
+                        item.object_id,
+                        item.alias_id,
+                        contribution,
+                        item.publication_ordinal,
+                    )
+                )
             elif _same_tensor_view(destination, contribution):
                 self._state.object_tensors[item.object_id] = destination
                 parameter = self._gradients.get(item.alias_id)
@@ -1296,11 +1306,17 @@ class TrainingExecutor:
                 contributions.append(contribution)
         if timing is not None:
             timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
-        adopted: list[tuple[torch.Tensor, str]] = []
-        for _object_id, alias_id, contribution in first:
-            adopted.append((contribution, alias_id))
+        adopted: list[PublishedStorage] = []
+        for _object_id, alias_id, contribution, publication_ordinal in first:
+            adopted.append(
+                PublishedStorage(
+                    contribution,
+                    alias_id,
+                    -1 if publication_ordinal is None else publication_ordinal,
+                )
+            )
         started_ns = time.perf_counter_ns() if timing is not None else 0
-        for object_id, alias_id, contribution in first:
+        for object_id, alias_id, contribution, _publication_ordinal in first:
             self._state.object_store[alias_id] = contribution
             self._state.object_tensors[object_id] = contribution
             parameter = self._gradients.get(alias_id)
@@ -1321,7 +1337,7 @@ class TrainingExecutor:
         self,
         record: _ExecutionTaskRecord,
     ) -> tuple[
-        tuple[tuple[torch.Tensor, str], ...],
+        tuple[PublishedStorage, ...],
         tuple[tuple[str, torch.Tensor, str], ...],
     ]:
         artifact = record.entrypoint.artifact
@@ -1336,7 +1352,7 @@ class TrainingExecutor:
             )
         }
         produced: set[str] = set()
-        adopted: list[tuple[torch.Tensor, str]] = []
+        adopted: list[PublishedStorage] = []
         bound: list[tuple[str, torch.Tensor, str]] = []
         for item in record.optimizer_outputs:
             tensor = outputs.get(item.name)
@@ -1345,7 +1361,15 @@ class TrainingExecutor:
                     f"optimizer did not create planned state {item.name!r}"
                 )
             if item.alias_id not in produced:
-                adopted.append((tensor, item.alias_id))
+                adopted.append(
+                    PublishedStorage(
+                        tensor,
+                        item.alias_id,
+                        -1
+                        if item.publication_ordinal is None
+                        else item.publication_ordinal,
+                    )
+                )
                 produced.add(item.alias_id)
             bound.append((item.object_id, tensor, item.alias_id))
         return tuple(adopted), tuple(bound)
@@ -1414,9 +1438,9 @@ class TrainingExecutor:
     def _dematerialization_tensors(
         self,
         record: _ExecutionTaskRecord,
-        adopted: tuple[tuple[torch.Tensor, str], ...],
+        adopted: tuple[PublishedStorage, ...],
     ) -> tuple[torch.Tensor, ...]:
-        newly_produced = {alias_id: tensor for tensor, alias_id in adopted}
+        newly_produced = {item.alias_id: item.tensor for item in adopted}
         pending: list[torch.Tensor] = []
         for alias_id in record.dematerialize_aliases:
             tensor = newly_produced.get(alias_id)

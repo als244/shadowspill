@@ -92,6 +92,14 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_bind_task_objects(
             return status;
         }
     }
+    for (uint32_t index = 0U; index < description->publication_count; ++index) {
+        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+            record, description->publications[index].object_id
+        );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+    }
     for (uint32_t index = 0U; index < description->action_count; ++index) {
         const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
             record, description->actions[index].object_id

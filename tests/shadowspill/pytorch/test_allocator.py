@@ -97,6 +97,9 @@ class _Library:
     shadowspill_pytorch_object_release_generation = _Function()
     shadowspill_pytorch_plan_bind_object = _Function()
     shadowspill_pytorch_plan_admit_task = _Function()
+    shadowspill_pytorch_plan_publish_initial_allocation = _Function()
+    shadowspill_pytorch_task_publish_allocation = _Function()
+    shadowspill_pytorch_validate_task_publication_binding = _Function()
     shadowspill_pytorch_plan_admit_fixed_layout = _Function()
     shadowspill_pytorch_plan_seal_fixed_layout = _Function()
     shadowspill_pytorch_plan_clear_tasks = _Function()
@@ -247,6 +250,25 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_size_t,
         ctypes.c_uint8,
     ]
+    assert library.shadowspill_pytorch_task_publish_allocation.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    assert (
+        library.shadowspill_pytorch_plan_publish_initial_allocation.argtypes
+        == [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+        ]
+    )
+    assert (
+        library.shadowspill_pytorch_validate_task_publication_binding.argtypes
+        == [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64]
+    )
     assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,

@@ -29,6 +29,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskDescription,
     TaskHostTiming,
+    TaskPublicationDescription,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
     TaskAllocationContractStep as CTaskAllocationContractStep,
@@ -117,11 +118,29 @@ class TaskHostTimestamps:
     after_task_exit_ns: int
 
 
+@dataclass(frozen=True, slots=True)
+class TaskPublication:
+    """One stable logical object that an admitted task may publish."""
+
+    alias_id: str
+    replace_lease: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedStorage:
+    """One concrete task result matched to a predecoded publication."""
+
+    tensor: torch.Tensor
+    alias_id: str
+    publication_ordinal: int
+
+
 @dataclass(slots=True)
 class _ExecutionBuffers:
     description: TaskDescription
     input_ids: Any
     updates: Any
+    publications: Any
     actions: Any
     allocation_contract_steps: Any
     encoded_labels: tuple[bytes | None, ...]
@@ -182,7 +201,7 @@ class RuntimeBridge:
         self._binding_consistency: dict[str, int] = {}
         self._runtime_object_ids: dict[str, int] = {}
         self._debug_task_timing_capacity = 0
-        self._admitted_tasks: dict[str, tuple[int, tuple[str, ...]]] = {}
+        self._admitted_task_handles: set[int] = set()
         self._admitted_action_batches: dict[
             int, tuple[int, tuple[tuple[str, MemoryActionKind], ...]]
         ] = {}
@@ -211,8 +230,7 @@ class RuntimeBridge:
             )
         if not self.requires_storage(alias_id):
             raise RuntimeExecutionError(
-                "zero-byte shared objects are not supported by the public "
-                "reference API"
+                "zero-byte shared objects are not supported by the public reference API"
             )
         return self.runtime._acquire_object_reference(
             object_id=self._runtime_object_id(alias_id),
@@ -330,6 +348,8 @@ class RuntimeBridge:
         actions: tuple[MemoryAction, ...],
         action_trace_labels: tuple[str, ...] | None = None,
         memory_envelope: TaskMemoryEnvelope | None = None,
+        *,
+        publications: tuple[TaskPublication, ...] = (),
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
 
@@ -339,19 +359,26 @@ class RuntimeBridge:
         runtime_inputs = self._runtime_inputs(input_alias_ids)
         mutations = self._runtime_mutations(task.mutations)
         action_pairs = self._runtime_actions(actions, labels)
+        runtime_publications = tuple(
+            item for item in publications if self.requires_storage(item.alias_id)
+        )
         for alias_id in self._referenced_aliases(
             runtime_inputs,
             mutations,
+            runtime_publications,
             action_pairs,
         ):
             self.register_placeholder(alias_id)
         self._bind_plan_objects(
-            self._referenced_aliases(runtime_inputs, mutations, action_pairs)
+            self._referenced_aliases(
+                runtime_inputs, mutations, runtime_publications, action_pairs
+            )
         )
         buffers = self._execution_buffers(
             task,
             runtime_inputs,
             mutations,
+            runtime_publications,
             action_pairs,
             memory_envelope,
         )
@@ -369,13 +396,13 @@ class RuntimeBridge:
                 f"task {task.task_id} admitted with a null handle"
             )
         resolved = int(task_handle.value)
-        self._admitted_tasks[task.task_id] = (resolved, runtime_inputs)
+        self._admitted_task_handles.add(resolved)
         return resolved
 
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
         """Copy one indexed physical-layout certificate into the C runtime."""
 
-        if self._admitted_tasks or self._admitted_action_batches:
+        if self._admitted_task_handles or self._admitted_action_batches:
             raise RuntimeExecutionError(
                 "fixed layout must be admitted before execution tasks"
             )
@@ -537,6 +564,7 @@ class RuntimeBridge:
         self,
         inputs: tuple[str, ...],
         mutations: tuple[MutationSpec, ...],
+        publications: tuple[TaskPublication, ...],
         actions: tuple[tuple[MemoryAction, str], ...],
     ) -> tuple[str, ...]:
         return tuple(
@@ -544,6 +572,7 @@ class RuntimeBridge:
                 (
                     *inputs,
                     *(self.alias_for_object(item.object_id) for item in mutations),
+                    *(item.alias_id for item in publications),
                     *(action.alias_group_id for action, _label in actions),
                 )
             )
@@ -554,6 +583,7 @@ class RuntimeBridge:
         task: TaskSpec,
         inputs: tuple[str, ...],
         mutations: tuple[MutationSpec, ...],
+        publications: tuple[TaskPublication, ...],
         actions: tuple[tuple[MemoryAction, str], ...],
         memory_envelope: TaskMemoryEnvelope,
     ) -> _ExecutionBuffers:
@@ -567,6 +597,15 @@ class RuntimeBridge:
                     item.version_delta,
                 )
                 for item in mutations
+            )
+        )
+        publication_values = (TaskPublicationDescription * len(publications))(
+            *(
+                TaskPublicationDescription(
+                    object_id=_plan_local_id(item.alias_id, "alias_"),
+                    kind=1 if item.replace_lease else 0,
+                )
+                for item in publications
             )
         )
         labels = tuple(label.encode("utf-8") if label else None for _, label in actions)
@@ -603,6 +642,8 @@ class RuntimeBridge:
             input_count=len(inputs),
             updates=updates if mutations else None,
             update_count=len(mutations),
+            publications=publication_values if publications else None,
+            publication_count=len(publications),
             actions=action_values if actions else None,
             action_count=len(actions),
             allocation_contract_steps=contract_values if contract_steps else None,
@@ -631,6 +672,7 @@ class RuntimeBridge:
             description,
             input_ids,
             updates,
+            publication_values,
             action_values,
             contract_values,
             labels,
@@ -906,22 +948,24 @@ class RuntimeBridge:
             self._runtime_object_ids.pop(alias_id, None)
             self._binding_consistency.pop(alias_id, None)
 
-    def bind_registered_tensor(
+    def publish_initial_tensor(
         self, alias_id: str, tensor: torch.Tensor
     ) -> ObjectBinding:
+        """Publish cold materialization through the plan-local object record."""
+
         if not self.requires_storage(alias_id):
             self._registered.add(alias_id)
             return self._zero_binding(alias_id)
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
         self._require(
-            self.library.shadowspill_pytorch_bind_registered_allocation(
-                self._runtime_object_id(alias_id),
+            self.library.shadowspill_pytorch_plan_publish_initial_allocation(
+                self.plan_handle,
+                _plan_local_id(alias_id, "alias_"),
                 storage.data_ptr(),
-                self._size(alias_id),
                 ctypes.byref(binding),
             ),
-            "bind registered allocation",
+            "publish initial plan allocation",
         )
         return binding
 
@@ -962,9 +1006,7 @@ class RuntimeBridge:
             "acquire caller outputs",
         )
         expanded = self._expand_bindings(alias_ids, runtime_aliases, bindings)
-        for alias_id, tensor, binding in zip(
-            alias_ids, tensors, expanded, strict=True
-        ):
+        for alias_id, tensor, binding in zip(alias_ids, tensors, expanded, strict=True):
             self.rebind(tensor, alias_id, binding)
         return expanded
 
@@ -1021,8 +1063,7 @@ class RuntimeBridge:
             )
         handle, expected = admitted
         observed = tuple(
-            (action.alias_group_id, action.kind)
-            for action in runtime_actions_values
+            (action.alias_group_id, action.kind) for action in runtime_actions_values
         )
         if observed != expected:
             raise RuntimeExecutionError(
@@ -1043,7 +1084,7 @@ class RuntimeBridge:
             self.library.shadowspill_pytorch_plan_clear_tasks(self.plan_handle),
             "clear plan tasks",
         )
-        self._admitted_tasks.clear()
+        self._admitted_task_handles.clear()
         self._admitted_action_batches.clear()
         self._admitted_acquisitions.clear()
         self._fixed_layout_installed = False
@@ -1144,7 +1185,7 @@ class RuntimeBridge:
         task_handle: int,
         task_id: int,
         device_ordinal: int,
-        adopted: Sequence[tuple[torch.Tensor, str]],
+        adopted: Sequence[PublishedStorage],
         dematerialized: Sequence[torch.Tensor],
         *,
         replacements: Sequence[ReplacementStorageViews] = (),
@@ -1152,46 +1193,35 @@ class RuntimeBridge:
         """Overwrite logical objects and publish one admitted task boundary."""
 
         materialized = tuple(
-            (index, tensor, alias_id)
-            for index, (tensor, alias_id) in enumerate(adopted)
-            if self.requires_storage(alias_id)
+            (index, item)
+            for index, item in enumerate(adopted)
+            if self.requires_storage(item.alias_id)
         )
         replacement_by_alias = {item.alias_id: item for item in replacements}
         if len(replacement_by_alias) != len(replacements):
             raise RuntimeExecutionError("task replacement aliases are not unique")
         replacement_aliases = frozenset(replacement_by_alias)
-        adopted_aliases = {alias_id for _tensor, alias_id in adopted}
+        adopted_aliases = {item.alias_id for item in adopted}
         unknown_replacements = replacement_aliases - adopted_aliases
         if unknown_replacements:
             raise RuntimeExecutionError(
                 "task replacement has no adopted output: "
                 f"{sorted(unknown_replacements)}"
             )
-        for _index, _tensor, alias_id in materialized:
-            self._allocate_runtime_object_id(alias_id)
         replacement_tensors: list[torch.Tensor] = []
         replacement_previous_generations: list[int] = []
         replacement_target_indices: list[int] = []
-        for target_index, (_index, _tensor, alias_id) in enumerate(materialized):
-            replacement = replacement_by_alias.get(alias_id)
+        for target_index, (_index, item) in enumerate(materialized):
+            replacement = replacement_by_alias.get(item.alias_id)
             if replacement is None:
                 continue
             for tensor in replacement.tensors:
                 replacement_tensors.append(tensor)
-                replacement_previous_generations.append(
-                    replacement.previous_generation
-                )
+                replacement_previous_generations.append(replacement.previous_generation)
                 replacement_target_indices.append(target_index)
         generations = torch.ops.shadowspill._after_task_storages(
-            [tensor for _, tensor, _ in materialized],
-            [self._runtime_object_id(alias_id) for _, _, alias_id in materialized],
-            [self._size(alias_id) for _, _, alias_id in materialized],
-            [
-                2
-                if alias_id in replacement_aliases
-                else int(alias_id in self._registered)
-                for _, _, alias_id in materialized
-            ],
+            [item.tensor for _, item in materialized],
+            [item.publication_ordinal for _, item in materialized],
             replacement_tensors,
             replacement_previous_generations,
             replacement_target_indices,
@@ -1204,21 +1234,17 @@ class RuntimeBridge:
             raise RuntimeExecutionError(
                 "task publication returned the wrong generation count"
             )
-        self._registered.update(alias_id for _, alias_id in adopted)
-        self._bind_plan_objects(alias_id for _, alias_id in adopted)
         result = [0] * len(adopted)
-        for (index, _tensor, _alias_id), generation in zip(
-            materialized, generations, strict=True
-        ):
+        for (index, _item), generation in zip(materialized, generations, strict=True):
             result[index] = int(generation)
-        for index, (_tensor, alias_id) in enumerate(adopted):
-            if self.requires_storage(alias_id):
+        for index, item in enumerate(adopted):
+            if self.requires_storage(item.alias_id):
                 continue
-            if alias_id in replacement_aliases:
-                self._zero_generations[alias_id] = (
-                    self._zero_generations.get(alias_id, 0) + 1
+            if item.alias_id in replacement_aliases:
+                self._zero_generations[item.alias_id] = (
+                    self._zero_generations.get(item.alias_id, 0) + 1
                 )
-            result[index] = self._zero_generations.setdefault(alias_id, 0)
+            result[index] = self._zero_generations.setdefault(item.alias_id, 0)
         return tuple(result)
 
     def dematerialize(
@@ -1279,9 +1305,7 @@ class RuntimeBridge:
         """Close the matching admitted task scope after frontend failure."""
 
         self._require(
-            self.library.shadowspill_pytorch_abort_task_handle(
-                task_handle, task_id
-            ),
+            self.library.shadowspill_pytorch_abort_task_handle(task_handle, task_id),
             f"abort task {task_id}",
         )
 

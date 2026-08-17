@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 41U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 42U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -195,6 +195,14 @@ shadowspill_pytorch_plan_admit_task(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_publish_initial_allocation(
+    uintptr_t plan_handle,
+    uint64_t plan_object_id,
+    uint64_t address,
+    ShadowSpillObjectBinding *binding
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
@@ -251,6 +259,24 @@ shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address
+);
+
+/* Publish one task-owned output without a runtime object-ID lookup. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_task_publish_allocation(
+    uintptr_t task_handle,
+    uint32_t publication_ordinal,
+    uint64_t address,
+    ShadowSpillObjectBinding *binding
+);
+
+/* Validate a current or retired publication generation by direct record. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_validate_task_publication_binding(
+    uintptr_t task_handle,
+    uint32_t publication_ordinal,
+    uint64_t address,
+    uint64_t generation
 );
 
 /* Reconciles current process bytes against the sealed or provisional cap. */

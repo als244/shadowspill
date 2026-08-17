@@ -409,6 +409,144 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
     return failed ? -1 : 0;
 }
 
+static int task_publications_resolve_plan_local_objects_once(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *first = NULL;
+    ShadowSpillPlan *second = NULL;
+    ShadowSpillObjectHandle *first_object_handle = NULL;
+    ShadowSpillObjectHandle *second_object_handle = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    const ShadowSpillObjectDescription first_object = {
+        .object_id = 3101U,
+        .size_bytes = 64U,
+        .initial_pool_id = 1U,
+    };
+    const ShadowSpillObjectDescription second_object = {
+        .object_id = 3202U,
+        .size_bytes = 64U,
+        .initial_pool_id = 1U,
+    };
+    const ShadowSpillTaskPublicationDescription publication = {
+        .object_id = 5U,
+        .kind = SHADOWSPILL_TASK_PUBLICATION_BIND,
+    };
+    const ShadowSpillTaskDescription task = {
+        .task_id = 17U,
+        .publications = &publication,
+        .publication_count = 1U,
+    };
+    const ShadowSpillTaskHandle *first_task = NULL;
+    const ShadowSpillTaskHandle *second_task = NULL;
+    ShadowSpillAllocation first_allocation = {0};
+    ShadowSpillAllocation second_allocation = {0};
+    ShadowSpillObjectBinding first_binding = {0};
+    ShadowSpillObjectBinding second_binding = {0};
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &first_object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &second_object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, first_object.object_id, &first_object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, second_object.object_id, &second_object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &first) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &second) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            first, 5U, first_object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            second, 5U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_task(first, &task, &first_task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_task(second, &task, &second_task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        first_task == NULL || second_task == NULL || first_task == second_task ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    if (!failed) {
+        failed = shadowspill_before_task_handle(
+                runtime, first_task, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_memory_pool_allocate(
+                runtime, 0U, 64U, 16U, compute, &first_allocation
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_task_publish_allocation(
+                runtime,
+                first_task,
+                0U,
+                first_allocation.pointer,
+                &first_binding
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            first_binding.object_id != first_object.object_id ||
+            shadowspill_task_publish_allocation(
+                runtime,
+                first_task,
+                1U,
+                first_allocation.pointer,
+                &first_binding
+            ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+            shadowspill_after_task_handle(runtime, first_task, compute) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_before_task_handle(
+                runtime, second_task, compute, NULL, 0U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_memory_pool_allocate(
+                runtime, 0U, 64U, 16U, compute, &second_allocation
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_task_publish_allocation(
+                runtime,
+                second_task,
+                0U,
+                second_allocation.pointer,
+                &second_binding
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            second_binding.object_id != second_object.object_id ||
+            second_binding.object_id == first_binding.object_id ||
+            shadowspill_after_task_handle(runtime, second_task, compute) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+    }
+    if (first_object_handle != NULL) {
+        (void)shadowspill_object_handle_release(first_object_handle);
+    }
+    if (second_object_handle != NULL) {
+        (void)shadowspill_object_handle_release(second_object_handle);
+    }
+    shadowspill_plan_destroy(first);
+    shadowspill_plan_destroy(second);
+    if (runtime != NULL) {
+        (void)shadowspill_unregister_object(runtime, first_object.object_id);
+        (void)shadowspill_unregister_object(runtime, second_object.object_id);
+    }
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int runtime_objects_survive_until_their_final_owner_closes(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -615,6 +753,10 @@ int main(void) {
     }
     if (plans_bind_local_ids_to_explicit_runtime_objects() != 0) {
         fprintf(stderr, "runtime plan canary failed: object bindings\n");
+        return EXIT_FAILURE;
+    }
+    if (task_publications_resolve_plan_local_objects_once() != 0) {
+        fprintf(stderr, "runtime plan canary failed: task publications\n");
         return EXIT_FAILURE;
     }
     if (runtime_objects_survive_until_their_final_owner_closes() != 0) {

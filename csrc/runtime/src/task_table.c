@@ -82,6 +82,9 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     for (uint32_t index = 0U; index < record->update_count; ++index) {
         shadowspill_object_release(record->updates[index].object);
     }
+    for (uint32_t index = 0U; index < record->publication_count; ++index) {
+        shadowspill_object_release(record->publications[index].object);
+    }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         shadowspill_object_release(record->actions[index].object);
         free(record->actions[index].trace_label);
@@ -93,6 +96,7 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     free(record->input_unique_indices);
     free(record->unique_first_positions);
     free(record->updates);
+    free(record->publications);
     free(record->actions);
     free(record->queued_actions);
     free(record->allocation_contract_steps);
@@ -179,6 +183,7 @@ static int same_description(
     if (record->boundary_kind != boundary_kind ||
         record->input_count != description->input_count ||
         record->update_count != description->update_count ||
+        record->publication_count != description->publication_count ||
         record->action_count != description->action_count ||
         record->allocation_contract_step_count !=
             description->allocation_contract_step_count ||
@@ -209,6 +214,14 @@ static int same_description(
                 description->updates[index].object_id ||
             record->updates[index].version_delta !=
                 description->updates[index].version_delta) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0U; index < record->publication_count; ++index) {
+        if (record->publications[index].plan_object_id !=
+                description->publications[index].object_id ||
+            record->publications[index].kind !=
+                description->publications[index].kind) {
             return 0;
         }
     }
@@ -261,6 +274,7 @@ static ShadowSpillTaskRecord *create_record(
     atomic_init(&record->acknowledgement_sequence, 0U);
     record->input_count = description->input_count;
     record->update_count = description->update_count;
+    record->publication_count = description->publication_count;
     record->action_count = description->action_count;
     record->allocation_contract_step_count =
         description->allocation_contract_step_count;
@@ -298,6 +312,11 @@ static ShadowSpillTaskRecord *create_record(
     if (record->update_count != 0U) {
         record->updates = calloc(record->update_count, sizeof(*record->updates));
     }
+    if (record->publication_count != 0U) {
+        record->publications = calloc(
+            record->publication_count, sizeof(*record->publications)
+        );
+    }
     if (record->action_count != 0U) {
         record->actions = calloc(record->action_count, sizeof(*record->actions));
         record->queued_actions = calloc(
@@ -316,6 +335,7 @@ static ShadowSpillTaskRecord *create_record(
           record->input_unique_indices == NULL ||
           record->unique_first_positions == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
+        (record->publication_count != 0U && record->publications == NULL) ||
         (record->action_count != 0U &&
          (record->actions == NULL || record->queued_actions == NULL)) ||
         (record->allocation_contract_step_count != 0U &&
@@ -381,6 +401,33 @@ static ShadowSpillTaskRecord *create_record(
             .object = object,
             .plan_object_id = description->updates[index].object_id,
             .version_delta = description->updates[index].version_delta,
+        };
+    }
+    for (uint32_t index = 0U; index < record->publication_count; ++index) {
+        const ShadowSpillTaskPublicationDescription *publication =
+            &description->publications[index];
+        if (publication->kind > SHADOWSPILL_TASK_PUBLICATION_REPLACE) {
+            destroy_record(record);
+            return NULL;
+        }
+        for (uint32_t previous = 0U; previous < index; ++previous) {
+            if (description->publications[previous].object_id ==
+                publication->object_id) {
+                destroy_record(record);
+                return NULL;
+            }
+        }
+        ShadowSpillObject *object = shadowspill_plan_object_acquire(
+            plan, publication->object_id, NULL
+        );
+        if (object == NULL) {
+            destroy_record(record);
+            return NULL;
+        }
+        record->publications[index] = (ShadowSpillTaskPublication){
+            .object = object,
+            .plan_object_id = publication->object_id,
+            .kind = publication->kind,
         };
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
@@ -499,6 +546,8 @@ static ShadowSpillRuntimeStatus admit_record(
         (description->input_count != 0U &&
          description->input_object_ids == NULL) ||
         (description->update_count != 0U && description->updates == NULL) ||
+        (description->publication_count != 0U &&
+         description->publications == NULL) ||
         (description->action_count != 0U && description->actions == NULL) ||
         (description->allocation_contract_step_count != 0U &&
          description->allocation_contract_steps == NULL) ||

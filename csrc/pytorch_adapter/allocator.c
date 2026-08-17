@@ -1464,6 +1464,70 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_task(
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_publish_initial_allocation(
+    uintptr_t plan_handle,
+    uint64_t plan_object_id,
+    uint64_t address,
+    ShadowSpillObjectBinding *binding
+) {
+    return plan_handle == 0U || address == 0U || binding == NULL
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_publish_initial_allocation(
+              (ShadowSpillPlan *)plan_handle,
+              plan_object_id,
+              (const void *)(uintptr_t)address,
+              binding
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_task_publish_allocation(
+    uintptr_t task_handle,
+    uint32_t publication_ordinal,
+    uint64_t address,
+    ShadowSpillObjectBinding *binding
+) {
+    if (task_handle == 0U || address == 0U || binding == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    return shadowspill_task_publish_allocation(
+        runtime,
+        (const ShadowSpillTaskHandle *)task_handle,
+        publication_ordinal,
+        (const void *)(uintptr_t)address,
+        binding
+    );
+}
+
+ShadowSpillRuntimeStatus
+shadowspill_pytorch_validate_task_publication_binding(
+    uintptr_t task_handle,
+    uint32_t publication_ordinal,
+    uint64_t address,
+    uint64_t generation
+) {
+    if (task_handle == 0U || address == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_task_validate_publication_binding(
+              runtime,
+              (const ShadowSpillTaskHandle *)task_handle,
+              publication_ordinal,
+              (const void *)(uintptr_t)address,
+              generation
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
