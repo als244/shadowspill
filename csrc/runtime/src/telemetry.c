@@ -78,6 +78,12 @@ uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime) {
         : 0U;
 }
 
+ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime) {
+    return task_scope.runtime == runtime && task_scope.execution != NULL
+        ? task_scope.execution->plan_owner
+        : NULL;
+}
+
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
@@ -175,7 +181,8 @@ int shadowspill_enter_execution_scope(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionRecord *record
 ) {
-    if (record == NULL || record->runtime_owner != runtime ||
+    if (record == NULL || record->plan_owner == NULL ||
+        record->plan_owner->runtime != runtime ||
         shadowspill_enter_task_scope(runtime, record->task_id) != 0) {
         return -1;
     }

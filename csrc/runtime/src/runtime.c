@@ -75,7 +75,6 @@ static void destroy_objects(ShadowSpillRuntime *runtime) {
             object->has_readiness_event = 0U;
         }
     }
-    shadowspill_execution_table_destroy(&runtime->execution);
     shadowspill_object_table_destroy(&runtime->objects);
 }
 
@@ -156,7 +155,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     shadowspill_retirement_queue_destroy(runtime, &runtime->retirements);
     destroy_actions(runtime);
     destroy_allocations(runtime);
-    shadowspill_fixed_layout_destroy(runtime);
+    shadowspill_plan_destroy_all(runtime);
     destroy_objects(runtime);
     free(runtime->execution_leases_by_id);
     free(runtime->execution_leases_by_pointer);
@@ -180,6 +179,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
             );
             route->lane_created = 0U;
         }
+        shadowspill_transfer_lane_destroy(&route->transfers);
     }
     free(runtime->routes);
     runtime->routes = NULL;
@@ -308,7 +308,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->allocation_index_bucket_count = 65536U;
     runtime->reusable_index_bucket_count = 8192U;
     const uint64_t object_index_bucket_count = 16384U;
-    const uint64_t execution_index_bucket_count = 4096U;
+    if (pthread_mutex_init(&runtime->plans_lock, NULL) != 0) {
+        free(runtime->routes);
+        free(runtime->pools);
+        free(runtime);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    runtime->plans_lock_initialized = 1U;
     runtime->execution_leases_by_id = calloc(
         (size_t)runtime->allocation_index_bucket_count,
         sizeof(*runtime->execution_leases_by_id)
@@ -326,16 +332,15 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         runtime->reusable_execution_leases_by_size == NULL ||
         shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
-        ) != 0 || shadowspill_execution_table_initialize(
-            &runtime->execution, execution_index_bucket_count
         ) != 0 || shadowspill_completion_tracker_initialize(
             &runtime->completions
         ) != 0) {
         free(runtime->execution_leases_by_id);
         free(runtime->execution_leases_by_pointer);
         free(runtime->reusable_execution_leases_by_size);
-        shadowspill_execution_table_destroy(&runtime->execution);
         shadowspill_object_table_destroy(&runtime->objects);
+        pthread_mutex_destroy(&runtime->plans_lock);
+        runtime->plans_lock_initialized = 0U;
         free(runtime->routes);
         free(runtime->pools);
         free(runtime);
@@ -344,6 +349,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     runtime->completions_initialized = 1U;
     if (shadowspill_transfer_profiles_initialize(runtime) != 0) {
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
@@ -351,11 +357,13 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
             &runtime->retirements
         ) != 0) {
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     if (pthread_mutex_init(&runtime->actions.lock, NULL) != 0) {
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
@@ -364,6 +372,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
@@ -372,6 +381,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
@@ -381,6 +391,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
@@ -393,18 +404,11 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
         pthread_mutex_destroy(&runtime->actions.lock);
         runtime->actions.lock_initialized = 0U;
         release_resources(runtime);
+        pthread_mutex_destroy(&runtime->plans_lock);
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
-    if (shadowspill_transfer_lane_initialize(&runtime->fetch_lane) != 0) {
-        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-        goto fail;
-    }
-    if (shadowspill_transfer_lane_initialize(&runtime->evict_lane) != 0) {
-        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-        goto fail;
-    }
     for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
         const ShadowSpillMemoryPoolDescription *pool = &config->pools[pool_id];
         if (shadowspill_memory_pool_initialize(
@@ -421,6 +425,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
     shadowspill_publish_execution_geometry_locked(runtime);
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
+        if (shadowspill_transfer_lane_initialize(&route->transfers) != 0) {
+            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            goto fail;
+        }
         if (route->route.create_lane(
                 route->route.context, &route->lane
             ) != 0) {
@@ -431,6 +439,19 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
             &runtime->profiler, route->lane, config->routes[route_id].name
         );
     }
+    const ShadowSpillPlanDescription default_plan = {
+        .execution_pool_id = runtime->execution_pool_id,
+        .spill_pool_id = runtime->spill_pool_id,
+        .fetch_route_id = runtime->fetch_route_id,
+        .evict_route_id = runtime->evict_route_id,
+    };
+    status = shadowspill_plan_create(
+        runtime, &default_plan, &runtime->default_plan
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        goto fail;
+    }
+    runtime->default_plan->internal_default = 1U;
     if (pthread_create(
             &runtime->worker_thread, NULL, shadowspill_worker_main, runtime
         ) != 0) {
@@ -447,10 +468,10 @@ fail:
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);
-    shadowspill_transfer_lane_destroy(&runtime->evict_lane);
-    shadowspill_transfer_lane_destroy(&runtime->fetch_lane);
     pthread_mutex_destroy(&runtime->actions.lock);
     runtime->actions.lock_initialized = 0U;
+    pthread_mutex_destroy(&runtime->plans_lock);
+    runtime->plans_lock_initialized = 0U;
     free(runtime);
     return status;
 }
@@ -628,10 +649,12 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);
-    shadowspill_transfer_lane_destroy(&runtime->evict_lane);
-    shadowspill_transfer_lane_destroy(&runtime->fetch_lane);
     pthread_mutex_destroy(&runtime->actions.lock);
     runtime->actions.lock_initialized = 0U;
+    if (runtime->plans_lock_initialized) {
+        pthread_mutex_destroy(&runtime->plans_lock);
+        runtime->plans_lock_initialized = 0U;
+    }
     free(runtime);
 }
 

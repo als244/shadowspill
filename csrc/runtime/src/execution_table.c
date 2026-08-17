@@ -257,14 +257,15 @@ static int same_description(
 }
 
 static ShadowSpillExecutionRecord *create_record(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     const ShadowSpillExecutionDescription *description
 ) {
+    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillExecutionRecord *record = calloc(1U, sizeof(*record));
     if (record == NULL) {
         return NULL;
     }
-    record->runtime_owner = runtime;
+    record->plan_owner = plan;
     record->task_id = description->task_id;
     atomic_init(&record->invocation_count, 0U);
     record->input_count = description->input_count;
@@ -416,6 +417,14 @@ static ShadowSpillExecutionRecord *create_record(
             .action_ordinal = index,
             .kind = description->actions[index].kind,
             .object = object,
+            .plan_owner = plan,
+            .route = description->actions[index].kind ==
+                    SHADOWSPILL_RUNTIME_RELEASE
+                ? NULL
+                : description->actions[index].kind ==
+                        SHADOWSPILL_RUNTIME_PREFETCH
+                    ? plan->fetch_route
+                    : plan->evict_route,
             .trace_label = trace_label,
             .admitted = 1U,
         };
@@ -475,11 +484,11 @@ static int valid_allocation_abi(
     return valid;
 }
 
-ShadowSpillRuntimeStatus shadowspill_admit_execution(
-    ShadowSpillRuntime *runtime,
+ShadowSpillRuntimeStatus shadowspill_plan_admit_execution(
+    ShadowSpillPlan *plan,
     const ShadowSpillExecutionDescription *description
 ) {
-    if (runtime == NULL || description == NULL ||
+    if (plan == NULL || description == NULL ||
         (description->input_count != 0U &&
          description->input_object_ids == NULL) ||
         (description->update_count != 0U && description->updates == NULL) ||
@@ -501,6 +510,7 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
              description->dynamic_scratch_live_limit_bytes)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
@@ -513,11 +523,11 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
             }
         }
     }
-    ShadowSpillExecutionRecord *created = create_record(runtime, description);
+    ShadowSpillExecutionRecord *created = create_record(plan, description);
     if (created == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    ShadowSpillExecutionTable *table = &runtime->execution;
+    ShadowSpillExecutionTable *table = &plan->execution;
     pthread_rwlock_wrlock(&table->lock);
     ShadowSpillExecutionRecord *existing = find_unlocked(
         table, description->task_id
@@ -539,12 +549,13 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
-    ShadowSpillRuntime *runtime
+ShadowSpillRuntimeStatus shadowspill_plan_clear_execution(
+    ShadowSpillPlan *plan
 ) {
-    if (runtime == NULL) {
+    if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
@@ -557,12 +568,29 @@ ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
         ) != 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    status = shadowspill_fixed_layout_clear(runtime);
+    status = shadowspill_fixed_layout_clear(plan);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    shadowspill_execution_table_clear(&runtime->execution);
+    shadowspill_execution_table_clear(&plan->execution);
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_admit_execution(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionDescription *description
+) {
+    return runtime == NULL || runtime->default_plan == NULL
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_admit_execution(runtime->default_plan, description);
+}
+
+ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(
+    ShadowSpillRuntime *runtime
+) {
+    return runtime == NULL || runtime->default_plan == NULL
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_clear_execution(runtime->default_plan);
 }
 
 ShadowSpillRuntimeStatus shadowspill_before_execution(
@@ -572,11 +600,11 @@ ShadowSpillRuntimeStatus shadowspill_before_execution(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
-    if (runtime == NULL) {
+    if (runtime == NULL || runtime->default_plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
-        &runtime->execution, task_id
+        &runtime->default_plan->execution, task_id
     );
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -591,11 +619,24 @@ ShadowSpillRuntimeStatus shadowspill_resolve_execution(
     uint64_t task_id,
     const ShadowSpillExecutionHandle **handle
 ) {
-    if (runtime == NULL || handle == NULL) {
+    if (runtime == NULL || runtime->default_plan == NULL || handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    return shadowspill_plan_resolve_execution(
+        runtime->default_plan, task_id, handle
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_plan_resolve_execution(
+    ShadowSpillPlan *plan,
+    uint64_t task_id,
+    const ShadowSpillExecutionHandle **handle
+) {
+    if (plan == NULL || handle == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
-        &runtime->execution, task_id
+        &plan->execution, task_id
     );
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -613,7 +654,7 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
 ) {
     const ShadowSpillExecutionRecord *record = handle;
     if (runtime == NULL || record == NULL ||
-        record->runtime_owner != runtime) {
+        record->plan_owner == NULL || record->plan_owner->runtime != runtime) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     if ((record->input_count != 0U && bindings == NULL) ||
@@ -768,11 +809,11 @@ ShadowSpillRuntimeStatus shadowspill_after_execution(
     uint64_t task_id,
     ShadowSpillBackendStream compute_stream
 ) {
-    if (runtime == NULL) {
+    if (runtime == NULL || runtime->default_plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
-        &runtime->execution, task_id
+        &runtime->default_plan->execution, task_id
     );
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -787,7 +828,7 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_handle(
 ) {
     const ShadowSpillExecutionRecord *record = handle;
     if (runtime == NULL || record == NULL ||
-        record->runtime_owner != runtime) {
+        record->plan_owner == NULL || record->plan_owner->runtime != runtime) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     return shadowspill_after_execution_record(runtime, record, compute_stream);

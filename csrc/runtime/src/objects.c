@@ -1055,6 +1055,14 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
         created->task_id = task_id;
         created->kind = actions[index].kind;
         created->object = object;
+        created->route = actions[index].kind == SHADOWSPILL_RUNTIME_RELEASE
+            ? NULL
+            : shadowspill_runtime_route(
+                  runtime,
+                  actions[index].kind == SHADOWSPILL_RUNTIME_PREFETCH
+                      ? runtime->fetch_route_id
+                      : runtime->evict_route_id
+              );
         created->trace_label = shadowspill_copy_action_trace_label(
             &actions[index], task_id, object->size_bytes
         );

@@ -418,17 +418,18 @@ static ShadowSpillRuntimeStatus create_execution_lease_locked(
 }
 
 ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement,
     int plan_owned,
     uint64_t origin_task_id,
     ShadowSpillMemoryLease **record
 ) {
-    if (runtime == NULL || placement == NULL || record == NULL ||
+    if (plan == NULL || placement == NULL || record == NULL ||
         (placement->kind != SHADOWSPILL_FIXED_TASK_ALLOCATION &&
          placement->kind != SHADOWSPILL_FIXED_ACTION_DESTINATION)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    ShadowSpillRuntime *runtime = plan->runtime;
     *record = NULL;
     ShadowSpillMemoryLease *created = create_execution_record(
         runtime, origin_task_id
@@ -438,7 +439,7 @@ ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
     }
     ShadowSpillRuntimeStatus status =
         shadowspill_fixed_layout_adopt_execution_lease_locked(
-            runtime,
+            plan,
             created,
             placement->offset,
             placement->bytes,
@@ -866,6 +867,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         shadowspill_current_task_allocation_is_scratch(runtime);
     const uint64_t task_invocation =
         shadowspill_current_task_invocation(runtime);
+    ShadowSpillPlan *plan = shadowspill_current_plan(runtime);
     /*
      * Keep large, short-lived framework values at the high end of an
      * unsealed pool while small provider state grows from the low end.  A
@@ -879,7 +881,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         : SHADOWSPILL_MEMORY_BEST_FIT_LOW;
     const ShadowSpillFixedPlacementDescription *fixed_placement =
         shadowspill_fixed_layout_find_placement(
-            runtime,
+            plan,
             SHADOWSPILL_FIXED_TASK_ALLOCATION,
             task_id,
             allocation_ordinal,
@@ -887,7 +889,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         );
     if (fixed_placement != NULL) {
         status = shadowspill_fixed_layout_wait_for_dependencies(
-            runtime,
+            plan,
             SHADOWSPILL_FIXED_TASK_ALLOCATION,
             task_id,
             allocation_ordinal,
@@ -912,7 +914,7 @@ ShadowSpillRuntimeStatus shadowspill_allocate(
         ShadowSpillMemoryLease *record = NULL;
         if (fixed_placement != NULL) {
             status = shadowspill_create_fixed_execution_lease_locked(
-                runtime,
+                plan,
                 fixed_placement,
                 0,
                 task_id,

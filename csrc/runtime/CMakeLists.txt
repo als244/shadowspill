@@ -14,6 +14,7 @@ add_library(
   src/object_actions.c
   src/object_table.c
   src/objects.c
+  src/plan.c
   src/profiler.c
   src/ranges.c
   src/retirement_queue.c

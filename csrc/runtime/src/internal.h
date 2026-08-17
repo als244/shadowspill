@@ -243,6 +243,7 @@ typedef struct ShadowSpillObjectLocation {
 } ShadowSpillObjectLocation;
 
 typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
+typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
 typedef struct ShadowSpillObject {
     uint64_t object_id;
@@ -302,6 +303,8 @@ struct ShadowSpillQueuedAction {
     uint8_t state;
     ShadowSpillMemoryLease *destination_lease;
     ShadowSpillObject *object;
+    ShadowSpillPlan *plan_owner;
+    ShadowSpillRouteState *route;
     ShadowSpillEventLease *trigger_event;
     ShadowSpillEventLease *completion_event;
     ShadowSpillEventLease *dependency_event;
@@ -340,11 +343,12 @@ typedef struct ShadowSpillTransferLane {
     uint8_t lock_initialized;
 } ShadowSpillTransferLane;
 
-typedef struct ShadowSpillRouteState {
+struct ShadowSpillRouteState {
     ShadowSpillTransferRoute route;
+    ShadowSpillTransferLane transfers;
     ShadowSpillBackendStream lane;
     uint8_t lane_created;
-} ShadowSpillRouteState;
+};
 
 /*
  * Owns only the quiescence notification consumed by runtime_wait_idle. The
@@ -371,7 +375,7 @@ typedef struct ShadowSpillExecutionAction {
 } ShadowSpillExecutionAction;
 
 typedef struct ShadowSpillExecutionRecord {
-    ShadowSpillRuntime *runtime_owner;
+    ShadowSpillPlan *plan_owner;
     uint64_t task_id;
     ShadowSpillObject **inputs;
     uint32_t input_count;
@@ -406,6 +410,25 @@ typedef struct ShadowSpillExecutionTable {
     uint64_t bucket_count;
     uint8_t lock_initialized;
 } ShadowSpillExecutionTable;
+
+struct ShadowSpillPlan {
+    ShadowSpillRuntime *runtime;
+    ShadowSpillMemoryPool *execution_pool;
+    ShadowSpillMemoryPool *spill_pool;
+    ShadowSpillRouteState *fetch_route;
+    ShadowSpillRouteState *evict_route;
+    ShadowSpillExecutionTable execution;
+    ShadowSpillFixedLayoutState fixed_layout;
+    pthread_mutex_t lifecycle_lock;
+    _Atomic uint32_t active_invocations;
+    _Atomic uint8_t closing;
+    _Atomic uint8_t closed;
+    uint8_t lifecycle_lock_initialized;
+    uint8_t execution_initialized;
+    uint8_t internal_default;
+    struct ShadowSpillPlan *ownership_next;
+    struct ShadowSpillPlan **ownership_previous_link;
+};
 
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
@@ -448,14 +471,14 @@ struct ShadowSpillRuntime {
     uint64_t allocation_index_bucket_count;
     uint64_t reusable_index_bucket_count;
     ShadowSpillObjectTable objects;
-    ShadowSpillExecutionTable execution;
+    pthread_mutex_t plans_lock;
+    ShadowSpillPlan *plans;
+    ShadowSpillPlan *default_plan;
+    uint8_t plans_lock_initialized;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;
     ShadowSpillActionQueue actions;
-    ShadowSpillTransferLane fetch_lane;
-    ShadowSpillTransferLane evict_lane;
-    ShadowSpillFixedLayoutState fixed_layout;
 
     uint64_t next_allocation_id;
     uint64_t next_generation;
@@ -673,37 +696,37 @@ void *shadowspill_memory_pool_pointer(
 );
 
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint64_t bytes
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
-    ShadowSpillRuntime *runtime
+    ShadowSpillPlan *plan
 );
-void shadowspill_fixed_layout_destroy(ShadowSpillRuntime *runtime);
+void shadowspill_fixed_layout_destroy(ShadowSpillPlan *plan);
 const ShadowSpillFixedPlacementDescription *
 shadowspill_fixed_layout_find_placement(
-    const ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     uint8_t kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t object_id
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     ShadowSpillMemoryLease *lease,
     uint64_t relative_offset,
     uint64_t bytes,
     uint64_t alignment
 );
 int shadowspill_fixed_layout_dependencies_published(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t invocation
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
@@ -711,7 +734,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
     ShadowSpillBackendStream stream
 );
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
@@ -817,7 +840,7 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     ShadowSpillMemoryLease **record
 );
 ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement,
     int plan_owned,
     uint64_t origin_task_id,
@@ -880,6 +903,7 @@ int shadowspill_current_task_allocation_is_scratch(
     ShadowSpillRuntime *runtime
 );
 uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime);
+ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime);
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
@@ -963,6 +987,7 @@ ShadowSpillRouteState *shadowspill_runtime_route(
     ShadowSpillRuntime *runtime,
     uint32_t route_id
 );
+void shadowspill_plan_destroy_all(ShadowSpillRuntime *runtime);
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);
 void shadowspill_transfer_profiles_destroy(ShadowSpillRuntime *runtime);
 void shadowspill_publish_execution_geometry_locked(ShadowSpillRuntime *runtime);

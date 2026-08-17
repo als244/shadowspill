@@ -30,13 +30,12 @@ ShadowSpillTransferLane *shadowspill_transfer_lane_for_action(
     ShadowSpillRuntime *runtime,
     const ShadowSpillQueuedAction *action
 ) {
-    if (runtime == NULL || action == NULL ||
+    (void)runtime;
+    if (action == NULL || action->route == NULL ||
         action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
         return NULL;
     }
-    return action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-        ? &runtime->fetch_lane
-        : &runtime->evict_lane;
+    return &action->route->transfers;
 }
 
 void shadowspill_transfer_lane_enqueue(

@@ -17,25 +17,24 @@ static void release_reserved_destination(
         return;
     }
     action->destination_lease = NULL;
+    ShadowSpillPlan *plan = action->plan_owner;
     if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
         shadowspill_memory_pool_lock_reservation(
-            shadowspill_execution_pool(runtime)
+            plan->execution_pool
         );
         shadowspill_cancel_execution_reservation_locked(runtime, lease);
         shadowspill_memory_pool_unlock_reservation(
-            shadowspill_execution_pool(runtime)
+            plan->execution_pool
         );
         shadowspill_memory_pool_relinquish_reservation(
-            shadowspill_execution_pool(runtime)
+            plan->execution_pool
         );
         return;
     }
-    shadowspill_memory_pool_lock_reservation(shadowspill_spill_pool(runtime));
+    shadowspill_memory_pool_lock_reservation(plan->spill_pool);
     (void)shadowspill_memory_pool_cancel_reservation_locked(lease);
-    shadowspill_memory_pool_unlock_reservation(shadowspill_spill_pool(runtime));
-    shadowspill_memory_pool_relinquish_reservation(
-        shadowspill_spill_pool(runtime)
-    );
+    shadowspill_memory_pool_unlock_reservation(plan->spill_pool);
+    shadowspill_memory_pool_relinquish_reservation(plan->spill_pool);
     free(lease);
 }
 
@@ -49,7 +48,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
         const ShadowSpillFixedPlacementDescription *fixed =
             action->admitted
             ? shadowspill_fixed_layout_find_placement(
-                  runtime,
+                  action->plan_owner,
                   SHADOWSPILL_FIXED_ACTION_DESTINATION,
                   action->task_id,
                   action->action_ordinal,
@@ -59,14 +58,14 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
         const ShadowSpillFixedPlacementDescription *dynamic =
             action->admitted && fixed == NULL
             ? shadowspill_fixed_layout_find_placement(
-                  runtime,
+                  action->plan_owner,
                   SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
                   action->task_id,
                   action->action_ordinal,
                   action->object->object_id
               )
             : NULL;
-        if (action->admitted && runtime->fixed_layout.sealed &&
+        if (action->admitted && action->plan_owner->fixed_layout.sealed &&
             fixed == NULL && dynamic == NULL) {
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         }
@@ -81,7 +80,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
                   &action->destination_lease
               )
             : shadowspill_create_fixed_execution_lease_locked(
-                  runtime,
+                  action->plan_owner,
                   fixed,
                   1,
                   action->task_id,
@@ -154,8 +153,8 @@ static ShadowSpillRuntimeStatus reserve_action_destination(
         return SHADOWSPILL_RUNTIME_OK;
     }
     ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-        ? shadowspill_execution_pool(runtime)
-        : shadowspill_spill_pool(runtime);
+        ? action->plan_owner->execution_pool
+        : action->plan_owner->spill_pool;
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
     shadowspill_memory_pool_lock_reservation(pool);
     for (;;) {
@@ -814,11 +813,15 @@ ShadowSpillRuntimeStatus shadowspill_after_task(
         shadowspill_leave_task_scope(runtime);
         return status;
     }
-    const ShadowSpillExecutionRecord *record =
-        shadowspill_execution_table_acquire(&runtime->execution, task_id);
-    if (record == NULL) {
+    const ShadowSpillExecutionHandle *handle = NULL;
+    status = shadowspill_plan_resolve_execution(
+        runtime->default_plan, task_id, &handle
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK || handle == NULL) {
         shadowspill_leave_task_scope(runtime);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return status == SHADOWSPILL_RUNTIME_OK
+            ? SHADOWSPILL_RUNTIME_INVALID_STATE : status;
     }
+    const ShadowSpillExecutionRecord *record = handle;
     return shadowspill_after_execution_record(runtime, record, compute_stream);
 }

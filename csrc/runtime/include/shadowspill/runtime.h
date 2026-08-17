@@ -24,6 +24,7 @@ extern "C" {
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
+typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
 
 /*
@@ -112,6 +113,17 @@ typedef struct ShadowSpillRuntimeConfig {
     ShadowSpillSynchronizationBackend synchronization;
     ShadowSpillProfiler profiler;
 } ShadowSpillRuntimeConfig;
+
+/*
+ * Immutable pool and route roles selected by one admitted callable. Multiple
+ * plans may share a runtime topology and runtime-owned logical objects.
+ */
+typedef struct ShadowSpillPlanDescription {
+    uint32_t execution_pool_id;
+    uint32_t spill_pool_id;
+    uint32_t fetch_route_id;
+    uint32_t evict_route_id;
+} ShadowSpillPlanDescription;
 
 typedef struct ShadowSpillAllocation {
     uint64_t allocation_id;
@@ -449,6 +461,18 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
     ShadowSpillRuntime **runtime
 );
 
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_create(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillPlanDescription *description,
+    ShadowSpillPlan **plan
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_close(
+    ShadowSpillPlan *plan
+);
+
+SHADOWSPILL_RUNTIME_API void shadowspill_plan_destroy(ShadowSpillPlan *plan);
+
 /*
  * Rejects new work, drains queued work, synchronizes both transfer streams,
  * joins the worker, and releases owned resources. This call is explicitly
@@ -681,6 +705,12 @@ shadowspill_admit_execution(
     const ShadowSpillExecutionDescription *description
 );
 
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_admit_execution(
+    ShadowSpillPlan *plan,
+    const ShadowSpillExecutionDescription *description
+);
+
 /*
  * Releases every immutable execution record admitted for the completed plan.
  * The runtime must be idle and no task boundary may be active. Logical objects
@@ -691,6 +721,9 @@ shadowspill_admit_execution(
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_clear_execution_plan(ShadowSpillRuntime *runtime);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_clear_execution(ShadowSpillPlan *plan);
 
 /*
  * Copies and validates one immutable physical-layout certificate and reserves
@@ -703,9 +736,18 @@ shadowspill_admit_fixed_layout(
     const ShadowSpillFixedLayoutDescription *description
 );
 
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_admit_fixed_layout(
+    ShadowSpillPlan *plan,
+    const ShadowSpillFixedLayoutDescription *description
+);
+
 /* Resolve every task/action reference and enable fixed placement. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_seal_fixed_layout(ShadowSpillRuntime *runtime);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
 
 /*
  * Resolves one stable, immutable execution handle on the cold path. The handle
@@ -716,6 +758,13 @@ shadowspill_seal_fixed_layout(ShadowSpillRuntime *runtime);
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_resolve_execution(
     ShadowSpillRuntime *runtime,
+    uint64_t task_id,
+    const ShadowSpillExecutionHandle **handle
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_resolve_execution(
+    ShadowSpillPlan *plan,
     uint64_t task_id,
     const ShadowSpillExecutionHandle **handle
 );

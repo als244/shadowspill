@@ -26,6 +26,17 @@ target_link_libraries(
 )
 add_test(NAME shadowspill_runtime_canary COMMAND shadowspill_runtime_canary)
 
+add_executable(shadowspill_runtime_plan_canary runtime/runtime_plan_canary.c)
+target_link_libraries(
+  shadowspill_runtime_plan_canary
+  PRIVATE
+    shadowspill_runtime
+    shadowspill_backend_mock
+    shadowspill_build_options
+    Threads::Threads
+)
+add_test(NAME shadowspill_runtime_plan_canary COMMAND shadowspill_runtime_plan_canary)
+
 add_executable(
   shadowspill_memory_pool_canary
   runtime/memory_pool_canary.c

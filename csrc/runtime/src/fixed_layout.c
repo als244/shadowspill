@@ -122,19 +122,20 @@ static void clear_metadata(ShadowSpillFixedLayoutState *layout) {
  * changes the production range allocator's physical accounting.
  */
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint64_t bytes
 ) {
-    if (runtime == NULL) {
+    if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
+    ShadowSpillRuntime *runtime = plan->runtime;
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    if (runtime->fixed_layout.active) {
+    if (plan->fixed_layout.active) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     } else if (bytes == 0U) {
-        runtime->fixed_layout.active = 1U;
+        plan->fixed_layout.active = 1U;
     } else {
         uint64_t offset = 0U;
         const int reserve_status = shadowspill_memory_pool_reserve_locked(
@@ -149,9 +150,9 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
                 ? SHADOWSPILL_RUNTIME_OUT_OF_MEMORY
                 : SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         } else {
-            runtime->fixed_layout.slice_offset = offset;
-            runtime->fixed_layout.slice_bytes = bytes;
-            runtime->fixed_layout.active = 1U;
+            plan->fixed_layout.slice_offset = offset;
+            plan->fixed_layout.slice_bytes = bytes;
+            plan->fixed_layout.active = 1U;
             shadowspill_publish_execution_geometry_locked(runtime);
         }
     }
@@ -171,28 +172,29 @@ static int has_borrowed_layout_lease(const ShadowSpillMemoryPool *pool) {
 }
 
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
-    ShadowSpillRuntime *runtime
+    ShadowSpillPlan *plan
 ) {
-    if (runtime == NULL) {
+    if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
+    ShadowSpillRuntime *runtime = plan->runtime;
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    if (!runtime->fixed_layout.active) {
+    if (!plan->fixed_layout.active) {
         /* Clearing an absent layout is intentionally idempotent. */
     } else if (has_borrowed_layout_lease(pool)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-    } else if (runtime->fixed_layout.slice_bytes == 0U) {
-        clear_metadata(&runtime->fixed_layout);
+    } else if (plan->fixed_layout.slice_bytes == 0U) {
+        clear_metadata(&plan->fixed_layout);
     } else if (shadowspill_memory_pool_release_locked(
                    pool,
-                   runtime->fixed_layout.slice_offset,
-                   runtime->fixed_layout.slice_bytes
+                   plan->fixed_layout.slice_offset,
+                   plan->fixed_layout.slice_bytes
                ) != 0) {
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     } else {
-        clear_metadata(&runtime->fixed_layout);
+        clear_metadata(&plan->fixed_layout);
         shadowspill_publish_execution_geometry_locked(runtime);
     }
     shadowspill_memory_pool_unlock_reservation(pool);
@@ -200,31 +202,31 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
     return status;
 }
 
-void shadowspill_fixed_layout_destroy(ShadowSpillRuntime *runtime) {
-    if (runtime != NULL) {
-        clear_metadata(&runtime->fixed_layout);
+void shadowspill_fixed_layout_destroy(ShadowSpillPlan *plan) {
+    if (plan != NULL) {
+        clear_metadata(&plan->fixed_layout);
     }
 }
 
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     ShadowSpillMemoryLease *lease,
     uint64_t relative_offset,
     uint64_t bytes,
     uint64_t alignment
 ) {
-    if (runtime == NULL || lease == NULL || !runtime->fixed_layout.active ||
-        !runtime->fixed_layout.sealed || bytes == 0U ||
-        relative_offset > runtime->fixed_layout.slice_bytes ||
-        bytes > runtime->fixed_layout.slice_bytes - relative_offset) {
+    if (plan == NULL || lease == NULL || !plan->fixed_layout.active ||
+        !plan->fixed_layout.sealed || bytes == 0U ||
+        relative_offset > plan->fixed_layout.slice_bytes ||
+        bytes > plan->fixed_layout.slice_bytes - relative_offset) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillMemoryPool *pool = shadowspill_execution_pool(runtime);
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
     if (alignment < pool->minimum_alignment) {
         alignment = pool->minimum_alignment;
     }
     const uint64_t absolute_offset =
-        runtime->fixed_layout.slice_offset + relative_offset;
+        plan->fixed_layout.slice_offset + relative_offset;
     if (absolute_offset % alignment != 0U ||
         shadowspill_memory_pool_adopt_borrowed_lease_locked(
             pool, lease, bytes, alignment, absolute_offset
@@ -236,13 +238,13 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
 
 const ShadowSpillFixedPlacementDescription *
 shadowspill_fixed_layout_find_placement(
-    const ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     uint8_t kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t object_id
 ) {
-    if (runtime == NULL || !runtime->fixed_layout.sealed) {
+    if (plan == NULL || !plan->fixed_layout.sealed) {
         return NULL;
     }
     const ShadowSpillFixedPlacementDescription key = {
@@ -253,9 +255,9 @@ shadowspill_fixed_layout_find_placement(
     };
     return bsearch(
         &key,
-        runtime->fixed_layout.placements,
-        (size_t)runtime->fixed_layout.placement_count,
-        sizeof(*runtime->fixed_layout.placements),
+        plan->fixed_layout.placements,
+        (size_t)plan->fixed_layout.placement_count,
+        sizeof(*plan->fixed_layout.placements),
         placement_compare
     );
 }
@@ -333,14 +335,15 @@ static int snapshot_dependency_event(
 }
 
 static int visit_successor_dependencies(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t invocation,
     ShadowSpillBackendStream *stream
 ) {
-    const ShadowSpillFixedLayoutState *layout = &runtime->fixed_layout;
+    ShadowSpillRuntime *runtime = plan->runtime;
+    const ShadowSpillFixedLayoutState *layout = &plan->fixed_layout;
     if (!layout->sealed) {
         return 1;
     }
@@ -381,17 +384,17 @@ static int visit_successor_dependencies(
 }
 
 int shadowspill_fixed_layout_dependencies_published(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t invocation
 ) {
-    if (runtime == NULL) {
+    if (plan == NULL) {
         return -1;
     }
     return visit_successor_dependencies(
-        runtime,
+        plan,
         successor_kind,
         task_id,
         ordinal,
@@ -401,18 +404,18 @@ int shadowspill_fixed_layout_dependencies_published(
 }
 
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t invocation,
     ShadowSpillBackendStream stream
 ) {
-    if (runtime == NULL) {
+    if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     return visit_successor_dependencies(
-        runtime,
+        plan,
         successor_kind,
         task_id,
         ordinal,
@@ -422,23 +425,24 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
 }
 
 ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
     uint64_t ordinal,
     uint64_t invocation,
     ShadowSpillBackendStream stream
 ) {
-    if (runtime == NULL || invocation == 0U) {
+    if (plan == NULL || invocation == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
+    ShadowSpillRuntime *runtime = plan->runtime;
     for (;;) {
         const int ready = shadowspill_fixed_layout_dependencies_published(
-            runtime, successor_kind, task_id, ordinal, invocation
+            plan, successor_kind, task_id, ordinal, invocation
         );
         if (ready > 0) {
             return shadowspill_fixed_layout_insert_dependency_waits(
-                runtime,
+                plan,
                 successor_kind,
                 task_id,
                 ordinal,
@@ -460,7 +464,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
 }
 
 static ShadowSpillRuntimeStatus copy_layout_description(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description
 ) {
     ShadowSpillFixedPlacementDescription *placements =
@@ -505,10 +509,10 @@ static ShadowSpillRuntimeStatus copy_layout_description(
             dependency_compare
         );
     }
-    runtime->fixed_layout.placements = placements;
-    runtime->fixed_layout.placement_count = description->placement_count;
-    runtime->fixed_layout.dependencies = dependencies;
-    runtime->fixed_layout.dependency_count = description->dependency_count;
+    plan->fixed_layout.placements = placements;
+    plan->fixed_layout.placement_count = description->placement_count;
+    plan->fixed_layout.dependencies = dependencies;
+    plan->fixed_layout.dependency_count = description->dependency_count;
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -562,31 +566,31 @@ static int sorted_layout_is_unique(const ShadowSpillFixedLayoutState *layout) {
     return 1;
 }
 
-ShadowSpillRuntimeStatus shadowspill_admit_fixed_layout(
-    ShadowSpillRuntime *runtime,
+ShadowSpillRuntimeStatus shadowspill_plan_admit_fixed_layout(
+    ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description
 ) {
-    if (runtime == NULL || !descriptions_are_valid(description)) {
+    if (plan == NULL || !descriptions_are_valid(description)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    if (runtime->fixed_layout.active || runtime->execution.owned_head != NULL) {
+    if (plan->fixed_layout.active || plan->execution.owned_head != NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     ShadowSpillRuntimeStatus status = copy_layout_description(
-        runtime, description
+        plan, description
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    if (!sorted_layout_is_unique(&runtime->fixed_layout)) {
-        clear_metadata(&runtime->fixed_layout);
+    if (!sorted_layout_is_unique(&plan->fixed_layout)) {
+        clear_metadata(&plan->fixed_layout);
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     status = shadowspill_fixed_layout_reserve_slice(
-        runtime, description->slice_bytes
+        plan, description->slice_bytes
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        clear_metadata(&runtime->fixed_layout);
+        clear_metadata(&plan->fixed_layout);
     }
     return status;
 }
@@ -607,9 +611,10 @@ static const ShadowSpillTaskAllocationABIStep *allocation_step(
 }
 
 static ShadowSpillRuntimeStatus validate_resolved_placement(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement
 ) {
+    ShadowSpillRuntime *runtime = plan->runtime;
     if (placement->kind == SHADOWSPILL_FIXED_INITIAL_OBJECT) {
         ShadowSpillObject *object = shadowspill_find_object(
             runtime, placement->object_id
@@ -618,7 +623,7 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
             ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
     }
     ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
-        &runtime->execution, placement->task_id
+        &plan->execution, placement->task_id
     );
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
@@ -644,13 +649,13 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
 }
 
 static int allocation_policy_count(
-    const ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     uint64_t task_id,
     uint64_t ordinal
 ) {
     int count = 0;
     if (shadowspill_fixed_layout_find_placement(
-            runtime,
+            plan,
             SHADOWSPILL_FIXED_TASK_ALLOCATION,
             task_id,
             ordinal,
@@ -659,7 +664,7 @@ static int allocation_policy_count(
         ++count;
     }
     if (shadowspill_fixed_layout_find_placement(
-            runtime,
+            plan,
             SHADOWSPILL_DYNAMIC_TASK_ALLOCATION,
             task_id,
             ordinal,
@@ -671,9 +676,9 @@ static int allocation_policy_count(
 }
 
 static ShadowSpillRuntimeStatus validate_layout_coverage(
-    ShadowSpillRuntime *runtime
+    ShadowSpillPlan *plan
 ) {
-    for (ShadowSpillExecutionRecord *record = runtime->execution.owned_head;
+    for (ShadowSpillExecutionRecord *record = plan->execution.owned_head;
          record != NULL; record = record->ownership_next) {
         for (uint32_t index = 0U;
              index < record->allocation_abi_step_count;
@@ -682,7 +687,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
                 &record->allocation_abi_steps[index];
             if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
                 allocation_policy_count(
-                    runtime, record->task_id, step->allocation_ordinal
+                    plan, record->task_id, step->allocation_ordinal
                 ) != 1) {
                 return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
             }
@@ -692,7 +697,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
             if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
                 int policy_count = 0;
                 if (shadowspill_fixed_layout_find_placement(
-                        runtime,
+                        plan,
                         SHADOWSPILL_FIXED_ACTION_DESTINATION,
                         record->task_id,
                         index,
@@ -701,7 +706,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
                     ++policy_count;
                 }
                 if (shadowspill_fixed_layout_find_placement(
-                        runtime,
+                        plan,
                         SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
                         record->task_id,
                         index,
@@ -719,14 +724,14 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
 }
 
 static ShadowSpillRuntimeStatus resolve_dependency(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
     ShadowSpillFixedRuntimeDependency *dependency
 ) {
     const ShadowSpillFixedDependencyDescription *item =
         &dependency->description;
     ShadowSpillExecutionRecord *predecessor =
         shadowspill_execution_table_acquire(
-            &runtime->execution, item->predecessor_task_id
+            &plan->execution, item->predecessor_task_id
         );
     if (predecessor == NULL ||
         item->predecessor_action_ordinal >= predecessor->action_count ||
@@ -740,7 +745,7 @@ static ShadowSpillRuntimeStatus resolve_dependency(
     if (item->successor_kind == SHADOWSPILL_FIXED_ACTION_DESTINATION) {
         ShadowSpillExecutionRecord *successor_record =
             shadowspill_execution_table_acquire(
-                &runtime->execution, item->successor_task_id
+                &plan->execution, item->successor_task_id
             );
         if (successor_record == NULL ||
             item->successor_ordinal >= successor_record->action_count) {
@@ -751,7 +756,7 @@ static ShadowSpillRuntimeStatus resolve_dependency(
     }
     const ShadowSpillFixedPlacementDescription *successor =
         shadowspill_fixed_layout_find_placement(
-            runtime,
+            plan,
             item->successor_kind,
             item->successor_task_id,
             item->successor_ordinal,
@@ -761,39 +766,58 @@ static ShadowSpillRuntimeStatus resolve_dependency(
         ? SHADOWSPILL_RUNTIME_PLAN_VIOLATION : SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_seal_fixed_layout(
-    ShadowSpillRuntime *runtime
+ShadowSpillRuntimeStatus shadowspill_plan_seal_fixed_layout(
+    ShadowSpillPlan *plan
 ) {
-    if (runtime == NULL || !runtime->fixed_layout.active ||
-        runtime->fixed_layout.sealed) {
+    if (plan == NULL || !plan->fixed_layout.active ||
+        plan->fixed_layout.sealed) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     /* Lookup helpers require the immutable layout to be visible while sealing. */
-    runtime->fixed_layout.sealed = 1U;
-    for (uint64_t index = 0U; index < runtime->fixed_layout.placement_count;
+    plan->fixed_layout.sealed = 1U;
+    for (uint64_t index = 0U; index < plan->fixed_layout.placement_count;
          ++index) {
         ShadowSpillRuntimeStatus status = validate_resolved_placement(
-            runtime, &runtime->fixed_layout.placements[index]
+            plan, &plan->fixed_layout.placements[index]
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {
-            runtime->fixed_layout.sealed = 0U;
+            plan->fixed_layout.sealed = 0U;
             return status;
         }
     }
-    ShadowSpillRuntimeStatus status = validate_layout_coverage(runtime);
+    ShadowSpillRuntimeStatus status = validate_layout_coverage(plan);
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        runtime->fixed_layout.sealed = 0U;
+        plan->fixed_layout.sealed = 0U;
         return status;
     }
-    for (uint64_t index = 0U; index < runtime->fixed_layout.dependency_count;
+    for (uint64_t index = 0U; index < plan->fixed_layout.dependency_count;
          ++index) {
         status = resolve_dependency(
-            runtime, &runtime->fixed_layout.dependencies[index]
+            plan, &plan->fixed_layout.dependencies[index]
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {
-            runtime->fixed_layout.sealed = 0U;
+            plan->fixed_layout.sealed = 0U;
             return status;
         }
     }
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_admit_fixed_layout(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillFixedLayoutDescription *description
+) {
+    return runtime == NULL || runtime->default_plan == NULL
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_admit_fixed_layout(
+              runtime->default_plan, description
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_seal_fixed_layout(
+    ShadowSpillRuntime *runtime
+) {
+    return runtime == NULL || runtime->default_plan == NULL
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_seal_fixed_layout(runtime->default_plan);
 }

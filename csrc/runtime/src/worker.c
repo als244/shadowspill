@@ -31,15 +31,9 @@ static int submit_transfer_copy(
 }
 
 static ShadowSpillRouteState *route_for_action(
-    ShadowSpillRuntime *runtime,
-    uint8_t action_kind
+    const ShadowSpillQueuedAction *action
 ) {
-    return shadowspill_runtime_route(
-        runtime,
-        action_kind == SHADOWSPILL_RUNTIME_PREFETCH
-            ? runtime->fetch_route_id
-            : runtime->evict_route_id
-    );
+    return action == NULL ? NULL : action->route;
 }
 
 void shadowspill_notify_worker(ShadowSpillRuntime *runtime) {
@@ -235,12 +229,11 @@ static int event_complete_locked(
 }
 
 static int destination_dependency_is_published(
-    ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
     const int fixed_ready =
         shadowspill_fixed_layout_dependencies_published(
-            runtime,
+            action->plan_owner,
             SHADOWSPILL_FIXED_ACTION_DESTINATION,
             action->task_id,
             action->action_ordinal,
@@ -294,7 +287,7 @@ static int acquire_reserved_destination(
         return status;
     }
     if (dependency_event != NULL) {
-        ShadowSpillRouteState *route = route_for_action(runtime, action->kind);
+        ShadowSpillRouteState *route = route_for_action(action);
         if (route == NULL || runtime->synchronization.wait_event(
                 runtime->synchronization.context,
                 route->lane,
@@ -387,9 +380,7 @@ static int dispatch_offload_locked(
     pthread_mutex_unlock(&object->lock);
 
     ShadowSpillEventLease *completion_event = NULL;
-    ShadowSpillRouteState *route = shadowspill_runtime_route(
-        runtime, runtime->evict_route_id
-    );
+    ShadowSpillRouteState *route = route_for_action(action);
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
@@ -538,9 +529,7 @@ static int dispatch_prefetch_locked(
     shadowspill_event_lease_retain(trigger_event);
     pthread_mutex_unlock(&object->lock);
     ShadowSpillEventLease *completion_event = NULL;
-    ShadowSpillRouteState *route = shadowspill_runtime_route(
-        runtime, runtime->fetch_route_id
-    );
+    ShadowSpillRouteState *route = route_for_action(action);
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
@@ -834,7 +823,7 @@ static int handle_action(
                  */
                 pthread_mutex_unlock(&object->lock);
                 const int dependency_ready =
-                    destination_dependency_is_published(runtime, action);
+                    destination_dependency_is_published(action);
                 /*
                  * Insert fixed-range reuse waits without owning the current
                  * object.  A later fetch commonly reuses the range freed by
@@ -845,14 +834,12 @@ static int handle_action(
                     dependency_ready > 0 &&
                         action->kind == SHADOWSPILL_RUNTIME_PREFETCH
                     ? shadowspill_fixed_layout_insert_dependency_waits(
-                          runtime,
+                          action->plan_owner,
                           SHADOWSPILL_FIXED_ACTION_DESTINATION,
                           action->task_id,
                           action->action_ordinal,
                           action->activation_generation,
-                          shadowspill_runtime_route(
-                              runtime, runtime->fetch_route_id
-                          )->lane
+                          action->route->lane
                       )
                     : SHADOWSPILL_RUNTIME_OK;
                 pthread_mutex_lock(&object->lock);
