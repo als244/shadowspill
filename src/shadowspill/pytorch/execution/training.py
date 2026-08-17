@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import copy
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -56,6 +56,7 @@ from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelInd
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
 from shadowspill.simulator import SimulationResult
 
+from .annotations import TaskBoundaryAnnotations
 from .records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,
 )
@@ -195,7 +196,7 @@ class TrainingExecutor:
         }
         self._armed_execution_timing: _ArmedExecutionTiming | None = None
         self._armed_span_timing: _ArmedSpanTiming | None = None
-        self._profiler_annotations_enabled = False
+        self._task_annotations = TaskBoundaryAnnotations(self._bridge)
         # Detailed tracing is default-off and allocated lazily. Full-model
         # schedules emit several records per action plus readiness and
         # retirement records, so task count alone is not a safe bound. Keep a
@@ -307,13 +308,12 @@ class TrainingExecutor:
     def set_profiler_annotations(self, enabled: bool) -> None:
         """Toggle provider annotations independently of runtime tracing."""
 
-        self._bridge.set_profiler_annotations(enabled)
-        self._profiler_annotations_enabled = enabled
+        self._task_annotations.set_enabled(enabled)
 
     def finish_profiler_annotations(self) -> None:
         """Drain annotated asynchronous work before disabling its provider."""
 
-        if not self._profiler_annotations_enabled:
+        if not self._task_annotations.enabled:
             return
         self._bridge.wait_idle()
         self.set_profiler_annotations(False)
@@ -639,7 +639,6 @@ class TrainingExecutor:
             if stream is None:
                 raise AssertionError("task timing omitted its CUDA stream")
             task.start_event.record(stream)
-            task.host_before_finished_ns = time.perf_counter_ns()
 
     @staticmethod
     def _record_task_end(
@@ -651,16 +650,8 @@ class TrainingExecutor:
             task.end_event.record(stream)
             task.host_after_started_ns = time.perf_counter_ns()
 
-    @contextmanager
-    def _profile_range(self, name: str) -> Iterator[None]:
-        if not self._profiler_annotations_enabled:
-            yield
-            return
-        range_id = self._bridge.profile_range_begin(name)
-        try:
-            yield
-        finally:
-            self._bridge.profile_range_end(range_id)
+    def _profile_range(self, name: str) -> AbstractContextManager[None]:
+        return self._task_annotations.range(name)
 
     @property
     def optimizer_state_initialized(self) -> bool:
@@ -806,9 +797,8 @@ class TrainingExecutor:
             return self._after_task(prepared, self._run_compiled_task(prepared))
         except BaseException:
             self._abort_task(prepared)
-            raise
-        finally:
             self._finish_task_timing(prepared.timing)
+            raise
 
     def _before_task(
         self,
@@ -845,8 +835,10 @@ class TrainingExecutor:
                     eager_optimizer=call.eager_optimizer,
                     timing=timing,
                 )
-            self._record_compute_start(stream)
-            self._record_task_start(timing, stream)
+                self._record_compute_start(stream)
+                self._record_task_start(timing, stream)
+            if timing is not None:
+                timing.host_before_finished_ns = time.perf_counter_ns()
             return prepared
         except BaseException:
             if runtime_scope_open:
@@ -1043,7 +1035,9 @@ class TrainingExecutor:
             )
             self._publish_output_generations(prepared, processed, generations)
             self._finish_task_cleanup(prepared)
-            return processed.outputs
+            outputs = processed.outputs
+        self._finish_task_timing(prepared.timing)
+        return outputs
 
     def _prepare_task_publication(
         self,

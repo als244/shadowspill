@@ -163,6 +163,11 @@ rebinds storages, assembles arguments, and records timing. `_after_task()`
 classifies outputs, publishes mutations, dematerializes releases, records the
 completion fence, submits actions, and performs terminal cleanup.
 
+Forward and training use this same orchestration skeleton and the same
+default-off profiler-annotation policy. Their enclosing annotations and host
+entry/exit timestamps cover the complete frontend boundaries; nested ranges
+only explain individual components.
+
 The neutral `shadowspill_before_task_handle()` and
 `shadowspill_after_task_handle()` remain small object/lease/action
 orchestrators. They contain no PyTorch storage logic.
