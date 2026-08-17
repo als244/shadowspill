@@ -10,7 +10,6 @@ add_library(
   src/failure_state.c
   src/fixed_layout.c
   src/idle_wakeup.c
-  src/lifecycle.c
   src/memory_pool.c
   src/object_actions.c
   src/object_table.c

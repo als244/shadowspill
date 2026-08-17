@@ -241,7 +241,7 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
             SHADOWSPILL_SPILL_POOL_ID;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_create_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **output
 ) {
@@ -478,7 +478,7 @@ fail:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 ) {
     if (runtime == NULL) {
@@ -499,14 +499,14 @@ ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle_legacy(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_resize_spill_pool(
     ShadowSpillRuntime *runtime,
     uint64_t spill_pool_bytes
 ) {
     if (runtime == NULL || spill_pool_bytes > SIZE_MAX) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle_legacy(runtime);
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
@@ -576,7 +576,7 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
+ShadowSpillRuntimeStatus shadowspill_runtime_close(
     ShadowSpillRuntime *runtime
 ) {
     if (runtime == NULL) {
@@ -636,7 +636,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close_legacy(
     return status;
 }
 
-void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
+void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
     if (runtime == NULL) {
         return;
     }
@@ -646,7 +646,7 @@ void shadowspill_runtime_destroy_legacy(ShadowSpillRuntime *runtime) {
      * freeing the runtime so a later runtime cannot inherit stale scope state.
      */
     shadowspill_abort_task(runtime);
-    (void)shadowspill_runtime_close_legacy(runtime);
+    (void)shadowspill_runtime_close(runtime);
     shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
     pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
