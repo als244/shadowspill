@@ -713,7 +713,6 @@ static int handle_action(
                         shadowspill_memory_pool_unlock_reclamation(
                             action->plan_owner->execution_pool
                         );
-                        pthread_cond_broadcast(&object->state_changed);
                         pthread_mutex_unlock(&object->lock);
                         complete_action(runtime, action);
                         return 2;
@@ -754,7 +753,6 @@ static int handle_action(
                     object->residency = spill->current
                         ? SHADOWSPILL_OBJECT_SPILL_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
-                    pthread_cond_broadcast(&object->state_changed);
                     pthread_mutex_unlock(&object->lock);
                     complete_action(runtime, action);
                     return 2;
@@ -883,7 +881,6 @@ static int handle_action(
                             object->allocation_id,
                             object->size_bytes
                         );
-                        pthread_cond_broadcast(&object->state_changed);
                         pthread_mutex_unlock(&object->lock);
                         return -1;
                     }
@@ -904,7 +901,6 @@ static int handle_action(
                 if (dispatched != 0) {
                     shadowspill_transfer_lane_publish_inflight(lane, action);
                     pthread_cond_broadcast(&runtime->condition);
-                    pthread_cond_broadcast(&object->state_changed);
                 }
                 pthread_mutex_unlock(&object->lock);
                 return dispatched;
@@ -1055,7 +1051,6 @@ static int handle_action(
                         &runtime->actions.count, memory_order_acquire
                     )
                 );
-                pthread_cond_broadcast(&object->state_changed);
                 pthread_mutex_unlock(&object->lock);
                 if (readiness_to_release != NULL &&
                     shadowspill_event_lease_release(

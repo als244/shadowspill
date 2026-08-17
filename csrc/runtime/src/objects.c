@@ -295,13 +295,6 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         goto done;
     }
-    if (pthread_cond_init(&created->state_changed, NULL) != 0) {
-        pthread_mutex_destroy(&created->lock);
-        free(created->locations);
-        free(created);
-        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-        goto done;
-    }
     created->object_id = description->object_id;
     created->size_bytes = description->size_bytes;
     created->authoritative_version = description->initial_version;
@@ -314,7 +307,6 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         ? shadowspill_runtime_pool(runtime, description->initial_pool_id)
         : NULL;
     if (description->initially_resident && initial_pool == NULL) {
-        pthread_cond_destroy(&created->state_changed);
         pthread_mutex_destroy(&created->lock);
         free(created->locations);
         free(created);
@@ -345,7 +337,6 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         }
         shadowspill_memory_pool_unlock_foreground(initial_pool);
         if (reserve_status != 0) {
-            pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created->locations);
             free(created);
@@ -378,7 +369,6 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             initial->lease = NULL;
             initial->owns_lease = 0U;
         }
-        pthread_cond_destroy(&created->state_changed);
         pthread_mutex_destroy(&created->lock);
         free(created->locations);
         free(created);
@@ -814,8 +804,6 @@ ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
         .authoritative_version = object->authoritative_version,
         .pointer = replacement->pointer,
     };
-    pthread_cond_broadcast(&object->state_changed);
-
 done:
     shadowspill_memory_pool_unlock_foreground(pool);
     pthread_mutex_unlock(&object->lock);

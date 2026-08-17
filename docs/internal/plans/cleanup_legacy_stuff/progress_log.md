@@ -1060,3 +1060,16 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   errors native and ASan builds; all 28 native/CUDA/PyTorch canaries; the
   complete Python suite with four expected skips; Ruff; strict mypy over 178
   installed source files; and `git diff --check`.
+
+## 2026-08-17 — Removed unused per-object condition variables
+
+- Audited every `state_changed` operation and confirmed that the runtime had
+  no waiter for this per-object condition variable. Object construction still
+  initialized one condition and task/worker transitions broadcast it despite
+  no consumer.
+- Deleted the field, initialization/error-cleanup branches, teardown, and all
+  broadcasts. Object transitions remain serialized by `object->lock`; caller
+  lifecycle waiting still uses its explicit runtime lifecycle mechanism.
+- Focused runtime transition, mutation, and training canaries pass after the
+  removal. The worker hot loop now performs no unused wake operation for an
+  object state transition.
