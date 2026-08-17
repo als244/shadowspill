@@ -402,3 +402,35 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   proves a live-reference guard, stable logical identity across recurrence,
   generation replacement, callable-independent public lifetime, and final
   reclamation.
+
+## 2026-08-17 — Zero-copy shared forward inputs
+
+- Added the symmetric `SharedInput`/`shared_input()` frontend contract. Planning
+  uses deterministic task-local representatives for compilation and profiling,
+  while callable materialization binds a lightweight tensor shell directly to
+  the referenced runtime object. Execution performs no caller copy and creates
+  no duplicate logical object.
+- Moved causal versus deliberately unordered binding policy into the neutral
+  `ObjectConsistency` value. The runtime bridge now consumes only
+  framework-neutral `ObjectRef` values; dtype, shape, stride, and storage-offset
+  handling stays in the PyTorch sharing layer.
+- Preserved alias geometry by constructing one profiling owner per runtime
+  object and reconstructing all declared views. Integer and Boolean control
+  inputs require an explicit authentic profiling value rather than a synthetic
+  `{0, 1}` fallback.
+- Root-caused the first producer-to-consumer planning failure: physical
+  admission treated a runtime-resident shared input as a missing plan-owned
+  initial allocation. Admission now validates shared roots as externally
+  resident and assigns them no callable offset or replay operation.
+- Added plan-owned consistency retention so a later task-admission pass cannot
+  accidentally rebind an unordered object with the default causal policy.
+- The CUDA canary keeps producer and consumer plans alive simultaneously,
+  proves that an execution-resident shared input incurs no fetch, closes the
+  first generation, overwrites the same logical object with a successor
+  generation, and executes the already-admitted consumer against that new
+  generation. Final ownership reclamation remains exact.
+- Validation passed: 680 Python tests with four expected skips, all focused
+  documentation/lint/type checks, the complete forward CUDA canary, and the
+  native/CUDA lifecycle suite. Ruff, strict mypy over 176 installed source
+  files, and `git diff --check` passed.
+- Passing behavior commit: `26d69b1` (`Bind shared outputs as callable inputs`).
