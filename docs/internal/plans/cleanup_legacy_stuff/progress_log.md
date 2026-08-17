@@ -655,3 +655,20 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   strict mypy over 177 installed source files; and `git diff --check`.
 - Passing structural commit: `aae4156` (`Remove legacy trace and benchmark
   readers`).
+
+## 2026-08-17 — Canonical task terminology
+
+- Renamed the admitted topology from `ExecutionDescription`,
+  `ExecutionRecord`, and `ExecutionTable` to `TaskDescription`, `TaskRecord`,
+  and `TaskTable` across the neutral C API, PyTorch adapter, bridge, tests, and
+  documentation.
+- Renamed `execution_table.c` to `task_table.c`, the internal execution-scope
+  entrypoint to task-scope entry, and plan cleanup to `clear_tasks()`.
+- Renamed task-local update/action records and the plan's task table while
+  retaining “execution” only for genuine concepts such as the execution pool,
+  execution sequence, and measured execution timing.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
+- Passing structural commit: `264cf44` (`Use task terminology for admitted
+  records`).
