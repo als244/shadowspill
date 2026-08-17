@@ -3,14 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void release_event_references(
+static void release_event_requirements(
     ShadowSpillRuntime *runtime,
-    ShadowSpillEventLease **events,
-    uint32_t event_count,
+    ShadowSpillEventRecord *events,
     uint64_t allocation_id
 ) {
-    for (uint32_t index = 0U; index < event_count; ++index) {
-        if (shadowspill_event_lease_release(runtime, events[index]) != 0) {
+    while (events != NULL) {
+        ShadowSpillEventRecord *next = events->next;
+        if (shadowspill_event_lease_release(runtime, events->event) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -19,8 +19,9 @@ static void release_event_references(
                 0U
             );
         }
+        free(events);
+        events = next;
     }
-    free(events);
 }
 
 static void release_retirement_requirements(
@@ -30,10 +31,9 @@ static void release_retirement_requirements(
     if (record == NULL) {
         return;
     }
-    release_event_references(
+    release_event_requirements(
         runtime,
         record->events,
-        record->event_count,
         record->allocation_id
     );
     if (shadowspill_event_lease_release(
@@ -48,8 +48,28 @@ static void release_retirement_requirements(
         );
     }
     record->events = NULL;
-    record->event_count = 0U;
     record->task_completion_event = NULL;
+}
+
+static void detach_borrowed_requirements_for_teardown(
+    ShadowSpillRetirementRecord *record
+) {
+    if (record == NULL || record->allocation == NULL ||
+        record->pool == NULL) {
+        return;
+    }
+    ShadowSpillMemoryLease *allocation = record->allocation;
+    shadowspill_memory_pool_lock_foreground(record->pool);
+    if (allocation->pool == record->pool &&
+        allocation->generation == record->allocation_generation) {
+        if (allocation->retirement_events == record->events) {
+            allocation->retirement_events = NULL;
+        }
+        if (allocation->retirement_event == record->task_completion_event) {
+            allocation->retirement_event = NULL;
+        }
+    }
+    shadowspill_memory_pool_unlock_foreground(record->pool);
 }
 
 static ShadowSpillRetirementRecord *acquire_retirement_record(
@@ -183,6 +203,7 @@ void shadowspill_retirement_queue_destroy(
     while (record != NULL) {
         ShadowSpillRetirementRecord *next = record->next;
         ShadowSpillMemoryLease *allocation = record->allocation;
+        detach_borrowed_requirements_for_teardown(record);
         record->allocation = NULL;
         release_retirement_requirements(runtime, record);
         shadowspill_memory_lease_release(allocation);
@@ -219,42 +240,19 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         return SHADOWSPILL_RUNTIME_OK;
     }
 
-    uint32_t event_count = 0U;
-    for (ShadowSpillEventRecord *event = allocation->retirement_events;
-         event != NULL; event = event->next) {
-        if (event_count == UINT32_MAX) {
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-        }
-        ++event_count;
-    }
     ShadowSpillRetirementRecord *record = acquire_retirement_record(
         &runtime->retirements
     );
-    ShadowSpillEventLease **events = event_count == 0U
-        ? NULL
-        : calloc((size_t)event_count, sizeof(*events));
-    if (record == NULL || (event_count != 0U && events == NULL)) {
-        if (record != NULL) {
-            release_retirement_record(&runtime->retirements, record);
-        }
-        free(events);
+    if (record == NULL) {
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
-    uint32_t index = 0U;
-    for (ShadowSpillEventRecord *event = allocation->retirement_events;
-         event != NULL; event = event->next) {
-        events[index++] = event->event;
-        shadowspill_event_lease_retain(event->event);
     }
     record->allocation = allocation;
     shadowspill_memory_lease_retain(allocation);
     record->pool = allocation->pool;
     record->allocation_id = allocation->allocation_id;
     record->allocation_generation = allocation->generation;
-    record->events = events;
-    record->event_count = event_count;
+    record->events = allocation->retirement_events;
     record->task_completion_event = allocation->retirement_event;
-    shadowspill_event_lease_retain(record->task_completion_event);
 
     ShadowSpillRetirementQueue *queue = &runtime->retirements;
     pthread_mutex_lock(&queue->lock);
@@ -277,48 +275,16 @@ static int retirement_complete(const ShadowSpillRetirementRecord *record) {
         !shadowspill_event_lease_is_complete(record->task_completion_event)) {
         return 0;
     }
-    for (uint32_t index = 0U; index < record->event_count; ++index) {
+    for (const ShadowSpillEventRecord *event = record->events;
+         event != NULL; event = event->next) {
         if (atomic_load_explicit(
-                &record->events[index]->backend_complete,
+                &event->event->backend_complete,
                 memory_order_acquire
             ) == 0U) {
             return 0;
         }
     }
     return 1;
-}
-
-static void release_owned_retirement_requirements(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillEventRecord *events,
-    ShadowSpillEventLease *task_completion_event,
-    uint64_t allocation_id
-) {
-    while (events != NULL) {
-        ShadowSpillEventRecord *next = events->next;
-        if (shadowspill_event_lease_release(runtime, events->event) != 0) {
-            shadowspill_latch_failure_locked(
-                runtime,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-                SHADOWSPILL_RUNTIME_NO_ID,
-                allocation_id,
-                0U
-            );
-        }
-        free(events);
-        events = next;
-    }
-    if (shadowspill_event_lease_release(
-            runtime, task_completion_event
-        ) != 0) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            allocation_id,
-            0U
-        );
-    }
 }
 
 static void append_retry(
@@ -378,8 +344,6 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             }
             break;
         }
-        ShadowSpillEventRecord *owned_events = NULL;
-        ShadowSpillEventLease *owned_task_completion_event = NULL;
         int released = 0;
         ShadowSpillMemoryLease *allocation = record->allocation;
         if (allocation->pool == pool &&
@@ -387,8 +351,6 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             allocation->logical_freed && allocation->pointer != NULL &&
             allocation->retirement_enqueued_generation ==
                 record->allocation_generation) {
-            owned_events = allocation->retirement_events;
-            owned_task_completion_event = allocation->retirement_event;
             allocation->retirement_events = NULL;
             allocation->retirement_event = NULL;
             shadowspill_append_trace_event_locked(
@@ -404,14 +366,18 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             shadowspill_release_execution_lease_locked(runtime, allocation);
             released = 1;
         }
+        if (allocation->pool == pool &&
+            allocation->generation == record->allocation_generation) {
+            if (allocation->retirement_events == record->events) {
+                allocation->retirement_events = NULL;
+            }
+            if (allocation->retirement_event ==
+                record->task_completion_event) {
+                allocation->retirement_event = NULL;
+            }
+        }
         shadowspill_memory_pool_unlock_reclamation(pool);
 
-        release_owned_retirement_requirements(
-            runtime,
-            owned_events,
-            owned_task_completion_event,
-            record->allocation_id
-        );
         if (released && atomic_fetch_sub_explicit(
                 &runtime->pending_retirements, 1U, memory_order_release
             ) == 1U) {

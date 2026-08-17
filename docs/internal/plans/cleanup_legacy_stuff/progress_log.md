@@ -1120,3 +1120,28 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - The exact 64-generation evict/fetch/caller-handoff sequence that exposed the
   race completed successfully in 100 consecutive fresh processes after the
   correction.
+
+## 2026-08-17 — Single-owner retirement requirements
+
+- Removed the retirement queue's heap-allocated copy of each lease's event
+  dependency array. Once retirement is enqueued, the queue now owns the one
+  immutable linked requirement list and task-completion event; the pending
+  `MemoryLease` borrows those same pointers only while its generation remains
+  eligible for causal reuse.
+- Same-stream successor reuse clears only the predecessor generation's
+  borrowed pointers. The stale queue record retains and eventually releases
+  the original event requirements, so concurrent worker polling never walks
+  freed nodes and no duplicate retain/release pass is required.
+- Normal worker completion atomically detaches the borrowed pointers while
+  releasing the physical range. Cold queue teardown performs the same guarded
+  detachment before destroying the sole-owned requirements. This preserves
+  generation safety and reverse-order lifecycle cleanup while removing one
+  `calloc`, one `free`, and O(event-count) reference churn per retirement.
+- Stress initially exposed a lock-order defect in the first implementation:
+  after releasing a range, the worker re-entered that pool through the
+  foreground-priority lock only to detach borrowed pointers. A destination
+  reservation could already be waiting on the completed retirement, while the
+  foreground lock yielded back to that reservation, forming a cycle. Pointer
+  detachment now happens inside the worker's existing reclamation critical
+  section. Normal execution performs no second pool acquisition; only cold
+  teardown uses the standalone guarded detach helper.

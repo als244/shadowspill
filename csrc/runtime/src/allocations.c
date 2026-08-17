@@ -836,17 +836,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         *record = split;
         return shadowspill_failure_status(runtime);
     }
-    ShadowSpillEventRecord *event = selected->retirement_events;
     selected->retirement_events = NULL;
-    int destroy_failed = 0;
-    while (event != NULL) {
-        ShadowSpillEventRecord *next = event->next;
-        if (shadowspill_event_lease_release(runtime, event->event) != 0) {
-            destroy_failed = 1;
-        }
-        free(event);
-        event = next;
-    }
     if (atomic_fetch_sub_explicit(
             &runtime->pending_retirements, 1U, memory_order_release
         ) == 1U) {
@@ -856,22 +846,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         &pool->pending_retirements, 1U, memory_order_release
     );
     if (selected->retirement_event != NULL) {
-        if (shadowspill_event_lease_release(
-                runtime, selected->retirement_event
-            ) != 0) {
-            destroy_failed = 1;
-        }
         selected->retirement_event = NULL;
-    }
-    if (destroy_failed) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            selected->allocation_id,
-            bytes
-        );
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
     pool->requested_allocated_bytes -= selected->requested_bytes;
     free_stream_records(selected->streams);
