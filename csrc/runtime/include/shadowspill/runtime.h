@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 44U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 45U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -545,6 +545,19 @@ typedef struct ShadowSpillObjectSnapshot {
     void *retired_execution_pointer;
 } ShadowSpillObjectSnapshot;
 
+typedef struct ShadowSpillObjectLocationSnapshot {
+    uint64_t object_id;
+    uint64_t size_bytes;
+    uint64_t authoritative_version;
+    uint64_t version;
+    uint64_t allocation_id;
+    uint64_t generation;
+    uint32_t pool_id;
+    uint8_t current;
+    uint8_t has_lease;
+    void *pointer;
+} ShadowSpillObjectLocationSnapshot;
+
 /*
  * Creates one runtime from explicit pool and directed-route registries, a
  * synchronization backend, profiler, and worker. Registry entries are copied;
@@ -595,19 +608,6 @@ shadowspill_runtime_reserve_memory_lease_records(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_create(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlanDescription *description,
-    ShadowSpillPlan **plan
-);
-
-/*
- * Creates a plan for one pool pair by resolving the unique configured route
- * in each direction. This is the usual frontend entry point when routes are
- * identified by their pool endpoints rather than registry ordinals.
- */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_plan_create_for_pools(
-    ShadowSpillRuntime *runtime,
-    uint32_t execution_pool_id,
-    uint32_t spill_pool_id,
     ShadowSpillPlan **plan
 );
 
@@ -1059,6 +1059,15 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
+);
+
+/* Copies one object's current location in an explicitly selected pool. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_object_location_snapshot(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint32_t pool_id,
+    ShadowSpillObjectLocationSnapshot *snapshot
 );
 
 SHADOWSPILL_RUNTIME_API uint32_t shadowspill_runtime_abi_version(void);

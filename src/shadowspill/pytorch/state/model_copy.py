@@ -12,7 +12,7 @@ import torch.nn as nn
 from .records import PersistentStorage, TensorView
 
 
-def copy_model_with_spill_storages(
+def copy_model_with_runtime_storages(
     model: nn.Module,
     storages: Iterable[PersistentStorage],
 ) -> tuple[nn.Module, tuple[PersistentStorage, ...]]:
@@ -21,11 +21,11 @@ def copy_model_with_spill_storages(
     memo: dict[int, object] = {}
     imported: list[PersistentStorage] = []
     for storage in storages:
-        owner = _spill_owner(storage)
+        owner = _runtime_owner(storage)
         views: list[TensorView] = []
         for source_view in storage.views:
             source = source_view.tensor
-            replacement = _spill_view(owner, source_view)
+            replacement = _runtime_view(owner, source_view)
             memo[id(source)] = replacement
             views.append(
                 TensorView(
@@ -46,23 +46,24 @@ def copy_model_with_spill_storages(
     return copied, tuple(imported)
 
 
-def _spill_owner(storage: PersistentStorage) -> torch.Tensor:
+def _runtime_owner(storage: PersistentStorage) -> torch.Tensor:
     dispatch = torch.empty(0, dtype=torch.uint8, device="cpu")
     owner = cast(
         torch.Tensor,
-        torch.ops.shadowspill._make_spill_cpu_storage(
+        torch.ops.shadowspill._make_runtime_cpu_storage(
             dispatch,
-            storage.spill_pointer,
+            storage.pool_id,
+            storage.pool_pointer,
             storage.current_object_id,
             storage.size_bytes,
         ),
     )
-    if int(owner.untyped_storage().data_ptr()) != storage.spill_pointer:
-        raise RuntimeError("spill-backed CPU storage has the wrong address")
+    if int(owner.untyped_storage().data_ptr()) != storage.pool_pointer:
+        raise RuntimeError("runtime-backed CPU storage has the wrong address")
     return owner
 
 
-def _spill_view(owner: torch.Tensor, view: TensorView) -> torch.Tensor:
+def _runtime_view(owner: torch.Tensor, view: TensorView) -> torch.Tensor:
     source = view.tensor
     result = torch.empty(0, dtype=source.dtype, device="cpu").set_(
         owner.untyped_storage(),
@@ -78,4 +79,4 @@ def _spill_view(owner: torch.Tensor, view: TensorView) -> torch.Tensor:
     return result
 
 
-__all__ = ["copy_model_with_spill_storages"]
+__all__ = ["copy_model_with_runtime_storages"]

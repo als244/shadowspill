@@ -19,7 +19,7 @@ from typing import Any, Literal
 import torch
 
 from shadowspill.ir import RecomputationGroup, RecomputationSelection
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
@@ -515,7 +515,11 @@ def _planned_worker(
             pools={
                 "execution": device(physical_capacity=device_budget),
                 "spill": pinned_host(capacity=_HOST_BUDGET),
-            }
+            },
+            routes={
+                "fetch": transfer_route(source="spill", destination="execution"),
+                "evict": transfer_route(source="execution", destination="spill"),
+            },
         )
         case = import_case_model(case, runtime=runtime)
         model = case.model

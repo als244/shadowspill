@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     ObjectiveResult,
     Runtime,
@@ -127,6 +127,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     provider_headroom=512 << 20,
                 ),
                 "spill": pinned_host(capacity=1 << 30),
+            },
+            routes={
+                "fetch": transfer_route(source="spill", destination="execution"),
+                "evict": transfer_route(source="execution", destination="spill"),
             },
             library_path=adapter,
         )

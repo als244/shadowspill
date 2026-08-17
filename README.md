@@ -28,7 +28,7 @@ from functools import partial
 
 import torch
 
-from shadowspill.memory import device, pinned_host
+from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
@@ -39,7 +39,11 @@ runtime = Runtime(
     pools={
         "device": device(physical_capacity=24 << 30),
         "spill": pinned_host(capacity=64 << 30),
-    }
+    },
+    routes={
+        "fetch": transfer_route(source="spill", destination="device"),
+        "evict": transfer_route(source="device", destination="spill"),
+    },
 )
 
 model = import_model_state(model, runtime=runtime, pool="spill")

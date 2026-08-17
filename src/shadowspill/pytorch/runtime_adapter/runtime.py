@@ -15,7 +15,14 @@ from typing import Any
 import torch
 
 from shadowspill._libraries import resolve_library
-from shadowspill.memory import DevicePool, MemoryPoolConfig, PinnedHostPool
+from shadowspill.memory import (
+    DevicePool,
+    MemoryPoolConfig,
+    PinnedHostPool,
+)
+from shadowspill.memory import (
+    TransferRoute as TransferRouteConfig,
+)
 from shadowspill.pytorch.contracts import AdmissionError
 from shadowspill.pytorch.runtime_adapter.abi import (
     TRANSFER_PROFILE_ABI_VERSION,
@@ -27,6 +34,8 @@ from shadowspill.pytorch.runtime_adapter.abi import (
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
+    PoolBootstrap,
+    RouteBootstrap,
     install_allocator,
 )
 from shadowspill.pytorch.runtime_adapter.failures import (
@@ -55,6 +64,18 @@ class MemoryPool:
     capacity: int
     physical_capacity: int | None
     device_ordinal: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRoute:
+    """One initialized directed route visible to planning."""
+
+    name: str
+    route_id: int
+    source: str
+    destination: str
+    source_pool_id: int
+    destination_pool_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +166,8 @@ class PlanMemory:
     installed: InstalledAllocator
     execution: MemoryPool
     spill: MemoryPool
+    fetch: RuntimeRoute
+    evict: RuntimeRoute
     execution_budget: int
     spill_budget: int
     dynamic_scratch_reserve_bytes: int
@@ -165,29 +188,49 @@ class Runtime:
     before any accelerator tensor allocation, then pass it to every
     ``plan_step`` or ``plan_forward`` call.
 
-    The supported configuration contains one device pool and one pinned-host
-    pool. The public pool registry and transfer matrix retain explicit pool
-    identities even though this topology has exactly two members.
+    The current backend supports one device pool plus any number of pinned-host
+    pools. Pools and directed routes have explicit identities; each admitted
+    callable independently selects its execution/spill pool pair and matching
+    routes.
     """
 
     def __init__(
         self,
         *,
         pools: Mapping[str, MemoryPoolConfig],
+        routes: Mapping[str, TransferRouteConfig],
         library_path: str | Path | None = None,
         calibrate: bool = True,
         worker_poll_nanoseconds: int = 1_000,
     ) -> None:
-        normalized = _validate_pool_configs(pools)
+        normalized, normalized_routes = _validate_topology(pools, routes)
         device_name, device_config = next(
             (name, config)
             for name, config in normalized.items()
             if isinstance(config, DevicePool)
         )
-        spill_name, spill_config = next(
-            (name, config)
+        pool_names = tuple(normalized)
+        pool_ids = {name: index for index, name in enumerate(pool_names)}
+        route_names = tuple(normalized_routes)
+        allocator_pool_id = pool_ids[device_name]
+        pool_bootstrap = tuple(
+            PoolBootstrap(
+                pool_id=pool_ids[name],
+                backend_kind=0 if isinstance(config, DevicePool) else 1,
+                capacity_bytes=(
+                    0 if isinstance(config, DevicePool) else config.capacity
+                ),
+            )
             for name, config in normalized.items()
-            if isinstance(config, PinnedHostPool)
+        )
+        route_bootstrap = tuple(
+            RouteBootstrap(
+                route_id=index,
+                name=name,
+                source_pool_id=pool_ids[route.source],
+                destination_pool_id=pool_ids[route.destination],
+            )
+            for index, (name, route) in enumerate(normalized_routes.items())
         )
         path = _adapter_path(library_path)
         global _active_runtime
@@ -201,7 +244,9 @@ class Runtime:
                 device_ordinal=device_config.device,
                 device_budget_bytes=device_config.physical_capacity,
                 provider_headroom_bytes=device_config.provider_headroom,
-                spill_pool_bytes=spill_config.capacity,
+                allocator_pool_id=allocator_pool_id,
+                pools=pool_bootstrap,
+                routes=route_bootstrap,
                 worker_poll_nanoseconds=worker_poll_nanoseconds,
             )
             self._installed = installed
@@ -214,26 +259,50 @@ class Runtime:
             self._active_object_references = 0
             self._persistent_state_count = 0
             self._next_persistent_object_id = 1 << 62
-            execution_pool = MemoryPool(
-                name=device_name,
-                pool_id=0,
-                kind="device",
-                capacity=int(installed.admission.execution_pool_bytes),
-                physical_capacity=device_config.physical_capacity,
-                device_ordinal=device_config.device,
+            initialized_pools = {
+                name: MemoryPool(
+                    name=name,
+                    pool_id=pool_ids[name],
+                    kind=(
+                        "device" if isinstance(config, DevicePool) else "pinned_host"
+                    ),
+                    capacity=(
+                        int(installed.admission.allocator_pool_bytes)
+                        if isinstance(config, DevicePool)
+                        else config.capacity
+                    ),
+                    physical_capacity=(
+                        config.physical_capacity
+                        if isinstance(config, DevicePool)
+                        else config.capacity
+                    ),
+                    device_ordinal=(
+                        config.device if isinstance(config, DevicePool) else None
+                    ),
+                )
+                for name, config in normalized.items()
+            }
+            initialized_routes = {
+                name: RuntimeRoute(
+                    name=name,
+                    route_id=index,
+                    source=route.source,
+                    destination=route.destination,
+                    source_pool_id=pool_ids[route.source],
+                    destination_pool_id=pool_ids[route.destination],
+                )
+                for index, (name, route) in enumerate(normalized_routes.items())
+            }
+            self._pools = MappingProxyType(initialized_pools)
+            self._routes = MappingProxyType(initialized_routes)
+            self._route_by_pair = MappingProxyType(
+                {
+                    (route.source, route.destination): route
+                    for route in initialized_routes.values()
+                }
             )
-            spill_pool = MemoryPool(
-                name=spill_name,
-                pool_id=1,
-                kind="pinned_host",
-                capacity=spill_config.capacity,
-                physical_capacity=spill_config.capacity,
-                device_ordinal=None,
-            )
-            self._pools = MappingProxyType(
-                {device_name: execution_pool, spill_name: spill_pool}
-            )
-            self._pool_names = (device_name, spill_name)
+            self._pool_names = pool_names
+            self._route_names = route_names
             _active_runtime = self
         if calibrate:
             self._calibrate(routes=None, provenance=_INITIALIZATION_PROVENANCE)
@@ -243,6 +312,12 @@ class Runtime:
         """Read-only initialized pool registry keyed by user names."""
 
         return self._pools
+
+    @property
+    def routes(self) -> Mapping[str, RuntimeRoute]:
+        """Read-only directed-route registry keyed by user names."""
+
+        return self._routes
 
     @property
     def transfer_capabilities(self) -> TransferCapabilities:
@@ -537,13 +612,21 @@ class Runtime:
                 execution_budget=resolved_execution,
             )
             transfers = self._read_transfer_capabilities()
-            fetch = transfers.route(spill, execution)
-            evict = transfers.route(execution, spill)
-            if not fetch.available or not fetch.calibrated:
+            try:
+                fetch_route = self._route_by_pair[(spill, execution)]
+                evict_route = self._route_by_pair[(execution, spill)]
+            except KeyError as exc:
+                source, destination = exc.args[0]
+                raise RuntimeConfigurationError(
+                    f"runtime has no directed route {source!r} -> {destination!r}"
+                ) from exc
+            fetch_profile = transfers.route(spill, execution)
+            evict_profile = transfers.route(execution, spill)
+            if not fetch_profile.available or not fetch_profile.calibrated:
                 raise RuntimeConfigurationError(
                     f"route {spill!r} -> {execution!r} is not calibrated"
                 )
-            if not evict.available or not evict.calibrated:
+            if not evict_profile.available or not evict_profile.calibrated:
                 raise RuntimeConfigurationError(
                     f"route {execution!r} -> {spill!r} is not calibrated"
                 )
@@ -552,6 +635,8 @@ class Runtime:
                 self._installed.library.shadowspill_pytorch_plan_create(
                     execution_pool.pool_id,
                     spill_pool.pool_id,
+                    fetch_route.route_id,
+                    evict_route.route_id,
                     ctypes.byref(plan_handle_value),
                 )
             )
@@ -566,6 +651,8 @@ class Runtime:
                 installed=self._installed,
                 execution=execution_pool,
                 spill=spill_pool,
+                fetch=fetch_route,
+                evict=evict_route,
                 execution_budget=resolved_execution,
                 spill_budget=resolved_spill,
                 dynamic_scratch_reserve_bytes=resolved_scratch,
@@ -812,16 +899,15 @@ class Runtime:
             )
 
 
-def _validate_pool_configs(
+def _validate_topology(
     pools: Mapping[str, MemoryPoolConfig],
-) -> dict[str, MemoryPoolConfig]:
+    routes: Mapping[str, TransferRouteConfig],
+) -> tuple[dict[str, MemoryPoolConfig], dict[str, TransferRouteConfig]]:
     if not isinstance(pools, Mapping):
         raise TypeError("pools must be a mapping from names to pool configurations")
     normalized = dict(pools)
-    if len(normalized) != 2:
-        raise RuntimeConfigurationError(
-            "the initial device/pinned-host release requires exactly two pools"
-        )
+    if len(normalized) < 2:
+        raise RuntimeConfigurationError("a runtime requires at least two memory pools")
     for name, config in normalized.items():
         if not isinstance(name, str) or not name or not name.isidentifier():
             raise RuntimeConfigurationError(
@@ -829,14 +915,50 @@ def _validate_pool_configs(
             )
         if not isinstance(config, (DevicePool, PinnedHostPool)):
             raise TypeError(f"unsupported pool configuration for {name!r}")
-    if (
-        sum(isinstance(value, DevicePool) for value in normalized.values()) != 1
-        or sum(isinstance(value, PinnedHostPool) for value in normalized.values()) != 1
-    ):
+    if sum(isinstance(value, DevicePool) for value in normalized.values()) != 1:
         raise RuntimeConfigurationError(
-            "the runtime requires one device pool and one pinned-host pool"
+            "the current PyTorch allocator frontend requires exactly one device pool"
         )
-    return normalized
+    if not any(isinstance(value, PinnedHostPool) for value in normalized.values()):
+        raise RuntimeConfigurationError(
+            "the current runtime backend requires at least one pinned-host pool"
+        )
+
+    if not isinstance(routes, Mapping):
+        raise TypeError("routes must be a mapping from names to route configurations")
+    normalized_routes = dict(routes)
+    if not normalized_routes:
+        raise RuntimeConfigurationError(
+            "a runtime requires at least one transfer route"
+        )
+    endpoint_pairs: set[tuple[str, str]] = set()
+    for name, route in normalized_routes.items():
+        if not isinstance(name, str) or not name or not name.isidentifier():
+            raise RuntimeConfigurationError(
+                f"route name {name!r} must be a non-empty identifier"
+            )
+        if not isinstance(route, TransferRouteConfig):
+            raise TypeError(f"unsupported route configuration for {name!r}")
+        for endpoint in (route.source, route.destination):
+            if endpoint not in normalized:
+                raise RuntimeConfigurationError(
+                    f"route {name!r} references unknown pool {endpoint!r}"
+                )
+        pair = (route.source, route.destination)
+        if pair in endpoint_pairs:
+            raise RuntimeConfigurationError(
+                "runtime route endpoint pairs must be unique; duplicate "
+                f"{route.source!r} -> {route.destination!r}"
+            )
+        endpoint_pairs.add(pair)
+        source = normalized[route.source]
+        destination = normalized[route.destination]
+        if isinstance(source, DevicePool) == isinstance(destination, DevicePool):
+            raise RuntimeConfigurationError(
+                "the current backend supports routes only between a device pool "
+                "and a pinned-host pool"
+            )
+    return normalized, normalized_routes
 
 
 def _resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
@@ -987,6 +1109,7 @@ __all__ = [
     "PlanMemory",
     "Runtime",
     "RuntimeConfigurationError",
+    "RuntimeRoute",
     "TransferCapabilities",
     "TransferProfile",
 ]

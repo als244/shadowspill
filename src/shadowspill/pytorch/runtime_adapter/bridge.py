@@ -186,10 +186,24 @@ def _runtime_action(
 class RuntimeBridge:
     """Bind one Program's local identities to shared runtime objects."""
 
-    def __init__(self, runtime: Runtime, program: Program, plan_handle: int) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        program: Program,
+        plan_handle: int,
+        *,
+        execution_pool_id: int,
+        spill_pool_id: int,
+    ) -> None:
+        if execution_pool_id < 0 or spill_pool_id < 0:
+            raise ValueError("plan pool IDs must be non-negative")
+        if execution_pool_id == spill_pool_id:
+            raise ValueError("execution and spill pools must be distinct")
         self.runtime = runtime
         self.library = runtime._installed.library
         self.plan_handle = plan_handle
+        self.execution_pool_id = execution_pool_id
+        self.spill_pool_id = spill_pool_id
         self._alias_by_object: dict[str, str] = {
             item.object_id: item.alias_group_id for item in program.objects
         }
@@ -765,7 +779,7 @@ class RuntimeBridge:
         except KeyError as exc:
             raise PlanningError(f"unknown program object {object_id!r}") from exc
 
-    def register_host_tensor(
+    def register_spill_tensor(
         self, alias_id: str, tensor: torch.Tensor, *, retain_spill_copy: bool
     ) -> None:
         if tensor.device.type != "cpu":
@@ -783,7 +797,8 @@ class RuntimeBridge:
             return
         runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
-            self.library.shadowspill_pytorch_register_host_object(
+            self.library.shadowspill_pytorch_register_object(
+                self.spill_pool_id,
                 runtime_object_id,
                 expected,
                 int(retain_spill_copy),
@@ -794,13 +809,14 @@ class RuntimeBridge:
         self._registered.add(alias_id)
         self._bind_plan_object(alias_id)
 
-    def adopt_persistent_spill_object(
+    def adopt_persistent_object(
         self,
         alias_id: str,
         *,
         current_object_id: int,
+        pool_id: int,
         size_bytes: int,
-        spill_pointer: int,
+        pool_pointer: int,
     ) -> int:
         """Adopt one preloaded spill lease without allocating or copying it."""
 
@@ -810,9 +826,14 @@ class RuntimeBridge:
                 f"persistent payload for {alias_id!r} has {size_bytes} bytes; "
                 f"the plan requires {expected}"
             )
+        if pool_id != self.spill_pool_id:
+            raise PlanningError(
+                f"persistent object for {alias_id!r} resides in pool {pool_id}; "
+                f"the plan selected spill pool {self.spill_pool_id}"
+            )
         self._require(
-            self.library.shadowspill_pytorch_validate_spill_binding(
-                current_object_id, spill_pointer, size_bytes
+            self.library.shadowspill_pytorch_validate_object_binding(
+                pool_id, current_object_id, pool_pointer, size_bytes
             ),
             f"validate persistent object {alias_id}",
         )
@@ -883,8 +904,11 @@ class RuntimeBridge:
         if expected == 0:
             return
         self._require(
-            self.library.shadowspill_pytorch_write_spill_object(
-                self._runtime_object_id(alias_id), expected, storage.data_ptr()
+            self.library.shadowspill_pytorch_write_object(
+                self.spill_pool_id,
+                self._runtime_object_id(alias_id),
+                expected,
+                storage.data_ptr(),
             ),
             "write host object",
         )
@@ -902,8 +926,11 @@ class RuntimeBridge:
         if expected == 0:
             return
         self._require(
-            self.library.shadowspill_pytorch_read_spill_object(
-                self._runtime_object_id(alias_id), expected, storage.data_ptr()
+            self.library.shadowspill_pytorch_read_object(
+                self.spill_pool_id,
+                self._runtime_object_id(alias_id),
+                expected,
+                storage.data_ptr(),
             ),
             "read host object",
         )

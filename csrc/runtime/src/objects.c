@@ -1104,3 +1104,42 @@ ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     shadowspill_object_release(object);
     return SHADOWSPILL_RUNTIME_OK;
 }
+
+ShadowSpillRuntimeStatus shadowspill_object_location_snapshot(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    uint32_t pool_id,
+    ShadowSpillObjectLocationSnapshot *snapshot
+) {
+    if (runtime == NULL || snapshot == NULL ||
+        shadowspill_runtime_pool(runtime, pool_id) == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObject *object = shadowspill_object_table_acquire(
+        &runtime->objects, object_id
+    );
+    if (object == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    pthread_mutex_lock(&object->lock);
+    const ShadowSpillObjectLocation *location = shadowspill_object_location(
+        object, pool_id
+    );
+    const ShadowSpillMemoryLease *lease = location == NULL
+        ? NULL : location->lease;
+    *snapshot = (ShadowSpillObjectLocationSnapshot){
+        .object_id = object->object_id,
+        .size_bytes = object->size_bytes,
+        .authoritative_version = object->authoritative_version,
+        .version = location == NULL ? 0U : location->version,
+        .allocation_id = lease == NULL ? 0U : lease->allocation_id,
+        .generation = lease == NULL ? 0U : lease->generation,
+        .pool_id = pool_id,
+        .current = location == NULL ? 0U : location->current,
+        .has_lease = lease != NULL,
+        .pointer = lease == NULL ? NULL : lease->pointer,
+    };
+    pthread_mutex_unlock(&object->lock);
+    shadowspill_object_release(object);
+    return SHADOWSPILL_RUNTIME_OK;
+}

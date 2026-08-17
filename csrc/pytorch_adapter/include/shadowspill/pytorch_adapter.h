@@ -17,14 +17,36 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 54U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 55U
+
+typedef enum ShadowSpillPytorchPoolBackendKind {
+    SHADOWSPILL_PYTORCH_POOL_DEVICE = 0,
+    SHADOWSPILL_PYTORCH_POOL_PINNED_HOST = 1,
+} ShadowSpillPytorchPoolBackendKind;
+
+typedef struct ShadowSpillPytorchPoolConfig {
+    uint32_t pool_id;
+    uint8_t backend_kind;
+    uint64_t capacity_bytes;
+} ShadowSpillPytorchPoolConfig;
+
+typedef struct ShadowSpillPytorchRouteConfig {
+    uint32_t route_id;
+    uint32_t source_pool_id;
+    uint32_t destination_pool_id;
+    const char *name;
+} ShadowSpillPytorchRouteConfig;
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
     int32_t device_ordinal;
     uint64_t device_budget_bytes;
     uint64_t provider_headroom_bytes;
-    uint64_t spill_pool_bytes;
+    uint32_t allocator_pool_id;
+    const ShadowSpillPytorchPoolConfig *pools;
+    uint32_t pool_count;
+    const ShadowSpillPytorchRouteConfig *routes;
+    uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
 } ShadowSpillPytorchAdapterConfig;
 
@@ -34,11 +56,12 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     uint64_t device_budget_bytes;
     uint64_t context_bytes;
     uint64_t provider_headroom_bytes;
-    uint64_t execution_pool_bytes;
+    uint32_t allocator_pool_id;
+    uint32_t pool_count;
+    uint64_t allocator_pool_bytes;
     uint64_t bootstrap_process_bytes;
     uint64_t device_used_bytes;
     uint64_t device_total_bytes;
-    uint64_t spill_pool_bytes;
 } ShadowSpillPytorchPhysicalAdmission;
 
 typedef struct ShadowSpillPytorchAdapterCapabilities {
@@ -161,6 +184,8 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_create(
     uint32_t execution_pool_id,
     uint32_t spill_pool_id,
+    uint32_t fetch_route_id,
+    uint32_t evict_route_id,
     uintptr_t *plan_handle
 );
 
@@ -382,9 +407,10 @@ shadowspill_pytorch_allocation_for_pointer(
     ShadowSpillAllocation *allocation
 );
 
-/* Register and populate one initially host-resident alias-group object. */
+/* Register and populate one object in an explicitly selected pool. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_register_host_object(
+shadowspill_pytorch_register_object(
+    uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
     uint8_t retain_spill_copy,
@@ -399,17 +425,19 @@ shadowspill_pytorch_register_placeholder_object(
     uint8_t retain_spill_copy
 );
 
-/* Replace one existing SPILL_ONLY object's current pinned payload. */
+/* Replace one existing object's current payload in an explicit pool. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_write_spill_object(
+shadowspill_pytorch_write_object(
+    uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t source_address
 );
 
-/* Copy one current SPILL_ONLY payload into borrowed caller memory. */
+/* Copy one current pool payload into borrowed caller memory. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_read_spill_object(
+shadowspill_pytorch_read_object(
+    uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t destination_address
@@ -433,9 +461,10 @@ shadowspill_pytorch_release_caller_allocation(
     uintptr_t stream
 );
 
-/* Validate one CPU-addressable spill lease before rebinding CPU storage. */
+/* Validate one CPU-addressable pool lease before rebinding CPU storage. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_validate_spill_binding(
+shadowspill_pytorch_validate_object_binding(
+    uint32_t pool_id,
     uint64_t object_id,
     uint64_t address,
     uint64_t size_bytes
@@ -458,6 +487,13 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_object_location_snapshot(
+    uint64_t object_id,
+    uint32_t pool_id,
+    ShadowSpillObjectLocationSnapshot *snapshot
 );
 
 /* Allocate/reset pre-sized callback records before a measured invocation. */

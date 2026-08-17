@@ -216,6 +216,12 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
         .synchronization = shadowspill_mock_synchronization_backend(mock),
     };
     ShadowSpillPlan *plan = NULL;
+    const ShadowSpillPlanDescription invalid_plan = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 2U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 0U,
+    };
     ShadowSpillBackendStream compute = {{0U, 0U}};
     ShadowSpillAllocation allocation = {0};
     failed = failed || shadowspill_runtime_create(&sparse, &runtime) !=
@@ -229,7 +235,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
             runtime, 2U, allocation.allocation_id, compute
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_create_for_pools(runtime, 0U, 2U, &plan) !=
+        shadowspill_plan_create(runtime, &invalid_plan, &plan) !=
             SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
         plan != NULL;
     if (compute.words[0] != 0U) {

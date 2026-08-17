@@ -8,6 +8,7 @@ from pathlib import Path
 
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 MIB = 1 << 20
 PLAN_VIOLATION = 6
@@ -19,7 +20,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=64 * MIB,
-        spill_pool_bytes=1 * MIB,
+        **two_pool_topology(1 * MIB),
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library

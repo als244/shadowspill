@@ -18,6 +18,7 @@ from .runtime import (
     PlanMemory,
     Runtime,
     RuntimeConfigurationError,
+    RuntimeRoute,
     TransferCapabilities,
     TransferProfile,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "RuntimeFixedLayout",
     "RuntimeFixedPlacement",
     "RuntimePlacementKind",
+    "RuntimeRoute",
     "TransferCapabilities",
     "TransferProfile",
     "actions_by_task",

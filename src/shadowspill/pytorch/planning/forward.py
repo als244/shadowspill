@@ -535,7 +535,13 @@ def admit_forward_plan(
         initial_task_id=INITIAL_PLACEMENT_TASK_ID,
         dynamic_task_allocations=(selected_admission.dynamic_provider_allocations()),
     )
-    bridge = RuntimeBridge(memory.runtime, execution_plan.program, memory.plan_handle)
+    bridge = RuntimeBridge(
+        memory.runtime,
+        execution_plan.program,
+        memory.plan_handle,
+        execution_pool_id=memory.execution.pool_id,
+        spill_pool_id=memory.spill.pool_id,
+    )
     state: MaterializedForwardState | None = None
     try:
         with timer.measure("materialization"):

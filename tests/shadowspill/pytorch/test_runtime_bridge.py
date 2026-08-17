@@ -47,7 +47,13 @@ class _Runtime:
 
 def test_abort_task_only_closes_the_native_scope() -> None:
     library = _AbortLibrary()
-    bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
+    bridge = RuntimeBridge(  # type: ignore[arg-type]
+        _Runtime(library),
+        representative_program(),
+        1,
+        execution_pool_id=0,
+        spill_pool_id=1,
+    )
 
     bridge.abort_task(37)
 
@@ -56,7 +62,13 @@ def test_abort_task_only_closes_the_native_scope() -> None:
 
 def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
     program = representative_program()
-    bridge = RuntimeBridge(_Runtime(object()), program, 1)  # type: ignore[arg-type]
+    bridge = RuntimeBridge(  # type: ignore[arg-type]
+        _Runtime(object()),
+        program,
+        1,
+        execution_pool_id=0,
+        spill_pool_id=1,
+    )
     trace = (
         TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 64, 64),
         TaskAllocationEvent(0, TaskAllocationOperation.FREE, 64, 64),
@@ -82,7 +94,13 @@ def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
 
 
 def test_task_trace_label_is_owned_by_the_admitted_description() -> None:
-    bridge = RuntimeBridge(_Runtime(object()), representative_program(), 1)  # type: ignore[arg-type]
+    bridge = RuntimeBridge(  # type: ignore[arg-type]
+        _Runtime(object()),
+        representative_program(),
+        1,
+        execution_pool_id=0,
+        spill_pool_id=1,
+    )
     buffers = bridge._execution_buffers(
         replace(representative_program().tasks[0], task_id="task_000000"),
         (),
@@ -117,7 +135,13 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
             ),
         ),
     )
-    bridge = RuntimeBridge(_Runtime(object()), program, 1)  # type: ignore[arg-type]
+    bridge = RuntimeBridge(  # type: ignore[arg-type]
+        _Runtime(object()),
+        program,
+        1,
+        execution_pool_id=0,
+        spill_pool_id=1,
+    )
     tensor = torch.empty(0)
 
     bridge.register_placeholder("alias_000099")

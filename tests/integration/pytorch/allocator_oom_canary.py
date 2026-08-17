@@ -16,7 +16,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     allocator_oom_error,
     read_allocator_failure,
 )
-from tests.integration.pytorch.runtime_helpers import begin_task
+from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 NO_PROGRESS = 4
 REQUEST_BYTES = 128 << 20
@@ -24,7 +24,9 @@ REQUEST_BYTES = 128 << 20
 
 def _admit_task(library: object, description: TaskDescription) -> tuple[int, int]:
     plan = ctypes.c_size_t()
-    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(plan)))
+    status = int(
+        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(plan))
+    )
     if status != 0 or plan.value == 0:
         raise AssertionError(f"failed to create OOM canary plan: status={status}")
     task = ctypes.c_size_t()
@@ -44,7 +46,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=1 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=1 << 20,
+        **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=10_000,
     )
     task_id = 17
@@ -106,7 +108,7 @@ def main() -> int:
         raise AssertionError("adapter lost the requested allocation size")
     if failure.runtime.status != NO_PROGRESS:
         raise AssertionError("adapter did not preserve the runtime's first cause")
-    if failure.runtime.free_bytes != installed.admission.execution_pool_bytes:
+    if failure.runtime.free_bytes != installed.admission.allocator_pool_bytes:
         raise AssertionError("diagnostic free-space accounting is incorrect")
     task = ExecutionTaskIdentity(
         execution_task_id="execution_000017",

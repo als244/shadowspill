@@ -20,12 +20,14 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
-from tests.integration.pytorch.runtime_helpers import begin_task
+from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 
 def _create_plan(library: object) -> int:
     handle = ctypes.c_size_t()
-    status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(handle)))
+    status = int(
+        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(handle))
+    )
     if status != 0 or handle.value == 0:
         raise AssertionError(f"plan creation failed with status {status}")
     return int(handle.value)
@@ -149,7 +151,7 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=32 << 20,
+        **two_pool_topology(32 << 20),
         worker_poll_nanoseconds=10_000,
     )
     capabilities = AdapterCapabilities()
@@ -366,7 +368,8 @@ def main() -> int:
 
     host_source = torch.arange(4096, dtype=torch.uint8)
     status = int(
-        library.shadowspill_pytorch_register_host_object(
+        library.shadowspill_pytorch_register_object(
+            1,
             3001,
             host_source.untyped_storage().nbytes(),
             1,
@@ -470,7 +473,7 @@ def main() -> int:
         raise AssertionError("physical memory query failed")
     if physical.process_bytes > installed.admission.device_budget_bytes:
         raise AssertionError("process exceeded the physical device cap")
-    if physical.process_bytes < installed.admission.execution_pool_bytes:
+    if physical.process_bytes < installed.admission.allocator_pool_bytes:
         raise AssertionError("physical ledger does not include the complete slab")
     if (
         int(

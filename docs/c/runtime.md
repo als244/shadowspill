@@ -73,6 +73,8 @@ structured no-progress status.
 - `shadowspill_transfer_acquired_object_to_caller()` hands an acquired terminal
   generation to caller ownership while preserving stream readiness.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view.
+- `shadowspill_object_location_snapshot()` returns the same object's current
+  lease state in one explicitly selected pool.
 - `shadowspill_object_handle_acquire()` creates an opaque retained owner for a
   runtime-global logical object.
 - `shadowspill_object_handle_release()` releases that owner. The object is
