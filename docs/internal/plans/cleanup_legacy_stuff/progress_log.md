@@ -764,3 +764,27 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   C functions (four expected skips); focused real public forward and training
   execution; Ruff; strict mypy over 177 installed source files; documentation
   tests; and `git diff --check`.
+
+## 2026-08-17 — Acquisition-owned caller handoff
+
+- Replaced repeated caller handoff by runtime object ID with
+  `(acquisition handle, object ordinal)`. The admitted acquisition owns a
+  direct retained object reference and its plan-selected execution and spill
+  pools, so handoff no longer performs object-table lookup or assumes the
+  runtime's first two pools.
+- Made pointer, generation, and allocation-ID validation part of the same
+  locked object transaction that changes ownership. A stale caller is rejected
+  before the lease or object is modified; there is no validate-then-commit race
+  through a second raw-ID API.
+- Kept public logical identity stable. Caller handoff detaches the current
+  physical lease only because its lifetime becomes caller-owned; it neither
+  copies the payload nor creates a replacement logical object.
+- Added native coverage proving a stale generation fails without partial
+  ownership transfer, followed by a successful handoff of the same acquired
+  ordinal and complete caller-lease reclamation.
+- Bumped the runtime ABI to 35 and PyTorch adapter ABI to 43 for the admitted
+  acquisition handoff entry points.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; the
+  real public forward path; Ruff; strict mypy over 177 installed source files;
+  and `git diff --check`.

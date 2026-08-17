@@ -105,6 +105,7 @@ class _Library:
     shadowspill_pytorch_plan_clear_tasks = _Function()
     shadowspill_pytorch_plan_admit_object_acquisition = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
+    shadowspill_pytorch_transfer_acquired_object_to_caller = _Function()
     shadowspill_pytorch_plan_admit_action_batch = _Function()
     shadowspill_pytorch_submit_action_batch_handle = _Function()
     shadowspill_pytorch_before_task_handle = _Function()
@@ -256,19 +257,27 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.POINTER(ObjectBinding),
     ]
-    assert (
-        library.shadowspill_pytorch_plan_publish_initial_allocation.argtypes
-        == [
-            ctypes.c_size_t,
-            ctypes.c_uint64,
-            ctypes.c_uint64,
-            ctypes.POINTER(ObjectBinding),
-        ]
-    )
-    assert (
-        library.shadowspill_pytorch_validate_task_publication_binding.argtypes
-        == [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64]
-    )
+    assert library.shadowspill_pytorch_plan_publish_initial_allocation.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
+    ]
+    assert library.shadowspill_pytorch_validate_task_publication_binding.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+    ]
+    assert library.shadowspill_pytorch_transfer_acquired_object_to_caller.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(Allocation),
+    ]
     assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
         ctypes.c_uint64,
         ctypes.c_uint64,

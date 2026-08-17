@@ -1130,6 +1130,18 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 );
+ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller_direct(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *execution_pool,
+    ShadowSpillMemoryPool *spill_pool,
+    ShadowSpillObject *object,
+    ShadowSpillBackendStream consumer_stream,
+    const void *expected_pointer,
+    uint64_t expected_generation,
+    uint64_t expected_allocation_id,
+    uint8_t validate_expected,
+    ShadowSpillAllocation *allocation
+);
 void shadowspill_task_table_destroy(ShadowSpillTaskTable *table);
 void shadowspill_task_table_clear(ShadowSpillTaskTable *table);
 ShadowSpillTaskRecord *shadowspill_task_table_acquire(

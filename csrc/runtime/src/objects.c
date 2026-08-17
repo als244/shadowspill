@@ -962,16 +962,22 @@ ShadowSpillRuntimeStatus shadowspill_task_validate_publication_binding(
         : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }
 
-ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
+ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller_direct(
     ShadowSpillRuntime *runtime,
-    uint64_t object_id,
+    ShadowSpillMemoryPool *execution_pool,
+    ShadowSpillMemoryPool *spill_pool,
+    ShadowSpillObject *object,
     ShadowSpillBackendStream consumer_stream,
+    const void *required_pointer,
+    uint64_t required_generation,
+    uint64_t required_allocation_id,
+    uint8_t validate_expected,
     ShadowSpillAllocation *allocation
 ) {
-    if (runtime == NULL || allocation == NULL) {
+    if (runtime == NULL || execution_pool == NULL || spill_pool == NULL ||
+        object == NULL || allocation == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillObject *object = NULL;
     uint64_t expected_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     uint64_t expected_generation = 0U;
 
@@ -986,12 +992,6 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         pthread_mutex_unlock(&runtime->mutex);
         return status;
     }
-    object = shadowspill_find_object(runtime, object_id);
-    if (object == NULL) {
-        pthread_mutex_unlock(&runtime->mutex);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    shadowspill_object_retain(object);
     for (;;) {
         pthread_mutex_lock(&object->lock);
         const int settled = object->action_head == NULL &&
@@ -1010,6 +1010,15 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
          object->has_readiness_event)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
+    const ShadowSpillObjectLocation *initial_execution =
+        shadowspill_object_location(object, execution_pool->pool_id);
+    if (status == SHADOWSPILL_RUNTIME_OK && validate_expected &&
+        (initial_execution == NULL || initial_execution->lease == NULL ||
+         initial_execution->lease->pointer != required_pointer ||
+         object->generation != required_generation ||
+         object->allocation_id != required_allocation_id)) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     if (status == SHADOWSPILL_RUNTIME_OK) {
         expected_allocation_id = object->allocation_id;
         expected_generation = object->generation;
@@ -1017,17 +1026,17 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&runtime->mutex);
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        goto release_object;
+        return status;
     }
 
     status = shadowspill_memory_pool_record_stream(
         runtime,
-        SHADOWSPILL_EXECUTION_POOL_ID,
+        execution_pool->pool_id,
         expected_allocation_id,
         consumer_stream
     );
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        goto release_object;
+        return status;
     }
 
     /* Commit ownership only if the snapshotted generation is still current. */
@@ -1046,9 +1055,9 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         goto done_object;
     }
 
-    shadowspill_memory_pool_lock_foreground(shadowspill_execution_pool(runtime));
+    shadowspill_memory_pool_lock_foreground(execution_pool);
     ShadowSpillMemoryLease *record = shadowspill_find_execution_lease(
-        shadowspill_execution_pool(runtime), object->allocation_id
+        execution_pool, object->allocation_id
     );
     if (record == NULL || record->pointer == NULL || record->logical_freed ||
         !record->plan_owned) {
@@ -1056,22 +1065,25 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         goto done_allocation;
     }
     if (object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY &&
-        shadowspill_spill_location(runtime, object)->lease != NULL) {
-        shadowspill_memory_pool_lock_foreground(shadowspill_spill_pool(runtime));
-        const int release_status = shadowspill_memory_pool_release_lease_locked(
-            shadowspill_spill_location(runtime, object)->lease
+        shadowspill_object_location(object, spill_pool->pool_id)->lease != NULL) {
+        ShadowSpillObjectLocation *spill = shadowspill_object_location(
+            object, spill_pool->pool_id
         );
-        shadowspill_memory_pool_unlock_foreground(shadowspill_spill_pool(runtime));
+        shadowspill_memory_pool_lock_foreground(spill_pool);
+        const int release_status = shadowspill_memory_pool_release_lease_locked(
+            spill->lease
+        );
+        shadowspill_memory_pool_unlock_foreground(spill_pool);
         if (release_status != 0) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done_allocation;
         }
-        if (shadowspill_spill_location(runtime, object)->owns_lease) {
-            free(shadowspill_spill_location(runtime, object)->lease);
+        if (spill->owns_lease) {
+            free(spill->lease);
         }
-        shadowspill_spill_location(runtime, object)->lease = NULL;
-        shadowspill_spill_location(runtime, object)->owns_lease = 0U;
-        shadowspill_spill_location(runtime, object)->current = 0U;
+        spill->lease = NULL;
+        spill->owns_lease = 0U;
+        spill->current = 0U;
     }
     record->framework_free_seen = 0;
     record->plan_owned = 0;
@@ -1079,8 +1091,11 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     object->retired_generation = object->generation;
     object->retired_execution_pointer = record->pointer;
     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-    shadowspill_execution_location(runtime, object)->lease = NULL;
-    shadowspill_execution_location(runtime, object)->current = 0U;
+    ShadowSpillObjectLocation *execution = shadowspill_object_location(
+        object, execution_pool->pool_id
+    );
+    execution->lease = NULL;
+    execution->current = 0U;
     object->residency = SHADOWSPILL_OBJECT_RELEASED;
     shadowspill_append_allocation_event_locked(
         runtime,
@@ -1089,7 +1104,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
         SHADOWSPILL_ALLOCATION_CALLER_OWNED
     );
     *allocation = (ShadowSpillAllocation){
-        .pool_id = shadowspill_execution_pool(runtime)->pool_id,
+        .pool_id = execution_pool->pool_id,
         .allocation_id = record->allocation_id,
         .generation = record->generation,
         .requested_bytes = record->requested_bytes,
@@ -1098,11 +1113,41 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     };
 
 done_allocation:
-    shadowspill_memory_pool_unlock_foreground(shadowspill_execution_pool(runtime));
+    shadowspill_memory_pool_unlock_foreground(execution_pool);
 done_object:
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&runtime->mutex);
-release_object:
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    ShadowSpillBackendStream consumer_stream,
+    ShadowSpillAllocation *allocation
+) {
+    if (runtime == NULL || allocation == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillObject *object = shadowspill_object_table_acquire(
+        &runtime->objects, object_id
+    );
+    if (object == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    const ShadowSpillRuntimeStatus status =
+        shadowspill_transfer_object_to_caller_direct(
+            runtime,
+            shadowspill_execution_pool(runtime),
+            shadowspill_spill_pool(runtime),
+            object,
+            consumer_stream,
+            NULL,
+            0U,
+            SHADOWSPILL_RUNTIME_NO_ID,
+            0U,
+            allocation
+        );
     shadowspill_object_release(object);
     return status;
 }

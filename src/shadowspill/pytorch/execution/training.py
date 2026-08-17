@@ -431,7 +431,12 @@ class TrainingExecutor:
             tensors,
             acquisition_handle=run.caller_acquisition_handle,
         )
-        self._bridge.transfer_outputs_to_caller(aliases, tensors, bindings)
+        self._bridge.transfer_outputs_to_caller(
+            aliases,
+            tensors,
+            bindings,
+            acquisition_handle=run.caller_acquisition_handle,
+        )
         for alias_id in aliases:
             self._state.object_store.pop(alias_id, None)
             self._state.generations.pop(alias_id, None)
