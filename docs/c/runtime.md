@@ -99,6 +99,10 @@ runtime's pool, route, event, and object owners:
   consistency. The plan owns an independent reference after the call returns.
 - `shadowspill_plan_admit_task()` copies one immutable task topology and
   returns its direct repeated-path handle in the same cold-path call.
+- `shadowspill_task_id()` and `shadowspill_task_trace_label()` expose the
+  handle's immutable diagnostic identity without a table lookup. The returned
+  label is borrowed from the handle and remains valid until its plan is
+  cleared or destroyed.
 - `shadowspill_plan_publish_initial_allocation()` publishes cold
   materialization through a plan-local object binding and the plan's selected
   execution pool; it does not create a fake task boundary.
@@ -127,8 +131,9 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 
-Task handles bypass repeated task-ID lookup. Admission retains direct object
-references and predecoded actions for the complete plan lifetime.
+Task handles bypass repeated task-ID and profiler-label lookup. Admission
+retains the semantic label, direct object references, and predecoded actions
+for the complete plan lifetime.
 It also allocates the exact byte-state workspace used to validate that task's
 allocation contract, so `before_task()` never grows a thread-local matcher.
 The handle owns its exact expanded input-binding array as well. A successful

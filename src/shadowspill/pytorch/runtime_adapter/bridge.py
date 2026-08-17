@@ -138,6 +138,7 @@ class PublishedStorage:
 @dataclass(slots=True)
 class _ExecutionBuffers:
     description: TaskDescription
+    encoded_task_label: bytes
     input_ids: Any
     updates: Any
     publications: Any
@@ -349,6 +350,7 @@ class RuntimeBridge:
         action_trace_labels: tuple[str, ...] | None = None,
         memory_envelope: TaskMemoryEnvelope | None = None,
         *,
+        trace_label: str,
         publications: tuple[TaskPublication, ...] = (),
     ) -> int:
         """Resolve one immutable task topology in the neutral runtime."""
@@ -381,6 +383,7 @@ class RuntimeBridge:
             runtime_publications,
             action_pairs,
             memory_envelope,
+            trace_label,
         )
         task_handle = ctypes.c_size_t()
         self._require(
@@ -586,6 +589,7 @@ class RuntimeBridge:
         publications: tuple[TaskPublication, ...],
         actions: tuple[tuple[MemoryAction, str], ...],
         memory_envelope: TaskMemoryEnvelope,
+        trace_label: str,
     ) -> _ExecutionBuffers:
         input_ids = (ctypes.c_uint64 * len(inputs))(
             *(_plan_local_id(value, "alias_") for value in inputs)
@@ -636,8 +640,10 @@ class RuntimeBridge:
                 for step in contract_steps
             )
         )
+        encoded_task_label = trace_label.encode("utf-8")
         description = TaskDescription(
             task_id=_plan_local_id(task.task_id, "task_"),
+            trace_label=encoded_task_label,
             input_object_ids=input_ids if inputs else None,
             input_count=len(inputs),
             updates=updates if mutations else None,
@@ -670,6 +676,7 @@ class RuntimeBridge:
         )
         return _ExecutionBuffers(
             description,
+            encoded_task_label,
             input_ids,
             updates,
             publication_values,
@@ -725,29 +732,6 @@ class RuntimeBridge:
             "disable debug task timing",
         )
         self._debug_task_timing_capacity = 0
-
-    def configure_task_labels(self, labels_by_task: Mapping[str, str]) -> None:
-        """Install cold-path semantic labels for plan-local task identities."""
-
-        labels_by_ordinal = {
-            _plan_local_id(task_id, "task_"): label
-            for task_id, label in labels_by_task.items()
-        }
-        capacity = max(labels_by_ordinal, default=-1) + 1
-        if capacity == 0:
-            self._require(
-                self.library.shadowspill_pytorch_task_labels_configure(None, 0),
-                "clear task trace labels",
-            )
-            return
-        encoded = [
-            labels_by_ordinal.get(index, "").encode() for index in range(capacity)
-        ]
-        values = (ctypes.c_char_p * capacity)(*encoded)
-        self._require(
-            self.library.shadowspill_pytorch_task_labels_configure(values, capacity),
-            "configure task trace labels",
-        )
 
     def prepare_runtime_trace(
         self, *, event_capacity: int, allocation_event_capacity: int
@@ -1142,7 +1126,6 @@ class RuntimeBridge:
     def before_task_and_acquire(
         self,
         task_handle: int,
-        task_id: int,
         device_ordinal: int,
         tensors: Sequence[torch.Tensor],
         alias_ids: Sequence[str],
@@ -1163,14 +1146,12 @@ class RuntimeBridge:
         torch.ops.shadowspill._before_task_storages(
             [tensor for _, tensor, _ in materialized],
             task_handle,
-            task_id,
             device_ordinal,
         )
 
     def after_task_and_update(
         self,
         task_handle: int,
-        task_id: int,
         device_ordinal: int,
         adopted: Sequence[PublishedStorage],
         dematerialized: Sequence[torch.Tensor],
@@ -1211,7 +1192,6 @@ class RuntimeBridge:
             replacement_target_indices,
             list(dematerialized),
             task_handle,
-            task_id,
             device_ordinal,
         )
 
@@ -1284,12 +1264,12 @@ class RuntimeBridge:
             )
         return tuple(result)
 
-    def abort_task(self, task_handle: int, task_id: int) -> None:
+    def abort_task(self, task_handle: int) -> None:
         """Close the matching admitted task scope after frontend failure."""
 
         self._require(
-            self.library.shadowspill_pytorch_abort_task_handle(task_handle, task_id),
-            f"abort task {task_id}",
+            self.library.shadowspill_pytorch_abort_task_handle(task_handle),
+            "abort admitted task",
         )
 
     def raise_if_allocator_failed(self, operation: str) -> None:

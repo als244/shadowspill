@@ -260,7 +260,16 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         .fetch_route_id = 0U,
         .evict_route_id = 1U,
     };
-    const ShadowSpillTaskDescription task = {.task_id = 7U};
+    char first_label[] = "execution_000007.first";
+    char second_label[] = "execution_000007.second";
+    const ShadowSpillTaskDescription first_task = {
+        .task_id = 7U,
+        .trace_label = first_label,
+    };
+    const ShadowSpillTaskDescription second_task = {
+        .task_id = 7U,
+        .trace_label = second_label,
+    };
     const ShadowSpillTaskHandle *first_handle = NULL;
     const ShadowSpillTaskHandle *second_handle = NULL;
     ShadowSpillBackendStream second_compute = {{0U, 0U}};
@@ -270,14 +279,30 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_task(first, &task, &first_handle) !=
+        shadowspill_plan_admit_task(first, &first_task, &first_handle) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_admit_task(second, &task, &second_handle) !=
+        shadowspill_plan_admit_task(second, &second_task, &second_handle) !=
             SHADOWSPILL_RUNTIME_OK ||
         first_handle == NULL || second_handle == NULL ||
         first_handle == second_handle ||
+        shadowspill_task_id(first_handle) != 7U ||
+        shadowspill_task_id(second_handle) != 7U ||
+        strcmp(shadowspill_task_trace_label(first_handle), first_label) != 0 ||
+        strcmp(shadowspill_task_trace_label(second_handle), second_label) != 0 ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
         shadowspill_mock_create_compute_stream(mock, &second_compute) != 0;
+    first_label[0] = 'x';
+    second_label[0] = 'y';
+    if (!failed) {
+        failed = strcmp(
+                shadowspill_task_trace_label(first_handle),
+                "execution_000007.first"
+            ) != 0 ||
+            strcmp(
+                shadowspill_task_trace_label(second_handle),
+                "execution_000007.second"
+            ) != 0;
+    }
     if (!failed) {
         failed = distinct_task_handles_overlap(
             runtime, first_handle, compute, second_handle, second_compute

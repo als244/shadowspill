@@ -189,11 +189,9 @@ void acquire_storages(
 void before_task_storages(
     at::TensorList tensors,
     int64_t task_handle,
-    int64_t task_id,
     int64_t device_ordinal
 ) {
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
-  TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
   const size_t count = tensors.size();
   for (const at::Tensor& tensor : tensors) {
@@ -210,7 +208,6 @@ void before_task_storages(
   const ShadowSpillRuntimeStatus status =
       shadowspill_pytorch_before_task_handle(
           static_cast<uintptr_t>(task_handle),
-          static_cast<uint64_t>(task_id),
           reinterpret_cast<uintptr_t>(stream.stream()),
           &bindings,
           &binding_count);
@@ -224,16 +221,13 @@ void before_task_storages(
 
   struct TaskScopeGuard {
     uintptr_t task_handle;
-    uint64_t task_id;
     bool active = true;
     ~TaskScopeGuard() {
       if (active) {
-        (void)shadowspill_pytorch_abort_task_handle(task_handle, task_id);
+        (void)shadowspill_pytorch_abort_task_handle(task_handle);
       }
     }
-  } scope_guard{
-      static_cast<uintptr_t>(task_handle),
-      static_cast<uint64_t>(task_id)};
+  } scope_guard{static_cast<uintptr_t>(task_handle)};
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
     const ShadowSpillObjectBinding& binding = bindings[index];
@@ -429,11 +423,9 @@ void after_task_storages(
     at::IntArrayRef replacement_target_indices,
     at::TensorList dematerialized_tensors,
     int64_t task_handle,
-    int64_t task_id,
     int64_t device_ordinal
 ) {
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
-  TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
   adopt_storages(adopted_tensors, publication_ordinals, task_handle);
   rebind_replacement_views(
@@ -448,7 +440,6 @@ void after_task_storages(
   const ShadowSpillRuntimeStatus status =
       shadowspill_pytorch_after_task_handle(
           static_cast<uintptr_t>(task_handle),
-          static_cast<uint64_t>(task_id),
           reinterpret_cast<uintptr_t>(stream.stream()));
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
@@ -522,13 +513,13 @@ TORCH_LIBRARY(shadowspill, library) {
       "_acquire_storages(Tensor(a!)[] tensors, int[] addresses) -> ()");
   library.def(
       "_before_task_storages(Tensor(a!)[] tensors, int task_handle, "
-      "int task_id, int device_ordinal) -> ()");
+      "int device_ordinal) -> ()");
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_after_task_storages(Tensor(a!)[] adopted_tensors, int[] "
       "publication_ordinals, Tensor(a!)[] replacement_tensors, int[] "
       "replacement_target_indices, "
-      "Tensor(a!)[] dematerialized_tensors, int task_handle, int task_id, "
+      "Tensor(a!)[] dematerialized_tensors, int task_handle, "
       "int device_ordinal) -> ()");
   library.def(
       "_transfer_acquired_storage_to_caller(Tensor(a!) tensor, int "

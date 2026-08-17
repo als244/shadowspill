@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 42U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 43U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -309,6 +309,11 @@ typedef struct ShadowSpillFixedLayoutDescription {
 
 typedef struct ShadowSpillTaskDescription {
     uint64_t task_id;
+    /*
+     * Optional borrowed semantic profiler label. Admission copies it into the
+     * immutable task handle, so repeated execution performs no ID lookup.
+     */
+    const char *trace_label;
     const uint64_t *input_object_ids;
     uint32_t input_count;
     const ShadowSpillObjectUpdate *updates;
@@ -771,6 +776,15 @@ shadowspill_plan_admit_task(
     ShadowSpillPlan *plan,
     const ShadowSpillTaskDescription *description,
     const ShadowSpillTaskHandle **handle
+);
+
+/* Borrow immutable identity already resolved by task admission. */
+SHADOWSPILL_RUNTIME_API uint64_t shadowspill_task_id(
+    const ShadowSpillTaskHandle *handle
+);
+
+SHADOWSPILL_RUNTIME_API const char *shadowspill_task_trace_label(
+    const ShadowSpillTaskHandle *handle
 );
 
 /* Cold-path initial publication through one plan-local object binding. */

@@ -48,19 +48,9 @@ def main() -> int:
         worker_poll_nanoseconds=10_000,
     )
     task_id = 17
-    labels = (ctypes.c_char_p * (task_id + 1))()
-    labels[task_id] = b"execution_000017.dummy_model.stage_0003.forward"
-    if (
-        int(
-            installed.library.shadowspill_pytorch_task_labels_configure(
-                labels, task_id + 1
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("failed to configure task labels")
     description = TaskDescription(
         task_id=task_id,
+        trace_label=b"execution_000017.dummy_model.stage_0003.forward",
         input_object_ids=None,
         input_count=0,
         updates=None,
@@ -100,9 +90,7 @@ def main() -> int:
                     f"direct OOM omitted {expected!r}: {message}"
                 ) from error
         status = int(
-            installed.library.shadowspill_pytorch_abort_task_handle(
-                task_handle, task_id
-            )
+            installed.library.shadowspill_pytorch_abort_task_handle(task_handle)
         )
         if status != 0:
             raise AssertionError(f"failed to abort OOM task: status={status}") from None

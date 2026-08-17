@@ -22,7 +22,6 @@ def begin_task(
     status = int(
         library.shadowspill_pytorch_before_task_handle(
             task_handle,
-            task_id,
             stream_address,
             ctypes.byref(bindings),
             ctypes.byref(count),
