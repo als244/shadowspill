@@ -30,7 +30,6 @@ import torch
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
     plan_step,
     relocate_model_state,
 )
@@ -50,32 +49,21 @@ train_step = plan_step(
         tokens, labels=targets
     ).loss,
     opt=partial(torch.optim.AdamW, lr=3e-4),
-    example_inputs=[
-        [tokens_example_0, targets_example_0],
-        [tokens_example_1, targets_example_1],
-    ],
+    example_inputs=[[tokens_example, targets_example]],
     runtime=runtime,
     execution="device",
     spill="spill",
-    planning_cachedir="/local-fast-storage/shadowspill-planning",
 )
 
-result = train_step(
-    [
-        [tokens_0, targets_0],
-        [tokens_1, targets_1],
-    ]
-)
+result = train_step([[tokens, targets]])
+print("loss", result.objectives[0])
 
 train_step.close()
-model = externalize_model_state(model, runtime=runtime, release_runtime=True)
-runtime.close()
 ```
 
-The outer input sequence defines the accumulation rounds; one call performs
-one optimizer update. See the [Python quickstart](docs/python/quickstart.md)
-for checkpoints, tracing, forward-only planning, and complete state lifecycle
-handling.
+One call performs one optimizer update. See the
+[Python quickstart](docs/python/quickstart.md) for accumulation, checkpoints,
+tracing, forward-only planning, and complete state lifecycle handling.
 
 ## Project structure
 
