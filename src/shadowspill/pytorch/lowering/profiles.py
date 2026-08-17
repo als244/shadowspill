@@ -167,6 +167,31 @@ class TaskProfileCatalog:
             self.layout(artifact, metadata_digest),
         )
 
+    def additional_workspace_for_outputs(
+        self,
+        artifact: GraphArtifact,
+        leaf_indices: tuple[int, ...],
+        metadata_digest: str | None = None,
+    ) -> int:
+        """Return the measured peak increase from transient task outputs."""
+
+        return self.layout(
+            artifact,
+            metadata_digest,
+        ).additional_workspace_for_outputs(leaf_indices)
+
+    def replacement_output_leaves(
+        self,
+        artifact: GraphArtifact,
+    ) -> tuple[int, ...]:
+        """Return fresh leaves that replace an existing input generation."""
+
+        return tuple(
+            mutation.replacement_output_leaf
+            for mutation in self.contract(artifact).mutations
+            if mutation.replacement_output_leaf is not None
+        )
+
     def _compatibility_digest(
         self,
         artifact: ProfiledArtifact,

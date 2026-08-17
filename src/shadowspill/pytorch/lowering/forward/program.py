@@ -200,7 +200,11 @@ def _forward_profile_ids(
     return tuple(
         profiles.profile_id(
             artifact,
-            profiles.mutation_transition_bytes(artifact, occurrence_key),
+            profiles.additional_workspace_for_outputs(
+                artifact,
+                profiles.replacement_output_leaves(artifact),
+                occurrence_key,
+            ),
             metadata_digest=occurrence_key,
         )
         for artifact, occurrence_key in zip(

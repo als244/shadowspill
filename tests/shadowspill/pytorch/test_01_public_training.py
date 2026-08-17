@@ -157,6 +157,11 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert first.step_number == 1
     assert first.diagnostics is None
     assert tuple(metric["tag"] for metric in first.metrics) == ("left", "right")
+    first_objective_pointers = tuple(
+        int(objective.untyped_storage().data_ptr()) for objective in first.objectives
+    )
+    assert len(set(first_objective_pointers)) == len(first.objectives)
+    first_objective_values = tuple(objective.cpu() for objective in first.objectives)
     for actual, expected in zip(first.objectives, expected_losses[0], strict=True):
         torch.testing.assert_close(actual.cpu(), expected, rtol=2e-5, atol=2e-6)
 
@@ -181,6 +186,15 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
             {"model": {}, "optimizer": checkpoint["optimizer"], "step": 1}
         )
     second = training(steps[1])
+    second_objective_pointers = tuple(
+        int(objective.untyped_storage().data_ptr()) for objective in second.objectives
+    )
+    assert len(set(second_objective_pointers)) == len(second.objectives)
+    assert set(first_objective_pointers).isdisjoint(second_objective_pointers)
+    for actual, retained in zip(
+        first.objectives, first_objective_values, strict=True
+    ):
+        torch.testing.assert_close(actual.cpu(), retained, rtol=0, atol=0)
     for actual, expected in zip(second.objectives, expected_losses[1], strict=True):
         torch.testing.assert_close(actual.cpu(), expected, rtol=2e-5, atol=2e-6)
     uninterrupted = {
