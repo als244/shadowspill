@@ -38,11 +38,6 @@ typedef struct ShadowSpillRangeAllocator {
     ShadowSpillRange *available_nodes;
 } ShadowSpillRangeAllocator;
 
-typedef struct ShadowSpillStreamRecord {
-    ShadowSpillBackendStream stream;
-    struct ShadowSpillStreamRecord *next;
-} ShadowSpillStreamRecord;
-
 typedef struct ShadowSpillObject ShadowSpillObject;
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskRecord;
 typedef struct ShadowSpillEventPool ShadowSpillEventPool;
@@ -90,10 +85,19 @@ struct ShadowSpillEventPool {
     uint8_t sealed;
 };
 
-typedef struct ShadowSpillEventRecord {
+/*
+ * One reusable record follows a lease use from stream attribution through
+ * retirement completion.  The record is never copied: while the lease is
+ * live, ``event`` is null; an ordinary asynchronous free fills the event in
+ * place and transfers ownership of the complete list to the retirement queue.
+ */
+typedef struct ShadowSpillLeaseUseRecord {
+    ShadowSpillBackendStream stream;
     ShadowSpillEventLease *event;
-    struct ShadowSpillEventRecord *next;
-} ShadowSpillEventRecord;
+    struct ShadowSpillLeaseUseRecord *next;
+    struct ShadowSpillLeaseUseRecord *ownership_next;
+    struct ShadowSpillLeaseUseRecord *free_next;
+} ShadowSpillLeaseUseRecord;
 
 typedef struct ShadowSpillCompletionStream {
     ShadowSpillBackendStream stream;
@@ -141,6 +145,9 @@ typedef struct ShadowSpillMemoryPool {
     struct ShadowSpillMemoryLease *owned_leases;
     /* Reusable metadata records; these own no physical range while linked. */
     struct ShadowSpillMemoryLease *free_lease_records;
+    /* Reusable stream-use and retirement-requirement records. */
+    ShadowSpillLeaseUseRecord *owned_use_records;
+    ShadowSpillLeaseUseRecord *free_use_records;
     struct ShadowSpillMemoryLease *active_leases;
     struct ShadowSpillMemoryLease **leases_by_id;
     struct ShadowSpillMemoryLease **leases_by_pointer;
@@ -163,12 +170,18 @@ typedef struct ShadowSpillMemoryPool {
     uint64_t lease_record_in_use;
     uint64_t lease_record_peak_in_use;
     uint64_t lease_record_growth_rejections;
+    uint64_t use_record_capacity;
+    uint64_t use_record_available;
+    uint64_t use_record_in_use;
+    uint64_t use_record_peak_in_use;
+    uint64_t use_record_growth_rejections;
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
     _Atomic uint64_t free_bytes_snapshot;
     _Atomic uint64_t largest_free_bytes_snapshot;
     uint8_t initialized;
     uint8_t lease_records_sealed;
+    uint8_t use_records_sealed;
 } ShadowSpillMemoryPool;
 
 typedef enum ShadowSpillMemoryLeaseState {
@@ -208,8 +221,9 @@ typedef struct ShadowSpillMemoryLease {
     int ever_plan_owned;
     int framework_free_seen;
     ShadowSpillObject *bound_object;
-    ShadowSpillStreamRecord *streams;
-    ShadowSpillEventRecord *retirement_events;
+    ShadowSpillLeaseUseRecord *uses;
+    /* Queue-owned alias of ``uses`` while ordinary events are pending. */
+    ShadowSpillLeaseUseRecord *retirement_requirements;
     ShadowSpillEventLease *retirement_event;
     uint64_t retirement_enqueued_generation;
     /*
@@ -278,7 +292,7 @@ typedef struct ShadowSpillRetirementRecord {
      * the same pointers while its generation remains retirement-pending so
      * the allocator can make causal-reuse decisions without copying them.
      */
-    ShadowSpillEventRecord *events;
+    ShadowSpillLeaseUseRecord *requirements;
     ShadowSpillEventLease *task_completion_event;
     struct ShadowSpillRetirementRecord *next;
     struct ShadowSpillRetirementRecord *free_next;
@@ -765,6 +779,13 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
 ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
     ShadowSpillMemoryPool *pool,
     uint64_t minimum_free_records
+);
+ShadowSpillLeaseUseRecord *shadowspill_memory_pool_acquire_use_record_locked(
+    ShadowSpillMemoryPool *pool
+);
+int shadowspill_memory_pool_release_use_records_locked(
+    ShadowSpillMemoryPool *pool,
+    ShadowSpillLeaseUseRecord *records
 );
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);

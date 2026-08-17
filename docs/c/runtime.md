@@ -15,9 +15,12 @@ worker, trace buffers, and first-failure state.
   immutable records queued between logical release and physical reclamation.
   A sealed inventory never falls back to `malloc` on the task or worker path.
 - `shadowspill_runtime_reserve_memory_lease_records()` grows and seals one
-  pool's reusable `MemoryLease` metadata inventory. Physical range release and
-  the final framework free return records to this owner; exhaustion after
-  sealing fails closed instead of allocating process-heap metadata.
+  pool's reusable `MemoryLease` metadata and lease-use inventories. A
+  lease-use record begins as one distinct stream attribution and is converted
+  in place into its retirement requirement; neither task release nor the
+  worker copies that list. Physical range release returns both record types to
+  the pool owner. Exhaustion after sealing fails closed instead of allocating
+  process-heap metadata.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.
@@ -162,8 +165,8 @@ Runtime tracing uses:
 - `shadowspill_trace_read()`
 
 `shadowspill_runtime_statistics()` returns aggregate pool and action counters,
-including capacity, current/peak use, and rejected growth for both neutral
-event leases and retirement records.
+including capacity, current/peak use, and rejected growth for neutral event
+leases, retirement records, memory-lease records, and lease-use records.
 `shadowspill_runtime_failure()` returns the first latched failure.
 `shadowspill_runtime_recover_no_progress()` performs the explicit recovery
 operation defined by the header; it does not hide an infeasible request.
