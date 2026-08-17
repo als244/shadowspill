@@ -1,7 +1,7 @@
 # Training loop
 
-This complete example creates a runtime, relocates model state, plans two
-accumulation rounds, trains, and writes a checkpoint.
+This complete example creates a runtime, relocates model state, plans one
+accumulation round, trains, and writes a checkpoint.
 
 ```python
 from functools import partial
@@ -44,7 +44,7 @@ train_step = plan_step(
     model,
     objective=objective,
     opt=partial(torch.optim.AdamW, lr=3e-4, foreach=False),
-    example_inputs=[batch(4), batch(7)],
+    example_inputs=[batch(4)],
     runtime=runtime,
     execution="execution",
     spill="spill",
@@ -52,25 +52,23 @@ train_step = plan_step(
 )
 
 for _ in range(10):
-    result = train_step([batch(4), batch(7)])
-    losses = result.objectives
-    print("optimizer step", result.step_number, "losses", losses)
+    result = train_step([batch(4)])
+    loss = result.objectives[0]
+    print("optimizer step", result.step_number, "loss", loss)
 
 torch.save(train_step.state_dict(), "checkpoint.pt")
 train_step.close()
 ```
 
-The outer sequence passed to `plan_step()` and `train_step()` is the
-accumulation-round dimension. One call runs both objective/backward rounds and
-then performs exactly one optimizer update. Shapes, strides, dtypes, static
+The one-element outer sequence passed to `plan_step()` and `train_step()` is
+the accumulation-round dimension. Each call runs one objective and backward
+pass followed by exactly one optimizer update. Shapes, strides, dtypes, static
 values, and outer structure must match the examples used during planning.
 
-The objective's scalar loss for each accumulation round is returned in
-`result.objectives`. `losses` above holds the most recent result and is
-replaced on the next loop iteration. ShadowSpill validates and records this
-explicit objective return during capture; it does not guess which model output
-is a loss. Optional nondifferentiated objective metrics are documented in the
-[frontend API](../python/api/frontend.md#inputs-objectives-and-partitioning).
+The scalar loss is `result.objectives[0]`. ShadowSpill validates and records
+this explicit objective return during capture; it does not guess which model
+output is a loss. Optional accumulation and nondifferentiated objective metrics
+are documented in the [frontend API](../python/api/frontend.md#inputs-objectives-and-partitioning).
 
 An ordinary `train_step()` returns `StepResult` without collecting or resolving
 a runtime trace. `DiagnosticsHandle.result()`, checkpoint operations, and

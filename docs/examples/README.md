@@ -7,8 +7,8 @@ while API pages define individual contracts.
 
 ## Suggested order
 
-1. [Training loop](training-lifecycle.md) — accumulated training with a
-   persistent planning cache and checkpoint.
+1. [Training loop](training-lifecycle.md) — one-round training with a persistent
+   planning cache and checkpoint.
 2. [Forward-only execution](forward-only.md) — plan and execute a fixed-shape
    inference graph.
 3. [Reusable planning and budget sweeps](reusable-planning.md) — separate
