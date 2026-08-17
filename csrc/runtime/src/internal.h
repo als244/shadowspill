@@ -106,9 +106,9 @@ enum {
  */
 typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
-    pthread_cond_t capacity_changed;
     _Atomic uint64_t foreground_waiters;
     _Atomic uint64_t reservation_waiters;
+    _Atomic uint64_t capacity_epoch;
     ShadowSpillRangeAllocator ranges;
     /* Physical range owners currently registered with the range allocator. */
     struct ShadowSpillMemoryLease *range_leases;
@@ -984,7 +984,7 @@ void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 );
-ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
+ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream

@@ -126,15 +126,7 @@ int shadowspill_memory_pool_initialize(
         }
         return -1;
     }
-    if (pthread_cond_init(&pool->capacity_changed, NULL) != 0) {
-        pthread_mutex_destroy(&pool->lock);
-        if (base != NULL) {
-            (void)backend->close(backend->context, base);
-        }
-        return -1;
-    }
     if (shadowspill_range_initialize(&pool->ranges, capacity) != 0) {
-        pthread_cond_destroy(&pool->capacity_changed);
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
             (void)backend->close(backend->context, base);
@@ -161,7 +153,6 @@ int shadowspill_memory_pool_initialize(
         free(pool->leases_by_pointer);
         free(pool->leases_by_id);
         shadowspill_range_destroy(&pool->ranges);
-        pthread_cond_destroy(&pool->capacity_changed);
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
             (void)backend->close(backend->context, base);
@@ -177,6 +168,7 @@ int shadowspill_memory_pool_initialize(
     pool->next_release_sequence = 1U;
     atomic_init(&pool->foreground_waiters, 0U);
     atomic_init(&pool->reservation_waiters, 0U);
+    atomic_init(&pool->capacity_epoch, 0U);
     atomic_init(&pool->pending_retirements, 0U);
     atomic_init(&pool->pending_capacity_actions, 0U);
     atomic_init(&pool->free_bytes_snapshot, capacity);
@@ -196,7 +188,6 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
     if (pool->base != NULL) {
         (void)pool->backend.close(pool->backend.context, pool->base);
     }
-    pthread_cond_destroy(&pool->capacity_changed);
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};
 }
@@ -316,7 +307,9 @@ int shadowspill_memory_pool_release_locked(
     }
     const int status = shadowspill_range_free(&pool->ranges, offset, bytes);
     if (status == 0) {
-        pthread_cond_broadcast(&pool->capacity_changed);
+        (void)atomic_fetch_add_explicit(
+            &pool->capacity_epoch, 1U, memory_order_release
+        );
     }
     return status;
 }
@@ -744,7 +737,9 @@ static int handoff_causal_range_locked(
     if (successor_state == SHADOWSPILL_LEASE_IN_USE) {
         pool->reserved_bytes -= successor->charged_bytes;
     }
-    pthread_cond_broadcast(&pool->capacity_changed);
+    (void)atomic_fetch_add_explicit(
+        &pool->capacity_epoch, 1U, memory_order_release
+    );
     return 0;
 }
 

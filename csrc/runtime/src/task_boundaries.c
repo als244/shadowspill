@@ -176,12 +176,35 @@ static ShadowSpillRuntimeStatus reserve_action_destination(
         }
         /*
          * Several completed predecessors may need to coalesce before this
-         * destination has one compatible range. Their events are already
-         * published, so waiting here has a concrete progress source.
+         * destination has one compatible range. Keep reservation priority,
+         * release the pool lock so the worker can reclaim those ranges, and
+         * actively poll the monotonic capacity epoch. Neither thread sleeps.
          */
-        shadowspill_notify_worker(runtime);
-        pthread_cond_wait(&pool->capacity_changed, &pool->lock);
-        status = shadowspill_failure_status(runtime);
+        const uint64_t capacity_epoch = atomic_load_explicit(
+            &pool->capacity_epoch, memory_order_acquire
+        );
+        shadowspill_memory_pool_unlock_reservation(pool);
+        status = SHADOWSPILL_RUNTIME_OK;
+        while (atomic_load_explicit(
+                   &pool->capacity_epoch, memory_order_acquire
+               ) == capacity_epoch) {
+            status = shadowspill_failure_status(runtime);
+            if (status != SHADOWSPILL_RUNTIME_OK ||
+                atomic_load_explicit(
+                    &runtime->worker_stop, memory_order_acquire
+                ) != 0U) {
+                break;
+            }
+            shadowspill_cpu_relax();
+        }
+        while (!shadowspill_memory_pool_try_lock_reservation(pool)) {
+            shadowspill_cpu_relax();
+        }
+        if (status == SHADOWSPILL_RUNTIME_OK && atomic_load_explicit(
+                &runtime->worker_stop, memory_order_acquire
+            ) != 0U) {
+            status = SHADOWSPILL_RUNTIME_CLOSED;
+        }
         if (status != SHADOWSPILL_RUNTIME_OK) {
             break;
         }
@@ -729,12 +752,10 @@ ShadowSpillRuntimeStatus shadowspill_after_task_record(
          * an allocator callback inside this task. Such frees occur after the
          * failure is latched and otherwise have no completion source.
          */
-        pthread_mutex_lock(&record->plan_owner->execution_pool->lock);
         const ShadowSpillRuntimeStatus retirement_status =
-            shadowspill_publish_task_retirement_event_locked(
+            shadowspill_publish_task_retirement_event(
                 runtime, record->task_id, compute_stream
             );
-        pthread_mutex_unlock(&record->plan_owner->execution_pool->lock);
         if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
             shadowspill_latch_failure_locked(
                 runtime,
