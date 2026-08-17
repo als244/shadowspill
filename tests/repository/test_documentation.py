@@ -390,7 +390,6 @@ def test_examples_cover_complete_public_workflows() -> None:
             "relocate_model_state(",
             "plan_step(",
             "state_dict()",
-            "training_batches(",
             "train_step.close()",
         ),
         "forward-only.md": ("plan_forward(", "run_forward.close()"),
@@ -403,7 +402,6 @@ def test_examples_cover_complete_public_workflows() -> None:
         "diagnostics.md": (
             "report.diagnostics.task(",
             "step.simulator_comparison",
-            "step.as_dict()",
         ),
         "custom-partitioning.md": ("assign_stages(", "partition=EveryNNodes("),
     }

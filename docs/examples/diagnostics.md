@@ -49,20 +49,6 @@ Interpret the first-level result before inspecting raw events:
 | Physical memory differs | Check charged allocator events, peak bytes, pending retirements, largest free range, and fragmentation. |
 | Evidence appears incomplete | Require `summary.trace_complete` and both overflow flags to be clean. |
 
-Planning and runtime dictionaries can be saved for offline inspection:
-
-```python
-import json
-
-with open("plan-diagnostics.json", "w", encoding="utf-8") as stream:
-    json.dump(report.diagnostics.as_dict(), stream, indent=2, sort_keys=True)
-
-with open("step-diagnostics.json", "w", encoding="utf-8") as stream:
-    json.dump(step.as_dict(), stream, indent=2, sort_keys=True)
-```
-
-These are diagnostic observations. Use `StepProgram.to_json()` and
-`AnnotatedProgramPlan.to_json()` for artifacts that can be loaded back into a
-planning workflow. The [PlanReport](../python/plan-report.md) and [StepResult
-diagnostics](../python/step-diagnostics.md) guides define every layer in more
-detail.
+The [PlanReport](../python/plan-report.md) and [StepResult
+diagnostics](../python/step-diagnostics.md) guides define every field and the
+corresponding serialization APIs.
