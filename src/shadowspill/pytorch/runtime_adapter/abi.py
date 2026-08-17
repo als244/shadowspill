@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 37
-RUNTIME_ABI_VERSION: Final = 29
+ADAPTER_ABI_VERSION: Final = 39
+RUNTIME_ABI_VERSION: Final = 31
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -754,8 +754,26 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
+        "shadowspill_pytorch_object_handle_acquire",
+        [ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_object_handle_release",
+        [ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_object_release_generation",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
         "shadowspill_pytorch_plan_bind_object",
-        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8],
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_uint8],
         ctypes.c_uint32,
     )
     _signature(

@@ -728,7 +728,11 @@ static int valid_transition_paths(void) {
         result = -1;
         goto done;
     }
-    if (shadowspill_unregister_object(
+    /* The compatibility plan owns every object referenced by its admitted
+     * records. Drop that owner before asserting final-registration release. */
+    if (shadowspill_clear_execution_plan(fixture.runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_unregister_object(
             fixture.runtime, retained.object_id
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(

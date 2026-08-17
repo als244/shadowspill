@@ -45,6 +45,12 @@ compiled code can use an invalid address.
 - `shadowspill_pytorch_transfer_output_to_caller()` and
   `shadowspill_pytorch_release_caller_allocation()` manage public outputs.
 - `shadowspill_pytorch_object_snapshot()` returns diagnostic state.
+- `shadowspill_pytorch_object_handle_acquire()` and
+  `shadowspill_pytorch_object_handle_release()` retain and release opaque
+  runtime-global object ownership across callable boundaries.
+- `shadowspill_pytorch_object_release_generation()` releases one exact
+  completed residency generation without destroying its logical object or
+  plan binding.
 
 ## Execution boundaries
 

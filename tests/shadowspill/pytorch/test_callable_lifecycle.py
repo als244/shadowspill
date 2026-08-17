@@ -23,6 +23,9 @@ class _FailingExecutor:
         del inputs
         raise self.error
 
+    def validate_invocation(self) -> None:
+        pass
+
     def restore_optimizer_cpu(self) -> None:
         self.optimizer_restored = True
 

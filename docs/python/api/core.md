@@ -85,3 +85,8 @@ The production-memory-pool replay interface is:
 - `AdmissionReplayLeaseState`, `AdmissionReplayDecision`
 - `AdmissionReuseDependency`, `AdmissionReplayResult`
 - `run_admission_replay()`
+
+`ObjectRef` is the framework-neutral retained handle for one runtime-global
+logical object. Object identity is independent of its current pool lease or
+residency generation. Framework integrations layer their own view metadata on
+this handle and call `ObjectRef.close()` to release public ownership.

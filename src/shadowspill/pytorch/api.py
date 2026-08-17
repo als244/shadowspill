@@ -21,6 +21,7 @@ from shadowspill.pytorch.program import (
     TransferBandwidths,
 )
 from shadowspill.pytorch.runtime_adapter import Runtime
+from shadowspill.pytorch.sharing import SharedOutput
 from shadowspill.pytorch.state.model import require_model_state_for_plan
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
 
@@ -110,6 +111,7 @@ def plan_forward(
     profiling_metadata: object = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    shared_outputs: Sequence[SharedOutput] = (),
     save_plan: bool = True,
     force_fresh: bool = False,
     overwrite_plan: bool = False,
@@ -145,6 +147,10 @@ def plan_forward(
     probes per structural contract. ``allocation_probe_repetitions`` repeats each
     seed identically to expose first-use allocation paths. The defaults are
     one seed and two repetitions.
+
+    ``shared_outputs`` names public tensor leaves that remain runtime-owned
+    and identifies the pool or pools in which each leaf must be retained.
+    Undeclared leaves keep ordinary caller-owned output behavior.
     """
 
     from .planning.forward import build_forward
@@ -183,6 +189,7 @@ def plan_forward(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                shared_outputs=shared_outputs,
             )
     except BaseException as error:
         _surface_failed_plan(

@@ -49,6 +49,7 @@ class Stage:
     input_provenance: tuple[TaskInputProvenance, ...]
     mutations: tuple[ExplicitMutation, ...]
     user_output_indices: tuple[int, ...]
+    public_output_bindings: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

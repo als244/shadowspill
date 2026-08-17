@@ -69,6 +69,10 @@ class PlannedForward:
             self._executor.set_profiler_annotations(True)
             self._profiler_annotations_active = True
         self._signature.validate(inputs)
+        # Ownership conflicts are invocation preconditions, not execution
+        # failures.  Reject them before entering failure cleanup so releasing
+        # the outstanding reference makes this callable immediately reusable.
+        self._executor.validate_invocation()
         try:
             return self._executor(inputs)
         except BaseException as error:

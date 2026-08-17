@@ -108,6 +108,7 @@ plan_forward(
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
+    shared_outputs=(),
     save_plan=True,
     force_fresh=False,
     overwrite_plan=False,
@@ -117,6 +118,22 @@ plan_forward(
 
 `plan_forward()` accepts one fixed example-input sequence and returns
 `PlannedForward`.
+
+The optional `shared_outputs` sequence contains `SharedOutput` declarations.
+Use `shared_output(*path, retain_in=pool_name)` to identify a tensor leaf in
+the public output pytree and retain that value as a runtime object in the
+named pool. The corresponding result leaf is a `TensorRef`, not a copied
+caller-owned tensor. `TensorRef` records the logical runtime-object identity,
+residency generation, dtype, shape, stride, and storage offset without
+exposing a backend address.
+
+`TensorRef.close()` releases that public ownership. Closing the planned
+callable releases its plan ownership but does not invalidate an outstanding
+`TensorRef`; the runtime object is reclaimed after its final owner closes.
+One planned shared-output slot holds one generation at a time, so the next
+invocation fails clearly until the preceding reference is closed. Once
+closed, the next invocation overwrites the same logical object with a new
+residency generation.
 
 <!-- source-signature: src/shadowspill/pytorch/api.py:plan_step -->
 ```text
@@ -164,6 +181,7 @@ Shared planning arguments have these meanings:
 | `profiling_metadata` | JSON-compatible identity for data-sensitive task measurement. |
 | `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
+| `shared_outputs` | Forward-output leaves retained as runtime-owned `TensorRef` values. |
 | `save_plan`, `force_fresh`, `overwrite_plan` | Artifact cache policy. |
 | `implementation_revision` | Explicit implementation identity for compiler/profile invalidation. |
 

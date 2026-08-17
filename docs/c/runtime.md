@@ -54,6 +54,15 @@ structured no-progress status.
 - `shadowspill_transfer_object_to_caller()` hands a terminal allocation to
   caller ownership while preserving stream readiness.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view.
+- `shadowspill_object_handle_acquire()` creates an opaque retained owner for a
+  runtime-global logical object.
+- `shadowspill_object_handle_release()` releases that owner. The object is
+  reclaimed only after registration, plans, and public handles have all
+  released ownership.
+- `shadowspill_object_release_generation()` releases one exact completed
+  residency generation while preserving the logical object and its plan
+  bindings. A later execution may publish a replacement generation into the
+  same object.
 
 Object pointers retained by execution records and queued actions stay valid
 after table removal until their own references are released.
@@ -67,7 +76,8 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_create_for_pools()` resolves the unique directed routes for
   a selected pool pair.
 - `shadowspill_plan_bind_object()` maps a Program-local object identity to a
-  retained runtime object with causal or explicitly unordered consistency.
+  retained `ShadowSpillObjectHandle` with causal or explicitly unordered
+  consistency. The plan owns an independent reference after the call returns.
 - `shadowspill_plan_admit_execution()` and
   `shadowspill_plan_resolve_execution()` publish and resolve immutable task
   handles.

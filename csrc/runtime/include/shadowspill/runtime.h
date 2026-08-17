@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 29U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 31U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -26,6 +26,7 @@ extern "C" {
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
+typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
 
 /*
  * Runtime instances are thread-safe. Returned pointers are accelerator
@@ -131,14 +132,43 @@ typedef enum ShadowSpillObjectConsistency {
 } ShadowSpillObjectConsistency;
 
 /*
- * Binds one Program-local object identity to one runtime-owned logical object.
- * Equal plan-local IDs in different plans have no relationship unless both
- * bindings name the same runtime object.
+ * Acquire and release one retained runtime-global object handle. The handle
+ * contains no pool role or framework metadata and remains valid across object
+ * generation and residency changes.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_object_handle_acquire(
+    ShadowSpillRuntime *runtime,
+    uint64_t runtime_object_id,
+    ShadowSpillObjectHandle **output
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_object_handle_release(
+    ShadowSpillObjectHandle *handle
+);
+
+/*
+ * Release one completed residency generation without destroying its logical
+ * object.  This is used by bounded producer slots after every external owner
+ * of the prior value has released its handle.  Plan bindings remain valid and
+ * a later task may publish a new generation into the same logical object.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_object_release_generation(
+    const ShadowSpillObjectHandle *handle,
+    uint64_t expected_generation
+);
+
+/*
+ * Bind one Program-local identity to a retained runtime object handle. Equal
+ * plan-local IDs in different plans have no relationship unless both bindings
+ * use handles for the same runtime object.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
-    uint64_t runtime_object_id,
+    const ShadowSpillObjectHandle *object,
     uint8_t consistency
 );
 

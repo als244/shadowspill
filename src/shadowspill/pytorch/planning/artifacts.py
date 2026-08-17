@@ -34,6 +34,7 @@ from ..lowering.training import (
     TrainingStorageLayout,
 )
 from ..partition import PartitionedExport
+from ..sharing import ResolvedSharedOutput
 from .admission import FixedLayoutSelection, SelectedAdmission
 
 
@@ -51,6 +52,7 @@ class ForwardCaptureArtifacts:
     partitioned: PartitionedExport
     tasks: tuple[GraphArtifact, ...]
     output_tree_spec: TreeSpec
+    shared_outputs: tuple[ResolvedSharedOutput, ...]
 
 
 @dataclass(frozen=True, slots=True)

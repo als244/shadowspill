@@ -11,7 +11,12 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import TreeSpec, tree_flatten
 
-from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
+from shadowspill.ir import (
+    EntrypointSpec,
+    ExecutionPlan,
+    MemoryLocation,
+    PhysicalAdmission,
+)
 from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitResult,
@@ -61,6 +66,7 @@ from ..partition import (
     partition_export,
 )
 from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
+from ..sharing import ResolvedSharedOutput, SharedOutput, resolve_shared_outputs
 from .admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
@@ -107,6 +113,7 @@ def capture_forward_graph(
     memory: PlanMemory,
     partition: PartitionSpec,
     profiling_metadata: object,
+    shared_outputs: Sequence[SharedOutput] = (),
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ForwardCaptureArtifacts:
@@ -129,6 +136,7 @@ def capture_forward_graph(
             partitioned,
             tasks,
             output_tree_spec,
+            resolved_shared_outputs,
         ) = _capture_partitioned_forward(
             model,
             cpu_inputs,
@@ -136,6 +144,8 @@ def capture_forward_graph(
             partition=partition,
             artifact_cache=artifact_cache,
             timer=timer,
+            shared_outputs=shared_outputs,
+            pool_names=tuple(memory.runtime.pools),
         )
     return ForwardCaptureArtifacts(
         signature,
@@ -148,6 +158,7 @@ def capture_forward_graph(
         partitioned,
         tasks,
         output_tree_spec,
+        resolved_shared_outputs,
     )
 
 
@@ -179,12 +190,15 @@ def _capture_partitioned_forward(
     partition: PartitionSpec,
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
+    shared_outputs: Sequence[SharedOutput],
+    pool_names: tuple[str, ...],
 ) -> tuple[
     nn.Module,
     ExportCapture,
     PartitionedExport,
     tuple[GraphArtifact, ...],
     TreeSpec,
+    tuple[ResolvedSharedOutput, ...],
 ]:
     try:
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -195,7 +209,13 @@ def _capture_partitioned_forward(
             device_index=device_ordinal,
         )
         with fake_mode, torch.no_grad():
-            output_leaves, output_tree_spec = tree_flatten(fake_model(*fake_inputs))
+            public_output = fake_model(*fake_inputs)
+            output_leaves, output_tree_spec = tree_flatten(public_output)
+            resolved_shared_outputs = resolve_shared_outputs(
+                public_output,
+                shared_outputs,
+                pool_names=pool_names,
+            )
             del output_leaves
             capture = capture_forward(fake_model, fake_inputs)
         with timer.measure("export_archival"):
@@ -216,7 +236,14 @@ def _capture_partitioned_forward(
         raise
     except BaseException as error:
         raise CaptureError(f"forward graph capture failed: {error}") from error
-    return fake_model, capture, partitioned, tasks, output_tree_spec
+    return (
+        fake_model,
+        capture,
+        partitioned,
+        tasks,
+        output_tree_spec,
+        resolved_shared_outputs,
+    )
 
 
 def profile_forward_tasks(
@@ -328,6 +355,7 @@ def build_forward_program(
             },
             device_ordinal=captured.device_ordinal,
             profile_compatibility_digests=profiled.profiles.key_digests,
+            public_output_locations=_shared_output_locations(captured, memory),
         )
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
@@ -485,6 +513,7 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
+                shared_outputs=captured.shared_outputs,
                 fixed_layout=runtime_fixed_layout,
                 memory_envelopes=selected_admission.envelopes_by_task(),
             )
@@ -635,6 +664,7 @@ def build_forward(
     profiling_metadata: object,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    shared_outputs: Sequence[SharedOutput] = (),
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""
 
@@ -647,6 +677,7 @@ def build_forward(
         memory=memory,
         partition=partition,
         profiling_metadata=profiling_metadata,
+        shared_outputs=shared_outputs,
         artifact_cache=artifacts,
         timer=timer,
     )
@@ -708,6 +739,33 @@ def _verify_manifest_identity(
             raise CompilationError(
                 f"compiled entrypoint changed its storage contract: artifact={digest}"
             )
+
+
+def _shared_output_locations(
+    captured: ForwardCaptureArtifacts,
+    memory: PlanMemory,
+) -> dict[int, MemoryLocation]:
+    """Translate selected runtime pool names into logical plan roles."""
+
+    result: dict[int, MemoryLocation] = {}
+    for output in captured.shared_outputs:
+        if len(output.retain_in) != 1:
+            raise PlanningError(
+                "retaining one output in several pools requires an explicit "
+                "mirror action, which is not yet supported"
+            )
+        pool = output.retain_in[0]
+        if pool == memory.execution.name:
+            location = MemoryLocation.DEVICE
+        elif pool == memory.spill.name:
+            location = MemoryLocation.HOST
+        else:
+            raise PlanningError(
+                f"shared output pool {pool!r} is not the selected execution "
+                f"or spill pool"
+            )
+        result[output.public_leaf_index] = location
+    return result
 
 
 __all__ = [
