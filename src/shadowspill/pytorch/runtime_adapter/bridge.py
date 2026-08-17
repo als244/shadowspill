@@ -44,6 +44,9 @@ from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.runtime import ObjectConsistency, ObjectRef
 
 if TYPE_CHECKING:
+    from shadowspill.pytorch.materialization.replacement import (
+        ReplacementStorageViews,
+    )
     from shadowspill.pytorch.profiling.allocation_contract import TaskAllocationContract
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
@@ -319,7 +322,7 @@ class RuntimeBridge:
             f"{'enable' if enabled else 'disable'} profiler annotations",
         )
 
-    def admit_execution(
+    def admit_task(
         self,
         task: TaskSpec,
         input_alias_ids: tuple[str, ...],
@@ -357,7 +360,7 @@ class RuntimeBridge:
             ),
             f"admit execution {task.task_id}",
         )
-        handle = self._resolve_execution_handle(task.task_id)
+        handle = self._resolve_task_handle(task.task_id)
         self._admitted_tasks[task.task_id] = (handle, runtime_inputs)
         return handle
 
@@ -478,7 +481,7 @@ class RuntimeBridge:
             ),
             f"admit initial action execution {task_number}",
         )
-        handle = self._resolve_execution_handle_number(task_number)
+        handle = self._resolve_task_handle_number(task_number)
         self._admitted_action_tasks[task_number] = (
             handle,
             expected,
@@ -624,10 +627,10 @@ class RuntimeBridge:
             labels,
         )
 
-    def _resolve_execution_handle(self, task_id: str) -> int:
-        return self._resolve_execution_handle_number(_plan_local_id(task_id, "task_"))
+    def _resolve_task_handle(self, task_id: str) -> int:
+        return self._resolve_task_handle_number(_plan_local_id(task_id, "task_"))
 
-    def _resolve_execution_handle_number(self, task_number: int) -> int:
+    def _resolve_task_handle_number(self, task_number: int) -> int:
         handle = ctypes.c_size_t()
         self._require(
             self.library.shadowspill_pytorch_plan_resolve_execution(
@@ -640,41 +643,6 @@ class RuntimeBridge:
                 f"execution {task_number} resolved to a null handle"
             )
         return int(handle.value)
-
-    def before_execution(
-        self,
-        execution_handle: int,
-        task_id: str,
-        stream: torch.cuda.Stream,
-        input_count: int,
-    ) -> tuple[ObjectBinding, ...]:
-        bindings = (ObjectBinding * input_count)()
-        self._require(
-            self.library.shadowspill_pytorch_before_execution_handle(
-                execution_handle,
-                _plan_local_id(task_id, "task_"),
-                stream.cuda_stream,
-                bindings if input_count else None,
-                input_count,
-            ),
-            f"before admitted task {task_id}",
-        )
-        return tuple(bindings)
-
-    def after_execution(
-        self,
-        execution_handle: int,
-        task_id: str,
-        stream: torch.cuda.Stream,
-    ) -> None:
-        self._require(
-            self.library.shadowspill_pytorch_after_execution_handle(
-                execution_handle,
-                _plan_local_id(task_id, "task_"),
-                stream.cuda_stream,
-            ),
-            f"after admitted task {task_id}",
-        )
 
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""
@@ -965,153 +933,6 @@ class RuntimeBridge:
         )
         return binding
 
-    def promote_output(self, alias_id: str, tensor: torch.Tensor) -> ObjectBinding:
-        if not self.requires_storage(alias_id):
-            self._registered.add(alias_id)
-            return self._zero_binding(alias_id)
-        binding = ObjectBinding()
-        storage = tensor.untyped_storage()
-        runtime_object_id = self._allocate_runtime_object_id(alias_id)
-        function = (
-            self.library.shadowspill_pytorch_bind_registered_allocation
-            if alias_id in self._registered
-            else self.library.shadowspill_pytorch_promote_allocation
-        )
-        self._require(
-            function(
-                runtime_object_id,
-                storage.data_ptr(),
-                self._size(alias_id),
-                ctypes.byref(binding),
-            ),
-            "bind task output",
-        )
-        self._registered.add(alias_id)
-        self._bind_plan_object(alias_id)
-        return binding
-
-    def replace_output(self, alias_id: str, tensor: torch.Tensor) -> ObjectBinding:
-        """Install a fresh functional output as an existing object's lease."""
-
-        if alias_id not in self._registered:
-            raise RuntimeExecutionError(
-                f"replacement object {alias_id!r} is not registered"
-            )
-        if not self.requires_storage(alias_id):
-            self._zero_generations[alias_id] = (
-                self._zero_generations.get(alias_id, 0) + 1
-            )
-            return self._zero_binding(alias_id)
-        binding = ObjectBinding()
-        storage = tensor.untyped_storage()
-        self._require(
-            self.library.shadowspill_pytorch_replace_registered_allocation(
-                self._runtime_object_id(alias_id),
-                storage.data_ptr(),
-                self._size(alias_id),
-                ctypes.byref(binding),
-            ),
-            "replace task output",
-        )
-        return binding
-
-    def adopt_many(
-        self,
-        items: Sequence[tuple[torch.Tensor, str]],
-        *,
-        replacement_aliases: frozenset[str] = frozenset(),
-    ) -> tuple[int, ...]:
-        """Adopt task outputs and replace their owning storage in one call."""
-
-        if not items:
-            return ()
-        materialized = tuple(
-            (index, tensor, alias_id)
-            for index, (tensor, alias_id) in enumerate(items)
-            if self.requires_storage(alias_id)
-        )
-        for _index, _tensor, alias_id in materialized:
-            self._allocate_runtime_object_id(alias_id)
-        generations = (
-            torch.ops.shadowspill._adopt_storages(
-                [tensor for _, tensor, _ in materialized],
-                [self._runtime_object_id(alias_id) for _, _, alias_id in materialized],
-                [self._size(alias_id) for _, _, alias_id in materialized],
-                [
-                    2
-                    if alias_id in replacement_aliases
-                    else int(alias_id in self._registered)
-                    for _, _, alias_id in materialized
-                ],
-            )
-            if materialized
-            else ()
-        )
-        if len(generations) != len(materialized):
-            raise RuntimeExecutionError(
-                "storage adoption returned the wrong generation count"
-            )
-        self._registered.update(alias_id for _, alias_id in items)
-        self._bind_plan_objects(alias_id for _, alias_id in items)
-        result = [0] * len(items)
-        for (index, _tensor, _alias_id), generation in zip(
-            materialized, generations, strict=True
-        ):
-            result[index] = int(generation)
-        for index, (_tensor, alias_id) in enumerate(items):
-            if self.requires_storage(alias_id):
-                continue
-            if alias_id in replacement_aliases:
-                self._zero_generations[alias_id] = (
-                    self._zero_generations.get(alias_id, 0) + 1
-                )
-            result[index] = self._zero_generations.setdefault(alias_id, 0)
-        return tuple(result)
-
-    def before_task(
-        self,
-        task_id: str,
-        stream: torch.cuda.Stream,
-        input_alias_ids: tuple[str, ...],
-    ) -> tuple[ObjectBinding, ...]:
-        runtime_inputs = tuple(
-            alias_id for alias_id in input_alias_ids if self.requires_storage(alias_id)
-        )
-        bindings = (ObjectBinding * len(runtime_inputs))()
-        admitted_inputs = self._admitted_tasks.get(task_id)
-        if admitted_inputs is not None:
-            execution_handle, expected_inputs = admitted_inputs
-            if expected_inputs != runtime_inputs:
-                raise RuntimeExecutionError(
-                    f"admitted task {task_id} input storage contract changed"
-                )
-            self._require(
-                self.library.shadowspill_pytorch_before_execution_handle(
-                    execution_handle,
-                    _plan_local_id(task_id, "task_"),
-                    stream.cuda_stream,
-                    bindings if runtime_inputs else None,
-                    len(runtime_inputs),
-                ),
-                f"before admitted task {task_id}",
-            )
-            return self._expand_bindings(input_alias_ids, runtime_inputs, bindings)
-        identifiers = (ctypes.c_uint64 * len(runtime_inputs))(
-            *(self._runtime_object_id(value) for value in runtime_inputs)
-        )
-        self._require(
-            self.library.shadowspill_pytorch_before_task(
-                _plan_local_id(task_id, "task_"),
-                stream.cuda_stream,
-                identifiers if runtime_inputs else None,
-                len(runtime_inputs),
-                bindings if runtime_inputs else None,
-                len(runtime_inputs),
-            ),
-            f"before task {task_id}",
-        )
-        return self._expand_bindings(input_alias_ids, runtime_inputs, bindings)
-
     def acquire_for_caller(
         self,
         alias_ids: tuple[str, ...],
@@ -1162,62 +983,6 @@ class RuntimeBridge:
             if task_open:
                 self.abort_task()
 
-    def after_task(
-        self,
-        task_id: str,
-        stream: torch.cuda.Stream,
-        mutations: Iterable[MutationSpec],
-        actions: Iterable[MemoryAction],
-    ) -> None:
-        if task_id in self._admitted_tasks:
-            execution_handle, _inputs = self._admitted_tasks[task_id]
-            self._require(
-                self.library.shadowspill_pytorch_after_execution_handle(
-                    execution_handle,
-                    _plan_local_id(task_id, "task_"),
-                    stream.cuda_stream,
-                ),
-                f"after admitted task {task_id}",
-            )
-            return
-        mutation_values = tuple(
-            item
-            for item in mutations
-            if self.requires_storage(self.alias_for_object(item.object_id))
-        )
-        action_values = tuple(
-            item for item in actions if self.requires_storage(item.alias_group_id)
-        )
-        updates = (ObjectUpdate * len(mutation_values))(
-            *(
-                ObjectUpdate(
-                    self._runtime_object_id(self.alias_for_object(item.object_id)),
-                    item.version_delta,
-                )
-                for item in mutation_values
-            )
-        )
-        runtime_actions = (RuntimeAction * len(action_values))(
-            *(
-                _runtime_action(
-                    self._runtime_object_id(item.alias_group_id),
-                    _ACTION_KIND[item.kind],
-                )
-                for item in action_values
-            )
-        )
-        self._require(
-            self.library.shadowspill_pytorch_after_task(
-                _plan_local_id(task_id, "task_"),
-                stream.cuda_stream,
-                updates if mutation_values else None,
-                len(mutation_values),
-                runtime_actions if action_values else None,
-                len(action_values),
-            ),
-            f"after task {task_id}",
-        )
-
     def submit_initial_actions(
         self,
         actions: tuple[MemoryAction, ...],
@@ -1231,57 +996,39 @@ class RuntimeBridge:
             return
         stream = torch.cuda.current_stream()
         admitted = self._admitted_action_tasks.get(task_number)
-        if admitted is not None:
-            handle, expected = admitted
-            observed = tuple(
-                (action.alias_group_id, action.kind)
-                for action in runtime_actions_values
+        if admitted is None:
+            raise RuntimeExecutionError(
+                f"initial action batch {task_number} was not admitted"
             )
-            if observed != expected:
-                raise RuntimeExecutionError(
-                    "initial action execution changed after admission: "
-                    f"task={task_number}, expected={expected}, observed={observed}"
-                )
+        handle, expected = admitted
+        observed = tuple(
+            (action.alias_group_id, action.kind)
+            for action in runtime_actions_values
+        )
+        if observed != expected:
+            raise RuntimeExecutionError(
+                "initial action execution changed after admission: "
+                f"task={task_number}, expected={expected}, observed={observed}"
+            )
+        task_open = False
+        try:
+            self._require(
+                self.library.shadowspill_pytorch_before_execution_handle(
+                    handle, task_number, stream.cuda_stream, None, 0
+                ),
+                "begin admitted initial actions",
+            )
+            task_open = True
+            self._require(
+                self.library.shadowspill_pytorch_after_execution_handle(
+                    handle, task_number, stream.cuda_stream
+                ),
+                "submit admitted initial actions",
+            )
             task_open = False
-            try:
-                self._require(
-                    self.library.shadowspill_pytorch_before_execution_handle(
-                        handle, task_number, stream.cuda_stream, None, 0
-                    ),
-                    "begin admitted initial actions",
-                )
-                task_open = True
-                self._require(
-                    self.library.shadowspill_pytorch_after_execution_handle(
-                        handle, task_number, stream.cuda_stream
-                    ),
-                    "submit admitted initial actions",
-                )
-                task_open = False
-                return
-            finally:
-                if task_open:
-                    self.abort_task()
-        runtime_actions = (RuntimeAction * len(runtime_actions_values))(
-            *(
-                _runtime_action(
-                    self._runtime_object_id(item.alias_group_id),
-                    _ACTION_KIND[item.kind],
-                )
-                for item in runtime_actions_values
-            )
-        )
-        self._require(
-            self.library.shadowspill_pytorch_after_task(
-                task_number,
-                stream.cuda_stream,
-                None,
-                0,
-                runtime_actions,
-                len(runtime_actions_values),
-            ),
-            "submit initial actions",
-        )
+        finally:
+            if task_open:
+                self.abort_task()
 
     def clear_execution_plan(self) -> None:
         """Discard immutable execution records and their fixed layout."""
@@ -1344,30 +1091,9 @@ class RuntimeBridge:
             [binding.pointer for _, _, binding in materialized],
         )
 
-    def replace_many(
+    def before_task_and_acquire(
         self,
-        tensors: Sequence[torch.Tensor],
-        alias_id: str,
-        *,
-        previous_generation: int,
-        target_tensor: torch.Tensor,
-        target_generation: int,
-    ) -> None:
-        """Rebind all frontend views after a no-copy lease replacement."""
-
-        if not tensors or not self.requires_storage(alias_id):
-            return
-        torch.ops.shadowspill._replace_storages(
-            list(tensors),
-            self._runtime_object_id(alias_id),
-            previous_generation,
-            target_tensor.untyped_storage().data_ptr(),
-            target_generation,
-        )
-
-    def before_execution_and_acquire(
-        self,
-        execution_handle: int,
+        task_handle: int,
         task_id: int,
         device_ordinal: int,
         tensors: Sequence[torch.Tensor],
@@ -1386,9 +1112,9 @@ class RuntimeBridge:
             )
             if self.requires_storage(alias_id)
         )
-        generations = torch.ops.shadowspill._before_execution_storages(
+        generations = torch.ops.shadowspill._before_task_storages(
             [tensor for _, tensor, _ in materialized],
-            execution_handle,
+            task_handle,
             task_id,
             device_ordinal,
         )
@@ -1406,26 +1132,50 @@ class RuntimeBridge:
                 result[index] = self._zero_generations.setdefault(alias_id, 0)
         return tuple(result)
 
-    def after_execution_and_update(
+    def after_task_and_update(
         self,
-        execution_handle: int,
+        task_handle: int,
         task_id: int,
         device_ordinal: int,
         adopted: Sequence[tuple[torch.Tensor, str]],
         dematerialized: Sequence[torch.Tensor],
         *,
-        replacement_aliases: frozenset[str] = frozenset(),
+        replacements: Sequence[ReplacementStorageViews] = (),
     ) -> tuple[int, ...]:
-        """Publish storages and one admitted completion/action batch."""
+        """Overwrite logical objects and publish one admitted task boundary."""
 
         materialized = tuple(
             (index, tensor, alias_id)
             for index, (tensor, alias_id) in enumerate(adopted)
             if self.requires_storage(alias_id)
         )
+        replacement_by_alias = {item.alias_id: item for item in replacements}
+        if len(replacement_by_alias) != len(replacements):
+            raise RuntimeExecutionError("task replacement aliases are not unique")
+        replacement_aliases = frozenset(replacement_by_alias)
+        adopted_aliases = {alias_id for _tensor, alias_id in adopted}
+        unknown_replacements = replacement_aliases - adopted_aliases
+        if unknown_replacements:
+            raise RuntimeExecutionError(
+                "task replacement has no adopted output: "
+                f"{sorted(unknown_replacements)}"
+            )
         for _index, _tensor, alias_id in materialized:
             self._allocate_runtime_object_id(alias_id)
-        generations = torch.ops.shadowspill._after_execution_storages(
+        replacement_tensors: list[torch.Tensor] = []
+        replacement_previous_generations: list[int] = []
+        replacement_target_indices: list[int] = []
+        for target_index, (_index, _tensor, alias_id) in enumerate(materialized):
+            replacement = replacement_by_alias.get(alias_id)
+            if replacement is None:
+                continue
+            for tensor in replacement.tensors:
+                replacement_tensors.append(tensor)
+                replacement_previous_generations.append(
+                    replacement.previous_generation
+                )
+                replacement_target_indices.append(target_index)
+        generations = torch.ops.shadowspill._after_task_storages(
             [tensor for _, tensor, _ in materialized],
             [self._runtime_object_id(alias_id) for _, _, alias_id in materialized],
             [self._size(alias_id) for _, _, alias_id in materialized],
@@ -1435,8 +1185,11 @@ class RuntimeBridge:
                 else int(alias_id in self._registered)
                 for _, _, alias_id in materialized
             ],
+            replacement_tensors,
+            replacement_previous_generations,
+            replacement_target_indices,
             list(dematerialized),
-            execution_handle,
+            task_handle,
             task_id,
             device_ordinal,
         )

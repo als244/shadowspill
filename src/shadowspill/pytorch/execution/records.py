@@ -42,7 +42,7 @@ class ExecutionTaskRecord:
     dematerialize_aliases: tuple[str, ...]
     released_ephemeral: tuple[tuple[str, tuple[str, ...]], ...]
     memory_envelope: TaskMemoryEnvelope
-    native_handle: int = 0
+    task_handle: int = 0
 
     @property
     def identity(self) -> ExecutionTaskIdentity:

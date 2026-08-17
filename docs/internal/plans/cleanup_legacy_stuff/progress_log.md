@@ -455,3 +455,31 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   longer affects these operations.
 - Validation passed: all 28 native/CUDA/PyTorch canaries and the complete
   Python suite (680 passed, four expected skips).
+
+## 2026-08-17 — Handle-only frontend task boundaries
+
+- Removed the Python raw-task fallback from both forward and training
+  execution. Every repeated compiled task now owns one admitted native task
+  handle and enters the runtime through the same fused storage boundary.
+- Renamed frontend execution-handle state to task-handle state and renamed the
+  private PyTorch storage operators to `_before_task_storages` and
+  `_after_task_storages`. The old private operator names were deleted rather
+  than retained as aliases.
+- Folded output adoption, functional replacement, frontend-view rebinding,
+  dematerialization, completion publication, and action submission into one
+  native after-task call. The bridge's standalone output promotion,
+  replacement, and raw task APIs are no longer used or exposed.
+- The first fused mutation implementation exposed a real ordering race: it
+  published the new object generation and its actions before Python rebound
+  persistent parameter views. A fast worker could retire the new generation,
+  closing the previous-generation validation window and producing
+  `existing storage does not match the retired object generation`.
+- Corrected the boundary transaction to perform `adopt replacement → validate
+  and rebind every persistent frontend view → dematerialize → publish the task
+  action batch`. The logical object and Python tensor identities remain stable;
+  only the object's generation and backing lease change. The obsolete separate
+  `_replace_storages` operator was deleted.
+- Validation passed: all 28 native/CUDA/PyTorch canaries, including the
+  functional-mutation canary; the complete Python suite (680 passed, four
+  expected skips); focused execution tests; Ruff; strict mypy over the PyTorch
+  source tree; and `git diff --check`.
