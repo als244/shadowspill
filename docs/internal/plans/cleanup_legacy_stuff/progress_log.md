@@ -965,3 +965,22 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Preallocated retirement queue records
+
+- Replaced the per-lease `calloc`/`free` pair in retirement publication and
+  worker reclamation with a runtime-owned cold-reserved record pool. Records
+  carry immutable lease generation, pool, allocation, and completion evidence
+  while queued, then return to the free inventory after reclamation.
+- Added an explicit idle-boundary reserve API. Physical sealing reserves the
+  neutral event and retirement inventories together; once sealed, retirement
+  publication fails closed on exhaustion and never falls back to the process
+  heap.
+- Added runtime and qualification diagnostics for retirement-record capacity,
+  current/peak use, and rejected growth. Native coverage exercises a bounded
+  64-retirement batch followed by 256 reuse rounds with no inventory growth.
+- Runtime ABI 38 and PyTorch adapter ABI 47 describe the extended statistics
+  and reserve API. Validation passed: warnings-as-errors native build; all 28
+  native, CUDA, and PyTorch canaries; the complete Python suite with four
+  expected skips; Ruff; strict mypy over 177 installed source files; and
+  `git diff --check`.

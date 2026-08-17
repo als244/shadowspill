@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 37U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 38U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -479,6 +479,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t event_lease_in_use;
     uint64_t event_lease_peak_in_use;
     uint64_t event_lease_growth_rejections;
+    uint64_t retirement_record_capacity;
+    uint64_t retirement_record_in_use;
+    uint64_t retirement_record_peak_in_use;
+    uint64_t retirement_record_growth_rejections;
 } ShadowSpillRuntimeStatistics;
 
 typedef struct ShadowSpillRuntimeFailure {
@@ -548,6 +552,17 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_runtime_reserve_event_leases(
     ShadowSpillRuntime *runtime,
     uint64_t minimum_free_leases
+);
+
+/*
+ * Cold-path capacity reservation for immutable retirement queue records.
+ * Once reserved, queue publication fails closed instead of allocating host
+ * memory when the inventory is exhausted.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_reserve_retirement_records(
+    ShadowSpillRuntime *runtime,
+    uint64_t minimum_free_records
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_create(

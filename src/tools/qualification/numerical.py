@@ -825,6 +825,24 @@ def _planned_worker(
         "allocation_event_overflow": bool(
             runtime_statistics.runtime.allocation_event_overflow
         ),
+        "neutral_event_lease_capacity": int(
+            runtime_statistics.runtime.event_lease_capacity
+        ),
+        "neutral_event_lease_peak_in_use": int(
+            runtime_statistics.runtime.event_lease_peak_in_use
+        ),
+        "neutral_event_lease_growth_rejections": int(
+            runtime_statistics.runtime.event_lease_growth_rejections
+        ),
+        "retirement_record_capacity": int(
+            runtime_statistics.runtime.retirement_record_capacity
+        ),
+        "retirement_record_peak_in_use": int(
+            runtime_statistics.runtime.retirement_record_peak_in_use
+        ),
+        "retirement_record_growth_rejections": int(
+            runtime_statistics.runtime.retirement_record_growth_rejections
+        ),
         "cuda_device_allocations": int(runtime_statistics.cuda.device_allocations),
         "steady_state_cuda_device_allocations": int(
             runtime_statistics.cuda.device_allocations

@@ -489,6 +489,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
     if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
         return reserve_status;
     }
+    reserve_status = shadowspill_runtime_reserve_retirement_records(
+        runtime, event_pool_reserve
+    );
+    if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
+        return reserve_status;
+    }
     if (shadowspill_cuda_backend_seal_event_pool(cuda, event_pool_reserve) != 0) {
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }

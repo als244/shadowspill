@@ -1,6 +1,7 @@
 #include "internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static void release_event_references(
     ShadowSpillRuntime *runtime,
@@ -22,7 +23,7 @@ static void release_event_references(
     free(events);
 }
 
-static void destroy_retirement_record(
+static void release_retirement_requirements(
     ShadowSpillRuntime *runtime,
     ShadowSpillRetirementRecord *record
 ) {
@@ -46,7 +47,64 @@ static void destroy_retirement_record(
             0U
         );
     }
-    free(record);
+    record->events = NULL;
+    record->event_count = 0U;
+    record->task_completion_event = NULL;
+}
+
+static ShadowSpillRetirementRecord *acquire_retirement_record(
+    ShadowSpillRetirementQueue *queue
+) {
+    pthread_mutex_lock(&queue->lock);
+    ShadowSpillRetirementRecord *record = queue->free_head;
+    const uint8_t sealed = queue->sealed;
+    if (record != NULL) {
+        queue->free_head = record->free_next;
+        record->free_next = NULL;
+        --queue->available;
+        ++queue->in_use;
+        if (queue->in_use > queue->peak_in_use) {
+            queue->peak_in_use = queue->in_use;
+        }
+    } else if (sealed) {
+        ++queue->growth_rejections;
+    }
+    pthread_mutex_unlock(&queue->lock);
+    if (record != NULL || sealed) {
+        return record;
+    }
+    return calloc(1U, sizeof(*record));
+}
+
+static void release_retirement_record(
+    ShadowSpillRetirementQueue *queue,
+    ShadowSpillRetirementRecord *record
+) {
+    if (!record->pool_owned) {
+        free(record);
+        return;
+    }
+    memset(record, 0, sizeof(*record));
+    record->pool_owned = 1U;
+    pthread_mutex_lock(&queue->lock);
+    record->free_next = queue->free_head;
+    queue->free_head = record;
+    ++queue->available;
+    if (queue->in_use != 0U) {
+        --queue->in_use;
+    }
+    pthread_mutex_unlock(&queue->lock);
+}
+
+static void destroy_retirement_record(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRetirementRecord *record
+) {
+    if (record == NULL) {
+        return;
+    }
+    release_retirement_requirements(runtime, record);
+    release_retirement_record(&runtime->retirements, record);
 }
 
 int shadowspill_retirement_queue_initialize(
@@ -64,6 +122,53 @@ int shadowspill_retirement_queue_initialize(
     return 0;
 }
 
+ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
+    ShadowSpillRetirementQueue *queue,
+    uint64_t minimum_free_records
+) {
+    if (queue == NULL || !queue->lock_initialized ||
+        minimum_free_records == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&queue->lock);
+    if (queue->available >= minimum_free_records) {
+        queue->sealed = 1U;
+        pthread_mutex_unlock(&queue->lock);
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    const uint64_t additional = minimum_free_records - queue->available;
+    pthread_mutex_unlock(&queue->lock);
+
+    if (additional > SIZE_MAX / sizeof(ShadowSpillRetirementRecord)) {
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    ShadowSpillRetirementRecordBlock *block = calloc(1U, sizeof(*block));
+    ShadowSpillRetirementRecord *records = calloc(
+        (size_t)additional, sizeof(*records)
+    );
+    if (block == NULL || records == NULL) {
+        free(records);
+        free(block);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    block->records = records;
+    block->count = additional;
+
+    pthread_mutex_lock(&queue->lock);
+    block->next = queue->blocks;
+    queue->blocks = block;
+    for (uint64_t index = 0U; index < additional; ++index) {
+        records[index].pool_owned = 1U;
+        records[index].free_next = queue->free_head;
+        queue->free_head = &records[index];
+    }
+    queue->capacity += additional;
+    queue->available += additional;
+    queue->sealed = 1U;
+    pthread_mutex_unlock(&queue->lock);
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 void shadowspill_retirement_queue_destroy(
     ShadowSpillRuntime *runtime,
     ShadowSpillRetirementQueue *queue
@@ -74,8 +179,18 @@ void shadowspill_retirement_queue_destroy(
     ShadowSpillRetirementRecord *record = queue->head;
     while (record != NULL) {
         ShadowSpillRetirementRecord *next = record->next;
-        destroy_retirement_record(runtime, record);
+        release_retirement_requirements(runtime, record);
+        if (!record->pool_owned) {
+            free(record);
+        }
         record = next;
+    }
+    ShadowSpillRetirementRecordBlock *block = queue->blocks;
+    while (block != NULL) {
+        ShadowSpillRetirementRecordBlock *next = block->next;
+        free(block->records);
+        free(block);
+        block = next;
     }
     queue->head = NULL;
     queue->tail = NULL;
@@ -106,12 +221,16 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         }
         ++event_count;
     }
-    ShadowSpillRetirementRecord *record = calloc(1U, sizeof(*record));
+    ShadowSpillRetirementRecord *record = acquire_retirement_record(
+        &runtime->retirements
+    );
     ShadowSpillEventLease **events = event_count == 0U
         ? NULL
         : calloc((size_t)event_count, sizeof(*events));
     if (record == NULL || (event_count != 0U && events == NULL)) {
-        free(record);
+        if (record != NULL) {
+            release_retirement_record(&runtime->retirements, record);
+        }
         free(events);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }

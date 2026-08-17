@@ -45,6 +45,10 @@ int main(void) {
         shadowspill_runtime_reserve_event_leases(runtime, 32U) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_reserve_event_leases(runtime, COMPLETION_COUNT) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_runtime_reserve_retirement_records(
+            runtime, COMPLETION_COUNT
+        ) !=
             SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
@@ -122,6 +126,11 @@ int main(void) {
         runtime_statistics.event_lease_peak_in_use == 0U ||
         runtime_statistics.event_lease_peak_in_use > COMPLETION_COUNT ||
         runtime_statistics.event_lease_growth_rejections != 0U ||
+        runtime_statistics.retirement_record_capacity != COMPLETION_COUNT ||
+        runtime_statistics.retirement_record_in_use != 0U ||
+        runtime_statistics.retirement_record_peak_in_use == 0U ||
+        runtime_statistics.retirement_record_peak_in_use > COMPLETION_COUNT ||
+        runtime_statistics.retirement_record_growth_rejections != 0U ||
         runtime_statistics.free_bytes !=
             COMPLETION_COUNT * ALLOCATION_BYTES) {
         return EXIT_FAILURE;
