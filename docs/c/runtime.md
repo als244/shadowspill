@@ -130,6 +130,10 @@ Task handles bypass repeated task-ID lookup. Admission retains direct object
 references and predecoded actions for the complete plan lifetime.
 It also allocates the exact byte-state workspace used to validate that task's
 allocation contract, so `before_task()` never grows a thread-local matcher.
+The handle owns its exact expanded input-binding array as well. A successful
+`shadowspill_before_task_handle()` returns a borrowed immutable view of that
+array; the view remains valid through the matching `after_task()` or abort and
+requires no caller allocation or binding copy.
 One task handle is deliberately non-reentrant because its admitted action and
 validation records are reused in place; concurrent callables use distinct
 plan-owned handles and may remain active on the same runtime.

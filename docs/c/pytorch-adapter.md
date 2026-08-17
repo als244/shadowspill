@@ -82,6 +82,8 @@ Task calls mirror the neutral runtime:
 
 - `shadowspill_pytorch_before_task_handle()` and
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
+  The before boundary exposes the task-owned borrowed binding array instead
+  of copying bindings into caller storage.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission

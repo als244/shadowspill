@@ -17,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     read_allocator_failure,
 )
+from tests.integration.pytorch.runtime_helpers import begin_task
 
 TASK_ID = 17
 CONTRACT_MISMATCH = 11
@@ -83,13 +84,13 @@ def main() -> int:
     if status != 0:
         raise AssertionError(f"task label configuration failed with status {status}")
     stream = torch.cuda.current_stream()
-    status = int(
-        library.shadowspill_pytorch_before_task_handle(
-            task_handle, TASK_ID, stream.cuda_stream, None, 0
-        )
+    begin_task(
+        library,
+        task_handle,
+        TASK_ID,
+        stream.cuda_stream,
+        expected_bindings=0,
     )
-    if status != 0:
-        raise AssertionError(f"task entry failed with status {status}")
 
     try:
         torch.empty((24,), dtype=torch.uint8, device="cuda")

@@ -95,6 +95,7 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     free(record->unique_inputs);
     free(record->input_unique_indices);
     free(record->unique_first_positions);
+    free(record->input_bindings);
     free(record->updates);
     free(record->publications);
     free(record->actions);
@@ -361,6 +362,9 @@ static ShadowSpillTaskRecord *create_record(
         record->unique_first_positions = calloc(
             record->input_count, sizeof(*record->unique_first_positions)
         );
+        record->input_bindings = calloc(
+            record->input_count, sizeof(*record->input_bindings)
+        );
     }
     if (record->update_count != 0U) {
         record->updates = calloc(record->update_count, sizeof(*record->updates));
@@ -389,7 +393,8 @@ static ShadowSpillTaskRecord *create_record(
          (record->inputs == NULL || record->input_plan_object_ids == NULL ||
           record->input_consistency == NULL || record->unique_inputs == NULL ||
           record->input_unique_indices == NULL ||
-          record->unique_first_positions == NULL)) ||
+          record->unique_first_positions == NULL ||
+          record->input_bindings == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
         (record->publication_count != 0U && record->publications == NULL) ||
         (record->action_count != 0U &&
@@ -782,8 +787,8 @@ ShadowSpillRuntimeStatus shadowspill_before_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream compute_stream,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
+    const ShadowSpillObjectBinding **bindings,
+    uint32_t *binding_count
 ) {
     const ShadowSpillTaskRecord *record = handle;
     if (runtime == NULL || record == NULL ||
@@ -791,9 +796,13 @@ ShadowSpillRuntimeStatus shadowspill_before_task_handle(
         record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    if ((record->input_count != 0U && bindings == NULL) ||
-        binding_capacity < record->input_count) {
+    if (bindings == NULL || binding_count == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *bindings = NULL;
+    *binding_count = 0U;
+    if (shadowspill_claim_task_invocation(record) != 0) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
 
     shadowspill_append_trace_event_locked(
@@ -816,13 +825,19 @@ ShadowSpillRuntimeStatus shadowspill_before_task_handle(
         record->unique_first_positions,
         record->input_count,
         compute_stream,
-        bindings,
-        binding_capacity
+        record->input_bindings,
+        record->input_count
     );
     if (status == SHADOWSPILL_RUNTIME_OK &&
-        shadowspill_enter_task_scope(runtime, record) != 0) {
+        shadowspill_enter_claimed_task_scope(runtime, record) != 0) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        shadowspill_release_task_invocation(record);
+        return status;
+    }
+    *bindings = record->input_bindings;
+    *binding_count = record->input_count;
     return status;
 }
 

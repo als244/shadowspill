@@ -17,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from tests.integration.pytorch.runtime_helpers import begin_task
 
 ELEMENTS = 16 << 20
 BYTES_PER_OBJECT = ELEMENTS * 4
@@ -289,18 +290,12 @@ def main() -> int:
         (second_binding.object_id, third_binding.object_id),
         release_actions,
     )
-    rebound = (ObjectBinding * 2)()
-    _require_ok(
-        int(
-            library.shadowspill_pytorch_before_task_handle(
-                consumer,
-                202,
-                stream_address,
-                rebound,
-                2,
-            )
-        ),
-        "two-input acquisition",
+    rebound = begin_task(
+        library,
+        consumer,
+        202,
+        stream_address,
+        expected_bindings=2,
     )
     torch.ops.shadowspill._acquire_storages(
         [second, third], [rebound[0].pointer, rebound[1].pointer]

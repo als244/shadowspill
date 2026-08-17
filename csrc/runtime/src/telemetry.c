@@ -212,29 +212,50 @@ static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
     return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH;
 }
 
-int shadowspill_enter_task_scope(
+int shadowspill_claim_task_invocation(
+    const ShadowSpillTaskRecord *record
+) {
+    if (record == NULL) {
+        return -1;
+    }
+    ShadowSpillTaskRecord *mutable_record = (ShadowSpillTaskRecord *)record;
+    uint8_t expected_active = 0U;
+    return atomic_compare_exchange_strong_explicit(
+        &mutable_record->invocation_active,
+        &expected_active,
+        1U,
+        memory_order_acq_rel,
+        memory_order_acquire
+    ) ? 0 : -1;
+}
+
+void shadowspill_release_task_invocation(
+    const ShadowSpillTaskRecord *record
+) {
+    if (record != NULL) {
+        atomic_store_explicit(
+            &((ShadowSpillTaskRecord *)record)->invocation_active,
+            0U,
+            memory_order_release
+        );
+    }
+}
+
+int shadowspill_enter_claimed_task_scope(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskRecord *record
 ) {
     if (record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime ||
+        atomic_load_explicit(
+            &record->invocation_active, memory_order_acquire
+        ) == 0U ||
         shadowspill_enter_allocation_scope(
             runtime, record->plan_owner->execution_pool, record->task_id
         ) != 0) {
         return -1;
     }
     ShadowSpillTaskRecord *mutable_record = (ShadowSpillTaskRecord *)record;
-    uint8_t expected_active = 0U;
-    if (!atomic_compare_exchange_strong_explicit(
-            &mutable_record->invocation_active,
-            &expected_active,
-            1U,
-            memory_order_acq_rel,
-            memory_order_acquire
-        )) {
-        shadowspill_leave_task_scope(runtime);
-        return -1;
-    }
     task_scope.task = record;
     prepare_allocation_matcher(record);
     task_scope.invocation = atomic_fetch_add_explicit(
@@ -242,6 +263,20 @@ int shadowspill_enter_task_scope(
         1U,
         memory_order_acq_rel
     ) + 1U;
+    return 0;
+}
+
+int shadowspill_enter_task_scope(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskRecord *record
+) {
+    if (shadowspill_claim_task_invocation(record) != 0) {
+        return -1;
+    }
+    if (shadowspill_enter_claimed_task_scope(runtime, record) != 0) {
+        shadowspill_release_task_invocation(record);
+        return -1;
+    }
     return 0;
 }
 
@@ -598,11 +633,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.scratch_allocation_count = 0U;
         task_scope.retirement_head = NULL;
         task_scope.retirement_tail = NULL;
-        if (record != NULL) {
-            atomic_store_explicit(
-                &record->invocation_active, 0U, memory_order_release
-            );
-        }
+        shadowspill_release_task_invocation(record);
     }
 }
 

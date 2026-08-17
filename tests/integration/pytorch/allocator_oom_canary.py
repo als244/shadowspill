@@ -16,6 +16,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     allocator_oom_error,
     read_allocator_failure,
 )
+from tests.integration.pytorch.runtime_helpers import begin_task
 
 NO_PROGRESS = 4
 REQUEST_BYTES = 128 << 20
@@ -76,15 +77,13 @@ def main() -> int:
     )
     plan_handle, task_handle = _admit_task(installed.library, description)
     stream = torch.cuda.current_stream()
-    if (
-        int(
-            installed.library.shadowspill_pytorch_before_task_handle(
-                task_handle, task_id, stream.cuda_stream, None, 0
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("failed to enter OOM canary task")
+    begin_task(
+        installed.library,
+        task_handle,
+        task_id,
+        stream.cuda_stream,
+        expected_bindings=0,
+    )
     try:
         torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
     except torch.OutOfMemoryError as error:

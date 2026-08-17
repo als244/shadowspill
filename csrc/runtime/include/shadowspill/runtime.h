@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 40U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 41U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -887,8 +887,8 @@ shadowspill_before_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream compute_stream,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
+    const ShadowSpillObjectBinding **bindings,
+    uint32_t *binding_count
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus

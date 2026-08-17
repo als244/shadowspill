@@ -148,16 +148,19 @@ int main(void) {
         .action_count = 1U,
     };
     const ShadowSpillTaskHandle *task_handle = NULL;
-    ShadowSpillObjectBinding binding = {0};
+    const ShadowSpillObjectBinding *bindings = NULL;
+    uint32_t binding_count = 0U;
     if (shadowspill_plan_admit_task(plan, &task, &task_handle) !=
             SHADOWSPILL_RUNTIME_OK || shadowspill_before_task_handle(
             runtime,
             task_handle,
             compute,
-            &binding,
-            1U
+            &bindings,
+            &binding_count
         ) != SHADOWSPILL_RUNTIME_OK ||
-        binding.pointer == NULL || binding.authoritative_version != 1U) {
+        binding_count != 1U || bindings == NULL ||
+        bindings[0].pointer == NULL ||
+        bindings[0].authoritative_version != 1U) {
         FAIL("fetch readiness");
     }
     const ShadowSpillRuntimeStatus after_status = shadowspill_after_task_handle(

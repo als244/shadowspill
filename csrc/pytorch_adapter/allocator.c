@@ -1537,8 +1537,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
+    const ShadowSpillObjectBinding **bindings,
+    uint32_t *binding_count
 ) {
     record_debug_host_boundary(task_id, 0U);
     if (task_range_active || task_handle == 0U) {
@@ -1559,7 +1559,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
             (const ShadowSpillTaskHandle *)task_handle,
             shadowspill_cuda_wrap_stream(compute_stream_address),
             bindings,
-            binding_capacity
+            binding_count
         );
     if (status != SHADOWSPILL_RUNTIME_OK) {
         end_task_range();

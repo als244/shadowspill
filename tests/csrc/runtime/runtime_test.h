@@ -2,7 +2,6 @@
 #define SHADOWSPILL_RUNTIME_TEST_H
 
 #include <stdint.h>
-
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
@@ -235,11 +234,31 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_before_task(
     const ShadowSpillTaskHandle *handle = shadowspill_test_task_handle(
         runtime, task_id
     );
-    return handle == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_STATE
-        : shadowspill_before_task_handle(
-              runtime, handle, stream, bindings, binding_capacity
-          );
+    if (handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    const ShadowSpillObjectBinding *borrowed = NULL;
+    uint32_t count = 0U;
+    ShadowSpillRuntimeStatus status = shadowspill_before_task_handle(
+        runtime, handle, stream, &borrowed, &count
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    if (count > binding_capacity) {
+        (void)shadowspill_abort_task_handle(runtime, handle);
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (count != 0U) {
+        if (bindings == NULL || borrowed == NULL) {
+            (void)shadowspill_abort_task_handle(runtime, handle);
+            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        }
+        for (uint32_t index = 0U; index < count; ++index) {
+            bindings[index] = borrowed[index];
+        }
+    }
+    return SHADOWSPILL_RUNTIME_OK;
 }
 
 static inline ShadowSpillRuntimeStatus shadowspill_test_after_task(

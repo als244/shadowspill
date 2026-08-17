@@ -203,7 +203,8 @@ std::vector<int64_t> before_task_storages(
         "task acquisition tensor is on the wrong CUDA device");
   }
 
-  std::vector<ShadowSpillObjectBinding> bindings(count);
+  const ShadowSpillObjectBinding* bindings = nullptr;
+  uint32_t binding_count = 0U;
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
   const ShadowSpillRuntimeStatus status =
@@ -211,12 +212,15 @@ std::vector<int64_t> before_task_storages(
           static_cast<uintptr_t>(task_handle),
           static_cast<uint64_t>(task_id),
           reinterpret_cast<uintptr_t>(stream.stream()),
-          bindings.data(),
-          static_cast<uint32_t>(count));
+          &bindings,
+          &binding_count);
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "task acquisition failed: ",
       shadowspill_runtime_status_string(status));
+  TORCH_CHECK(
+      binding_count == count && (count == 0U || bindings != nullptr),
+      "task acquisition returned the wrong binding count");
 
   struct TaskScopeGuard {
     uintptr_t task_handle;
@@ -230,9 +234,7 @@ std::vector<int64_t> before_task_storages(
   } scope_guard{
       static_cast<uintptr_t>(task_handle),
       static_cast<uint64_t>(task_id)};
-  std::vector<uint64_t> current_addresses;
   std::vector<int64_t> generations;
-  current_addresses.reserve(count);
   generations.reserve(count);
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
@@ -245,16 +247,17 @@ std::vector<int64_t> before_task_storages(
     TORCH_CHECK(
         current_address == 0U || current_address == target_address,
         "storage does not name its acquired runtime generation");
-    current_addresses.push_back(current_address);
     generations.push_back(static_cast<int64_t>(binding.generation));
   }
   for (const auto index : c10::irange(count)) {
     const uint64_t target_address = static_cast<uint64_t>(
         reinterpret_cast<uintptr_t>(bindings[index].pointer));
-    if (current_addresses[index] == target_address) {
+    const at::Tensor& tensor = tensors[index];
+    const uint64_t current_address = static_cast<uint64_t>(
+        reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
+    if (current_address == target_address) {
       continue;
     }
-    const at::Tensor& tensor = tensors[index];
     c10::Storage storage = tensor.storage();
     c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
         reinterpret_cast<void*>(static_cast<uintptr_t>(target_address)),
@@ -294,8 +297,6 @@ std::vector<int64_t> adopt_storages(
       "storage adoption batch fields must have equal lengths");
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
 
-  std::vector<uint64_t> addresses;
-  addresses.reserve(count);
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
     TORCH_CHECK(tensor.is_cuda(), "storage adoption requires CUDA tensors");
@@ -312,19 +313,20 @@ std::vector<int64_t> adopt_storages(
         publication_ordinals[index],
         ", tensor numel ",
         tensor.numel());
-    addresses.push_back(address);
   }
 
-  std::vector<ShadowSpillObjectBinding> bindings(count);
   std::vector<int64_t> generations;
   generations.reserve(count);
   for (const auto index : c10::irange(count)) {
+    const uint64_t address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        tensors[index].storage().data_ptr().get()));
+    ShadowSpillObjectBinding binding = {};
     const ShadowSpillRuntimeStatus status =
         shadowspill_pytorch_task_publish_allocation(
             static_cast<uintptr_t>(task_handle),
             static_cast<uint32_t>(publication_ordinals[index]),
-            addresses[index],
-            &bindings[index]);
+            address,
+            &binding);
     TORCH_CHECK(
         status == SHADOWSPILL_RUNTIME_OK,
         "storage adoption failed at batch index ",
@@ -332,14 +334,14 @@ std::vector<int64_t> adopt_storages(
         ", publication ordinal ",
         publication_ordinals[index],
         ", address ",
-        addresses[index],
+        address,
         ": ",
         shadowspill_runtime_status_string(status));
     TORCH_CHECK(
-        bindings[index].pointer == reinterpret_cast<void*>(
-            static_cast<uintptr_t>(addresses[index])),
+        binding.pointer == reinterpret_cast<void*>(
+            static_cast<uintptr_t>(address)),
         "storage adoption changed the allocation address");
-    generations.push_back(static_cast<int64_t>(bindings[index].generation));
+    generations.push_back(static_cast<int64_t>(binding.generation));
   }
 
   // Runtime adoption succeeds for the complete batch before any owning
@@ -347,9 +349,11 @@ std::vector<int64_t> adopt_storages(
   // logical free while the runtime keeps the plan-owned allocation alive.
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
+    const uint64_t address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        tensor.storage().data_ptr().get()));
     c10::Storage storage = tensor.storage();
     c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
-        reinterpret_cast<void*>(static_cast<uintptr_t>(addresses[index])),
+        reinterpret_cast<void*>(static_cast<uintptr_t>(address)),
         tensor.device()));
     prior.clear();
   }
@@ -374,11 +378,6 @@ void rebind_replacement_views(
       publication_ordinals.size() == adopted_tensors.size() &&
           target_generations.size() == adopted_tensors.size(),
       "adopted storage fields must have equal lengths");
-
-  std::vector<uint64_t> current_addresses;
-  std::vector<uint64_t> target_addresses;
-  current_addresses.reserve(count);
-  target_addresses.reserve(count);
 
   // Validate every old and new generation before rebinding any frontend view.
   // The runtime has adopted the replacement, but has not yet published task
@@ -419,17 +418,20 @@ void rebind_replacement_views(
           "existing storage does not match the retired object generation: ",
           shadowspill_runtime_status_string(status));
     }
-    current_addresses.push_back(current);
-    target_addresses.push_back(target);
   }
   for (const auto index : c10::irange(count)) {
-    if (current_addresses[index] == target_addresses[index]) {
+    const int64_t target_index = target_indices[index];
+    const uint64_t target = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        adopted_tensors[target_index].storage().data_ptr().get()));
+    const uint64_t current = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+        replacement_tensors[index].storage().data_ptr().get()));
+    if (current == target) {
       continue;
     }
     c10::Storage storage = replacement_tensors[index].storage();
     c10::DataPtr prior = storage.set_data_ptr(c10::DataPtr(
         reinterpret_cast<void*>(
-            static_cast<uintptr_t>(target_addresses[index])),
+            static_cast<uintptr_t>(target)),
         replacement_tensors[index].device()));
     prior.clear();
   }

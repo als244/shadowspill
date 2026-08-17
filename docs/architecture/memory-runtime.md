@@ -183,6 +183,8 @@ orchestrators. They contain no PyTorch storage logic. Allocation-contract
 state is sized once with the admitted task record. Distinct task handles may
 be active concurrently, while a second concurrent invocation of the same
 mutable handle fails closed rather than sharing validation/action state.
+The same record owns its expanded input-binding array, so input snapshots are
+published as a borrowed view without a repeated allocation or copy.
 
 ## Failure and teardown
 
