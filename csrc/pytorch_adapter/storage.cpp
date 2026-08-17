@@ -331,7 +331,7 @@ std::vector<int64_t> before_task_storages(
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
   const ShadowSpillRuntimeStatus status =
-      shadowspill_pytorch_before_execution_handle(
+      shadowspill_pytorch_before_task_handle(
           static_cast<uintptr_t>(task_handle),
           static_cast<uint64_t>(task_id),
           reinterpret_cast<uintptr_t>(stream.stream()),
@@ -609,7 +609,7 @@ std::vector<int64_t> after_task_storages(
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
   const ShadowSpillRuntimeStatus status =
-      shadowspill_pytorch_after_execution_handle(
+      shadowspill_pytorch_after_task_handle(
           static_cast<uintptr_t>(task_handle),
           static_cast<uint64_t>(task_id),
           reinterpret_cast<uintptr_t>(stream.stream()));

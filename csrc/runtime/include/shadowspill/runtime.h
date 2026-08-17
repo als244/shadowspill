@@ -26,6 +26,7 @@ extern "C" {
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillExecutionRecord ShadowSpillExecutionHandle;
+typedef struct ShadowSpillExecutionRecord ShadowSpillTaskHandle;
 typedef struct ShadowSpillExecutionRecord ShadowSpillActionBatchHandle;
 typedef struct ShadowSpillObjectAcquisitionRecord
     ShadowSpillObjectAcquisitionHandle;
@@ -774,6 +775,14 @@ shadowspill_plan_admit_execution(
     const ShadowSpillExecutionDescription *description
 );
 
+/* Admit one immutable task and return its direct repeated-path handle. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_admit_task(
+    ShadowSpillPlan *plan,
+    const ShadowSpillExecutionDescription *description,
+    const ShadowSpillTaskHandle **handle
+);
+
 /*
  * Releases every immutable execution record admitted for the completed plan.
  * The runtime must be idle and no task boundary may be active. Logical objects
@@ -905,9 +914,25 @@ shadowspill_before_execution_handle(
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_before_task_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream compute_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_after_execution_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionHandle *handle,
+    ShadowSpillBackendStream compute_stream
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_after_task_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream compute_stream
 );
 

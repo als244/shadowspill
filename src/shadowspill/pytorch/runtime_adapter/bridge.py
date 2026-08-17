@@ -355,15 +355,22 @@ class RuntimeBridge:
             action_pairs,
             memory_envelope,
         )
+        task_handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_admit_execution(
-                self.plan_handle, ctypes.byref(buffers.description)
+            self.library.shadowspill_pytorch_plan_admit_task(
+                self.plan_handle,
+                ctypes.byref(buffers.description),
+                ctypes.byref(task_handle),
             ),
-            f"admit execution {task.task_id}",
+            f"admit task {task.task_id}",
         )
-        handle = self._resolve_task_handle(task.task_id)
-        self._admitted_tasks[task.task_id] = (handle, runtime_inputs)
-        return handle
+        if task_handle.value == 0:
+            raise RuntimeExecutionError(
+                f"task {task.task_id} admitted with a null handle"
+            )
+        resolved = int(task_handle.value)
+        self._admitted_tasks[task.task_id] = (resolved, runtime_inputs)
+        return resolved
 
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
         """Copy one indexed physical-layout certificate into the C runtime."""
@@ -628,23 +635,6 @@ class RuntimeBridge:
             contract_values,
             labels,
         )
-
-    def _resolve_task_handle(self, task_id: str) -> int:
-        return self._resolve_task_handle_number(_plan_local_id(task_id, "task_"))
-
-    def _resolve_task_handle_number(self, task_number: int) -> int:
-        handle = ctypes.c_size_t()
-        self._require(
-            self.library.shadowspill_pytorch_plan_resolve_execution(
-                self.plan_handle, task_number, ctypes.byref(handle)
-            ),
-            f"resolve execution {task_number}",
-        )
-        if handle.value == 0:
-            raise RuntimeExecutionError(
-                f"execution {task_number} resolved to a null handle"
-            )
-        return int(handle.value)
 
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""

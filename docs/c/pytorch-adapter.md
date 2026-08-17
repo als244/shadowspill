@@ -61,7 +61,9 @@ semantics:
 - `shadowspill_pytorch_plan_close()`
 - `shadowspill_pytorch_plan_destroy()`
 - `shadowspill_pytorch_plan_bind_object()`
-- `shadowspill_pytorch_plan_admit_execution()`
+- `shadowspill_pytorch_plan_admit_task()`
+- `shadowspill_pytorch_plan_admit_execution()` remains exported only while
+  low-level adapter canaries are migrated.
 - `shadowspill_pytorch_plan_admit_action_batch()` and
   `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_plan_admit_object_acquisition()` and
@@ -73,6 +75,8 @@ semantics:
 
 Task and admitted-execution calls mirror the neutral runtime:
 
+- `shadowspill_pytorch_before_task_handle()` and
+  `shadowspill_pytorch_after_task_handle()` are the production task boundary.
 - `shadowspill_pytorch_before_task()` / `shadowspill_pytorch_after_task()`
 - `shadowspill_pytorch_admit_execution()`
 - `shadowspill_pytorch_resolve_execution()`
