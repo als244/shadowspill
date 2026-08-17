@@ -47,7 +47,7 @@ flowchart LR
         compiled["Compiled task callables"]
         runtime["C runtime<br/>objects, leases, actions"]
         worker["C worker<br/>transfers + completion"]
-        pools["Execution and spill pools"]
+        pools["Configured memory pools<br/>+ directed routes"]
 
         dispatcher --> compiled
         dispatcher <--> runtime
@@ -141,6 +141,7 @@ sequenceDiagram
     D->>R: after_task(outputs and mutations)
     R->>G: record task-completion fence
     R->>W: publish ordered memory actions
+    W-->>R: acknowledge eligible actions submitted
     D->>R: begin the next task
     W->>T: submit eligible transfers
     T-->>W: completion events
@@ -149,13 +150,16 @@ sequenceDiagram
 
 `before_task()` covers runtime acquisition, readiness waits, storage rebinding,
 and argument assembly. `after_task()` covers output classification, mutation
-publication, releases, and action submission. A transfer dependency is placed
-on the compute stream instead of making the dispatcher wait on the host when
-stream ordering can express the dependency.
+publication, releases, destination reservation, action publication, and the
+worker submission acknowledgement. The acknowledgement covers route/event
+submission, never transfer completion. A transfer dependency is placed on the
+compute stream instead of making the dispatcher wait on the host when stream
+ordering can express the dependency.
 
-The runtime composes execution and spill pools with directed fetch and evict
-lanes. Its worker services lane submission, completion frontiers, and deferred
-releases without holding a general-purpose global runtime mutex.
+The runtime owns explicit pool and directed-route registries. Each immutable
+plan independently binds its execution pool, spill pool, fetch route, and
+evict route. The worker services route submission, completion frontiers, and
+deferred releases without holding a general-purpose global runtime mutex.
 
 ## Component ownership
 
@@ -191,7 +195,10 @@ A logical value retains one identity even as its physical address changes:
 9. The worker submits transfers and publishes completion; generation checks
    prevent stale work from modifying a successor.
 
-Pointers therefore describe current placement, not semantic identity.
+Pointers therefore describe current placement, not semantic identity. For a
+recurrent shared output, the producer updates this same logical object record;
+it does not manufacture another identity. The prior lease retires behind its
+causal completion fence before a successor can reuse its bytes.
 
 ## Correctness invariants
 

@@ -1418,3 +1418,291 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   documentation/source audits, the warnings-as-errors builds, all 29
   native/CUDA/PyTorch canaries, focused public forward/training execution, and
   `git diff --check`.
+
+## 2026-08-17 — Current status and ordered remaining gates
+
+This entry is the current source of truth for the cleanup branch. Shared-object
+feature development is paused until the documentation and retained
+qualification gates below pass.
+
+Completed production milestones:
+
+1. Production PressureFit and simulation are compiled-only; readable Python
+   implementations live only under `reference/python/`.
+2. Runtime ownership is split into generic pools, directed routes,
+   synchronization, and profiler components.
+3. Plans own immutable pool/route bindings, execution tables, fixed-layout
+   evidence, and direct task handles.
+4. Repeated task execution is handle-only. Runtime-owned generations,
+   preallocated allocation-contract state, borrowed input bindings, and
+   semantic profiler labels removed the remaining task-ID lookup and adapter
+   mutex from the boundary.
+5. Production callable publication requires explicit physical-allocation
+   evidence; synthetic executable admission was removed.
+6. Runtime teardown is explicit, idempotent, joins the continuously active
+   worker, and closes routes and pools in ownership order.
+7. Public runtime construction now receives explicit pool and directed-route
+   registries. Persistent object I/O and validation are addressed by pool ID,
+   and each plan selects its own execution/spill pools and fetch/evict routes.
+
+Current, intentionally unfinished areas:
+
+- Public/internal documentation has not yet received a complete post-topology
+  consistency audit. In particular, it must describe stable logical object
+  identity, generation replacement, plan-local role bindings, and the exact
+  current shared-input/output limitations without promising unfinished
+  concurrent-invocation behavior.
+- The retained five-cell approximately-1B correctness matrix and the
+  mlops-Llama 8B/16-GiB performance run have not yet been repeated on commit
+  `ead9621`.
+- Existing shared forward outputs already preserve one logical object slot and
+  replace its lease/generation in place. A live exported `TensorRef` currently
+  prevents that slot from being overwritten until the reference is closed.
+  General concurrent callable invocations, invocation-owned mutable task
+  state, and async result synchronization remain future milestones.
+- Remaining role-shaped aggregate diagnostics, hot-boundary timing
+  qualification, the final NSYS capture, and the exhaustive legacy-symbol
+  deletion audit remain outstanding.
+
+Required order from this point:
+
+1. Audit and update documentation to exactly match commit `ead9621`; run
+   documentation/source consistency tests.
+2. Run the fresh five-cell approximately-1B numerical/checkpoint correctness
+   gate using only the external retained references needed for comparison.
+3. Run mlops-Llama 8B at a strict 16-GiB execution budget and compare planning,
+   simulator, measured selected span/throughput, physical peaks, and action
+   ledgers with the retained canonical-runtime baseline.
+4. Stop and root-cause any failure or greater-than-5% regression before making
+   another shared-object feature change.
+5. Commit the documented, qualified generic-topology milestone only after all
+   gates pass.
+6. Resume shared-object ownership, multi-callable invocation, and async-result
+   work; then perform hot-path measurement/optimization and final NSYS
+   qualification.
+
+## 2026-08-17 — Post-topology documentation audit
+
+- Audited the normative architecture, Python API, C API, examples, root README,
+  and source-linked signatures against commit `ead9621` before beginning
+  qualification.
+- Removed the documented `shadowspill_plan_create_for_pools()` compatibility
+  constructor after confirming that no such production symbol remains. Plans
+  now document only explicit pool and directed-route identities.
+- Replaced the last description of the removed monolithic
+  `ShadowSpillBackend` with the actual independent `MemoryPool`, transfer-route,
+  synchronization, and profiler contracts.
+- Documented `Runtime.routes`, the current one-device/any-number-of-pinned-host
+  frontend support boundary, and plan-local execution/spill/fetch/evict role
+  binding. Pool backends themselves have no plan role.
+- Clarified stable shared-output semantics: a recurrent producer updates one
+  logical object record in place while its physical lease and generation may
+  change. The old lease retires causally; identity preservation introduces no
+  value copy.
+- Added the implemented worker-submission acknowledgement to the execution
+  timeline. `after_task()` spins only until every causally eligible action has
+  been submitted and its waitable event published; it never waits for transfer
+  completion.
+- Made the current public limitation explicit: multiple plans and task handles
+  may coexist, but Python planned calls are synchronous and overlapping Python
+  invocations/async result ownership are not yet promised.
+- Documentation validation passed all 27 repository contract tests, including
+  exported signatures, links, naming, current-contract language, package
+  boundaries, compiled-library discovery, and legacy-symbol audits.
+- `git diff --check` passed, and a direct normative-doc search found no
+  `shadowspill_plan_create_for_pools`, monolithic `ShadowSpillBackend`, old
+  relocate/externalize terminology, or `TaskAllocationABI` references.
+
+## 2026-08-17 — Documented-example execution and strict profile-cache schema
+
+- Executed the complete training example in a fresh process against the
+  default planning cache. The first attempt failed while sealing the selected
+  fixed layout even though the same model planned and ran with
+  `force_fresh=True`.
+- Root cause was a stale-cache compatibility surface. Current code still read
+  `profiling/measurements/v15`; those entries advertised the still-current
+  top-level profile schema but serialized the former `allocation_abi` field.
+  `TaskMeasurement.from_dict()` silently treated the missing current
+  `allocation_contract` as `None`, so incompatible physical evidence reached
+  callable sealing instead of becoming a clean cache miss or schema error.
+- Made task-measurement deserialization exact, bumped the profile schema to
+  `shadowspill.pytorch.profile/v25`, and moved current measurements to
+  `profiling/measurements/v16`. Historical entries are neither read nor
+  migrated. Added focused regression coverage for both the cache root and
+  rejection of the legacy allocation field.
+- Re-ran the training example without cache-control flags: all ten optimizer
+  steps completed and a checkpoint was written. The run populated current
+  v16 measurements while the incompatible v15 files remained untouched.
+- Executed forward-only planning and inference, `StepProgram` JSON round-trip
+  plus three independent PressureFit budget/bandwidth points, traced-step
+  diagnostics joined to `PlanReport` by execution ID, and custom contiguous
+  partitioning followed by a real optimizer step. Each public workflow
+  completed successfully.
+- Corrected the reusable-planning recipe: it claimed to reuse the example's
+  4-GiB execution and 2-GiB spill runtime while requesting 16–20 GiB and
+  64 GiB. The live-tested sweep now uses 3–4 GiB execution and 2 GiB spill,
+  so every point satisfies the source runtime-capacity contract.
+
+## 2026-08-17 — Qualification accounting, record capacity, and five-cell gate
+
+- Root-caused a 4-KiB terminal-backward admission mismatch. Program lowering
+  had added every returned gradient allocation to anonymous workspace even
+  when their allocation lifetimes did not overlap. `CompiledTaskLayout` now
+  replays the live allocation set and reports only the incremental peak caused
+  by outputs and mutation replacements. The admitted Program and exact fixed
+  layout now use the same lifetime accounting.
+- Root-caused a runtime no-progress failure on a 16-byte task allocation. It
+  was metadata-record exhaustion rather than slab exhaustion: the sealed
+  inventory was derived from selected tasks and transfers, while the admitted
+  fixed layout contained more lease records. Runtime-record capacity now uses
+  the complete placement and dynamic-lifetime inventory plus bounded service
+  slack, and plan adoption validates the layout's Program and schedule
+  digests before sealing it.
+- Added real CUDA coverage proving that objectives from every accumulation
+  round have distinct device addresses, that consecutive invocations use
+  disjoint caller-owned output leases, and that a prior invocation's retained
+  objective values remain bitwise unchanged.
+- Completed the five approximately-1B cells for PyTorch/mlops Llama,
+  PyTorch/mlops Qwen, and mlops OLMoE. All five passed numerical thresholds,
+  bitwise checkpoint replay, strict physical budgets, real fetch/evict,
+  callback/pointer checks, and runtime-record growth checks.
+
+## 2026-08-17 — Full-model checkpoint ownership and runtime-first calibration
+
+- The first mlops-Llama 8B 16/112-GiB run completed planning but was killed by
+  the kernel while creating an anonymous `state_dict()` checkpoint. The model
+  had already been imported with source release; the additional full model and
+  optimizer checkpoint raised anonymous RSS to approximately 171.8 GiB on top
+  of the registered spill arena. Added an explicit performance-only
+  `--skip-checkpoint` protocol so throughput probes do not conflate checkpoint
+  qualification with runtime execution. Numerical qualification retains
+  checkpoint/replay coverage.
+- Corrected the performance harness to release caller-owned `StepResult`
+  outputs after extracting scalar evidence. Runtime close now succeeds without
+  weakening its live-output ownership check.
+- A completed 13-step Llama control using the old construction order measured
+  19.0611 s selected span and 19.4693 s median wall step, but its runtime
+  published only 21.909 GB/s fetch and 21.726 GB/s evict. Physical budgets,
+  objectives, protocol, and teardown passed; only the retained historical
+  throughput gate failed.
+- Proved that the low transfer profile was below the planner and worker. The
+  same idle 16/112-GiB runtime, using registered pool ranges and real
+  bidirectional copies, repeatedly measured approximately 25.4 GB/s fetch and
+  25.2 GB/s evict. Constructing the 15.8-GiB anonymous model first reproduced
+  22.0/21.8 GB/s without planning. Registering the runtime first, then building
+  the model, and recalibrating at identical final process residency preserved
+  25.45/25.20 GB/s. Thus initial host-page registration order—not worker
+  overhead or contemporaneous occupancy—determines the sustained profile.
+- Made runtime-first the canonical lifecycle in performance and numerical
+  qualification and in public documentation: allocate/register/calibrate
+  runtime-owned pools before constructing or loading workload state, then
+  import that state and plan. The performance runner prints and persists the
+  exact effective, concurrent, and solo route measurements, latency, mode, and
+  probe geometry before planning.
+- The corrected Llama rerun used 25.420 GB/s fetch and 25.175 GB/s evict from
+  simultaneous 16x256-MiB probes. It completed all 13 logical steps with a
+  19.2151-s simulator prediction, 19.3280-s median wall step, 18.9143-s median
+  selected-task span, and 3,390.7 token/s median throughput. Simulator error
+  was +0.588%; objectives, strict 16-GiB physical accounting, action draining,
+  record/event sealing, and teardown passed. The retained historical
+  throughput gate remains below target at 92.4% and is still an open
+  recomputation/plan-quality qualification item rather than a runtime failure.
+- Added separate performance-harness identities for physical spill-pool
+  capacity and the planning spill budget. A plan may use a smaller budget but
+  cannot exceed the initialized pool. This reproduces the retained Qwen setup
+  with a 112-GiB registered pool and a 100-GiB PressureFit budget without
+  conflating either value.
+- The runtime-first mlops-OLMoE 7B run calibrated 25.403/25.188 GB/s
+  fetch/evict and completed all 13 logical steps. Its 4.7111-s simulator
+  prediction was 1.82% conservative versus the 4.6251-s median wall step; the
+  median selected span was 4.2926 s. This improves over the latest ShadowSpill
+  baseline's 4.8377-s selected span and 5.1755-s wall step while preserving
+  essentially identical traffic (77.61/53.44 GB current versus 77.91/53.17 GB
+  baseline). All physical and runtime invariants passed.
+
+## 2026-08-17 — Runtime-first Qwen and full-model comparison gate
+
+- The runtime-first mlops-Qwen 3.5 9B run used a 112-GiB physical spill pool,
+  a 100-GiB planning spill budget, and calibrated 25.434/25.207 GB/s
+  fetch/evict. It completed all 13 logical steps with finite objectives, exact
+  physical-budget accounting, drained actions, sealed runtime records/events,
+  and clean teardown.
+- The simulator predicted a 21.7108-s complete step. The measured median wall
+  step was 21.8088 s (+0.45%), and the median selected-task span was 21.3827 s
+  (approximately 3,065 selected token/s). The latest retained ShadowSpill
+  baseline measured a 23.6281-s selected span (approximately 2,774 selected
+  token/s) and a 24.0616-s wall step, so the current selected-span throughput
+  improves by approximately 10.5%.
+- Traffic remained equivalent: 196.29/107.50 GB current fetch/evict versus
+  196.99/107.04 GB in the retained baseline. Warm real task-event time was
+  19.9558 s versus 19.9904 s profiled; real inter-task gaps were 1.1019 s
+  versus 1.4782 s simulated.
+- Structural profiling remained unchanged at 162.047 s versus 162.645 s in
+  the retained baseline. Total planning rose from 256.220 s to 279.618 s
+  because physical admission required six monotonic refinements before
+  accepting a 1.5-GiB object-capacity reduction. This is recorded as remaining
+  planner-efficiency work; it did not affect runtime correctness or speed.
+- The accepted recomputation selections were 264 recompute/8 save for Llama,
+  132/4 for Qwen, and 34/2 for OLMoE. Llama and Qwen retain the terminal-head
+  save choice for each accumulation round.
+- Together with the five approximately-1B numerical/checkpoint cells, the
+  full-model Llama, Qwen, and OLMoE controls establish that the current
+  accounting, runtime-record capacity, runtime-first lifecycle, and harness
+  changes preserve or improve the latest ShadowSpill baseline behavior.
+
+## Remaining work after consolidation
+
+The cleanup branch is being consolidated into the canonical worktree at this
+qualified checkpoint. The accepted plan is intentionally not complete. Resume
+the following work from the merged commit in this order:
+
+1. Finish shared-object ownership and pool-residency contracts, including
+   stable shared input/output handles, explicit consistency modes, reference
+   ownership, and deterministic release when the final owner closes.
+2. Add multi-callable concurrency and asynchronous dispatcher-side invocation;
+   `.result()` must be the explicit synchronization point, and concurrent
+   mutation must fail closed unless the caller selects the documented unordered
+   shared-write mode.
+3. Complete the handle-only task-boundary conversion and delete any remaining
+   raw/task-ID or Python fallback paths discovered by the final symbol audit.
+4. Measure and optimize warmed `before_task()` and `after_task()` end to end,
+   including storage rebinding, argument assembly, publication, handoff, and
+   cleanup. The target remains at most 10 microseconds median and 25
+   microseconds p99 for ready, action-free boundaries.
+5. Complete worker-acknowledgement stress tests and the always-active-worker
+   NSYS gate: no condition waits, futexes, sleeps, yields, global runtime lock,
+   population scan, steady-state allocation, or event creation on the hot path.
+6. Re-run the pure-Qwen 30-GiB selected-span gate and capture the final semantic
+   NSYS trace after hot-path work. Preserve the established at-most-312.4-ms
+   bound and compare against the retained roughly 300–320-ms controls.
+7. Remove remaining role-shaped aggregate diagnostics and complete the
+   exhaustive legacy-symbol/dependency audit. Keep compiled PressureFit and
+   simulation as the only production paths; Python algorithms remain isolated
+   reference material.
+8. Investigate Qwen's six physical-admission refinements and reduce redundant
+   planning work without changing the accepted physical certificate or
+   schedule semantics.
+
+## 2026-08-17 — Consolidation release gate
+
+- Ruff passed for the complete repository, strict mypy passed for all 178
+  installed source files, and `git diff --check` passed.
+- The complete Python suite passed: 722 tests passed and four accelerator-only
+  cases were skipped as declared. The suite includes the documentation/source
+  contract audit and the focused qualification-harness tests.
+- The warnings-as-errors canonical build completed, and all 29 compiled
+  simulator, planner, runtime, memory-pool, fixed-layout, CUDA-backend, and
+  PyTorch-adapter canaries passed serially.
+- The AddressSanitizer/UndefinedBehaviorSanitizer build completed. Direct
+  memory-pool and blocking/lifecycle canaries passed, as did the remaining
+  mock-runtime canaries. A broad CTest invocation became noisy when CTest
+  killed a sanitizer process at its imposed timeout, so direct binaries were
+  used for the focused gate.
+- The ThreadSanitizer build completed with warnings-as-errors, but this host's
+  ThreadSanitizer runtime exits before test code with `unexpected memory
+  mapping`; this is a host/toolchain limitation rather than a reported data
+  race. The normal threaded canaries and all real CUDA lifecycle gates pass.
+- Qualified behavior is split into commits `3735ee6` (transient-output
+  lifetime accounting), `72e4e15` (runtime-record capacity from admitted
+  lifetimes), and `78a14b8` (runtime-first route calibration and qualification
+  lifecycle). Documentation and this frozen handoff are committed separately.

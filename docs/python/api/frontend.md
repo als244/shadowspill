@@ -32,10 +32,23 @@ Runtime(
 )
 ```
 
-`Runtime` owns the installed allocator, initialized `MemoryPool` registry,
-transfer calibration, active callable count, persistent state registry, and
-latest failure. Public properties are `pools`, `transfer_capabilities`, and
-`last_failure`.
+`Runtime` owns the installed allocator, initialized `MemoryPool` and
+`RuntimeRoute` registries, transfer calibration, active callable count,
+persistent state registry, and latest failure. Public properties are `pools`,
+`routes`, `transfer_capabilities`, and `last_failure`.
+
+Create `Runtime` before constructing or loading workload state. Construction
+registers the configured physical pools and calibrates the real directed
+routes between their addresses. Model and optimizer state are then created and
+imported into that initialized runtime; planning reads the published
+`transfer_capabilities` snapshot rather than recalibrating independently.
+
+Pool and route names are user-defined identities. A planning call binds its
+own `execution` and `spill` pool names and resolves the matching directed
+fetch/evict routes; those roles are not global properties of `Runtime`. The
+current PyTorch backend supports one device pool and any number of registered
+pinned-host pools. Unsupported pool or route combinations fail during runtime
+construction or plan resolution.
 
 `calibrate_transfer_capabilities()` measures all or selected source/destination
 routes and atomically publishes a new `TransferCapabilities` matrix. Callers
@@ -52,6 +65,7 @@ state and rejects subsequent device allocations.
 The immutable runtime values are:
 
 - `MemoryPool`
+- `RuntimeRoute`
 - `TransferProfile`
 - `TransferCapabilities`
 - `ExecutionTaskIdentity`
@@ -138,8 +152,9 @@ callable releases its plan ownership but does not invalidate an outstanding
 `TensorRef`; the runtime object is reclaimed after its final owner closes.
 One planned shared-output slot holds one generation at a time, so the next
 invocation fails clearly until the preceding reference is closed. Once
-closed, the next invocation overwrites the same logical object with a new
-residency generation.
+closed, the next invocation updates the same logical object record in place.
+Its current physical lease and residency generation may be replaced; no new
+public object identity or value copy is introduced.
 
 `SharedInput` is the symmetric input declaration. Wrap a `TensorRef` with
 `shared_input(reference, require_in=pool_name)` in `example_inputs` when
@@ -170,6 +185,12 @@ a pool guaranteed by the reference. Floating shared inputs receive a
 deterministic task-local profiling representative; integer and Boolean
 control inputs require an explicit CPU `profiling_value` on `SharedInput`.
 The `ObjectConsistency` enumeration contains these two policies.
+
+Several planned callables may remain admitted to one runtime and may bind the
+same `ObjectRef`. Public `PlannedForward` and `PlannedTrainStep` calls are
+currently synchronous dispatcher operations, however, and overlapping Python
+invocations are not yet part of the public contract. Async invocation-owned
+results and concurrent mutation arbitration are separate runtime work.
 
 <!-- source-signature: src/shadowspill/pytorch/api.py:plan_step -->
 ```text

@@ -7,14 +7,24 @@ and storage operations into this contract.
 
 ## Pools, budgets, and leases
 
-`MemoryPool` is a generic range owner instantiated for the execution and spill
-pools. The supported backends are an accelerator-device slab and a registered
-pinned-host slab. Host memory is obtained with ordinary allocation followed by
-provider registration, and is unregistered before it is freed.
+`MemoryPool` is a generic range owner registered by identity with the runtime.
+Directed transfer routes are registered separately. Each admitted plan then
+selects its execution pool, spill pool, fetch route, and evict route; the
+runtime has no single global execution/spill role pair. The current PyTorch
+backend supports one accelerator-device slab and any number of registered
+pinned-host slabs. Host memory is obtained with ordinary allocation followed
+by provider registration, and is unregistered before it is freed.
 
 The execution pool's `physical_capacity` is the complete process-attributable
 device cap. Provider/context headroom lies inside that cap. Planning budgets
 may reduce configured capacities but cannot exceed them.
+
+Runtime construction precedes workload-state construction. The runtime first
+allocates and registers every configured pool, then calibrates each directed
+route using ranges from those actual pools. Workload state is constructed and
+imported afterward. This ordering keeps the physical pages and DMA mapping of
+a large pinned spill arena independent of earlier anonymous model allocations;
+planning consumes the immutable transfer profile published by that runtime.
 
 A `MemoryLease` owns one range for one residency generation. Objects keep a
 lease per pool location; aliases and views share the same object and lease.
@@ -35,8 +45,10 @@ runtime-global object handle. Physical admission validates that the alias is
 externally resident but assigns it no plan-owned offset. Closing either plan
 releases only that plan's ownership; the object remains until its final plan
 or public reference closes. Recurrent producers preserve the logical object
-and replace only its residency generation, so already-admitted consumers do
-not need to be rebuilt.
+and update its current residency generation in place, so already-admitted
+consumers keep the same object binding. The predecessor lease retires behind
+its completion dependency; replacing a generation never copies the value just
+to preserve frontend identity.
 
 Lease states have one meaning across execution and spill pools:
 
@@ -151,7 +163,9 @@ Python dispatcher       compute stream         C worker          transfer lane
        |--------------------->| record task fence   |                    |
        | reserve destination  |                     |                    |
        | queue action ---------------------------->|                    |
-       | return / next task   |                     |------------------->| submit copy
+       | wait submission ack  |                     |------------------->| submit copy
+       |<--------------------------------------------| ack submitted      |
+       | return / next task   |                     |                    |
        |                      |                     | query FIFO heads   | record event
        |                      |                     | publish generation | completion
        | next before_task()   |                     |                    |
@@ -160,9 +174,11 @@ Python dispatcher       compute stream         C worker          transfer lane
 
 `before_task()` inserts a device-stream dependency; it does not synchronize
 the Python thread on ordinary readiness. `after_task()` reserves transfer
-capacity before returning, while copy submission and completion publication
-belong to the worker. A dispatcher allocation may wait only when a known
-pending transition can satisfy it; otherwise it fails with no progress.
+capacity, publishes its predecoded action batch, and spins only until the
+worker acknowledges submission of every causally eligible route operation.
+It never waits for copy completion. Completion publication belongs to the
+worker. A dispatcher allocation may wait only when a known pending transition
+can satisfy it; otherwise it fails with no progress.
 
 ## Task boundaries
 
@@ -185,6 +201,13 @@ be active concurrently, while a second concurrent invocation of the same
 mutable handle fails closed rather than sharing validation/action state.
 The same record owns its expanded input-binding array, so input snapshots are
 published as a borrowed view without a repeated allocation or copy.
+
+Multiple plan and task handles may coexist in the neutral runtime. The public
+PyTorch callables currently dispatch synchronously, and one admitted task
+handle is intentionally non-reentrant because it reuses preallocated mutable
+validation and action state. Concurrent Python invocation and invocation-owned
+async results are not yet supported; the runtime does not claim that contract
+until mutable state and physical-layout ownership are invocation-scoped.
 
 ## Failure and teardown
 

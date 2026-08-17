@@ -33,9 +33,9 @@ program_path.write_text(step_program.to_json(), encoding="utf-8")
 loaded = StepProgram.from_json(program_path.read_text(encoding="utf-8"))
 
 points = [
-    (16 << 30, 64 << 30, 24_000_000_000),
-    (20 << 30, 64 << 30, 24_000_000_000),
-    (20 << 30, 64 << 30, 36_000_000_000),
+    (3 << 30, 2 << 30, 24_000_000_000),
+    (4 << 30, 2 << 30, 24_000_000_000),
+    (4 << 30, 2 << 30, 36_000_000_000),
 ]
 
 for execution_budget, spill_budget, bandwidth in points:
@@ -72,4 +72,3 @@ For reproducible sweeps, store together:
 - the sweep configuration and source revision;
 - the planning cache on a fast local filesystem;
 - any explicit transfer-bandwidth provenance.
-
