@@ -11,5 +11,5 @@ runtime design. They are historical analyses, not normative API contracts.
 - [Qwen runtime overheads](qwen-runtime-overheads.md) reconciles the original
   standard-allocator, simulator, and ShadowSpill execution measurements.
 
-Current behavior is defined by the architecture, runtime, planner, simulator,
-PyTorch frontend, and memory-budget documents in the parent directory.
+Current behavior is defined by the [architecture](../architecture/overview.md),
+[Python](../python/README.md), and [C](../c/README.md) documentation.

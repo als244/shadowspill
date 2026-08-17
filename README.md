@@ -107,12 +107,11 @@ optimizer update per call. It does not divide accumulated gradients.
 
 `train_step.state_dict()` returns `model`, `optimizer`, and `step`. The model
 member is directly compatible with
-`fresh_model.load_state_dict(checkpoint["model"])`; see
-[PyTorch Frontend](docs/pytorch-frontend.md#checkpoints-and-ordinary-pytorch-restoration)
-for active-runtime restore, ordinary-PyTorch restore, and an example that
-overlaps filesystem serialization with subsequent training after the
-synchronous snapshot completes. The snapshot uses ordinary CPU memory outside
-ShadowSpill's pools and budgets.
+`fresh_model.load_state_dict(checkpoint["model"])`; see the
+[checkpoint guide](docs/python/quickstart.md#checkpoint-and-restore) for
+active-runtime restore, ordinary-PyTorch restore, and asynchronous filesystem
+serialization after the synchronous snapshot completes. The snapshot uses
+ordinary CPU memory outside ShadowSpill's pools and budgets.
 
 `profiling_metadata` is planning-only cache metadata for value-sensitive task
 costs. It is not passed into the model; the corresponding concrete
@@ -177,12 +176,11 @@ IR ──────────────► Simulator
 - Pure-PyTorch and optional `mlops` models are qualification clients, never
   dependencies of the core.
 
-See [the architecture](docs/architecture.md),
-[the PyTorch API](docs/pytorch-frontend.md),
-[the planning cache](docs/planning-cache.md),
-[memory-budget semantics](docs/memory-budget-semantics.md), and the
-[development plan](docs/development-plan.md). Historical root-cause reports are
-indexed separately under [engineering investigations](docs/investigations/README.md).
+See the [documentation index](docs/README.md),
+[architecture overview](docs/architecture/overview.md),
+[Python guide](docs/python/README.md), [C guide](docs/c/README.md), and
+[development guide](docs/development/README.md). Root-cause reports are indexed
+separately under [engineering investigations](docs/investigations/README.md).
 
 ## Repository layout
 

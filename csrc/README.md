@@ -16,6 +16,8 @@ Public C headers live under each component's `include/shadowspill/` directory.
 Implementation files and private headers live under `src/`. The runtime alone
 has backend implementations: `mock` supports accelerator-free testing and
 `cuda` supplies device pools, streams, events, copies, and NVTX profiling.
+The [C API guide](../docs/c/README.md) documents ownership, threading, and each
+public component boundary.
 
 The dependency direction is:
 
