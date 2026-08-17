@@ -1051,7 +1051,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
         .object_id = object_id,
         .size_bytes = size_bytes,
         .retain_spill_copy = retain_spill_copy,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     ShadowSpillRuntimeStatus status = shadowspill_register_object(
         runtime, &description
@@ -1059,9 +1060,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_host_object(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
-    return shadowspill_write_spill_object(
+    return shadowspill_write_object(
         runtime,
         object_id,
+        1U,
         (const void *)(uintptr_t)source_address,
         size_bytes
     );
@@ -1085,7 +1087,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
         .object_id = object_id,
         .size_bytes = size_bytes,
         .retain_spill_copy = retain_spill_copy,
-        .initially_spill_resident = 0U,
+        .initially_resident = 0U,
     };
     return shadowspill_register_object(runtime, &description);
 }
@@ -1115,9 +1117,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_write_spill_object(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_write_spill_object(
+        : shadowspill_write_object(
               runtime,
               object_id,
+              1U,
               (const void *)(uintptr_t)source_address,
               size_bytes
           );
@@ -1136,9 +1139,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_read_spill_object(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_read_spill_object(
+        : shadowspill_read_object(
               runtime,
               object_id,
+              1U,
               (void *)(uintptr_t)destination_address,
               size_bytes
           );

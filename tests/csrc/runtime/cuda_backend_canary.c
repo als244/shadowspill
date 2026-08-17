@@ -101,7 +101,8 @@ int main(void) {
         .size_bytes = PAYLOAD_BYTES,
         .initial_version = 1U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = object.object_id,
@@ -112,8 +113,8 @@ int main(void) {
     const ShadowSpillActionBatchHandle *initial_actions = NULL;
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_write_spill_object(
-            runtime, object.object_id, original, PAYLOAD_BYTES
+        shadowspill_write_object(
+            runtime, object.object_id, 1U, original, PAYLOAD_BYTES
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_plan_create_for_pools(
             runtime, 0U, 1U, &plan
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_handle_acquire(
@@ -163,8 +164,8 @@ int main(void) {
         : after_status;
     const ShadowSpillRuntimeStatus read_status = idle_status ==
             SHADOWSPILL_RUNTIME_OK
-        ? shadowspill_read_spill_object(
-            runtime, object.object_id, restored, PAYLOAD_BYTES
+        ? shadowspill_read_object(
+            runtime, object.object_id, 1U, restored, PAYLOAD_BYTES
         )
         : idle_status;
     if (after_status != SHADOWSPILL_RUNTIME_OK ||

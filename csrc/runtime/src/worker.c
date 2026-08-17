@@ -288,11 +288,11 @@ static int dispatch_offload_locked(
     if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
         return 0;
     }
-    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
-        runtime, object
+    ShadowSpillObjectLocation *execution = shadowspill_plan_execution_location(
+        action->plan_owner, object
     );
-    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-        runtime, object
+    ShadowSpillObjectLocation *spill = shadowspill_plan_spill_location(
+        action->plan_owner, object
     );
     ShadowSpillMemoryLease *allocation = execution->lease;
     if (allocation == NULL || allocation->pointer == NULL ||
@@ -457,7 +457,9 @@ static int dispatch_prefetch_locked(
     ShadowSpillQueuedAction *action
 ) {
     if (action->destination_lease == NULL ||
-        shadowspill_spill_location(runtime, action->object)->lease == NULL) {
+        shadowspill_plan_spill_location(
+            action->plan_owner, action->object
+        )->lease == NULL) {
         latch_action_failure(
             runtime,
             action,
@@ -469,11 +471,11 @@ static int dispatch_prefetch_locked(
         return -1;
     }
     ShadowSpillObject *object = action->object;
-    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
-        runtime, object
+    ShadowSpillObjectLocation *execution = shadowspill_plan_execution_location(
+        action->plan_owner, object
     );
-    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-        runtime, object
+    ShadowSpillObjectLocation *spill = shadowspill_plan_spill_location(
+        action->plan_owner, object
     );
     const uint64_t object_id = object->object_id;
     const uint64_t previous_generation = object->generation;
@@ -707,9 +709,17 @@ static int handle_action(
                         object->retired_generation = object->generation;
                         object->retired_execution_pointer = allocation->pointer;
                         object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                        shadowspill_execution_location(runtime, object)->lease = NULL;
-                        shadowspill_execution_location(runtime, object)->current = 0U;
-                        object->residency = shadowspill_spill_location(runtime, object)->current
+                        ShadowSpillObjectLocation *execution =
+                            shadowspill_plan_execution_location(
+                                action->plan_owner, object
+                            );
+                        const ShadowSpillObjectLocation *spill =
+                            shadowspill_plan_spill_location(
+                                action->plan_owner, object
+                            );
+                        execution->lease = NULL;
+                        execution->current = 0U;
+                        object->residency = spill->current
                             ? SHADOWSPILL_OBJECT_SPILL_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
                         allocation->handoff_head_object_id =
@@ -741,9 +751,17 @@ static int handle_action(
                         action->plan_owner->execution_pool
                     );
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                    shadowspill_execution_location(runtime, object)->lease = NULL;
-                    shadowspill_execution_location(runtime, object)->current = 0U;
-                    object->residency = shadowspill_spill_location(runtime, object)->current
+                    ShadowSpillObjectLocation *execution =
+                        shadowspill_plan_execution_location(
+                            action->plan_owner, object
+                        );
+                    const ShadowSpillObjectLocation *spill =
+                        shadowspill_plan_spill_location(
+                            action->plan_owner, object
+                        );
+                    execution->lease = NULL;
+                    execution->current = 0U;
+                    object->residency = spill->current
                         ? SHADOWSPILL_OBJECT_SPILL_ONLY
                         : SHADOWSPILL_OBJECT_RELEASED;
                     pthread_cond_broadcast(&object->state_changed);
@@ -752,9 +770,10 @@ static int handle_action(
                     return 2;
                 }
             } else {
-                ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-                    runtime, object
-                );
+                ShadowSpillObjectLocation *spill =
+                    shadowspill_plan_spill_location(
+                        action->plan_owner, object
+                    );
                 if ((action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
                      action->destination_lease == NULL) ||
                     (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
@@ -859,7 +878,9 @@ static int handle_action(
                 }
                 if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
                     ShadowSpillObjectLocation *spill =
-                        shadowspill_spill_location(runtime, object);
+                        shadowspill_plan_spill_location(
+                            action->plan_owner, object
+                        );
                     if (object->residency !=
                             SHADOWSPILL_OBJECT_SPILL_ONLY ||
                         spill->lease == NULL || !spill->current ||
@@ -963,14 +984,24 @@ static int handle_action(
                         action->plan_owner->execution_pool
                     );
                     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                    shadowspill_execution_location(runtime, object)->lease = NULL;
-                    shadowspill_execution_location(runtime, object)->current = 0U;
-                    shadowspill_spill_location(runtime, object)->current = 1U;
-                    shadowspill_spill_location(runtime, object)->version = object->authoritative_version;
+                    ShadowSpillObjectLocation *execution =
+                        shadowspill_plan_execution_location(
+                            action->plan_owner, object
+                        );
+                    ShadowSpillObjectLocation *spill =
+                        shadowspill_plan_spill_location(
+                            action->plan_owner, object
+                        );
+                    execution->lease = NULL;
+                    execution->current = 0U;
+                    spill->current = 1U;
+                    spill->version = object->authoritative_version;
                     object->residency = SHADOWSPILL_OBJECT_SPILL_ONLY;
                 } else {
                     ShadowSpillObjectLocation *execution =
-                        shadowspill_execution_location(runtime, object);
+                        shadowspill_plan_execution_location(
+                            action->plan_owner, object
+                        );
                     if (execution->lease != NULL &&
                         execution->lease->generation == object->generation) {
                         object->residency = SHADOWSPILL_OBJECT_EXECUTION_READY;
@@ -989,7 +1020,9 @@ static int handle_action(
                     object->readiness_event = NULL;
                     if (!object->retain_spill_copy) {
                         ShadowSpillObjectLocation *spill =
-                            shadowspill_spill_location(runtime, object);
+                            shadowspill_plan_spill_location(
+                                action->plan_owner, object
+                            );
                         ShadowSpillMemoryLease *lease = spill->lease;
                         const int range_status =
                             shadowspill_memory_pool_release_lease_locked(lease);

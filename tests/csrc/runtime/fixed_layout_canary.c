@@ -26,7 +26,8 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 42U,
         .size_bytes = 64U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     failed = failed || shadowspill_register_object(runtime, &object) !=
         SHADOWSPILL_RUNTIME_OK;
@@ -355,7 +356,8 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         .object_id = 71U,
         .size_bytes = 64U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     failed = failed || shadowspill_register_object(runtime, &object) !=
         SHADOWSPILL_RUNTIME_OK;
@@ -453,7 +455,8 @@ static int eviction_completion_orders_fixed_reuse(void) {
         .object_id = 51U,
         .size_bytes = 64U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     failed = failed || shadowspill_register_object(runtime, &object) !=
         SHADOWSPILL_RUNTIME_OK;
@@ -611,13 +614,15 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
             .object_id = 61U,
             .size_bytes = 64U,
             .retain_spill_copy = 1U,
-            .initially_spill_resident = 1U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
         },
         {
             .object_id = 62U,
             .size_bytes = 64U,
             .retain_spill_copy = 1U,
-            .initially_spill_resident = 1U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
         },
     };
     failed = failed || shadowspill_register_object(runtime, &objects[0]) !=

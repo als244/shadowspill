@@ -163,7 +163,8 @@ static int worker_submission_failure_reaches_dispatcher(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 19U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
@@ -360,7 +361,8 @@ static int failed_prefetch_reports_trigger_reservation_oom(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 7U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = object.object_id,

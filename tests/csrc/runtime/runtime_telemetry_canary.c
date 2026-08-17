@@ -226,9 +226,24 @@ static int queued_transfers_survive_retirement_only_task(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     const ShadowSpillObjectDescription objects[] = {
-        {.object_id = 20U, .size_bytes = 32U, .initially_spill_resident = 1U},
-        {.object_id = 21U, .size_bytes = 32U, .initially_spill_resident = 1U},
-        {.object_id = 22U, .size_bytes = 32U, .initially_spill_resident = 1U},
+        {
+            .object_id = 20U,
+            .size_bytes = 32U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
+        {
+            .object_id = 21U,
+            .size_bytes = 32U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
+        {
+            .object_id = 22U,
+            .size_bytes = 32U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
     };
     const ShadowSpillRuntimeAction initial[] = {
         {.object_id = 20U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
@@ -295,7 +310,8 @@ static int all_completed_retirements_precede_action_admission(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 30U,
         .size_bytes = 96U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     ShadowSpillAllocation first = {0};
     ShadowSpillAllocation second = {0};
@@ -394,7 +410,8 @@ static int bounded_runtime_trace_is_opt_in(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 50U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = object.object_id,

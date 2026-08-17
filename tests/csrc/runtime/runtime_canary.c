@@ -266,7 +266,8 @@ int main(void) {
         .size_bytes = 128U,
         .initial_version = 4U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     ShadowSpillAllocation first_generation = {0};
     unsigned char original_payload[128];
@@ -276,15 +277,17 @@ int main(void) {
     }
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_write_spill_object(
+        shadowspill_write_object(
             runtime,
             object.object_id,
+            1U,
             original_payload,
             sizeof(original_payload)
         ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_read_spill_object(
+        shadowspill_read_object(
             runtime,
             object.object_id,
+            1U,
             restored_payload,
             sizeof(restored_payload)
         ) != SHADOWSPILL_RUNTIME_OK ||
@@ -295,9 +298,10 @@ int main(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_memory_pool_grow(runtime, 1U, 255U) !=
             SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
-        shadowspill_read_spill_object(
+        shadowspill_read_object(
             runtime,
             object.object_id,
+            1U,
             restored_payload,
             sizeof(restored_payload)
         ) != SHADOWSPILL_RUNTIME_OK ||
@@ -423,12 +427,14 @@ int main(void) {
         {
             .object_id = 8U,
             .size_bytes = 64U,
-            .initially_spill_resident = 1U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
         },
         {
             .object_id = 9U,
             .size_bytes = 64U,
-            .initially_spill_resident = 1U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
         },
     };
     const ShadowSpillRuntimeAction pair_prefetch[] = {

@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
@@ -227,14 +228,102 @@ static int plan_selects_nondefault_pool_pair(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *plan = NULL;
     ShadowSpillPlan *invalid = NULL;
+    ShadowSpillObjectHandle *object_handle = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillObjectDescription object = {
+        .object_id = 7007U,
+        .size_bytes = 64U,
+        .initial_pool_id = 2U,
+        .initially_resident = 1U,
+    };
+    uint8_t payload[64];
+    uint8_t restored[64] = {0};
+    for (uint32_t index = 0U; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(index * 11U + 5U);
+    }
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = 9U,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillRuntimeAction evict = {
+        .object_id = 9U,
+        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+    };
+    const ShadowSpillActionBatchHandle *initial_actions = NULL;
+    const uint64_t input = 9U;
+    const ShadowSpillTaskDescription task = {
+        .task_id = 1U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .actions = &evict,
+        .action_count = 1U,
+    };
+    const ShadowSpillTaskHandle *task_handle = NULL;
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillAllocation reclaimed = {0};
     int failed = shadowspill_runtime_create(&config, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &alternate, &plan) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &mismatched, &invalid) !=
             SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
-        invalid != NULL;
+        invalid != NULL ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_write_object(
+            runtime, object.object_id, 2U, payload, sizeof(payload)
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, object.object_id, &object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_action_batch(
+            plan, 0U, &fetch, 1U, &initial_actions
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_task(plan, &task, &task_handle) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    if (!failed) {
+        failed = shadowspill_submit_action_batch_handle(
+                runtime, initial_actions, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_before_task_handle(
+                runtime, task_handle, compute, &binding, 1U
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            binding.pointer == NULL ||
+            memcmp(binding.pointer, payload, sizeof(payload)) != 0 ||
+            shadowspill_after_task_handle(runtime, task_handle, compute) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_read_object(
+                runtime, object.object_id, 2U, restored, sizeof(restored)
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            memcmp(restored, payload, sizeof(payload)) != 0;
+    }
+    if (object_handle != NULL) {
+        (void)shadowspill_object_handle_release(object_handle);
+    }
     shadowspill_plan_destroy(plan);
+    if (runtime != NULL && !failed) {
+        failed = shadowspill_unregister_object(runtime, object.object_id) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_memory_pool_allocate(
+                runtime, 2U, 4096U, 16U, compute, &reclaimed
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_memory_pool_free(
+                runtime, 2U, reclaimed.allocation_id, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_wait_idle(runtime) !=
+                SHADOWSPILL_RUNTIME_OK;
+    } else if (runtime != NULL) {
+        (void)shadowspill_unregister_object(runtime, object.object_id);
+    }
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
     shadowspill_runtime_destroy(runtime);
     shadowspill_mock_backend_destroy(mock);
     return failed ? -1 : 0;
@@ -264,12 +353,14 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
     const ShadowSpillObjectDescription first_object = {
         .object_id = 1001U,
         .size_bytes = 64U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillObjectDescription second_object = {
         .object_id = 2002U,
         .size_bytes = 64U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const uint64_t input = 7U;
     const ShadowSpillTaskDescription task = {
@@ -341,7 +432,8 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 9001U,
         .size_bytes = 64U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
@@ -441,7 +533,8 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 3003U,
         .size_bytes = 64U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = 9U,
