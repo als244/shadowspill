@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from shadowspill.ir import (
@@ -164,27 +162,18 @@ def test_causal_reuse_preserves_peak_and_delays_wire_start() -> None:
     )
     assert admission == _admission()
 
-    compiled = simulate(
+    result = simulate(
         _program(),
         _schedule(),
         config=_config(),
         admission=admission,
     )
-    reference = simulate(
-        _program(),
-        _schedule(),
-        config=_config(),
-        admission=admission,
-        record_timeline=True,
-    )
-
-    assert compiled == replace(reference, memory_timeline=())
-    eviction, fetch = compiled.transfer_intervals
+    eviction, fetch = result.transfer_intervals
     assert (eviction.start_ns, eviction.end_ns) == (10, 106)
     assert (fetch.ready_ns, fetch.start_ns, fetch.end_ns) == (20, 106, 202)
     assert fetch.stall_reasons == ("memory-reuse",)
-    assert compiled.task_intervals[-1].start_ns == 202
-    peak = compiled.device_peak("cuda_0")
+    assert result.task_intervals[-1].start_ns == 202
+    peak = result.device_peak("cuda_0")
     assert peak.object_bytes == 192
     assert peak.total_bytes == 96
-    assert compiled.makespan_ns == 212
+    assert result.makespan_ns == 212

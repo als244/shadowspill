@@ -310,6 +310,30 @@ int main(void) {
         .alias_json_names = context_alias_names,
         .task_json_names = context_task_names,
     };
+    ShadowSpillPressureFitPreflightResult preflight = {0};
+    if (shadowspill_validate_pressurefit_program_context(
+            &program_context,
+            &preflight
+        ) != SHADOWSPILL_PLANNER_OK ||
+        preflight.status != SHADOWSPILL_PLANNER_OK ||
+        preflight.failure_kind != SHADOWSPILL_PREFLIGHT_NONE) {
+        return EXIT_FAILURE;
+    }
+    const uint64_t excessive_workspace[] = {65U};
+    ShadowSpillSimulationProgram oversized_simulation = context_simulation;
+    oversized_simulation.task_workspace_bytes = excessive_workspace;
+    ShadowSpillPressureFitProgramContext oversized_context = program_context;
+    oversized_context.simulation = &oversized_simulation;
+    if (shadowspill_validate_pressurefit_program_context(
+            &oversized_context,
+            &preflight
+        ) != SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE ||
+        preflight.status != SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE ||
+        preflight.failure_kind != SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY ||
+        preflight.error_boundary != 0 || preflight.required_bytes != 65U ||
+        preflight.capacity_bytes != 64U) {
+        return EXIT_FAILURE;
+    }
     ShadowSpillPressureFitContextResult program_context_result = {0};
     if (shadowspill_evaluate_pressurefit_program_context(
             &program_context,

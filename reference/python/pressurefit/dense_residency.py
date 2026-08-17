@@ -8,9 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.simulator import SimulationConfig
-
-from ._capi import (
+from shadowspill.planner._capi import (
     ABI_VERSION,
     NO_INDEX,
     CResidencyOptions,
@@ -18,9 +16,11 @@ from ._capi import (
     CResidencyResult,
     load_planner_library,
 )
-from ._facts import PlanningFacts
-from ._residency import ResidencyPlan, Span
-from .model import PressureFitInfeasibleError
+from shadowspill.planner.model import PressureFitInfeasibleError
+from shadowspill.simulator import SimulationConfig
+
+from .facts import PlanningFacts
+from .residency import ResidencyPlan, Span
 
 
 def _array(ctype: Any, values: list[int]) -> Any:

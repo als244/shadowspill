@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from shadowspill.planner._capi import planner_library_path
-from shadowspill.planner._dense_residency import (
+from reference.python.pressurefit.dense_residency import (
     compile_residency_template,
     reduce_residency_compiled,
 )
-from shadowspill.planner._facts import build_facts
-from shadowspill.planner._residency import reduce_pressure, seed_residency
+from reference.python.pressurefit.facts import build_facts
+from reference.python.pressurefit.residency import reduce_pressure, seed_residency
+from shadowspill.planner._capi import planner_library_path
 from shadowspill.planner.model import (
     InitialPlacement,
     PressureFitInfeasibleError,

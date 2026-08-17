@@ -4,9 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner._facts import build_facts
-from shadowspill.planner._residency import (
+from reference.python.pressurefit.facts import build_facts
+from reference.python.pressurefit.residency import (
     ResidencyPlan,
     Span,
     _pressure_by_device,
@@ -16,6 +15,7 @@ from shadowspill.planner._residency import (
     reduce_pressure,
     seed_residency,
 )
+from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.planner.model import InitialPlacement
 
 from ._examples import (

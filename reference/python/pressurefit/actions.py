@@ -12,11 +12,11 @@ from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
 )
+from shadowspill.planner.model import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
-from ._facts import PlanningFacts
-from ._residency import ResidencyPlan, Span, _pressure_by_device
-from .model import PressureFitInfeasibleError
+from .facts import PlanningFacts
+from .residency import ResidencyPlan, Span, _pressure_by_device
 
 
 @dataclass(frozen=True, slots=True)

@@ -31,6 +31,13 @@ typedef struct PreparedContext {
     uint8_t *seen_input;
     uint8_t *charged_anchors;
     uint64_t *required_bytes;
+
+    uint8_t failure_kind;
+    uint32_t error_device;
+    uint32_t error_alias;
+    int32_t error_boundary;
+    uint64_t failure_required_bytes;
+    uint64_t failure_capacity_bytes;
 } PreparedContext;
 
 typedef struct ColdAlias {
@@ -187,7 +194,6 @@ static int program_context_valid(
         context->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
         context->simulation->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
         context->simulation->device_count == 0U ||
-        context->simulation->alias_count == 0U ||
         context->simulation->task_count == 0U ||
         options->initial_placement > SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
         return 0;
@@ -234,31 +240,39 @@ static int allocate_prepared_buffers(
         checked_cells(program->device_count, boundary_count, &pressure_cells) != 0) {
         return -1;
     }
+    size_t aliases = program->alias_count == 0U ? 1U : program->alias_count;
+    size_t allocated_cells = cells == 0U ? 1U : cells;
     prepared->initial_location = malloc(
-        (size_t)program->alias_count * sizeof(*prepared->initial_location)
+        aliases * sizeof(*prepared->initial_location)
     );
     prepared->final_location = malloc(
-        (size_t)program->alias_count * sizeof(*prepared->final_location)
+        aliases * sizeof(*prepared->final_location)
     );
-    prepared->anchors = calloc(cells, sizeof(*prepared->anchors));
-    prepared->productions = calloc(cells, sizeof(*prepared->productions));
+    prepared->anchors = calloc(allocated_cells, sizeof(*prepared->anchors));
+    prepared->productions = calloc(
+        allocated_cells,
+        sizeof(*prepared->productions)
+    );
     prepared->latest_access_task = malloc(
-        cells * sizeof(*prepared->latest_access_task)
+        allocated_cells * sizeof(*prepared->latest_access_task)
     );
     prepared->output_reservations = calloc(
-        cells,
+        allocated_cells,
         sizeof(*prepared->output_reservations)
     );
-    prepared->write_prefix = calloc(cells, sizeof(*prepared->write_prefix));
+    prepared->write_prefix = calloc(
+        allocated_cells,
+        sizeof(*prepared->write_prefix)
+    );
     prepared->first_input_task = malloc(
-        (size_t)program->alias_count * sizeof(*prepared->first_input_task)
+        aliases * sizeof(*prepared->first_input_task)
     );
     prepared->fetch_runtime_ns = calloc(
-        program->alias_count,
+        aliases,
         sizeof(*prepared->fetch_runtime_ns)
     );
     prepared->evict_runtime_ns = calloc(
-        program->alias_count,
+        aliases,
         sizeof(*prepared->evict_runtime_ns)
     );
     prepared->task_ideal_end_ns = calloc(
@@ -273,18 +287,24 @@ static int allocate_prepared_buffers(
         pressure_cells,
         sizeof(*prepared->boundary_capacity_bytes)
     );
-    prepared->seed_resident = calloc(cells, sizeof(*prepared->seed_resident));
-    prepared->seed_breaks = calloc(cells, sizeof(*prepared->seed_breaks));
-    prepared->first_access_task = malloc(
-        (size_t)program->alias_count * sizeof(*prepared->first_access_task)
+    prepared->seed_resident = calloc(
+        allocated_cells,
+        sizeof(*prepared->seed_resident)
     );
-    prepared->produced = calloc(program->alias_count, sizeof(*prepared->produced));
+    prepared->seed_breaks = calloc(
+        allocated_cells,
+        sizeof(*prepared->seed_breaks)
+    );
+    prepared->first_access_task = malloc(
+        aliases * sizeof(*prepared->first_access_task)
+    );
+    prepared->produced = calloc(aliases, sizeof(*prepared->produced));
     prepared->seen_input = calloc(
-        program->alias_count,
+        aliases,
         sizeof(*prepared->seen_input)
     );
     prepared->charged_anchors = calloc(
-        cells,
+        allocated_cells,
         sizeof(*prepared->charged_anchors)
     );
     prepared->required_bytes = calloc(
@@ -312,7 +332,7 @@ static int allocate_prepared_buffers(
     memset(prepared->initial_location, -1, program->alias_count);
     memset(prepared->final_location, -1, program->alias_count);
     memset(prepared->latest_access_task, 0xff,
-           cells * sizeof(*prepared->latest_access_task));
+           allocated_cells * sizeof(*prepared->latest_access_task));
     memset(prepared->first_input_task, 0xff,
            (size_t)program->alias_count * sizeof(*prepared->first_input_task));
     memset(prepared->first_access_task, 0xff,
@@ -507,6 +527,12 @@ static ShadowSpillPlannerStatus finalize_boundary_capacities(
             const uint64_t workspace =
                 prepared->boundary_capacity_bytes[position];
             if (workspace > capacity) {
+                prepared->failure_kind =
+                    SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY;
+                prepared->error_device = device;
+                prepared->error_boundary = (int32_t)boundary;
+                prepared->failure_required_bytes = workspace;
+                prepared->failure_capacity_bytes = capacity;
                 return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
             }
             prepared->boundary_capacity_bytes[position] = capacity - workspace;
@@ -551,6 +577,10 @@ static ShadowSpillPlannerStatus finalize_alias_facts(
             prepared->first_input_task[alias] == 0U &&
             prepared->produced[alias] == 0U &&
             prepared->initial_location[alias] < 0) {
+            prepared->failure_kind =
+                SHADOWSPILL_PREFLIGHT_MISSING_INITIAL_RESIDENCY;
+            prepared->error_alias = alias;
+            prepared->error_boundary = 0;
             return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
         }
         uint8_t seen_write = 0U;
@@ -619,6 +649,15 @@ static ShadowSpillPlannerStatus validate_required_floor(
             if (required > prepared->boundary_capacity_bytes[
                     (uint64_t)device * boundary_count + position
                 ]) {
+                prepared->failure_kind =
+                    SHADOWSPILL_PREFLIGHT_REQUIRED_CAPACITY;
+                prepared->error_device = device;
+                prepared->error_boundary = (int32_t)position;
+                prepared->failure_required_bytes = required;
+                prepared->failure_capacity_bytes =
+                    prepared->boundary_capacity_bytes[
+                        (uint64_t)device * boundary_count + position
+                    ];
                 return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
             }
         }
@@ -778,6 +817,9 @@ static ShadowSpillPlannerStatus prepare_context(
     PreparedContext *prepared
 ) {
     memset(prepared, 0, sizeof(*prepared));
+    prepared->error_device = UINT32_MAX;
+    prepared->error_alias = UINT32_MAX;
+    prepared->error_boundary = INT32_MIN;
     const ShadowSpillSimulationProgram *program = source->simulation;
     if (allocate_prepared_buffers(program, prepared) != 0) {
         return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
@@ -885,6 +927,38 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_program_context(
     } else {
         result->status = status;
     }
+    prepared_context_destroy(&prepared);
+    return status;
+}
+
+ShadowSpillPlannerStatus shadowspill_validate_pressurefit_program_context(
+    const ShadowSpillPressureFitProgramContext *context,
+    ShadowSpillPressureFitPreflightResult *result
+) {
+    if (result == NULL) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+    memset(result, 0, sizeof(*result));
+    result->status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    result->error_device = UINT32_MAX;
+    result->error_alias = UINT32_MAX;
+    result->error_boundary = INT32_MIN;
+    const ShadowSpillPressureFitContextOptions options = {
+        .initial_placement = SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED,
+    };
+    if (!program_context_valid(context, &options)) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+
+    PreparedContext prepared = {0};
+    ShadowSpillPlannerStatus status = prepare_context(context, &options, &prepared);
+    result->status = status;
+    result->failure_kind = prepared.failure_kind;
+    result->error_device = prepared.error_device;
+    result->error_alias = prepared.error_alias;
+    result->error_boundary = prepared.error_boundary;
+    result->required_bytes = prepared.failure_required_bytes;
+    result->capacity_bytes = prepared.failure_capacity_bytes;
     prepared_context_destroy(&prepared);
     return status;
 }

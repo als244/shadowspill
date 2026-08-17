@@ -16,8 +16,7 @@ from shadowspill.ir import (
     ResourceKind,
     TaskSpec,
 )
-
-from .model import (
+from shadowspill.simulator.model import (
     DeviceMemoryPeak,
     MemorySnapshot,
     SimulationAdmission,

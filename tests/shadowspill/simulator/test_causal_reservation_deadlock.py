@@ -146,10 +146,7 @@ def _config(capacity: int) -> SimulationConfig:
     )
 
 
-@pytest.mark.parametrize("record_timeline", [False, True])
-def test_transfer_start_charging_would_admit_but_causal_admission_rejects(
-    record_timeline: bool,
-) -> None:
+def test_transfer_start_charging_would_admit_but_causal_admission_rejects() -> None:
     # Under the old rule, the future 40-byte destination was not charged while
     # it waited behind the earlier FETCH. The current head task therefore appeared
     # to fit: 20 resident + 40 active-FETCH + 30 output + 20 workspace = 110 <= 120.
@@ -169,7 +166,6 @@ def test_transfer_start_charging_would_admit_but_causal_admission_rejects(
             _program(),
             _schedule(),
             config=_config(120),
-            record_timeline=record_timeline,
         )
 
     error = caught.value
@@ -185,7 +181,6 @@ def test_causal_reservation_preserves_overlap_when_the_plan_really_fits() -> Non
         _program(),
         _schedule(),
         config=_config(150),
-        record_timeline=True,
     )
 
     head = next(

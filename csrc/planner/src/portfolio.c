@@ -597,7 +597,10 @@ static int candidate_workspace_create(
     workspace->repair_resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->repair_breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->removable_aliases = calloc(
-        context->residency->alias_count, 1U
+        context->residency->alias_count == 0U
+            ? 1U
+            : context->residency->alias_count,
+        1U
     );
     workspace->extra_pressure = calloc(
         pressure_count == 0U ? 1U : (size_t)pressure_count,

@@ -9,7 +9,7 @@ from pathlib import Path
 from shadowspill._libraries import resolve_library
 from shadowspill.simulator._capi import CProgram
 
-ABI_VERSION = 11
+ABI_VERSION = 12
 NO_INDEX = (1 << 32) - 1
 
 
@@ -172,6 +172,18 @@ class CPressureFitProgramContext(ctypes.Structure):
     ]
 
 
+class CPressureFitPreflightResult(ctypes.Structure):
+    _fields_ = [
+        ("status", ctypes.c_uint32),
+        ("failure_kind", ctypes.c_uint8),
+        ("error_device", ctypes.c_uint32),
+        ("error_alias", ctypes.c_uint32),
+        ("error_boundary", ctypes.c_int32),
+        ("required_bytes", ctypes.c_uint64),
+        ("capacity_bytes", ctypes.c_uint64),
+    ]
+
+
 class CPressureFitRepairDiagnostics(ctypes.Structure):
     _fields_ = [
         ("admission_prefetch_advance_attempts", ctypes.c_uint64),
@@ -313,6 +325,11 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitContextResult),
     ]
     library.shadowspill_evaluate_pressurefit_program_context.restype = ctypes.c_uint32
+    library.shadowspill_validate_pressurefit_program_context.argtypes = [
+        ctypes.POINTER(CPressureFitProgramContext),
+        ctypes.POINTER(CPressureFitPreflightResult),
+    ]
+    library.shadowspill_validate_pressurefit_program_context.restype = ctypes.c_uint32
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionTopology),
@@ -340,6 +357,7 @@ __all__ = [
     "CPressureFitContext",
     "CPressureFitContextOptions",
     "CPressureFitContextResult",
+    "CPressureFitPreflightResult",
     "CPressureFitProgramContext",
     "CPressureFitRepairDiagnostics",
     "CPressureFitWorkDiagnostics",

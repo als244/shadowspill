@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from reference.python.pressurefit.selection import SelectionCandidate, select_compiled
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.planner._capi import planner_library_path
-from shadowspill.planner._compiled import SelectionCandidate, select_compiled
 
 from ._examples import (
     training_chain_config,

@@ -24,15 +24,14 @@ from ._admission import CompiledAdmissionTopology
 from ._capi import (
     ABI_VERSION,
     NO_INDEX,
-    CPressureFitContext,
     CPressureFitContextOptions,
     CPressureFitContextResult,
+    CPressureFitPreflightResult,
     CPressureFitProgramContext,
     CPressureFitRepairDiagnostics,
     CPressureFitWorkDiagnostics,
     load_planner_library,
 )
-from ._dense_residency import CompiledResidencyTemplate
 from .diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
 from .model import CandidateDiagnostic, PressureFitOptions
 
@@ -57,6 +56,9 @@ _ACTION_KIND = {
 }
 _LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.HOST}
 _INITIAL_PLACEMENT = {"required": 0, "greedy": 1}
+_PREFLIGHT_WORKSPACE_CAPACITY = 1
+_PREFLIGHT_REQUIRED_CAPACITY = 2
+_PREFLIGHT_MISSING_INITIAL_RESIDENCY = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +140,22 @@ class NativeContextResult:
 
 class NativeContextPreparationError(RuntimeError):
     """The compiled topology could not be normalized into planner facts."""
+
+
+@dataclass(frozen=True, slots=True)
+class NativePreflightResult:
+    """Structured semantic-feasibility result from the compiled planner."""
+
+    failure_kind: str | None
+    error_device: int | None
+    error_alias: int | None
+    error_boundary: int | None
+    required_bytes: int | None
+    capacity_bytes: int | None
+
+    @property
+    def valid(self) -> bool:
+        return self.failure_kind is None
 
 
 def decode_candidate_diagnostic(
@@ -301,6 +319,123 @@ def _escaped_identifier(value: str) -> bytes:
     return encoded[1:-1].encode("utf-8")
 
 
+def _name_arrays(
+    simulation: CompiledSimulationTemplate,
+) -> tuple[
+    ctypes.Array[ctypes.c_char_p],
+    ctypes.Array[ctypes.c_char_p],
+]:
+    alias_payloads = tuple(_escaped_identifier(value) for value in simulation.alias_ids)
+    task_payloads = tuple(_escaped_identifier(value) for value in simulation.task_ids)
+    alias_names = (ctypes.c_char_p * max(1, len(alias_payloads)))(*alias_payloads)
+    task_names = (ctypes.c_char_p * max(1, len(task_payloads)))(*task_payloads)
+    return alias_names, task_names
+
+
+def _program_context(
+    simulation: CompiledSimulationTemplate,
+    admission: CompiledAdmissionTopology | None,
+) -> tuple[CPressureFitProgramContext, tuple[object, ...]]:
+    alias_names, task_names = _name_arrays(simulation)
+    device_ranks = {
+        device_id: rank for rank, device_id in enumerate(sorted(simulation.device_ids))
+    }
+    priorities = (ctypes.c_uint32 * max(1, len(simulation.device_ids)))(
+        *(device_ranks[value] for value in simulation.device_ids)
+    )
+    context = CPressureFitProgramContext(
+        abi_version=ABI_VERSION,
+        simulation=ctypes.pointer(simulation.program),
+        device_priority=priorities,
+        admission=ctypes.pointer(admission.value) if admission is not None else None,
+        alias_json_names=alias_names,
+        task_json_names=task_names,
+    )
+    return context, (alias_names, task_names, priorities)
+
+
+def _context_options(
+    options: PressureFitOptions,
+) -> tuple[
+    CPressureFitContextOptions,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[object, ...],
+]:
+    strategy_names = tuple(options.residency_strategies)
+    rule_names = tuple(options.prefetch_rules)
+    strategies = (ctypes.c_uint8 * len(strategy_names))(
+        *(_STRATEGY_CODE[value] for value in strategy_names)
+    )
+    rules = (ctypes.c_uint8 * len(rule_names))(
+        *(_RULE_CODE[value] for value in rule_names)
+    )
+    native = CPressureFitContextOptions(
+        residency_strategies=strategies,
+        residency_strategy_count=len(strategy_names),
+        prefetch_rules=rules,
+        prefetch_rule_count=len(rule_names),
+        evaluate_coalesced=int(options.evaluate_coalesced),
+        max_repair_attempts=options.max_repair_attempts,
+        initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
+    )
+    return native, strategy_names, rule_names, (strategies, rules)
+
+
+def validate_program_context_compiled(
+    simulation: CompiledSimulationTemplate,
+    *,
+    admission: CompiledAdmissionTopology | None = None,
+) -> NativePreflightResult:
+    """Validate one selected topology using the compiled planner authority."""
+
+    context, _buffers = _program_context(simulation, admission)
+    result = CPressureFitPreflightResult()
+    library = load_planner_library()
+    status = int(
+        library.shadowspill_validate_pressurefit_program_context(
+            ctypes.byref(context),
+            ctypes.byref(result),
+        )
+    )
+    if status != int(result.status):
+        raise RuntimeError(
+            "compiled PressureFit preflight returned inconsistent status"
+        )
+    if status == 0:
+        return NativePreflightResult(None, None, None, None, None, None)
+    failure_kind = int(result.failure_kind)
+    if failure_kind not in {
+        _PREFLIGHT_WORKSPACE_CAPACITY,
+        _PREFLIGHT_REQUIRED_CAPACITY,
+        _PREFLIGHT_MISSING_INITIAL_RESIDENCY,
+    }:
+        encoded = library.shadowspill_planner_status_string(status)
+        message = encoded.decode("utf-8") if encoded else f"planner status {status}"
+        raise NativeContextPreparationError(message)
+    failure_names = {
+        _PREFLIGHT_WORKSPACE_CAPACITY: "workspace_capacity",
+        _PREFLIGHT_REQUIRED_CAPACITY: "required_capacity",
+        _PREFLIGHT_MISSING_INITIAL_RESIDENCY: "missing_initial_residency",
+    }
+    return NativePreflightResult(
+        failure_kind=failure_names[failure_kind],
+        error_device=(
+            None if int(result.error_device) == NO_INDEX else int(result.error_device)
+        ),
+        error_alias=(
+            None if int(result.error_alias) == NO_INDEX else int(result.error_alias)
+        ),
+        error_boundary=(
+            None
+            if int(result.error_boundary) == -(1 << 31)
+            else int(result.error_boundary)
+        ),
+        required_bytes=int(result.required_bytes),
+        capacity_bytes=int(result.capacity_bytes),
+    )
+
+
 def _copy_schedule(result: CPressureFitContextResult) -> NativeDenseSchedule:
     value = result.selected_schedule
     return NativeDenseSchedule(
@@ -382,87 +517,27 @@ def _evaluate_native_context(
     simulation: CompiledSimulationTemplate,
     options: PressureFitOptions,
     *,
-    residency: CompiledResidencyTemplate | None,
     admission: CompiledAdmissionTopology | None,
 ) -> NativeContextResult | None:
-    """Invoke and decode either compiled context-entry path."""
+    """Invoke and decode one compiled program-context evaluation."""
 
-    alias_payloads = tuple(_escaped_identifier(value) for value in simulation.alias_ids)
-    task_payloads = tuple(_escaped_identifier(value) for value in simulation.task_ids)
-    alias_names = (ctypes.c_char_p * len(alias_payloads))(*alias_payloads)
-    task_names = (ctypes.c_char_p * len(task_payloads))(*task_payloads)
-    strategy_names = tuple(options.residency_strategies)
-    rule_names = tuple(options.prefetch_rules)
-    strategies = (ctypes.c_uint8 * len(strategy_names))(
-        *(_STRATEGY_CODE[value] for value in strategy_names)
-    )
-    rules = (ctypes.c_uint8 * len(rule_names))(
-        *(_RULE_CODE[value] for value in rule_names)
-    )
-    native_options = CPressureFitContextOptions(
-        residency_strategies=strategies,
-        residency_strategy_count=len(strategy_names),
-        prefetch_rules=rules,
-        prefetch_rule_count=len(rule_names),
-        evaluate_coalesced=int(options.evaluate_coalesced),
-        max_repair_attempts=options.max_repair_attempts,
-        initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
+    native_options, strategy_names, rule_names, _option_buffers = _context_options(
+        options
     )
     native_result = CPressureFitContextResult()
     library = load_planner_library()
-    if residency is not None:
-        context: CPressureFitContext | CPressureFitProgramContext = (
-            CPressureFitContext(
-                abi_version=ABI_VERSION,
-                residency=ctypes.pointer(residency.problem),
-                simulation=ctypes.pointer(simulation.program),
-                seed_resident=residency.seed_resident,
-                seed_breaks=residency.seed_breaks,
-                admission=(
-                    ctypes.pointer(admission.value)
-                    if admission is not None
-                    else None
-                ),
-                alias_json_names=alias_names,
-                task_json_names=task_names,
-            )
+    context, _context_buffers = _program_context(simulation, admission)
+    status = int(
+        library.shadowspill_evaluate_pressurefit_program_context(
+            ctypes.byref(context),
+            ctypes.byref(native_options),
+            ctypes.byref(native_result),
         )
-        status = int(
-            library.shadowspill_evaluate_pressurefit_context(
-                ctypes.byref(context),
-                ctypes.byref(native_options),
-                ctypes.byref(native_result),
-            )
-        )
-    else:
-        device_ranks = {
-            device_id: rank
-            for rank, device_id in enumerate(sorted(simulation.device_ids))
-        }
-        priorities = (ctypes.c_uint32 * len(simulation.device_ids))(
-            *(device_ranks[value] for value in simulation.device_ids)
-        )
-        context = CPressureFitProgramContext(
-            abi_version=ABI_VERSION,
-            simulation=ctypes.pointer(simulation.program),
-            device_priority=priorities,
-            admission=(
-                ctypes.pointer(admission.value) if admission is not None else None
-            ),
-            alias_json_names=alias_names,
-            task_json_names=task_names,
-        )
-        status = int(
-            library.shadowspill_evaluate_pressurefit_program_context(
-                ctypes.byref(context),
-                ctypes.byref(native_options),
-                ctypes.byref(native_result),
-            )
-        )
+    )
     try:
-        if residency is None and status == 5:
+        if status == 5:
             return None
-        if residency is None and status == 1:
+        if status == 1:
             raise NativeContextPreparationError(
                 "compiled PressureFit context rejected the selected topology"
             )
@@ -533,20 +608,6 @@ def _evaluate_native_context(
         )
 
 
-def evaluate_context_compiled(
-    residency: CompiledResidencyTemplate,
-    simulation: CompiledSimulationTemplate,
-    options: PressureFitOptions,
-) -> NativeContextResult:
-    """Evaluate a caller-prepared dense context in C."""
-
-    result = _evaluate_native_context(
-        simulation, options, residency=residency, admission=None
-    )
-    assert result is not None
-    return result
-
-
 def evaluate_program_context_compiled(
     simulation: CompiledSimulationTemplate,
     options: PressureFitOptions,
@@ -555,9 +616,7 @@ def evaluate_program_context_compiled(
 ) -> NativeContextResult | None:
     """Derive dense planning facts and evaluate the portfolio entirely in C."""
 
-    return _evaluate_native_context(
-        simulation, options, residency=None, admission=admission
-    )
+    return _evaluate_native_context(simulation, options, admission=admission)
 
 
 __all__ = [
@@ -565,8 +624,9 @@ __all__ = [
     "NativeContextPreparationError",
     "NativeContextResult",
     "NativeDenseSchedule",
+    "NativePreflightResult",
     "decode_candidate_diagnostic",
     "decode_schedule",
-    "evaluate_context_compiled",
     "evaluate_program_context_compiled",
+    "validate_program_context_compiled",
 ]

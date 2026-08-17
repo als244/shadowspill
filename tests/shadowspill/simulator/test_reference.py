@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from reference.python.simulator import simulate_python
 from shadowspill.simulator import TransferDirection, simulate
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
@@ -22,7 +23,7 @@ from ._examples import (
 
 
 def test_quick_turnaround_waits_for_evict_then_fetch() -> None:
-    result = simulate(
+    result = simulate_python(
         representative_program(),
         representative_schedule(),
         selections=SAVE_SELECTION,
@@ -117,8 +118,8 @@ def test_result_is_deterministic_across_replays() -> None:
     )
     config = calibrated_config(device_capacity_bytes=512)
 
-    first = simulate(*arguments, config=config, record_timeline=True)
-    second = simulate(*arguments, config=config, record_timeline=True)
+    first = simulate(*arguments, config=config)
+    second = simulate(*arguments, config=config)
 
     assert second == first
 

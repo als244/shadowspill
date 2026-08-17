@@ -19,7 +19,7 @@ The model includes:
 Each `TaskInterval` records ready, start, and end time. Each
 `TransferInterval` records action trigger, queue/wire timing, bytes, and
 completion. `SimulationResult` contains makespan, per-device peaks, transfer
-utilization, stalls, and an optional detailed timeline.
+utilization, stalls, and task/transfer intervals.
 
 ## Trigger-time capacity
 
@@ -34,12 +34,12 @@ The simulator receives `ActionPhysicalDelta` values for these reservations and
 reuses an evicted range cannot start before that eviction completes, even when
 the nominal object schedule would otherwise permit it.
 
-## Compiled and diagnostic paths
+## Compiled production path
 
-`simulate()` uses the installed C simulator by default and fails closed if the
-library or ABI is unavailable. Passing `record_timeline=True` selects the
-Python diagnostic implementation to produce a rich timeline. The two paths
-share the same public inputs and are tested for semantic agreement.
+`simulate()` always uses the installed C simulator and fails closed if the
+library or ABI is unavailable. The readable Python implementation is a
+non-installed differential oracle under `reference/python/simulator`; it is
+never selected by production configuration or a diagnostic flag.
 
 ## Fidelity
 

@@ -879,8 +879,7 @@ static int valid_problem(
 ) {
     if (problem == NULL || options == NULL || result == NULL ||
         problem->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        problem->alias_count == 0U || problem->boundary_count == 0U ||
-        problem->device_count == 0U) {
+        problem->boundary_count == 0U || problem->device_count == 0U) {
         return 0;
     }
     uint64_t cells = (uint64_t)problem->alias_count * problem->boundary_count;
@@ -904,8 +903,7 @@ int shadowspill_residency_workspace_create(
     ShadowSpillResidencyWorkspace **workspace_output
 ) {
     if (problem == NULL || workspace_output == NULL ||
-        problem->alias_count == 0U || problem->boundary_count == 0U ||
-        problem->device_count == 0U) {
+        problem->boundary_count == 0U || problem->device_count == 0U) {
         return -1;
     }
     *workspace_output = NULL;
@@ -922,6 +920,8 @@ int shadowspill_residency_workspace_create(
     if (workspace == NULL) {
         return -1;
     }
+    size_t aliases = problem->alias_count == 0U ? 1U : problem->alias_count;
+    size_t allocated_cells = cells == 0U ? 1U : (size_t)cells;
     workspace->alias_count = problem->alias_count;
     workspace->boundary_count = problem->boundary_count;
     workspace->device_count = problem->device_count;
@@ -935,12 +935,16 @@ int shadowspill_residency_workspace_create(
         (size_t)problem->boundary_count * sizeof(*workspace->after)
     );
     workspace->first_required = malloc(
-        (size_t)problem->alias_count * sizeof(*workspace->first_required)
+        aliases * sizeof(*workspace->first_required)
     );
-    workspace->gap_start = malloc((size_t)cells * sizeof(*workspace->gap_start));
-    workspace->gap_end = malloc((size_t)cells * sizeof(*workspace->gap_end));
-    workspace->seed_resident = malloc((size_t)cells);
-    workspace->seed_breaks = malloc((size_t)cells);
+    workspace->gap_start = malloc(
+        allocated_cells * sizeof(*workspace->gap_start)
+    );
+    workspace->gap_end = malloc(
+        allocated_cells * sizeof(*workspace->gap_end)
+    );
+    workspace->seed_resident = malloc(allocated_cells);
+    workspace->seed_breaks = malloc(allocated_cells);
     workspace->base_pressure[0] = malloc(
         (size_t)pressure_cells * sizeof(*workspace->base_pressure[0])
     );

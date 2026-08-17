@@ -36,10 +36,8 @@ from tests.shadowspill.ir._examples import (
 from ._examples import calibrated_config, overlap_program, overlap_schedule
 
 
-@pytest.mark.parametrize("record_timeline", [False, True])
 def test_public_simulator_fails_closed_without_compiled_library(
     monkeypatch: pytest.MonkeyPatch,
-    record_timeline: bool,
 ) -> None:
     implementation = importlib.import_module("shadowspill.simulator")
 
@@ -52,7 +50,6 @@ def test_public_simulator_fails_closed_without_compiled_library(
             overlap_program(),
             overlap_schedule(),
             config=calibrated_config(),
-            record_timeline=record_timeline,
         )
 
 
@@ -160,10 +157,7 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
     assert error.requested_bytes == 128
 
 
-@pytest.mark.parametrize("record_timeline", [False, True])
-def test_prefetch_reserves_capacity_at_trigger_before_lane_head(
-    record_timeline: bool,
-) -> None:
+def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
@@ -215,7 +209,6 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head(
             program,
             schedule,
             config=calibrated_config(device_capacity_bytes=160),
-            record_timeline=record_timeline,
         )
 
     error = caught.value

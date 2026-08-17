@@ -55,8 +55,8 @@ Failures are `PressureFitInfeasibleError` or
 
 ## `shadowspill.simulator`
 
-`simulate()` replays one explicit schedule. It uses the compiled simulator
-unless `record_timeline=True` requests the Python diagnostic timeline.
+`simulate()` replays one explicit schedule through the required compiled
+simulator. Missing or ABI-incompatible compiled libraries fail immediately.
 
 Configuration and results:
 

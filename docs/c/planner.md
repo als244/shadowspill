@@ -36,6 +36,9 @@ timings, and failure boundary.
   derived context.
 - `shadowspill_evaluate_pressurefit_program_context()` derives and evaluates a
   complete context from schedule-invariant inputs.
+- `shadowspill_validate_pressurefit_program_context()` returns the structured
+  workspace, required-capacity, or missing-initial-residency preflight result
+  without evaluating candidate policies.
 - `shadowspill_evaluate_schedule_admission()` checks one selected schedule
   against the exact admission topology.
 - `shadowspill_pressurefit_context_result_destroy()` releases arrays owned by

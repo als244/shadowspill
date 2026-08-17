@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryLocation
+from shadowspill.planner.model import InitialPlacement, PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
-from ._facts import PlanningFacts
-from .model import InitialPlacement, PressureFitInfeasibleError
+from .facts import PlanningFacts
 
 
 @dataclass(frozen=True, order=True, slots=True)

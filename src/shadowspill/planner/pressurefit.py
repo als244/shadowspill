@@ -1,75 +1,45 @@
-"""Deterministic, simulator-verified PressureFit orchestration."""
+"""Compiled, simulator-verified PressureFit orchestration."""
 
 from __future__ import annotations
 
 import os
 import time
-from bisect import bisect_right
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
-from shadowspill.ir import (
-    MemorySchedule,
-    Program,
-    RecomputationSelection,
-    ResidencySpec,
-)
-from shadowspill.ir._validation import ValidationError
-from shadowspill.simulator import (
-    SimulationConfig,
-    SimulationInfeasibleError,
-    SimulationResult,
-    simulate,
-)
+from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
+from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._capi import load_simulator_library
 from shadowspill.simulator._compiled import (
-    CompiledSimulationSummary,
     CompiledSimulationTemplate,
     compile_simulation_template,
     simulate_compiled_template,
-    simulate_compiled_template_summary,
 )
 
-from ._actions import emit_schedule
 from ._admission import (
     CompiledAdmissionTopology,
     compile_admission_topology,
     evaluate_schedule_admission,
 )
 from ._capi import load_planner_library
-from ._dense_residency import (
-    CompiledResidencyTemplate,
-    compile_residency_template,
-    reduce_residency_compiled,
-)
-from ._facts import PlanningFacts, build_facts
 from ._native_portfolio import (
     NativeContextResult,
+    NativePreflightResult,
     decode_candidate_diagnostic,
     decode_schedule,
-    evaluate_context_compiled,
     evaluate_program_context_compiled,
+    validate_program_context_compiled,
 )
 from ._recomputation import build_recomputation_portfolio
-from ._residency import (
-    Cut,
-    ResidencyPlan,
-    assert_required_floor,
-    extend_interval_entries,
-    reduce_pressure,
-    seed_residency,
-)
 from .admission import AdmissionTopology
 from .diagnostics import (
-    PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationContextDiagnostics,
 )
 from .model import (
     AdmissionRefinement,
-    CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitInfeasibleError,
     PressureFitOptions,
@@ -84,13 +54,7 @@ _ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
 
 
 def _scheduled_admission_refinement(attempt: int) -> int:
-    """Return the deterministic reserve increment for one failed admission.
-
-    Early attempts double from 128 MiB through 1 GiB so obviously dense plans
-    converge quickly.  Later attempts grow linearly by 512 MiB, avoiding the
-    multi-GiB jumps that would discard too much otherwise usable capacity.
-    ``attempt`` is zero-based.
-    """
+    """Return the deterministic reserve increment for one failed admission."""
 
     doubled = _ADMISSION_INITIAL_REFINEMENT_BYTES << attempt
     if doubled <= _ADMISSION_DOUBLING_LIMIT_BYTES:
@@ -103,44 +67,8 @@ def _scheduled_admission_refinement(attempt: int) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class _SelectionContext:
-    selections: tuple[RecomputationSelection, ...]
-    selection_id: str
-    facts: PlanningFacts
-    seed: ResidencyPlan
-    compiled_template: CompiledSimulationTemplate | None
-    compiled_residency: CompiledResidencyTemplate | None
-    cut_scores: dict[tuple[Cut, str], tuple[int, ...]] = field(
-        default_factory=dict,
-        compare=False,
-        repr=False,
-    )
-    residency_plans: dict[
-        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
-    ] = field(
-        default_factory=dict,
-        compare=False,
-        repr=False,
-    )
-    interval_plans: dict[
-        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
-    ] = field(
-        default_factory=dict,
-        compare=False,
-        repr=False,
-    )
-    schedule_cache: dict[tuple[ResidencyPlan, str, bool, bool], MemorySchedule] = field(
-        default_factory=dict, compare=False, repr=False
-    )
-    simulation_cache: dict[
-        MemorySchedule,
-        SimulationResult | CompiledSimulationSummary | _CachedSimulationFailure,
-    ] = field(default_factory=dict, compare=False, repr=False)
-
-
-@dataclass(frozen=True, slots=True)
 class _NativeSelectionContext:
-    """One selection projected directly into the compiled planner ABI."""
+    """One recomputation selection projected into the compiled planner ABI."""
 
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
@@ -148,72 +76,43 @@ class _NativeSelectionContext:
     compiled_admission: CompiledAdmissionTopology | None
 
 
-@dataclass(frozen=True, slots=True)
-class _CachedSimulationFailure:
-    message: str
-    kind: str
-    time_ns: int
-    task_id: str | None
-    alias_group_ids: tuple[str, ...]
-    location: str | None
-    capacity_bytes: int | None
-    used_bytes: int | None
-    requested_bytes: int | None
-
-    @classmethod
-    def from_error(cls, error: SimulationInfeasibleError) -> _CachedSimulationFailure:
-        return cls(
-            str(error),
-            error.kind,
-            error.time_ns,
-            error.task_id,
-            error.alias_group_ids,
-            error.location,
-            error.capacity_bytes,
-            error.used_bytes,
-            error.requested_bytes,
-        )
-
-    def to_error(self) -> SimulationInfeasibleError:
-        return SimulationInfeasibleError(
-            self.message,
-            kind=self.kind,
-            time_ns=self.time_ns,
-            task_id=self.task_id,
-            alias_group_ids=self.alias_group_ids,
-            location=self.location,
-            capacity_bytes=self.capacity_bytes,
-            used_bytes=self.used_bytes,
-            requested_bytes=self.requested_bytes,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _CandidateSpec:
-    ordinal: int
-    context: _SelectionContext
-    strategy: str
-    prefetch_rule: str
-    coalesced: bool
-
-    @property
-    def candidate_id(self) -> str:
-        suffix = "-coalesced" if self.coalesced else ""
-        return f"{self.strategy}/{self.prefetch_rule}{suffix}"
-
-
-@dataclass(frozen=True, slots=True)
-class _CandidateOutcome:
-    spec: _CandidateSpec
-    diagnostic: CandidateDiagnostic
-    schedule: MemorySchedule | None = None
-    simulation: SimulationResult | CompiledSimulationSummary | None = None
-
-
 def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
     if not selections:
         return "none"
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
+
+
+def _validate_pressurefit_inputs(
+    program: Program,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...],
+    config: SimulationConfig,
+    admission: AdmissionTopology | None,
+) -> None:
+    """Validate public types and the logical/physical capacity relationship."""
+
+    if not isinstance(program, Program):
+        raise TypeError("program must be a Program")
+    if not isinstance(initial_residency, tuple):
+        raise TypeError("initial_residency must be a tuple")
+    if not isinstance(final_residency, tuple):
+        raise TypeError("final_residency must be a tuple")
+    if not isinstance(config, SimulationConfig):
+        raise TypeError("config must be a SimulationConfig")
+    if admission is None:
+        return
+    if not isinstance(admission, AdmissionTopology):
+        raise TypeError("admission must be an AdmissionTopology")
+    admission.validate(program)
+    configured = {item.device_id: item for item in config.devices}
+    if (
+        admission.device_id not in configured
+        or configured[admission.device_id].capacity_bytes
+        != admission.object_capacity_bytes
+    ):
+        raise ValueError(
+            "feasibility capacity must equal AdmissionTopology object capacity"
+        )
 
 
 def validate_schedule_feasibility(
@@ -224,499 +123,27 @@ def validate_schedule_feasibility(
     config: SimulationConfig,
     admission: AdmissionTopology | None = None,
 ) -> None:
-    """Reject irreducible capacity failures before schedule search.
+    """Reject irreducible capacity failures using the compiled planner."""
 
-    This is a necessary-condition preflight, not a PressureFit candidate
-    search. It accepts when at least one legal recomputation selection has a
-    task-by-task residency floor that fits the declared capacity. PressureFit
-    retains the same checks internally as defensive invariants.
-    """
-
-    if not isinstance(program, Program):
-        raise TypeError("program must be a Program")
-    if not isinstance(initial_residency, tuple):
-        raise TypeError("initial_residency must be a tuple")
-    if not isinstance(final_residency, tuple):
-        raise TypeError("final_residency must be a tuple")
-    if not isinstance(config, SimulationConfig):
-        raise TypeError("config must be a SimulationConfig")
-    if admission is not None:
-        if not isinstance(admission, AdmissionTopology):
-            raise TypeError("admission must be an AdmissionTopology")
-        admission.validate(program)
-        configured = {item.device_id: item for item in config.devices}
-        if (
-            admission.device_id not in configured
-            or configured[admission.device_id].capacity_bytes
-            != admission.object_capacity_bytes
-        ):
-            raise ValueError(
-                "feasibility capacity must equal AdmissionTopology object "
-                "capacity"
-            )
-
-    failures: list[PressureFitInfeasibleError] = []
-    for selections in build_recomputation_portfolio(program):
-        try:
-            facts = build_facts(
-                program,
-                selections,
-                initial_residency,
-                final_residency,
-                config,
-            )
-            assert_required_floor(facts)
-        except PressureFitInfeasibleError as error:
-            failures.append(error)
-        else:
-            return
-
-    if failures:
-        raise failures[0]
-    raise PressureFitInfeasibleError(
-        "no recomputation selection could be constructed",
-        kind="recomputation_selection",
+    _validate_pressurefit_inputs(
+        program,
+        initial_residency,
+        final_residency,
+        config,
+        admission,
     )
-
-
-def _repair_pressure(
-    facts: PlanningFacts,
-    error: SimulationInfeasibleError,
-) -> tuple[tuple[str, int], int] | None:
-    if error.kind not in {
-        "initial-device-capacity",
-        "prefetch-device-capacity",
-        "task-device-capacity",
-    }:
-        return None
-    if error.location is None or not error.location.startswith("device:"):
-        return None
-    device_id = error.location.removeprefix("device:")
-    if error.task_id is None:
-        boundary = -1
-    else:
-        task = facts.task_index.get(error.task_id)
-        if task is None:
-            return None
-        boundary = task - 1 if error.kind == "task-device-capacity" else task
-    used = error.used_bytes or 0
-    requested = error.requested_bytes or 0
-    capacity = error.capacity_bytes or facts.object_capacity_by_boundary[device_id][
-        boundary + 1
-    ]
-    excess = max(used + requested - capacity, 1)
-    return (device_id, boundary), excess
-
-
-def _delay_prefetch(
-    facts: PlanningFacts,
-    schedule: MemorySchedule,
-    error: SimulationInfeasibleError,
-) -> MemorySchedule | None:
-    if error.kind not in {"prefetch-device-capacity", "task-device-capacity"}:
-        return None
-    failing_task = (
-        facts.task_index.get(error.task_id) if error.task_id is not None else None
+    load_simulator_library()
+    load_planner_library()
+    contexts = _build_native_contexts(
+        program,
+        initial_residency,
+        final_residency,
+        config,
+        admission,
+        portfolio=build_recomputation_portfolio(program),
+        progress=None,
     )
-    requested_alias = error.alias_group_ids[0] if error.alias_group_ids else None
-    candidates: list[tuple[int, int, int, int]] = []
-    for action_index, action in enumerate(schedule.actions):
-        if action.kind.value != "prefetch":
-            continue
-        if requested_alias is not None and action.alias_group_id != requested_alias:
-            continue
-        if (
-            error.kind == "prefetch-device-capacity"
-            and error.task_id is not None
-            and action.trigger_task_id != error.task_id
-        ):
-            continue
-        trigger = facts.task_index[action.trigger_task_id]
-        # An action submitted by the failing task runs after that task has
-        # completed.  It cannot contribute to admission pressure at the task
-        # boundary and delaying it would only perturb unrelated future work.
-        if (
-            error.kind == "task-device-capacity"
-            and failing_task is not None
-            and trigger >= failing_task
-        ):
-            continue
-        alias = facts.alias_index[action.alias_group_id]
-        consumers = facts.input_tasks[alias]
-        next_consumer = bisect_right(consumers, trigger)
-        latest = (
-            consumers[next_consumer] - 1
-            if next_consumer < len(consumers)
-            else facts.last_boundary
-        )
-        target = trigger + 1
-        if failing_task is not None and error.kind == "task-device-capacity":
-            target = max(target, failing_task)
-        if target > latest:
-            continue
-        candidates.append((-facts.alias_sizes[alias], -trigger, action_index, target))
-    if not candidates:
-        return None
-    _size, _trigger, selected_index, target = min(candidates)
-    actions = list(schedule.actions)
-    actions[selected_index] = replace(
-        actions[selected_index],
-        trigger_task_id=facts.tasks[target].task_id,
-    )
-    kind_order = {"release": 0, "offload": 1, "prefetch": 2}
-    actions.sort(
-        key=lambda action: (
-            facts.task_index[action.trigger_task_id],
-            kind_order[action.kind.value],
-            facts.alias_index[action.alias_group_id],
-        )
-    )
-    repaired = replace(schedule, actions=tuple(actions))
-    repaired._validate_selected(facts.program, facts.tasks)
-    return repaired
-
-
-def _failure_diagnostic(
-    spec: _CandidateSpec,
-    *,
-    status: str,
-    kind: str,
-    detail: str,
-    repairs: PressureFitRepairDiagnostics | None = None,
-    work: PressureFitWorkDiagnostics | None = None,
-) -> CandidateDiagnostic:
-    return CandidateDiagnostic(
-        candidate_id=spec.candidate_id,
-        selection_id=spec.context.selection_id,
-        status=status,
-        failure_kind=kind,
-        failure_detail=detail,
-        repairs=repairs or PressureFitRepairDiagnostics(),
-        work=work or PressureFitWorkDiagnostics(),
-    )
-
-
-def _repair_exhausted_diagnostic(
-    spec: _CandidateSpec,
-    error: SimulationInfeasibleError,
-    repairs: PressureFitRepairDiagnostics,
-    work: PressureFitWorkDiagnostics,
-) -> CandidateDiagnostic:
-    return _failure_diagnostic(
-        spec,
-        status="exhausted",
-        kind="repair_budget_exhausted",
-        detail=(
-            "candidate repair budget exhausted after "
-            f"{repairs.total_attempts} monotonic "
-            f"repairs; last simulator result: {error}"
-        ),
-        repairs=repairs,
-        work=work,
-    )
-
-
-def _evaluate_candidate(
-    spec: _CandidateSpec,
-    config: SimulationConfig,
-    options: PressureFitOptions,
-) -> _CandidateOutcome:
-    facts = spec.context.facts
-    seed = spec.context.seed
-    extra_pressure: dict[tuple[str, int], int] = {}
-    candidate_started = time.perf_counter_ns()
-    residency_cache_hits = 0
-    residency_cache_misses = 0
-    schedule_emissions = 0
-    schedule_cache_hits = 0
-    simulation_calls = 0
-    simulation_cache_hits = 0
-    residency_time_ns = 0
-    schedule_time_ns = 0
-    simulation_time_ns = 0
-    digest_time_ns = 0
-    simulation_prefetch_delay_attempts = 0
-    simulation_pressure_boundary_attempts = 0
-
-    def repairs_value() -> PressureFitRepairDiagnostics:
-        return PressureFitRepairDiagnostics(
-            simulation_prefetch_delay_attempts=(
-                simulation_prefetch_delay_attempts
-            ),
-            simulation_pressure_boundary_attempts=(
-                simulation_pressure_boundary_attempts
-            ),
-        )
-
-    def work_value() -> PressureFitWorkDiagnostics:
-        return PressureFitWorkDiagnostics(
-            evaluation_time_ns=time.perf_counter_ns() - candidate_started,
-            residency_cache_hits=residency_cache_hits,
-            residency_cache_misses=residency_cache_misses,
-            schedule_emissions=schedule_emissions,
-            schedule_cache_hits=schedule_cache_hits,
-            simulation_calls=simulation_calls,
-            simulation_cache_hits=simulation_cache_hits,
-            residency_time_ns=residency_time_ns,
-            schedule_time_ns=schedule_time_ns,
-            simulation_time_ns=simulation_time_ns,
-            digest_time_ns=digest_time_ns,
-        )
-
-    while True:
-        try:
-            pressure_key = tuple(
-                sorted(
-                    (device_id, boundary, value)
-                    for (device_id, boundary), value in extra_pressure.items()
-                )
-            )
-            residency_key = (spec.strategy, pressure_key)
-            residency = spec.context.residency_plans.get(residency_key)
-            if residency is None:
-                residency_cache_misses += 1
-                residency_started = time.perf_counter_ns()
-                if spec.context.compiled_residency is not None:
-                    residency = reduce_residency_compiled(
-                        spec.context.compiled_residency,
-                        seed,
-                        spec.strategy,
-                        extra_pressure=extra_pressure,
-                    )
-                else:
-                    residency = reduce_pressure(
-                        facts,
-                        config,
-                        seed,
-                        spec.strategy,
-                        extra_pressure=extra_pressure,
-                        score_cache=spec.context.cut_scores,
-                    )
-                residency_time_ns += time.perf_counter_ns() - residency_started
-                spec.context.residency_plans[residency_key] = residency
-            else:
-                residency_cache_hits += 1
-            if spec.prefetch_rule == "interval-entry":
-                extended = spec.context.interval_plans.get(residency_key)
-                if extended is None:
-                    extended = extend_interval_entries(facts, residency)
-                    spec.context.interval_plans[residency_key] = extended
-                residency = extended
-            prefetch_headroom = spec.strategy.startswith("headroom")
-            schedule_key = (
-                residency,
-                spec.prefetch_rule,
-                spec.coalesced,
-                prefetch_headroom,
-            )
-            schedule = spec.context.schedule_cache.get(schedule_key)
-            if schedule is None:
-                schedule_started = time.perf_counter_ns()
-                schedule = emit_schedule(
-                    facts,
-                    config,
-                    residency,
-                    spec.prefetch_rule,
-                    coalesced=spec.coalesced,
-                    prefetch_headroom=prefetch_headroom,
-                )
-                schedule_time_ns += time.perf_counter_ns() - schedule_started
-                schedule_emissions += 1
-                spec.context.schedule_cache[schedule_key] = schedule
-            else:
-                schedule_cache_hits += 1
-        except PressureFitInfeasibleError as error:
-            return _CandidateOutcome(
-                spec,
-                _failure_diagnostic(
-                    spec,
-                    status="infeasible",
-                    kind=error.kind,
-                    detail=str(error),
-                    repairs=repairs_value(),
-                    work=work_value(),
-                ),
-            )
-        except ValidationError as error:
-            return _CandidateOutcome(
-                spec,
-                _failure_diagnostic(
-                    spec,
-                    status="invalid",
-                    kind="schedule_validation",
-                    detail=str(error),
-                    repairs=repairs_value(),
-                    work=work_value(),
-                ),
-            )
-        restart_reduction = False
-        while True:
-            try:
-                cached_simulation = spec.context.simulation_cache.get(schedule)
-                if isinstance(cached_simulation, _CachedSimulationFailure):
-                    simulation_cache_hits += 1
-                    raise cached_simulation.to_error()
-                if cached_simulation is None:
-                    simulation_started = time.perf_counter_ns()
-                    try:
-                        cached_simulation = (
-                            simulate_compiled_template_summary(
-                                spec.context.compiled_template,
-                                schedule,
-                            )
-                            if spec.context.compiled_template is not None
-                            else simulate(
-                                facts.program,
-                                schedule,
-                                selections=facts.selections,
-                                config=config,
-                            )
-                            )
-                    except SimulationInfeasibleError as error:
-                        simulation_time_ns += (
-                            time.perf_counter_ns() - simulation_started
-                        )
-                        simulation_calls += 1
-                        spec.context.simulation_cache[schedule] = (
-                            _CachedSimulationFailure.from_error(error)
-                        )
-                        raise
-                    simulation_time_ns += time.perf_counter_ns() - simulation_started
-                    simulation_calls += 1
-                    spec.context.simulation_cache[schedule] = cached_simulation
-                else:
-                    simulation_cache_hits += 1
-                simulation = cached_simulation
-            except SimulationInfeasibleError as error:
-                if repairs_value().total_attempts < options.max_repair_attempts:
-                    delayed = _delay_prefetch(facts, schedule, error)
-                    if delayed is not None and delayed != schedule:
-                        schedule = delayed
-                        simulation_prefetch_delay_attempts += 1
-                        continue
-                    repair = _repair_pressure(facts, error)
-                    if repair is not None:
-                        boundary, extra = repair
-                        # The analytic plan already satisfied any pressure
-                        # previously recorded at this boundary.  A new
-                        # simulator failure therefore describes additional,
-                        # not replacement, overlap pressure (normally an
-                        # admitted prefetch destination).  Accumulate it so a
-                        # restarted reduction cannot reproduce the same plan
-                        # forever.
-                        extra_pressure[boundary] = (
-                            extra_pressure.get(boundary, 0) + extra
-                        )
-                        simulation_pressure_boundary_attempts += 1
-                        restart_reduction = True
-                        break
-                elif (
-                    _delay_prefetch(facts, schedule, error) is not None
-                    or _repair_pressure(facts, error) is not None
-                ):
-                    return _CandidateOutcome(
-                        spec,
-                        _repair_exhausted_diagnostic(
-                            spec, error, repairs_value(), work_value()
-                        ),
-                    )
-                return _CandidateOutcome(
-                    spec,
-                    _failure_diagnostic(
-                        spec,
-                        status="infeasible",
-                        kind=error.kind,
-                        detail=str(error),
-                        repairs=repairs_value(),
-                        work=work_value(),
-                    ),
-                )
-            break
-        if restart_reduction:
-            continue
-        digest_started = time.perf_counter_ns()
-        schedule_digest = schedule.digest
-        digest_time_ns += time.perf_counter_ns() - digest_started
-        return _CandidateOutcome(
-            spec,
-            CandidateDiagnostic(
-                candidate_id=spec.candidate_id,
-                selection_id=spec.context.selection_id,
-                status="valid",
-                makespan_ns=simulation.makespan_ns,
-                schedule_digest=schedule_digest,
-                repairs=repairs_value(),
-                work=work_value(),
-            ),
-            schedule,
-            simulation,
-        )
-
-
-def _build_contexts(
-    program: Program,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...],
-    config: SimulationConfig,
-    options: PressureFitOptions,
-    *,
-    portfolio: tuple[tuple[RecomputationSelection, ...], ...],
-    progress: Callable[[str], None] | None,
-) -> tuple[_SelectionContext, ...]:
-    contexts: list[_SelectionContext] = []
-    failures: list[PressureFitInfeasibleError] = []
-    started = time.perf_counter_ns()
-    for selection_index, selections in enumerate(portfolio, start=1):
-        try:
-            facts = build_facts(
-                program,
-                selections,
-                initial_residency,
-                final_residency,
-                config,
-            )
-            assert_required_floor(facts)
-        except PressureFitInfeasibleError as error:
-            failures.append(error)
-            continue
-        seed = seed_residency(
-            facts,
-            config,
-            options.initial_placement,
-            # Initial placement is a property of the program and public
-            # capacity, not a later strategy's speculative headroom.
-            initial_capacity_by_device=facts.object_capacity_by_device,
-        )
-        contexts.append(
-            _SelectionContext(
-                selections,
-                _selection_id(selections),
-                facts,
-                seed,
-                compile_simulation_template(
-                    program,
-                    selections,
-                    config,
-                    selected_tasks=facts.tasks,
-                ),
-                compile_residency_template(facts, config, seed),
-            )
-        )
-        if progress is not None:
-            progress(
-                "PressureFit context "
-                f"{selection_index}/{len(portfolio)}: "
-                f"tasks={len(facts.tasks)}, aliases={len(facts.alias_ids)}, "
-                f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
-            )
-    if contexts:
-        return tuple(contexts)
-    if failures:
-        raise failures[0]
-    raise PressureFitInfeasibleError(
-        "no recomputation selection could be constructed",
-        kind="recomputation_selection",
-    )
+    _preflight_native_contexts(contexts)
 
 
 def _build_native_contexts(
@@ -765,54 +192,82 @@ def _build_native_contexts(
     return tuple(contexts)
 
 
-def _candidate_specs(
-    contexts: tuple[_SelectionContext, ...],
-    options: PressureFitOptions,
-) -> tuple[_CandidateSpec, ...]:
-    specs: list[_CandidateSpec] = []
-    ordinal = 0
-    coalescing = (False, True) if options.evaluate_coalesced else (False,)
-    for context in contexts:
-        for strategy in options.residency_strategies:
-            for rule in options.prefetch_rules:
-                for coalesced in coalescing:
-                    specs.append(
-                        _CandidateSpec(
-                            ordinal,
-                            context,
-                            strategy,
-                            rule,
-                            coalesced,
-                        )
-                    )
-                    ordinal += 1
-    return tuple(specs)
+def _preflight_error(
+    context: _NativeSelectionContext,
+    result: NativePreflightResult,
+) -> ValueError:
+    """Decode one compiled preflight failure into the public exception model."""
 
+    if result.failure_kind == "missing_initial_residency":
+        if result.error_alias is None:
+            raise RuntimeError("compiled preflight omitted its failing alias")
+        alias_id = context.compiled_template.alias_ids[result.error_alias]
+        return ValueError(f"input alias {alias_id!r} has no initial residency")
 
-def _run_candidates(
-    specs: tuple[_CandidateSpec, ...],
-    config: SimulationConfig,
-    options: PressureFitOptions,
-) -> tuple[_CandidateOutcome, ...]:
-    if options.workers == 1 or len(specs) <= 1:
-        return tuple(_evaluate_candidate(spec, config, options) for spec in specs)
-    batches: list[list[_CandidateSpec]] = []
-    for spec in specs:
-        if not batches or batches[-1][0].context is not spec.context:
-            batches.append([])
-        batches[-1].append(spec)
-
-    def evaluate_batch(batch: list[_CandidateSpec]) -> tuple[_CandidateOutcome, ...]:
-        return tuple(_evaluate_candidate(spec, config, options) for spec in batch)
-
-    workers = None if options.workers == 0 else options.workers
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        results = tuple(
-            outcome
-            for batch_results in executor.map(evaluate_batch, batches)
-            for outcome in batch_results
+    device_id = (
+        None
+        if result.error_device is None
+        else context.compiled_template.device_ids[result.error_device]
+    )
+    boundary_task_id = (
+        None
+        if result.error_boundary is None
+        or result.error_boundary < 0
+        or result.error_boundary >= len(context.compiled_template.task_ids)
+        else context.compiled_template.task_ids[result.error_boundary]
+    )
+    required = result.required_bytes
+    capacity = result.capacity_bytes
+    if result.failure_kind == "workspace_capacity":
+        return PressureFitInfeasibleError(
+            f"task workspace {required} exceeds capacity {capacity} "
+            f"on {device_id!r}",
+            kind="workspace_capacity",
+            device_id=device_id,
+            boundary_task_id=boundary_task_id,
+            required_bytes=required,
+            capacity_bytes=capacity,
         )
-    return tuple(sorted(results, key=lambda item: item.spec.ordinal))
+    if result.failure_kind == "required_capacity":
+        return PressureFitInfeasibleError(
+            f"required inputs and outputs need {required} bytes at "
+            f"{boundary_task_id or 'initialization'} on {device_id!r}, "
+            f"exceeding object capacity {capacity}",
+            kind="required_capacity",
+            device_id=device_id,
+            boundary_task_id=boundary_task_id,
+            required_bytes=required,
+            capacity_bytes=capacity,
+        )
+    raise RuntimeError(
+        f"compiled preflight returned unknown failure {result.failure_kind!r}"
+    )
+
+
+def _preflight_native_contexts(
+    contexts: tuple[_NativeSelectionContext, ...],
+) -> tuple[_NativeSelectionContext, ...]:
+    """Keep selections that satisfy the compiled semantic-capacity preflight."""
+
+    valid: list[_NativeSelectionContext] = []
+    failures: list[ValueError] = []
+    for context in contexts:
+        result = validate_program_context_compiled(
+            context.compiled_template,
+            admission=context.compiled_admission,
+        )
+        if result.valid:
+            valid.append(context)
+        else:
+            failures.append(_preflight_error(context, result))
+    if valid:
+        return tuple(valid)
+    if failures:
+        raise failures[0]
+    raise PressureFitInfeasibleError(
+        "no recomputation selection could be constructed",
+        kind="recomputation_selection",
+    )
 
 
 def _native_worker_count(options: PressureFitOptions, count: int) -> int:
@@ -824,30 +279,10 @@ def _native_worker_count(options: PressureFitOptions, count: int) -> int:
 
 
 def _run_native_contexts(
-    contexts: tuple[_SelectionContext, ...],
-    options: PressureFitOptions,
-) -> tuple[NativeContextResult, ...]:
-    def evaluate(context: _SelectionContext) -> NativeContextResult:
-        assert context.compiled_residency is not None
-        assert context.compiled_template is not None
-        return evaluate_context_compiled(
-            context.compiled_residency,
-            context.compiled_template,
-            options,
-        )
-
-    workers = _native_worker_count(options, len(contexts))
-    if workers == 1:
-        return tuple(evaluate(context) for context in contexts)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return tuple(executor.map(evaluate, contexts))
-
-
-def _run_native_program_contexts(
     contexts: tuple[_NativeSelectionContext, ...],
     options: PressureFitOptions,
 ) -> tuple[NativeContextResult | None, ...]:
-    """Prepare and evaluate each selection in the compiled planner."""
+    """Evaluate every recomputation selection in the compiled planner."""
 
     def evaluate(context: _NativeSelectionContext) -> NativeContextResult | None:
         return evaluate_program_context_compiled(
@@ -869,16 +304,17 @@ def _finish_native_pressurefit(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    contexts: tuple[_SelectionContext | _NativeSelectionContext, ...],
+    contexts: tuple[_NativeSelectionContext, ...],
     results: tuple[NativeContextResult, ...],
     admission: AdmissionTopology | None,
 ) -> PressureFitResult:
+    """Decode the globally best compiled result and its diagnostics."""
+
     recomputation_contexts: list[RecomputationContextDiagnostics] = []
     selected: tuple[int, int, NativeContextResult] | None = None
     for context_index, (context, result) in enumerate(
         zip(contexts, results, strict=True)
     ):
-        assert context.compiled_template is not None
         candidates = tuple(
             decode_candidate_diagnostic(
                 candidate,
@@ -945,7 +381,11 @@ def _finish_native_pressurefit(
         raise PressureFitInfeasibleError(
             "no simulator-valid PressureFit candidate satisfied the declared "
             "capacity and residency constraints",
-            kind=first.failure_kind if first and first.failure_kind else "no_candidate",
+            kind=(
+                first.failure_kind
+                if first is not None and first.failure_kind
+                else "no_candidate"
+            ),
             required_bytes=min(physical_slack) if physical_slack else None,
             capacity_bytes=(
                 config.devices[0].capacity_bytes
@@ -961,15 +401,11 @@ def _finish_native_pressurefit(
     context = contexts[context_index]
     dense_schedule = result.selected_schedule
     assert dense_schedule is not None
-    assert context.compiled_template is not None
     schedule = decode_schedule(dense_schedule, context.compiled_template)
     result_admission_calls = 0
     result_admission_time_ns = 0
     simulation_admission = None
-    if (
-        isinstance(context, _NativeSelectionContext)
-        and context.compiled_admission is not None
-    ):
+    if context.compiled_admission is not None:
         admission_started = time.perf_counter_ns()
         simulation_admission = evaluate_schedule_admission(
             context.compiled_template,
@@ -995,7 +431,7 @@ def _finish_native_pressurefit(
         result_simulation_time_ns=result_simulation_time_ns,
         result_admission_time_ns=result_admission_time_ns,
     )
-    public_diagnostics = PressureFitDiagnostics(
+    diagnostics = PressureFitDiagnostics(
         selected_candidate_id=selected_diagnostic.candidate_id,
         selected_selection_id=context.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
@@ -1011,7 +447,7 @@ def _finish_native_pressurefit(
         schedule=schedule,
         selections=context.selections,
         simulation=simulation,
-        diagnostics=public_diagnostics,
+        diagnostics=diagnostics,
         admission_topology=admission,
     )
 
@@ -1026,30 +462,18 @@ def _pressurefit_once(
     admission: AdmissionTopology | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Plan residency, movement, and recomputation for a validated program.
+    """Evaluate every selection through the required compiled planner."""
 
-    Every returned schedule has been accepted by the public simulator. Planner
-    heuristics may reject candidates, but they never weaken simulator checks or
-    move an action after candidate selection.
-    """
-
-    if not isinstance(program, Program):
-        raise TypeError("program must be a Program")
-    if not isinstance(initial_residency, tuple):
-        raise TypeError("initial_residency must be a tuple")
-    if not isinstance(final_residency, tuple):
-        raise TypeError("final_residency must be a tuple")
-    if not isinstance(config, SimulationConfig):
-        raise TypeError("config must be a SimulationConfig")
-    # PressureFit's installed contract is compiled and fail-closed.  Python
-    # implementations remain private diagnostic oracles and are never selected
-    # because a required shared library is absent or ABI-incompatible.
+    _validate_pressurefit_inputs(
+        program,
+        initial_residency,
+        final_residency,
+        config,
+        admission,
+    )
     load_simulator_library()
     load_planner_library()
-    if admission is not None:
-        if not isinstance(admission, AdmissionTopology):
-            raise TypeError("admission must be an AdmissionTopology")
-        admission.validate(program)
+
     selected_options = options or PressureFitOptions()
     portfolio = build_recomputation_portfolio(program)
     if progress is not None:
@@ -1058,9 +482,9 @@ def _pressurefit_once(
             f"groups={len(program.recomputation_groups)}, "
             f"selections={len(portfolio)}"
         )
-    if program.alias_groups:
-        contexts_started = time.perf_counter_ns()
-        native_contexts = _build_native_contexts(
+    started = time.perf_counter_ns()
+    contexts = _preflight_native_contexts(
+        _build_native_contexts(
             program,
             initial_residency,
             final_residency,
@@ -1069,237 +493,36 @@ def _pressurefit_once(
             portfolio=portfolio,
             progress=progress,
         )
-        # A compiled semantic rejection is a real contract failure.  Do not
-        # conceal it by evaluating a different implementation.
-        native_results = _run_native_program_contexts(
-            native_contexts,
-            selected_options,
+    )
+    native_results = _run_native_contexts(contexts, selected_options)
+    valid_pairs = tuple(
+        (context, result)
+        for context, result in zip(contexts, native_results, strict=True)
+        if result is not None
+    )
+    if progress is not None:
+        progress(
+            "PressureFit compiled contexts and candidates finished: "
+            f"valid={len(valid_pairs)}/{len(contexts)}, "
+            "candidates="
+            f"{sum(len(result.candidates) for _context, result in valid_pairs)}, "
+            f"workers={_native_worker_count(selected_options, len(contexts))}, "
+            f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
         )
-        valid_pairs = (
-            tuple(
-                (context, result)
-                for context, result in zip(
-                    native_contexts,
-                    native_results,
-                    strict=True,
-                )
-                if result is not None
-            )
-            if native_results
-            else ()
+    if not valid_pairs:
+        raise RuntimeError(
+            "compiled PressureFit rejected every selection after semantic "
+            "feasibility validation succeeded"
         )
-        if progress is not None and native_results:
-            progress(
-                "PressureFit compiled contexts and candidates finished: "
-                f"valid={len(valid_pairs)}/{len(native_contexts)}, "
-                "candidates="
-                f"{sum(len(result.candidates) for _context, result in valid_pairs)}, "
-                "workers="
-                f"{_native_worker_count(selected_options, len(native_contexts))}, "
-                "elapsed="
-                f"{(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
-            )
-        if valid_pairs:
-            return _finish_native_pressurefit(
-                program,
-                initial_residency,
-                final_residency,
-                config,
-                selected_options,
-                tuple(context for context, _result in valid_pairs),
-                tuple(result for _context, result in valid_pairs),
-                admission,
-            )
-        # Rebuild the rare all-infeasible case through the Python authority so
-        # its field-specific diagnostic remains unchanged.
-    contexts_started = time.perf_counter_ns()
-    contexts = _build_contexts(
+    return _finish_native_pressurefit(
         program,
         initial_residency,
         final_residency,
         config,
         selected_options,
-        portfolio=portfolio,
-        progress=progress,
-    )
-    if progress is not None:
-        progress(
-            "PressureFit contexts ready: "
-            f"valid={len(contexts)}/{len(portfolio)}, "
-            f"elapsed={(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
-        )
-    if all(
-        context.compiled_template is not None and context.compiled_residency is not None
-        for context in contexts
-    ):
-        candidates_started = time.perf_counter_ns()
-        native_results = _run_native_contexts(contexts, selected_options)
-        if progress is not None:
-            progress(
-                "PressureFit compiled candidates finished: "
-                f"contexts={len(contexts)}, "
-                f"candidates={sum(len(item.candidates) for item in native_results)}, "
-                f"workers={_native_worker_count(selected_options, len(contexts))}, "
-                "elapsed="
-                f"{(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
-            )
-        return _finish_native_pressurefit(
-            program,
-            initial_residency,
-            final_residency,
-            config,
-            selected_options,
-            contexts,
-            native_results,
-            admission,
-        )
-    specs = _candidate_specs(contexts, selected_options)
-    if progress is not None:
-        progress(
-            "PressureFit candidates: "
-            f"count={len(specs)}, per_context={len(specs) // len(contexts)}"
-        )
-    candidates_started = time.perf_counter_ns()
-    if selected_options.workers == 1 or len(specs) <= 1:
-        outcomes_list: list[_CandidateOutcome] = []
-        per_context = len(specs) // len(contexts)
-        for index, spec in enumerate(specs, start=1):
-            outcomes_list.append(_evaluate_candidate(spec, config, selected_options))
-            if progress is not None and (
-                index % per_context == 0 or index == len(specs)
-            ):
-                batch = outcomes_list[-per_context:]
-                progress(
-                    "PressureFit candidate context "
-                    f"{index // per_context}/{len(contexts)}: "
-                    f"valid={sum(item.schedule is not None for item in batch)}, "
-                    "repairs="
-                    f"{sum(item.diagnostic.repair_attempts for item in batch)}, "
-                    "elapsed="
-                    f"{(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
-                )
-        outcomes = tuple(outcomes_list)
-    else:
-        outcomes = _run_candidates(specs, config, selected_options)
-        if progress is not None:
-            progress(
-                "PressureFit parallel candidates finished: "
-                f"elapsed={(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
-            )
-    valid = tuple(
-        outcome
-        for outcome in outcomes
-        if outcome.schedule is not None and outcome.simulation is not None
-    )
-    if not valid:
-        failure_diagnostics = tuple(outcome.diagnostic for outcome in outcomes)
-        if any(item.status == "exhausted" for item in failure_diagnostics):
-            raise PressureFitSearchExhaustedError(
-                "PressureFit exhausted its bounded candidate-repair budget "
-                "before proving a feasible schedule",
-                diagnostics=failure_diagnostics,
-            )
-        first = failure_diagnostics[0] if failure_diagnostics else None
-        raise PressureFitInfeasibleError(
-            "no simulator-valid PressureFit candidate satisfied the declared "
-            "capacity and residency constraints",
-            kind=first.failure_kind if first and first.failure_kind else "no_candidate",
-            diagnostics=failure_diagnostics,
-        )
-    best = min(
-        valid,
-        key=lambda outcome: (
-            outcome.simulation.makespan_ns,  # type: ignore[union-attr]
-            outcome.spec.ordinal,
-        ),
-    )
-    assert best.schedule is not None
-    assert best.simulation is not None
-    result_simulation_calls = 0
-    result_simulation_time_ns = 0
-    if (
-        isinstance(best.simulation, CompiledSimulationSummary)
-        and best.spec.context.compiled_template is not None
-    ):
-        simulation_started = time.perf_counter_ns()
-        final_simulation = simulate_compiled_template(
-            best.spec.context.compiled_template,
-            best.schedule,
-        )
-        result_simulation_time_ns = time.perf_counter_ns() - simulation_started
-        result_simulation_calls = 1
-    else:
-        assert isinstance(best.simulation, SimulationResult)
-        final_simulation = best.simulation
-    context_diagnostics: list[RecomputationContextDiagnostics] = []
-    aggregate_work = PressureFitWorkDiagnostics(
-        result_simulation_calls=result_simulation_calls,
-        result_simulation_time_ns=result_simulation_time_ns,
-    )
-    for context in contexts:
-        context_outcomes = tuple(
-            outcome for outcome in outcomes if outcome.spec.context is context
-        )
-        context_candidates = tuple(
-            outcome.diagnostic for outcome in context_outcomes
-        )
-        context_valid = tuple(
-            outcome
-            for outcome in context_outcomes
-            if outcome.schedule is not None and outcome.simulation is not None
-        )
-        context_best = (
-            None
-            if not context_valid
-            else min(
-                context_valid,
-                key=lambda outcome: (
-                    outcome.simulation.makespan_ns,  # type: ignore[union-attr]
-                    outcome.spec.ordinal,
-                ),
-            )
-        )
-        context_work = PressureFitWorkDiagnostics()
-        for candidate in context_candidates:
-            context_work += candidate.work
-        aggregate_work += context_work
-        context_diagnostics.append(
-            RecomputationContextDiagnostics(
-                selection_id=context.selection_id,
-                choices=tuple(
-                    RecomputationChoiceDiagnostic(item.group_id, item.option_id)
-                    for item in context.selections
-                ),
-                selected_candidate_id=(
-                    None if context_best is None else context_best.spec.candidate_id
-                ),
-                selected_makespan_ns=(
-                    None
-                    if context_best is None
-                    else context_best.simulation.makespan_ns  # type: ignore[union-attr]
-                ),
-                candidate_evaluations=context_candidates,
-                work=context_work,
-            )
-        )
-    diagnostics = PressureFitDiagnostics(
-        selected_candidate_id=best.spec.candidate_id,
-        selected_selection_id=best.spec.context.selection_id,
-        selected_makespan_ns=final_simulation.makespan_ns,
-        recomputation_contexts=tuple(context_diagnostics),
-        work=aggregate_work,
-    )
-    return PressureFitResult(
-        program=program,
-        options=selected_options,
-        initial_residency=initial_residency,
-        final_residency=final_residency,
-        simulation_config=config,
-        schedule=best.schedule,
-        selections=best.spec.context.selections,
-        simulation=final_simulation,
-        diagnostics=diagnostics,
-        admission_topology=admission,
+        tuple(context for context, _result in valid_pairs),
+        tuple(result for _context, result in valid_pairs),
+        admission,
     )
 
 
@@ -1339,27 +562,8 @@ def pressurefit(
     admission: AdmissionTopology | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Select a schedule and monotonically refine dynamic-slab headroom.
+    """Select a compiled schedule and refine dynamic-slab headroom."""
 
-    PressureFit first uses the caller's conservative object capacity.  If all
-    logically valid schedules fail exact dynamic ``MemoryPool`` admission,
-    object capacity is reduced by at least 128 MiB.  The increment doubles on
-    every subsequent failure and is never smaller than the measured contiguous
-    deficit rounded to allocator granularity.  Increments double through 1 GiB
-    and then grow by 512 MiB per attempt. Selection then repeats without
-    changing physical pool capacity, task semantics, or action rules.
-    """
-
-    # Preserve the framework-neutral semantic diagnostics before entering the
-    # required compiled search. This validates caller input; it is not an
-    # alternate planner or simulator execution path.
-    validate_schedule_feasibility(
-        program,
-        initial_residency=initial_residency,
-        final_residency=final_residency,
-        config=config,
-        admission=admission,
-    )
     original_config = config
     current_config = config
     current_admission = admission
@@ -1382,9 +586,6 @@ def pressurefit(
             )
             return replace(
                 result,
-                # Preserve the public call boundary for cache identity.  The
-                # exact effective capacity is recorded below, while physical
-                # simulation uses AdmissionTopology.pool_capacity_bytes.
                 simulation_config=original_config,
                 diagnostics=replace(
                     result.diagnostics,
@@ -1402,9 +603,7 @@ def pressurefit(
             ):
                 raise
             previous = current_admission.object_capacity_bytes
-            scheduled_increment = _scheduled_admission_refinement(
-                len(refinements)
-            )
+            scheduled_increment = _scheduled_admission_refinement(len(refinements))
             increment = max(
                 _round_up_admission_reserve(error.required_bytes),
                 scheduled_increment,
@@ -1425,8 +624,7 @@ def pressurefit(
                 progress(
                     "PressureFit physical admission refinement "
                     f"{len(refinements)}: required_slack={error.required_bytes}, "
-                    f"reserve_increment={increment}, "
-                    f"object_capacity={capacity}"
+                    f"reserve_increment={increment}, object_capacity={capacity}"
                 )
             current_config, current_admission = _with_object_capacity(
                 current_config,

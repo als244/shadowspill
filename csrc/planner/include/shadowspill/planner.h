@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 11U
+#define SHADOWSPILL_PLANNER_ABI_VERSION 12U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 
@@ -186,6 +186,24 @@ typedef struct ShadowSpillPressureFitProgramContext {
     const char *const *alias_json_names;
     const char *const *task_json_names;
 } ShadowSpillPressureFitProgramContext;
+
+typedef enum ShadowSpillPressureFitPreflightFailureKind {
+    SHADOWSPILL_PREFLIGHT_NONE = 0,
+    SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY = 1,
+    SHADOWSPILL_PREFLIGHT_REQUIRED_CAPACITY = 2,
+    SHADOWSPILL_PREFLIGHT_MISSING_INITIAL_RESIDENCY = 3,
+} ShadowSpillPressureFitPreflightFailureKind;
+
+/* Structured semantic feasibility result produced before candidate search. */
+typedef struct ShadowSpillPressureFitPreflightResult {
+    uint32_t status;
+    uint8_t failure_kind;
+    uint32_t error_device;
+    uint32_t error_alias;
+    int32_t error_boundary;
+    uint64_t required_bytes;
+    uint64_t capacity_bytes;
+} ShadowSpillPressureFitPreflightResult;
 
 typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_VALID = 0,
@@ -369,6 +387,12 @@ shadowspill_evaluate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
+);
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_validate_pressurefit_program_context(
+    const ShadowSpillPressureFitProgramContext *context,
+    ShadowSpillPressureFitPreflightResult *result
 );
 
 SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus

@@ -6,6 +6,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from reference.python.simulator import simulate_python
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -25,7 +26,6 @@ from shadowspill.ir import (
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
 from shadowspill.simulator._capi import simulator_library_path
 from shadowspill.simulator._compiled import simulate_compiled
-from shadowspill.simulator._python import simulate_python
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
     representative_program,
