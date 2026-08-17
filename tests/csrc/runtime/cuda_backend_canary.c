@@ -134,7 +134,7 @@ int main(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
     };
-    const ShadowSpillExecutionDescription task = {
+    const ShadowSpillTaskDescription task = {
         .task_id = 1U,
         .input_object_ids = &input_object_id,
         .input_count = 1U,

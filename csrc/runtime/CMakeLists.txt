@@ -6,7 +6,7 @@ add_library(
   src/allocations.c
   src/completion_tracker.c
   src/event_pool.c
-  src/execution_table.c
+  src/task_table.c
   src/failure_state.c
   src/fixed_layout.c
   src/idle_wakeup.c

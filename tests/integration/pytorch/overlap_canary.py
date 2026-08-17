@@ -11,10 +11,10 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
-    ExecutionDescription,
     ObjectBinding,
     ObjectSnapshot,
     RuntimeAction,
+    TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 
@@ -136,7 +136,7 @@ def _admit_task(
         _bind_plan_object(library, plan, object_id)
     input_array = (ctypes.c_uint64 * len(inputs))(*inputs)
     action_array = (RuntimeAction * len(actions))(*actions)
-    description = ExecutionDescription(
+    description = TaskDescription(
         task_id=task_id,
         input_object_ids=input_array,
         input_count=len(inputs),

@@ -170,7 +170,7 @@ class TrainingExecutor:
         )
         # Materialization uses a short-lived action batch. Replace it with
         # exactly one immutable initial or recurrent plan.
-        self._bridge.clear_execution_plan()
+        self._bridge.clear_tasks()
         if self._initial is not None and not self._optimizer_state_initialized:
             assert self._initial_fixed_layout is not None
             self._initial = self._admit_run(self._initial, self._initial_fixed_layout)
@@ -356,7 +356,7 @@ class TrainingExecutor:
         if run is None:
             raise AssertionError("initial optimizer plan is unavailable")
         if run is not self._active_run:
-            self._bridge.clear_execution_plan()
+            self._bridge.clear_tasks()
             if run is self._initial:
                 layout = self._initial_fixed_layout
                 if layout is None:

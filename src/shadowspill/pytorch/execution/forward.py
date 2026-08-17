@@ -232,7 +232,7 @@ class ForwardExecutor:
         )
         # Materialization uses a short-lived action batch. It is idle now and
         # must not become part of the immutable execution plan.
-        bridge.clear_execution_plan()
+        bridge.clear_tasks()
         bridge.admit_fixed_layout(fixed_layout)
         bridge.admit_initial_actions(
             initial_actions,

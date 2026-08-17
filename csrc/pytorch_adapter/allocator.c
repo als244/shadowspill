@@ -1440,7 +1440,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_bind_object(
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_task(
     uintptr_t plan_handle,
-    const ShadowSpillExecutionDescription *description,
+    const ShadowSpillTaskDescription *description,
     uintptr_t *task_handle
 ) {
     if (plan_handle == 0U || task_handle == NULL) {
@@ -1478,12 +1478,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_seal_fixed_layout(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_clear_execution(
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_clear_tasks(
     uintptr_t plan_handle
 ) {
     return plan_handle == 0U
         ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
-        : shadowspill_plan_clear_execution((ShadowSpillPlan *)plan_handle);
+        : shadowspill_plan_clear_tasks((ShadowSpillPlan *)plan_handle);
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_object_acquisition(

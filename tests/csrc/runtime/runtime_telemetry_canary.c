@@ -154,7 +154,7 @@ static int same_stream_retirement_is_task_batched(void) {
     ShadowSpillMockBackendStatistics before = {0};
     ShadowSpillMockBackendStatistics during = {0};
     ShadowSpillMockBackendStatistics after = {0};
-    const ShadowSpillExecutionDescription task = {.task_id = 77U};
+    const ShadowSpillTaskDescription task = {.task_id = 77U};
     shadowspill_mock_backend_statistics(mock, &before);
     int failed = shadowspill_test_admit_task(runtime, &task) !=
             SHADOWSPILL_RUNTIME_OK || shadowspill_test_before_task(
@@ -240,7 +240,7 @@ static int queued_transfers_survive_retirement_only_task(void) {
         .object_id = 22U,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription temporary_task = {.task_id = 81U};
+    const ShadowSpillTaskDescription temporary_task = {.task_id = 81U};
     for (uint32_t index = 0U; !failed && index < 3U; ++index) {
         failed = shadowspill_register_object(runtime, &objects[index]) !=
             SHADOWSPILL_RUNTIME_OK;
@@ -302,7 +302,7 @@ static int all_completed_retirements_precede_action_admission(void) {
     };
     ShadowSpillAllocation first = {0};
     ShadowSpillAllocation second = {0};
-    const ShadowSpillExecutionDescription allocator_task = {.task_id = 90U};
+    const ShadowSpillTaskDescription allocator_task = {.task_id = 90U};
     failed = failed || shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_RUNTIME_OK || shadowspill_test_admit_task(
             runtime, &allocator_task
@@ -408,7 +408,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
     const uint64_t input = object.object_id;
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 101U,
         .input_object_ids = &input,
         .input_count = 1U,

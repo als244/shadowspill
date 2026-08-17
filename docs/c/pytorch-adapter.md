@@ -68,7 +68,7 @@ semantics:
   `shadowspill_pytorch_acquire_objects_handle()`
 - `shadowspill_pytorch_plan_admit_fixed_layout()`
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
-- `shadowspill_pytorch_plan_clear_execution()`
+- `shadowspill_pytorch_plan_clear_tasks()`
 
 Task calls mirror the neutral runtime:
 

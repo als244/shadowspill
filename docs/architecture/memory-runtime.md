@@ -153,7 +153,7 @@ pending transition can satisfy it; otherwise it fails with no progress.
 
 ## Task boundaries
 
-The Python `_before_task()` boundary resolves the immutable execution record,
+The Python `_before_task()` boundary uses the immutable task record,
 calls the neutral runtime, acquires input generations, inserts stream waits,
 rebinds storages, assembles arguments, and records timing. `_after_task()`
 classifies outputs, publishes mutations, dematerializes releases, records the

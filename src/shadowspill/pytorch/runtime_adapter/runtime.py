@@ -591,7 +591,7 @@ class Runtime:
                 self._active_plan_handles.discard(plan_handle)
 
     def _abort_plan(self, plan_handle: int | None = None) -> None:
-        """Release cold-path execution records after a failed planning call."""
+        """Release cold-path task records after a failed planning call."""
 
         with self._lock:
             target = self._planning_plan_handle if plan_handle is None else plan_handle

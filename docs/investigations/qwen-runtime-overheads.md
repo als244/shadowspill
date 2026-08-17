@@ -643,7 +643,7 @@ retirement, and requested-byte accounting remain a separate allocation-record
 owner because those concepts apply to framework-visible device allocations,
 not to every pinned-host subrange.
 
-### `ShadowSpillExecutionTable`
+### `ShadowSpillTaskTable`
 
 The admitted execution plan is immutable and needs no hot-path lock. Each task
 record stores direct retained object pointers, predecoded mutations/actions,
@@ -720,7 +720,7 @@ typedef struct ShadowSpillRuntime {
     ShadowSpillMemoryPool device_pool;
     ShadowSpillMemoryPool host_pool;
     ShadowSpillAllocationTable allocations;
-    ShadowSpillExecutionTable execution;
+    ShadowSpillTaskTable tasks;
     ShadowSpillTransferLane h2d;
     ShadowSpillTransferLane d2h;
     ShadowSpillCompletionTracker completions;

@@ -74,7 +74,7 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_bind_object(
 
 static inline ShadowSpillRuntimeStatus shadowspill_test_bind_task_objects(
     ShadowSpillTestRuntime *record,
-    const ShadowSpillExecutionDescription *description
+    const ShadowSpillTaskDescription *description
 ) {
     for (uint32_t index = 0U; index < description->input_count; ++index) {
         const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
@@ -105,7 +105,7 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_bind_task_objects(
 
 static inline ShadowSpillRuntimeStatus shadowspill_test_admit_task(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionDescription *description
+    const ShadowSpillTaskDescription *description
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     if (record == NULL || description == NULL ||
@@ -236,7 +236,7 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_clear_plan(
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
     const ShadowSpillRuntimeStatus status = record == NULL
         ? SHADOWSPILL_RUNTIME_INVALID_STATE
-        : shadowspill_plan_clear_execution(record->plan);
+        : shadowspill_plan_clear_tasks(record->plan);
     if (status == SHADOWSPILL_RUNTIME_OK && record != NULL) {
         record->task_count = 0U;
     }

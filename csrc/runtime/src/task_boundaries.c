@@ -226,12 +226,12 @@ static ShadowSpillRuntimeStatus reserve_action_destination(
 
 static ShadowSpillRuntimeStatus publish_mutations_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
 ) {
     for (uint32_t index = 0U; index < record->update_count; ++index) {
-        const ShadowSpillExecutionUpdate *update = &record->updates[index];
+        const ShadowSpillTaskUpdate *update = &record->updates[index];
         ShadowSpillObject *object = update->object;
         pthread_mutex_lock(&object->lock);
         if (update->version_delta == 0U ||
@@ -260,7 +260,7 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
 }
 
 static int action_releases_object(
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     uint64_t object_id
 ) {
     for (uint32_t index = 0U; index < record->action_count; ++index) {
@@ -274,7 +274,7 @@ static int action_releases_object(
 
 static ShadowSpillRuntimeStatus validate_handoffs_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
 ) {
@@ -446,14 +446,14 @@ static void discard_action_batch_locked(
 
 static ShadowSpillRuntimeStatus instantiate_actions_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     ShadowSpillEventLease *task_completion_event,
     ShadowSpillActionBatch *batch,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
 ) {
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        const ShadowSpillExecutionAction *action = &record->actions[index];
+        const ShadowSpillTaskAction *action = &record->actions[index];
         ShadowSpillObject *object = action->object;
         pthread_mutex_lock(&object->lock);
         *failure_object_id = object->object_id;
@@ -582,7 +582,7 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
 
 static void publish_action_batch_locked(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     ShadowSpillActionBatch *batch
 ) {
     if (batch->head == NULL) {
@@ -643,13 +643,13 @@ static void publish_action_batch_locked(
 
 static ShadowSpillRuntimeStatus await_worker_submission(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record
+    const ShadowSpillTaskRecord *record
 ) {
     if (record->action_count == 0U) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    ShadowSpillExecutionRecord *mutable_record =
-        (ShadowSpillExecutionRecord *)record;
+    ShadowSpillTaskRecord *mutable_record =
+        (ShadowSpillTaskRecord *)record;
     const uint64_t sequence = atomic_fetch_add_explicit(
         &runtime->next_worker_submission_sequence, 1U, memory_order_acq_rel
     ) + 1U;
@@ -662,7 +662,7 @@ static ShadowSpillRuntimeStatus await_worker_submission(
         &mutable_record->submission_sequence, sequence, memory_order_release
     );
 
-    ShadowSpillExecutionRecord *expected = NULL;
+    ShadowSpillTaskRecord *expected = NULL;
     while (!atomic_compare_exchange_weak_explicit(
         &runtime->worker_submission,
         &expected,
@@ -704,7 +704,7 @@ static ShadowSpillRuntimeStatus await_worker_submission(
 
 ShadowSpillRuntimeStatus shadowspill_after_task_record(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     ShadowSpillBackendStream compute_stream
 ) {
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
@@ -801,7 +801,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_record(
             status = SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
         }
     }
-    if (record->boundary_kind == SHADOWSPILL_BOUNDARY_EXECUTION_TASK) {
+    if (record->boundary_kind == SHADOWSPILL_BOUNDARY_TASK) {
         shadowspill_append_trace_event_locked(
             runtime,
             SHADOWSPILL_TRACE_AFTER_TASK,

@@ -287,7 +287,7 @@ Runtime adoption has two cold-path phases:
 
 1. `shadowspill_plan_admit_fixed_layout()` copies the pointer-free certificate
    and reserves the parent execution-pool slice.
-2. After objects and immutable execution records exist,
+2. After objects and immutable task records exist,
    `shadowspill_plan_seal_fixed_layout()` resolves every placement and
    dependency.
 
@@ -297,7 +297,7 @@ Sealing verifies:
 - every fixed range fits the slice and satisfies alignment;
 - every strict-contract allocation and fetch action has exactly one fixed or
   dynamic policy;
-- task allocation bytes/alignment match the execution record;
+- task allocation bytes/alignment match the task record;
 - action destinations name the expected object and size;
 - every dependency names an admitted eviction and a real successor.
 
