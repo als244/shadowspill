@@ -1252,3 +1252,28 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   Python suite with four expected skips, Ruff, strict mypy over 178 installed
   source files, `git diff --check`, and focused ASan runtime-plan and telemetry
   canaries under the debugger.
+
+## 2026-08-17 — Runtime-owned task generations
+
+- Removed the generation vectors returned by both PyTorch task-boundary
+  operators and the corresponding Python alias-to-generation dictionaries.
+  The neutral object record remains the sole authority for current and retired
+  generations. Ordinary `before_task()` and `after_task()` calls now mutate
+  frontend storages in place and return no generation container.
+- Replacement-style mutation no longer sends a cached prior generation from
+  Python. While the task transaction is still open, the native adapter
+  validates the stronger relation directly: every persistent frontend view
+  must name that publication's exact retired address and the compiled result
+  must name its current successor address. Only after all views validate are
+  they rebound to the successor lease.
+- Stable logical identity is unchanged. Recurrent shared output slots replace
+  their current lease/generation in place; a public `TensorRef` snapshots the
+  authoritative generation once when ownership is exported, preserving exact
+  stale-generation release checks without burdening every internal task.
+- Removed the obsolete generation-publication field from `StepDiagnostics`.
+  Runtime ABI 42 and PyTorch adapter ABI 51 describe the relation-based
+  replacement check and mutation-only storage operators.
+- Validation passed the warnings-as-errors build, all 28 native/CUDA/PyTorch
+  canaries, the complete Python suite with four expected skips, Ruff, strict
+  mypy over 178 installed source files, `git diff --check`, and focused ASan
+  runtime-plan and telemetry canaries under the debugger.

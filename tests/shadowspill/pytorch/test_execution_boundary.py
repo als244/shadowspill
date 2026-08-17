@@ -50,8 +50,8 @@ class _AfterTaskHarness(TrainingExecutor):
         return ()
 
     @staticmethod
-    def _publish_output_generations(
-        _prepared: object, _processed: object, _generations: object
+    def _publish_frontend_bindings(
+        _prepared: object, _processed: object
     ) -> None:
         return None
 
@@ -108,8 +108,8 @@ class _TimedAfterTaskHarness(_AfterTaskHarness):
         self.calls.append("runtime_after_task")
         return ()
 
-    def _publish_output_generations(
-        self, _prepared: object, _processed: object, _generations: object
+    def _publish_frontend_bindings(
+        self, _prepared: object, _processed: object
     ) -> None:
         self.calls.append("publish_frontend")
 

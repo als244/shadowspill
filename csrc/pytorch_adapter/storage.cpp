@@ -186,7 +186,7 @@ void acquire_storages(
   }
 }
 
-std::vector<int64_t> before_task_storages(
+void before_task_storages(
     at::TensorList tensors,
     int64_t task_handle,
     int64_t task_id,
@@ -234,8 +234,6 @@ std::vector<int64_t> before_task_storages(
   } scope_guard{
       static_cast<uintptr_t>(task_handle),
       static_cast<uint64_t>(task_id)};
-  std::vector<int64_t> generations;
-  generations.reserve(count);
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
     const ShadowSpillObjectBinding& binding = bindings[index];
@@ -247,7 +245,6 @@ std::vector<int64_t> before_task_storages(
     TORCH_CHECK(
         current_address == 0U || current_address == target_address,
         "storage does not name its acquired runtime generation");
-    generations.push_back(static_cast<int64_t>(binding.generation));
   }
   for (const auto index : c10::irange(count)) {
     const uint64_t target_address = static_cast<uint64_t>(
@@ -265,7 +262,6 @@ std::vector<int64_t> before_task_storages(
     prior.clear();
   }
   scope_guard.active = false;
-  return generations;
 }
 
 void dematerialize_storages(at::TensorList tensors) {
@@ -285,7 +281,7 @@ void dematerialize_storages(at::TensorList tensors) {
   }
 }
 
-std::vector<int64_t> adopt_storages(
+void adopt_storages(
     at::TensorList tensors,
     at::IntArrayRef publication_ordinals,
     int64_t task_handle
@@ -315,8 +311,6 @@ std::vector<int64_t> adopt_storages(
         tensor.numel());
   }
 
-  std::vector<int64_t> generations;
-  generations.reserve(count);
   for (const auto index : c10::irange(count)) {
     const uint64_t address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
         tensors[index].storage().data_ptr().get()));
@@ -341,7 +335,6 @@ std::vector<int64_t> adopt_storages(
         binding.pointer == reinterpret_cast<void*>(
             static_cast<uintptr_t>(address)),
         "storage adoption changed the allocation address");
-    generations.push_back(static_cast<int64_t>(binding.generation));
   }
 
   // Runtime adoption succeeds for the complete batch before any owning
@@ -357,45 +350,37 @@ std::vector<int64_t> adopt_storages(
         tensor.device()));
     prior.clear();
   }
-  return generations;
 }
 
 void rebind_replacement_views(
     at::TensorList replacement_tensors,
-    at::IntArrayRef previous_generations,
     at::IntArrayRef target_indices,
     at::TensorList adopted_tensors,
     at::IntArrayRef publication_ordinals,
-    int64_t task_handle,
-    const std::vector<int64_t>& target_generations
+    int64_t task_handle
 ) {
   RangeGuard range_guard("shadowspill.pytorch.storage_replace_views_batch");
   const size_t count = replacement_tensors.size();
   TORCH_CHECK(
-      previous_generations.size() == count && target_indices.size() == count,
+      target_indices.size() == count,
       "storage replacement fields must have equal lengths");
   TORCH_CHECK(
-      publication_ordinals.size() == adopted_tensors.size() &&
-          target_generations.size() == adopted_tensors.size(),
+      publication_ordinals.size() == adopted_tensors.size(),
       "adopted storage fields must have equal lengths");
 
-  // Validate every old and new generation before rebinding any frontend view.
+  // Validate every retired and successor address before rebinding any view.
   // The runtime has adopted the replacement, but has not yet published task
-  // actions, so both generations remain valid throughout this transaction.
+  // actions, so both leases remain stable throughout this transaction.
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = replacement_tensors[index];
     const int64_t target_index = target_indices[index];
     TORCH_CHECK(tensor.is_cuda(), "storage replacement requires CUDA tensors");
     TORCH_CHECK(
-        previous_generations[index] >= 0,
-        "previous storage generation must be nonnegative");
-    TORCH_CHECK(
         target_index >= 0 &&
             static_cast<size_t>(target_index) < adopted_tensors.size(),
         "replacement target index is out of range");
     TORCH_CHECK(
-        publication_ordinals[target_index] >= 0 &&
-            target_generations[target_index] >= 0,
+        publication_ordinals[target_index] >= 0,
         "replacement target identity must be nonnegative");
     const at::Tensor& target_tensor = adopted_tensors[target_index];
     TORCH_CHECK(
@@ -408,11 +393,11 @@ void rebind_replacement_views(
         reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
     if (current != target) {
       const ShadowSpillRuntimeStatus status =
-          shadowspill_pytorch_validate_task_publication_binding(
+          shadowspill_pytorch_validate_task_replacement_binding(
               static_cast<uintptr_t>(task_handle),
               static_cast<uint32_t>(publication_ordinals[target_index]),
               current,
-              static_cast<uint64_t>(previous_generations[index]));
+              target);
       TORCH_CHECK(
           status == SHADOWSPILL_RUNTIME_OK,
           "existing storage does not match the retired object generation: ",
@@ -437,11 +422,10 @@ void rebind_replacement_views(
   }
 }
 
-std::vector<int64_t> after_task_storages(
+void after_task_storages(
     at::TensorList adopted_tensors,
     at::IntArrayRef publication_ordinals,
     at::TensorList replacement_tensors,
-    at::IntArrayRef replacement_previous_generations,
     at::IntArrayRef replacement_target_indices,
     at::TensorList dematerialized_tensors,
     int64_t task_handle,
@@ -451,16 +435,13 @@ std::vector<int64_t> after_task_storages(
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
   TORCH_CHECK(task_id >= 0, "task ID must be nonnegative");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
-  std::vector<int64_t> generations = adopt_storages(
-      adopted_tensors, publication_ordinals, task_handle);
+  adopt_storages(adopted_tensors, publication_ordinals, task_handle);
   rebind_replacement_views(
       replacement_tensors,
-      replacement_previous_generations,
       replacement_target_indices,
       adopted_tensors,
       publication_ordinals,
-      task_handle,
-      generations);
+      task_handle);
   dematerialize_storages(dematerialized_tensors);
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
@@ -473,7 +454,6 @@ std::vector<int64_t> after_task_storages(
       status == SHADOWSPILL_RUNTIME_OK,
       "task publication failed: ",
       shadowspill_runtime_status_string(status));
-  return generations;
 }
 
 at::Tensor transfer_acquired_storage_to_caller(
@@ -542,14 +522,14 @@ TORCH_LIBRARY(shadowspill, library) {
       "_acquire_storages(Tensor(a!)[] tensors, int[] addresses) -> ()");
   library.def(
       "_before_task_storages(Tensor(a!)[] tensors, int task_handle, "
-      "int task_id, int device_ordinal) -> int[]");
+      "int task_id, int device_ordinal) -> ()");
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_after_task_storages(Tensor(a!)[] adopted_tensors, int[] "
       "publication_ordinals, Tensor(a!)[] replacement_tensors, int[] "
-      "replacement_previous_generations, int[] replacement_target_indices, "
+      "replacement_target_indices, "
       "Tensor(a!)[] dematerialized_tensors, int task_handle, int task_id, "
-      "int device_ordinal) -> int[]");
+      "int device_ordinal) -> ()");
   library.def(
       "_transfer_acquired_storage_to_caller(Tensor(a!) tensor, int "
       "acquisition_handle, int object_ordinal, int generation, int "

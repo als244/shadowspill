@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 50U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 51U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -281,13 +281,13 @@ shadowspill_pytorch_task_publish_allocation(
     ShadowSpillObjectBinding *binding
 );
 
-/* Validate a current or retired publication generation by direct record. */
+/* Validate one replacement's retired and successor addresses by direct record. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_validate_task_publication_binding(
+shadowspill_pytorch_validate_task_replacement_binding(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
-    uint64_t address,
-    uint64_t generation
+    uint64_t retired_address,
+    uint64_t successor_address
 );
 
 /* Reconciles current process bytes against the sealed or provisional cap. */

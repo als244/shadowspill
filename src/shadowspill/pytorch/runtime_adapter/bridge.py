@@ -1146,7 +1146,7 @@ class RuntimeBridge:
         device_ordinal: int,
         tensors: Sequence[torch.Tensor],
         alias_ids: Sequence[str],
-    ) -> tuple[int, ...]:
+    ) -> None:
         """Run the admitted neutral boundary and install acquired storages."""
 
         if len(tensors) != len(alias_ids):
@@ -1160,25 +1160,12 @@ class RuntimeBridge:
             )
             if self.requires_storage(alias_id)
         )
-        generations = torch.ops.shadowspill._before_task_storages(
+        torch.ops.shadowspill._before_task_storages(
             [tensor for _, tensor, _ in materialized],
             task_handle,
             task_id,
             device_ordinal,
         )
-        if len(generations) != len(materialized):
-            raise RuntimeExecutionError(
-                "task acquisition returned the wrong generation count"
-            )
-        result = [0] * len(tensors)
-        for (index, _tensor, _alias_id), generation in zip(
-            materialized, generations, strict=True
-        ):
-            result[index] = int(generation)
-        for index, alias_id in enumerate(alias_ids):
-            if not self.requires_storage(alias_id):
-                result[index] = self._zero_generations.setdefault(alias_id, 0)
-        return tuple(result)
 
     def after_task_and_update(
         self,
@@ -1189,7 +1176,7 @@ class RuntimeBridge:
         dematerialized: Sequence[torch.Tensor],
         *,
         replacements: Sequence[ReplacementStorageViews] = (),
-    ) -> tuple[int, ...]:
+    ) -> None:
         """Overwrite logical objects and publish one admitted task boundary."""
 
         materialized = tuple(
@@ -1209,7 +1196,6 @@ class RuntimeBridge:
                 f"{sorted(unknown_replacements)}"
             )
         replacement_tensors: list[torch.Tensor] = []
-        replacement_previous_generations: list[int] = []
         replacement_target_indices: list[int] = []
         for target_index, (_index, item) in enumerate(materialized):
             replacement = replacement_by_alias.get(item.alias_id)
@@ -1217,35 +1203,33 @@ class RuntimeBridge:
                 continue
             for tensor in replacement.tensors:
                 replacement_tensors.append(tensor)
-                replacement_previous_generations.append(replacement.previous_generation)
                 replacement_target_indices.append(target_index)
-        generations = torch.ops.shadowspill._after_task_storages(
+        torch.ops.shadowspill._after_task_storages(
             [item.tensor for _, item in materialized],
             [item.publication_ordinal for _, item in materialized],
             replacement_tensors,
-            replacement_previous_generations,
             replacement_target_indices,
             list(dematerialized),
             task_handle,
             task_id,
             device_ordinal,
         )
-        if len(generations) != len(materialized):
+
+    def current_generation(self, alias_id: str) -> int:
+        """Snapshot one public object's authoritative runtime generation."""
+
+        if alias_id not in self._registered or not self.requires_storage(alias_id):
             raise RuntimeExecutionError(
-                "task publication returned the wrong generation count"
+                f"cannot snapshot unregistered plan object {alias_id!r}"
             )
-        result = [0] * len(adopted)
-        for (index, _item), generation in zip(materialized, generations, strict=True):
-            result[index] = int(generation)
-        for index, item in enumerate(adopted):
-            if self.requires_storage(item.alias_id):
-                continue
-            if item.alias_id in replacement_aliases:
-                self._zero_generations[item.alias_id] = (
-                    self._zero_generations.get(item.alias_id, 0) + 1
-                )
-            result[index] = self._zero_generations.setdefault(item.alias_id, 0)
-        return tuple(result)
+        snapshot = ObjectSnapshot()
+        self._require(
+            self.library.shadowspill_pytorch_object_snapshot(
+                self._runtime_object_id(alias_id), ctypes.byref(snapshot)
+            ),
+            f"snapshot object {alias_id}",
+        )
+        return int(snapshot.generation)
 
     def dematerialize(
         self, tensor: torch.Tensor, alias_id: str, generation: int

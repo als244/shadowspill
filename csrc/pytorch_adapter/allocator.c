@@ -1355,13 +1355,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_task_publish_allocation(
 }
 
 ShadowSpillRuntimeStatus
-shadowspill_pytorch_validate_task_publication_binding(
+shadowspill_pytorch_validate_task_replacement_binding(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
-    uint64_t address,
-    uint64_t generation
+    uint64_t retired_address,
+    uint64_t successor_address
 ) {
-    if (task_handle == 0U || address == 0U) {
+    if (task_handle == 0U || retired_address == 0U ||
+        successor_address == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
@@ -1369,12 +1370,12 @@ shadowspill_pytorch_validate_task_publication_binding(
     (void)device_ordinal;
     return runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_task_validate_publication_binding(
+        : shadowspill_task_validate_replacement_binding(
               runtime,
               (const ShadowSpillTaskHandle *)task_handle,
               publication_ordinal,
-              (const void *)(uintptr_t)address,
-              generation
+              (const void *)(uintptr_t)retired_address,
+              (const void *)(uintptr_t)successor_address
           );
 }
 

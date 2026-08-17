@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 41U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 42U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -798,12 +798,12 @@ shadowspill_task_publish_allocation(
 
 /* Validate a current or just-retired view through the same direct record. */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_task_validate_publication_binding(
+shadowspill_task_validate_replacement_binding(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
     uint32_t publication_ordinal,
-    const void *pointer,
-    uint64_t generation
+    const void *retired_pointer,
+    const void *successor_pointer
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus

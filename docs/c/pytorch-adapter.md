@@ -68,7 +68,7 @@ semantics:
 - `shadowspill_pytorch_plan_admit_task()`
 - `shadowspill_pytorch_plan_publish_initial_allocation()`
 - `shadowspill_pytorch_task_publish_allocation()` and
-  `shadowspill_pytorch_validate_task_publication_binding()`
+  `shadowspill_pytorch_validate_task_replacement_binding()`
 - `shadowspill_pytorch_plan_admit_action_batch()` and
   `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_plan_admit_object_acquisition()` and
@@ -83,7 +83,8 @@ Task calls mirror the neutral runtime:
 - `shadowspill_pytorch_before_task_handle()` and
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
   The before boundary exposes the task-owned borrowed binding array instead
-  of copying bindings into caller storage.
+  of copying bindings into caller storage. The storage operators consume that
+  view in place and return no per-task generation container to Python.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission

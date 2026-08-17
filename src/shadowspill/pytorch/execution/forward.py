@@ -123,7 +123,7 @@ class _ExecutingStage(nn.Module):
                 f"shadowspill.before_task.{self._trace_label}"
             ):
                 input_tensors = self._resolve_inputs(arguments)
-                generations = self._bridge.before_task_and_acquire(
+                self._bridge.before_task_and_acquire(
                     self._task_handle,
                     self._task_index,
                     self._device_ordinal,
@@ -131,7 +131,7 @@ class _ExecutingStage(nn.Module):
                     self._input_aliases,
                 )
                 runtime_scope_open = True
-                self._publish_input_generations(input_tensors, generations)
+                self._publish_input_bindings(input_tensors)
                 prepared = _PreparedForwardTask(
                     input_tensors, self._input_aliases
                 )
@@ -153,16 +153,12 @@ class _ExecutingStage(nn.Module):
             tensors.append(tensor)
         return tuple(tensors)
 
-    def _publish_input_generations(
+    def _publish_input_bindings(
         self,
         tensors: tuple[torch.Tensor, ...],
-        generations: tuple[int, ...],
     ) -> None:
-        for tensor, alias_id, generation in zip(
-            tensors, self._input_aliases, generations, strict=True
-        ):
+        for tensor, alias_id in zip(tensors, self._input_aliases, strict=True):
             self._state.object_store[alias_id] = tensor
-            self._state.generations[alias_id] = generation
 
     def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
         # Forward-only execution has no captured backward. Avoid creating
@@ -184,7 +180,7 @@ class _ExecutingStage(nn.Module):
             f"shadowspill.after_task.{self._trace_label}"
         ):
             processed = self._process_outputs(output)
-            generations = self._bridge.after_task_and_update(
+            self._bridge.after_task_and_update(
                 self._task_handle,
                 self._task_index,
                 self._device_ordinal,
@@ -193,7 +189,7 @@ class _ExecutingStage(nn.Module):
                 replacements=processed.replacements,
             )
             prepared.runtime_scope_open = False
-            self._publish_output_generations(processed, generations)
+            self._publish_output_bindings(processed)
             self._forget_released_bindings(processed)
             result = processed.raw
         return result
@@ -263,7 +259,7 @@ class _ExecutingStage(nn.Module):
                 continue
             tensor = available.get(alias_id)
             if tensor is None or (
-                alias_id not in self._state.generations
+                alias_id not in self._state.object_store
                 and alias_id not in adopted_aliases
             ):
                 raise RuntimeError(
@@ -279,26 +275,22 @@ class _ExecutingStage(nn.Module):
             dematerialized=tuple(dematerialized),
         )
 
-    def _publish_output_generations(
+    def _publish_output_bindings(
         self,
         processed: _ProcessedForwardOutputs,
-        generations: tuple[int, ...],
     ) -> None:
         replacement_by_alias = {
             item.alias_id: item for item in processed.replacements
         }
         for alias_id, tensor in processed.bindings:
             self._state.object_store[alias_id] = tensor
-        for item, generation in zip(processed.adopted, generations, strict=True):
+        for item in processed.adopted:
             tensor = item.tensor
             alias_id = item.alias_id
             if alias_id in processed.replacement_aliases:
-                self._state.publish_replacement_generation(
-                    replacement_by_alias[alias_id], generation
-                )
+                self._state.publish_replacement_views(replacement_by_alias[alias_id])
             else:
                 self._state.object_store[alias_id] = tensor
-                self._state.generations[alias_id] = generation
 
     def _forget_released_bindings(
         self, processed: _ProcessedForwardOutputs
@@ -308,7 +300,6 @@ class _ExecutingStage(nn.Module):
             if alias_id in adopted:
                 continue
             self._state.object_store.pop(alias_id, None)
-            self._state.generations.pop(alias_id, None)
 
     def _abort_task(
         self,
@@ -498,7 +489,6 @@ class ForwardExecutor:
         created = self._retain_shared_outputs(public_leaves)
         for alias_id in dict.fromkeys(self._public_output_aliases):
             self._state.object_store.pop(alias_id, None)
-            self._state.generations.pop(alias_id, None)
         self._invocations += 1
         self._active_shared_outputs = created
         return tree_unflatten(public_leaves, self._output_tree_spec)
@@ -541,7 +531,7 @@ class ForwardExecutor:
                 alias_id = self._public_output_aliases[output.public_leaf_index]
                 object_reference = self._bridge.acquire_object_reference(alias_id)
                 try:
-                    generation = self._state.generations[alias_id]
+                    generation = self._bridge.current_generation(alias_id)
                     reference = TensorRef.from_tensor(
                         object_reference,
                         tensor,

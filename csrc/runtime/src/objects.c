@@ -854,32 +854,38 @@ ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_task_validate_publication_binding(
+ShadowSpillRuntimeStatus shadowspill_task_validate_replacement_binding(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
     uint32_t publication_ordinal,
-    const void *pointer,
-    uint64_t generation
+    const void *retired_pointer,
+    const void *successor_pointer
 ) {
     const ShadowSpillTaskRecord *record = handle;
-    if (runtime == NULL || record == NULL || pointer == NULL ||
+    if (runtime == NULL || record == NULL || retired_pointer == NULL ||
+        successor_pointer == NULL ||
         record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
         record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK ||
-        publication_ordinal >= record->publication_count) {
+        publication_ordinal >= record->publication_count ||
+        record->publications[publication_ordinal].kind !=
+            SHADOWSPILL_TASK_PUBLICATION_REPLACE) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (shadowspill_current_plan(runtime) != record->plan_owner ||
+        shadowspill_current_task_id(runtime) != record->task_id) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     ShadowSpillObject *object = record->publications[publication_ordinal].object;
     pthread_mutex_lock(&object->lock);
     const ShadowSpillObjectLocation *location = shadowspill_object_location(
         object, record->plan_owner->execution_pool->pool_id
     );
-    const int current_matches = object->generation == generation &&
-        location != NULL && location->lease != NULL &&
-        location->lease->pointer == pointer;
-    const int retired_matches = object->retired_generation == generation &&
-        object->retired_execution_pointer == pointer;
+    const int matches = location != NULL && location->lease != NULL &&
+        location->lease->pointer == successor_pointer &&
+        location->lease->generation == object->generation &&
+        object->retired_execution_pointer == retired_pointer;
     pthread_mutex_unlock(&object->lock);
-    return current_matches || retired_matches
+    return matches
         ? SHADOWSPILL_RUNTIME_OK
         : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }

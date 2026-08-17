@@ -24,7 +24,6 @@ _BEFORE_COMPONENTS = (
     "host_native_before_task_seconds",
     "host_input_lookup_seconds",
     "host_storage_rebind_seconds",
-    "host_generation_publish_seconds",
     "host_argument_assembly_seconds",
 )
 _AFTER_COMPONENTS = (

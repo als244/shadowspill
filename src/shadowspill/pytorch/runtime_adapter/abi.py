@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 50
-RUNTIME_ABI_VERSION: Final = 41
+ADAPTER_ABI_VERSION: Final = 51
+RUNTIME_ABI_VERSION: Final = 42
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -803,7 +803,7 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_validate_task_publication_binding",
+        "shadowspill_pytorch_validate_task_replacement_binding",
         [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
