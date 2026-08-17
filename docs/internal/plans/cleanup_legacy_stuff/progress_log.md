@@ -434,3 +434,24 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   native/CUDA lifecycle suite. Ruff, strict mypy over 176 installed source
   files, and `git diff --check` passed.
 - Passing behavior commit: `26d69b1` (`Bind shared outputs as callable inputs`).
+
+## 2026-08-17 — Task-local retirement ownership
+
+- Root-caused a population-dependent task boundary: same-stream allocator
+  frees and functional object-generation replacement both left unfenced leases
+  in the runtime-global active-lease list. `after_task()` counted and attached
+  those retirements by scanning that entire population twice.
+- Added one intrusive task-local retirement chain owned by the dispatcher
+  scope. Ordinary frees and replacement-style mutations enter the same
+  tracking API. A lease reused within the task stays linked once; the boundary
+  acts only on its final state.
+- The first conversion hung the functional-mutation transition canary because
+  replacement retires the previous generation directly rather than through
+  `shadowspill_free()`. The old global scan had hidden that second producer.
+  Explicit tracking at replacement publication fixed the missing completion
+  source without restoring a scan.
+- `after_task()`, allocator-pressure fence publication, and abort cleanup now
+  traverse only retirements created by the active task. Population size no
+  longer affects these operations.
+- Validation passed: all 28 native/CUDA/PyTorch canaries and the complete
+  Python suite (680 passed, four expected skips).
