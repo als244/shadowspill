@@ -193,11 +193,45 @@ def point_complete(directory: Path, request: FrontierPointRequest) -> bool:
 
 
 def point_attempt_count(directory: Path, request: FrontierPointRequest) -> int:
+    """Return attempts charged against the configured retry budget."""
+
     status = read_object(directory / "status.json")
     _validate_status(status, request, directory / "status.json")
     attempts = status["attempts"]
     assert isinstance(attempts, list)
-    return len(attempts)
+    return sum(item.get("status") != "interrupted" for item in attempts)
+
+
+def recover_interrupted_attempt(
+    directory: Path,
+    request: FrontierPointRequest,
+) -> bool:
+    """Close one orphaned running attempt without consuming its retry budget."""
+
+    status_path = directory / "status.json"
+    status = read_object(status_path)
+    _validate_status(status, request, status_path)
+    attempts = status["attempts"]
+    assert isinstance(attempts, list)
+    if not attempts or not isinstance(attempts[-1], dict):
+        return False
+    current = attempts[-1]
+    if current.get("status") != "running":
+        return False
+    current.update(
+        {
+            "status": "interrupted",
+            "completed_at": utc_now(),
+            "elapsed_seconds": None,
+            "error": {
+                "type": "FrontierControllerInterrupted",
+                "message": "controller stopped before the point produced evidence",
+            },
+        }
+    )
+    status["status"] = "retryable"
+    atomic_json(status_path, status)
+    return True
 
 
 def begin_point_attempt(
@@ -215,7 +249,12 @@ def begin_point_attempt(
         and attempts[-1].get("status") == "running"
     ):
         raise RuntimeError("cannot begin a point while its prior attempt is running")
-    attempt = len(attempts) + 1
+    prior_ordinals = tuple(
+        int(item["attempt"])
+        for item in attempts
+        if isinstance(item, dict) and isinstance(item.get("attempt"), int)
+    )
+    attempt = max(prior_ordinals, default=0) + 1
     attempts.append(
         {
             "attempt": attempt,

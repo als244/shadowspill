@@ -48,6 +48,11 @@ of controller/journaling/summary changes; any planner, runtime, simulator, or
 planner-input change is rejected. Resume commands and source compatibility are
 appended to `resume-commands.log` and `resume-history.jsonl`.
 
+If the controller was interrupted while a point was running, that attempt stays
+in the journal with status `interrupted` but does not consume the point's attempt
+budget. Timeouts, worker failures, and completed planner errors remain charged
+and are never silently retried.
+
 ## Result layout
 
 ```text

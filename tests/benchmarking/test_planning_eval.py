@@ -14,6 +14,7 @@ from benchmarking.planning_eval.config import (
     TransferBandwidthBaseline,
     load_frontier_config,
 )
+from benchmarking.planning_eval.controller import _recover_interrupted_points
 from benchmarking.planning_eval.matrix import (
     FrontierPointRequest,
     expand_frontier_points,
@@ -34,6 +35,7 @@ from benchmarking.planning_eval.storage import (
     begin_point_attempt,
     finish_point_attempt,
     initialize_point,
+    point_attempt_count,
     point_complete,
     recover_running_attempt,
 )
@@ -182,6 +184,74 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         final=True,
     )
     assert point_complete(directory, request)
+
+
+def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
+    tmp_path: Path,
+) -> None:
+    corpus_root = tmp_path / "corpus"
+    saved = save_step_program(
+        corpus_root,
+        identity=ProgramCaseIdentity("llama3", "mlops", 1024, 1024, 1),
+        program=_fixture(),
+    )
+    case = CorpusProgramCase(
+        saved.directory,
+        saved.identity,
+        saved.program_digest,
+        saved.artifact_digest,
+    )
+    config = FrontierConfig(
+        name="interrupted-frontier",
+        expected_programs=1,
+        expected_points_per_program=1,
+        program_role="recurrent",
+        point_timeout_seconds=300,
+        max_point_attempts=1,
+        max_worker_restarts_per_program=1,
+        pressurefit_cache_mode="cold",
+        transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
+        grids=(
+            FrontierGrid(
+                "main",
+                (96,),
+                (1024,),
+                (BandwidthScale(1, 1),),
+            ),
+        ),
+    )
+    provenance = RepositoryProvenance(
+        _REPOSITORY,
+        "a" * 40,
+        "",
+        "",
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    )
+    paths = BaselinePaths.initialize(
+        tmp_path / "frontiers",
+        baseline_id="interrupted-baseline",
+        config=config,
+        provenance=provenance,
+        corpus_root=corpus_root,
+        corpus_digest=corpus_manifest_digest((case,)),
+        cases=(case,),
+    )
+    request = expand_frontier_points(
+        _fixture().recurrent,
+        config.grids,
+        transfer_baseline=config.transfer_bandwidths,
+    )[0]
+    directory = initialize_point(paths, case, request)
+    assert begin_point_attempt(directory, request) == 1
+    assert point_attempt_count(directory, request) == 1
+
+    atomic_json(
+        paths.case_directory(case) / "case.json",
+        {"points": [request.to_dict()]},
+    )
+    assert _recover_interrupted_points(paths, (case,)) == 1
+    assert point_attempt_count(directory, request) == 0
+    assert begin_point_attempt(directory, request) == 2
 
 
 def test_timeout_recovery_writes_summarizable_canonical_evidence(

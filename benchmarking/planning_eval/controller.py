@@ -20,6 +20,7 @@ from .storage import (
     atomic_json,
     read_active_point,
     read_object,
+    recover_interrupted_attempt,
     recover_running_attempt,
     utc_now,
     write_active_point,
@@ -49,6 +50,7 @@ def run_frontier_collection(
     _preflight_resume(paths, selected_cases, options.resume)
     failures = _load_case_failures(paths)
     with _CollectionLock(paths.directory / "collection.lock"):
+        recovered = _recover_interrupted_points(paths, selected_cases)
         _log(
             paths,
             "FRONTIER START "
@@ -57,6 +59,11 @@ def run_frontier_collection(
             f"points_per_program={config.expected_points_per_program} "
             f"resume={options.resume}",
         )
+        if recovered:
+            _log(
+                paths,
+                f"RESUME RECOVERED interrupted_points={recovered}",
+            )
         write_frontier_summary(
             paths,
             expected_programs=len(all_cases),
@@ -129,6 +136,32 @@ def run_frontier_collection(
             f"counts={summary['status_counts']} failures={len(failures)}",
         )
         return summary
+
+
+def _recover_interrupted_points(
+    paths: BaselinePaths,
+    selected_cases: tuple[CorpusProgramCase, ...],
+) -> int:
+    """Make orphaned running journals resumable after acquiring the sole lock."""
+
+    recovered = 0
+    for case in selected_cases:
+        case_directory = paths.case_directory(case)
+        case_path = case_directory / "case.json"
+        if not case_path.is_file():
+            continue
+        raw_points = read_object(case_path).get("points")
+        if not isinstance(raw_points, list):
+            raise ValueError(f"frontier case point inventory is invalid at {case_path}")
+        for raw in raw_points:
+            request = FrontierPointRequest.from_value(raw)
+            directory = case_directory / "points" / request.point_id
+            if not (directory / "status.json").is_file():
+                continue
+            if recover_interrupted_attempt(directory, request):
+                recovered += 1
+        write_active_point(case_directory, None)
+    return recovered
 
 
 def _run_case_until_complete(
