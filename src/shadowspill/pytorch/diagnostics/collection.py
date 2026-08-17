@@ -64,7 +64,7 @@ def collect_step_diagnostics(
         timing=execution_timing,
         tasks=tasks_by_execution_id,
         allocator=allocator,
-        transfers=_build_transfer_trace(timing, evidence),
+        transfers=_build_transfer_trace(timing, evidence, bridge),
         runtime=runtime,
         simulator_comparison=_build_simulator_comparison(timing, tasks),
         summary=_build_step_summary(timing, tasks, execution_timing, runtime),
@@ -284,6 +284,7 @@ def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:
 def _build_transfer_trace(
     timing: ArmedExecutionTiming,
     evidence: _TraceEvidence,
+    bridge: RuntimeBridge,
 ) -> TransferTrace:
     before = evidence.statistics_before.runtime
     after = evidence.statistics_after.runtime
@@ -315,7 +316,7 @@ def _build_transfer_trace(
             item for item in evidence.native.events if item.kind in transfer_kinds
         ),
         simulator_comparison=_build_transfer_comparison(
-            timing, evidence.native.events, selected_task_numbers
+            timing, evidence.native.events, selected_task_numbers, bridge
         ),
     )
 
@@ -324,6 +325,7 @@ def _build_transfer_comparison(
     timing: ArmedExecutionTiming,
     events: tuple[RuntimeTraceEvent, ...],
     selected_task_numbers: set[int],
+    bridge: RuntimeBridge,
 ) -> Mapping[str, SimulatorTransferComparison]:
     simulation = timing.simulation
     if simulation is None or not simulation.transfer_intervals:
@@ -372,7 +374,7 @@ def _build_transfer_comparison(
         dispatch = lane_dispatches[interval.sequence]
         completion = lane_completions[interval.sequence]
         task_number = _dense_id(interval.trigger_task_id, "task_")
-        object_number = _dense_id(interval.alias_group_id, "alias_")
+        object_number = bridge.runtime_object_id(interval.alias_group_id)
         _validate_transfer_event(interval, dispatch, task_number, object_number)
         _validate_transfer_event(interval, completion, task_number, object_number)
         action_kind = 2 if direction == "fetch" else 1

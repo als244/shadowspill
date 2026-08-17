@@ -23,9 +23,32 @@ class _AbortLibrary:
     def shadowspill_pytorch_abort_task_range(self) -> None:
         self.aborted = True
 
+
+class _Installed:
+    def __init__(self, library: object) -> None:
+        self.library = library
+
+
+class _Runtime:
+    def __init__(self, library: object) -> None:
+        self._installed = _Installed(library)
+        self._next_object_id = 10_000
+
+    def _reserve_persistent_object_ids(
+        self, count: int, *, allow_in_progress_plan: bool = False
+    ) -> tuple[int, ...]:
+        del allow_in_progress_plan
+        first = self._next_object_id
+        self._next_object_id += count
+        return tuple(range(first, first + count))
+
+    def _reserve_runtime_object_ids(self, count: int) -> tuple[int, ...]:
+        return self._reserve_persistent_object_ids(count)
+
+
 def test_abort_task_only_closes_the_native_scope() -> None:
     library = _AbortLibrary()
-    bridge = RuntimeBridge(library, representative_program())
+    bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
 
     bridge.abort_task()
 
@@ -34,7 +57,7 @@ def test_abort_task_only_closes_the_native_scope() -> None:
 
 def test_execution_buffers_project_pointer_free_allocation_abi() -> None:
     program = representative_program()
-    bridge = RuntimeBridge(object(), program)
+    bridge = RuntimeBridge(_Runtime(object()), program, 1)  # type: ignore[arg-type]
     trace = (
         TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 64, 64),
         TaskAllocationEvent(0, TaskAllocationOperation.FREE, 64, 64),
@@ -69,9 +92,9 @@ class _LabelLibrary:
         return 0
 
 
-def test_task_trace_labels_are_projected_by_dense_canonical_id() -> None:
+def test_task_trace_labels_are_projected_by_plan_local_id() -> None:
     library = _LabelLibrary()
-    bridge = RuntimeBridge(library, representative_program())
+    bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
 
     bridge.configure_task_labels(
         {
@@ -106,7 +129,7 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
             ),
         ),
     )
-    bridge = RuntimeBridge(object(), program)
+    bridge = RuntimeBridge(_Runtime(object()), program, 1)  # type: ignore[arg-type]
     tensor = torch.empty(0)
 
     bridge.register_placeholder("alias_000099")

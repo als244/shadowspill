@@ -52,7 +52,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
                   SHADOWSPILL_FIXED_ACTION_DESTINATION,
                   action->task_id,
                   action->action_ordinal,
-                  action->object->object_id
+                  action->plan_object_id
               )
             : NULL;
         const ShadowSpillFixedPlacementDescription *dynamic =
@@ -62,7 +62,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
                   SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
                   action->task_id,
                   action->action_ordinal,
-                  action->object->object_id
+                  action->plan_object_id
               )
             : NULL;
         if (action->admitted && action->plan_owner->fixed_layout.sealed &&

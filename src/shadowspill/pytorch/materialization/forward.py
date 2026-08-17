@@ -439,10 +439,15 @@ class MaterializedForwardState:
             binding = self.bridge.bind_registered_tensor(alias_id, owner)
             self.object_store[alias_id] = representative
             self.generations[alias_id] = binding.generation
+            task_number = (1 << 61) + ordinal
+            actions = (
+                MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
+            )
+            self.bridge.admit_initial_actions(actions, task_number=task_number)
             self.bridge.dematerialize(representative, alias_id, binding.generation)
             self.bridge.submit_initial_actions(
-                (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),),
-                task_number=(1 << 61) + ordinal,
+                actions,
+                task_number=task_number,
             )
         self.bridge.wait_idle()
 

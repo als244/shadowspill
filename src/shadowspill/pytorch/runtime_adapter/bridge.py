@@ -40,6 +40,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     read_allocator_failure,
 )
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
+from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.profiling.allocation_abi import TaskAllocationABI
@@ -122,12 +123,16 @@ class _ExecutionBuffers:
     encoded_labels: tuple[bytes | None, ...]
 
 
-def _dense_id(value: str, prefix: str) -> int:
+def _plan_local_id(value: str, prefix: str) -> int:
     if not value.startswith(prefix):
-        raise PlanningError(f"dense identity {value!r} does not start with {prefix!r}")
+        raise PlanningError(
+            f"plan-local identity {value!r} does not start with {prefix!r}"
+        )
     suffix = value.removeprefix(prefix)
     if not suffix.isdigit():
-        raise PlanningError(f"dense identity {value!r} has a nonnumeric suffix")
+        raise PlanningError(
+            f"plan-local identity {value!r} has a nonnumeric suffix"
+        )
     return int(suffix)
 
 
@@ -157,10 +162,12 @@ def _runtime_action(
 
 
 class RuntimeBridge:
-    """Translate canonical string identities into the adapter's dense C ABI."""
+    """Bind one Program's local identities to shared runtime objects."""
 
-    def __init__(self, library: Any, program: Program) -> None:
-        self.library = library
+    def __init__(self, runtime: Runtime, program: Program, plan_handle: int) -> None:
+        self.runtime = runtime
+        self.library = runtime._installed.library
+        self.plan_handle = plan_handle
         self._alias_by_object: dict[str, str] = {
             item.object_id: item.alias_group_id for item in program.objects
         }
@@ -169,12 +176,60 @@ class RuntimeBridge:
         }
         self._zero_generations: dict[str, int] = {}
         self._registered: set[str] = set()
+        self._runtime_object_ids: dict[str, int] = {}
         self._debug_task_timing_capacity = 0
-        self._admitted_tasks: dict[str, tuple[str, ...]] = {}
+        self._admitted_tasks: dict[str, tuple[int, tuple[str, ...]]] = {}
         self._admitted_action_tasks: dict[
             int, tuple[int, tuple[tuple[str, MemoryActionKind], ...]]
         ] = {}
         self._fixed_layout_installed = False
+
+    def _runtime_object_id(self, alias_id: str) -> int:
+        try:
+            return self._runtime_object_ids[alias_id]
+        except KeyError as exc:
+            raise RuntimeExecutionError(
+                f"plan object {alias_id!r} is not bound to a runtime object"
+            ) from exc
+
+    def runtime_object_id(self, alias_id: str) -> int:
+        """Return the shared runtime identity bound to one plan-local alias."""
+
+        return self._runtime_object_id(alias_id)
+
+    def _record_runtime_object(self, alias_id: str, runtime_object_id: int) -> None:
+        existing = self._runtime_object_ids.get(alias_id)
+        if existing is not None and existing != runtime_object_id:
+            raise RuntimeExecutionError(
+                f"plan object {alias_id!r} changed runtime identity: "
+                f"{existing} -> {runtime_object_id}"
+            )
+        self._runtime_object_ids[alias_id] = runtime_object_id
+
+    def _allocate_runtime_object_id(self, alias_id: str) -> int:
+        existing = self._runtime_object_ids.get(alias_id)
+        if existing is not None:
+            return existing
+        runtime_object_id = self.runtime._reserve_runtime_object_ids(1)[0]
+        self._record_runtime_object(alias_id, runtime_object_id)
+        return runtime_object_id
+
+    def _bind_plan_object(self, alias_id: str, *, consistency: int = 0) -> None:
+        if not self.requires_storage(alias_id):
+            return
+        self._require(
+            self.library.shadowspill_pytorch_plan_bind_object(
+                self.plan_handle,
+                _plan_local_id(alias_id, "alias_"),
+                self._runtime_object_id(alias_id),
+                consistency,
+            ),
+            f"bind plan object {alias_id}",
+        )
+
+    def _bind_plan_objects(self, alias_ids: Iterable[str]) -> None:
+        for alias_id in dict.fromkeys(alias_ids):
+            self._bind_plan_object(alias_id)
 
     def profile_range_begin(self, name: str) -> int:
         """Open one optional provider-backed profiling range."""
@@ -218,6 +273,9 @@ class RuntimeBridge:
             action_pairs,
         ):
             self.register_placeholder(alias_id)
+        self._bind_plan_objects(
+            self._referenced_aliases(runtime_inputs, mutations, action_pairs)
+        )
         buffers = self._execution_buffers(
             task,
             runtime_inputs,
@@ -226,13 +284,14 @@ class RuntimeBridge:
             memory_envelope,
         )
         self._require(
-            self.library.shadowspill_pytorch_admit_execution(
-                ctypes.byref(buffers.description)
+            self.library.shadowspill_pytorch_plan_admit_execution(
+                self.plan_handle, ctypes.byref(buffers.description)
             ),
             f"admit execution {task.task_id}",
         )
-        self._admitted_tasks[task.task_id] = runtime_inputs
-        return self._resolve_execution_handle(task.task_id)
+        handle = self._resolve_execution_handle(task.task_id)
+        self._admitted_tasks[task.task_id] = (handle, runtime_inputs)
+        return handle
 
     def admit_fixed_layout(self, layout: RuntimeFixedLayout) -> None:
         """Copy one dense physical-layout certificate into the C runtime."""
@@ -276,8 +335,8 @@ class RuntimeBridge:
             dependency_count=len(layout.dependencies),
         )
         status = int(
-            self.library.shadowspill_pytorch_admit_fixed_layout(
-                ctypes.byref(description)
+            self.library.shadowspill_pytorch_plan_admit_fixed_layout(
+                self.plan_handle, ctypes.byref(description)
             )
         )
         if status != 0:
@@ -306,21 +365,32 @@ class RuntimeBridge:
     ) -> int:
         """Admit one reusable action-only execution for initial placement."""
 
-        if task_number in self._admitted_action_tasks:
-            raise RuntimeExecutionError(
-                f"initial action execution {task_number} is already admitted"
-            )
         labels = _action_labels(actions, action_trace_labels)
         action_pairs = self._runtime_actions(actions, labels)
+        expected = tuple(
+            (action.alias_group_id, action.kind) for action, _label in action_pairs
+        )
+        existing = self._admitted_action_tasks.get(task_number)
+        if existing is not None:
+            handle, admitted = existing
+            if admitted != expected:
+                raise RuntimeExecutionError(
+                    "initial action admission changed for an existing task: "
+                    f"task={task_number}, expected={admitted}, observed={expected}"
+                )
+            return handle
         for action, _label in action_pairs:
             self.register_placeholder(action.alias_group_id)
+        self._bind_plan_objects(
+            action.alias_group_id for action, _label in action_pairs
+        )
         encoded_labels = tuple(
             label.encode("utf-8") if label else None for _action, label in action_pairs
         )
         runtime_actions = (RuntimeAction * len(action_pairs))(
             *(
                 _runtime_action(
-                    _dense_id(action.alias_group_id, "alias_"),
+                    _plan_local_id(action.alias_group_id, "alias_"),
                     _ACTION_KIND[action.kind],
                     trace_label=encoded,
                 )
@@ -335,15 +405,15 @@ class RuntimeBridge:
             action_count=len(action_pairs),
         )
         self._require(
-            self.library.shadowspill_pytorch_admit_execution(ctypes.byref(description)),
+            self.library.shadowspill_pytorch_plan_admit_execution(
+                self.plan_handle, ctypes.byref(description)
+            ),
             f"admit initial action execution {task_number}",
         )
         handle = self._resolve_execution_handle_number(task_number)
         self._admitted_action_tasks[task_number] = (
             handle,
-            tuple(
-                (action.alias_group_id, action.kind) for action, _label in action_pairs
-            ),
+            expected,
         )
         return handle
 
@@ -353,7 +423,9 @@ class RuntimeBridge:
         if not self._fixed_layout_installed:
             raise RuntimeExecutionError("no fixed physical layout was admitted")
         self._require(
-            self.library.shadowspill_pytorch_seal_fixed_layout(),
+            self.library.shadowspill_pytorch_plan_seal_fixed_layout(
+                self.plan_handle
+            ),
             "seal fixed physical layout",
         )
 
@@ -408,12 +480,12 @@ class RuntimeBridge:
         memory_envelope: TaskMemoryEnvelope,
     ) -> _ExecutionBuffers:
         input_ids = (ctypes.c_uint64 * len(inputs))(
-            *(_dense_id(value, "alias_") for value in inputs)
+            *(_plan_local_id(value, "alias_") for value in inputs)
         )
         updates = (ObjectUpdate * len(mutations))(
             *(
                 ObjectUpdate(
-                    _dense_id(self.alias_for_object(item.object_id), "alias_"),
+                    _plan_local_id(self.alias_for_object(item.object_id), "alias_"),
                     item.version_delta,
                 )
                 for item in mutations
@@ -423,7 +495,7 @@ class RuntimeBridge:
         action_values = (RuntimeAction * len(actions))(
             *(
                 _runtime_action(
-                    _dense_id(action.alias_group_id, "alias_"),
+                    _plan_local_id(action.alias_group_id, "alias_"),
                     _ACTION_KIND[action.kind],
                     trace_label=label,
                 )
@@ -446,7 +518,7 @@ class RuntimeBridge:
             )
         )
         description = ExecutionDescription(
-            task_id=_dense_id(task.task_id, "task_"),
+            task_id=_plan_local_id(task.task_id, "task_"),
             input_object_ids=input_ids if inputs else None,
             input_count=len(inputs),
             updates=updates if mutations else None,
@@ -485,13 +557,15 @@ class RuntimeBridge:
         )
 
     def _resolve_execution_handle(self, task_id: str) -> int:
-        return self._resolve_execution_handle_number(_dense_id(task_id, "task_"))
+        return self._resolve_execution_handle_number(
+            _plan_local_id(task_id, "task_")
+        )
 
     def _resolve_execution_handle_number(self, task_number: int) -> int:
         handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_resolve_execution(
-                task_number, ctypes.byref(handle)
+            self.library.shadowspill_pytorch_plan_resolve_execution(
+                self.plan_handle, task_number, ctypes.byref(handle)
             ),
             f"resolve execution {task_number}",
         )
@@ -512,7 +586,7 @@ class RuntimeBridge:
         self._require(
             self.library.shadowspill_pytorch_before_execution_handle(
                 execution_handle,
-                _dense_id(task_id, "task_"),
+                _plan_local_id(task_id, "task_"),
                 stream.cuda_stream,
                 bindings if input_count else None,
                 input_count,
@@ -530,7 +604,7 @@ class RuntimeBridge:
         self._require(
             self.library.shadowspill_pytorch_after_execution_handle(
                 execution_handle,
-                _dense_id(task_id, "task_"),
+                _plan_local_id(task_id, "task_"),
                 stream.cuda_stream,
             ),
             f"after admitted task {task_id}",
@@ -539,8 +613,10 @@ class RuntimeBridge:
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""
 
-        dense_ids = tuple(_dense_id(task_id, "task_") for task_id in task_ids)
-        capacity = max(dense_ids, default=-1) + 1
+        task_ordinals = tuple(
+            _plan_local_id(task_id, "task_") for task_id in task_ids
+        )
+        capacity = max(task_ordinals, default=-1) + 1
         if capacity <= 0:
             raise RuntimeExecutionError("debug task timing requires a task")
         self._require(
@@ -585,20 +661,22 @@ class RuntimeBridge:
         self._debug_task_timing_capacity = 0
 
     def configure_task_labels(self, labels_by_task: Mapping[str, str]) -> None:
-        """Install cold-path semantic NVTX labels for dense task identities."""
+        """Install cold-path semantic labels for plan-local task identities."""
 
-        dense_labels = {
-            _dense_id(task_id, "task_"): label
+        labels_by_ordinal = {
+            _plan_local_id(task_id, "task_"): label
             for task_id, label in labels_by_task.items()
         }
-        capacity = max(dense_labels, default=-1) + 1
+        capacity = max(labels_by_ordinal, default=-1) + 1
         if capacity == 0:
             self._require(
                 self.library.shadowspill_pytorch_task_labels_configure(None, 0),
                 "clear task trace labels",
             )
             return
-        encoded = [dense_labels.get(index, "").encode() for index in range(capacity)]
+        encoded = [
+            labels_by_ordinal.get(index, "").encode() for index in range(capacity)
+        ]
         values = (ctypes.c_char_p * capacity)(*encoded)
         self._require(
             self.library.shadowspill_pytorch_task_labels_configure(values, capacity),
@@ -653,9 +731,10 @@ class RuntimeBridge:
             self._registered.add(alias_id)
             self._zero_generations.setdefault(alias_id, 0)
             return
+        runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
             self.library.shadowspill_pytorch_register_host_object(
-                _dense_id(alias_id, "alias_"),
+                runtime_object_id,
                 expected,
                 int(retain_spill_copy),
                 storage.data_ptr(),
@@ -663,6 +742,7 @@ class RuntimeBridge:
             "register host object",
         )
         self._registered.add(alias_id)
+        self._bind_plan_object(alias_id)
 
     def adopt_persistent_spill_object(
         self,
@@ -680,22 +760,16 @@ class RuntimeBridge:
                 f"persistent payload for {alias_id!r} has {size_bytes} bytes; "
                 f"the plan requires {expected}"
             )
-        target_object_id = _dense_id(alias_id, "alias_")
-        if current_object_id != target_object_id:
-            self._require(
-                self.library.shadowspill_pytorch_rekey_object(
-                    current_object_id, target_object_id
-                ),
-                f"adopt persistent object as {alias_id}",
-            )
         self._require(
             self.library.shadowspill_pytorch_validate_spill_binding(
-                target_object_id, spill_pointer, size_bytes
+                current_object_id, spill_pointer, size_bytes
             ),
             f"validate persistent object {alias_id}",
         )
+        self._record_runtime_object(alias_id, current_object_id)
         self._registered.add(alias_id)
-        return target_object_id
+        self._bind_plan_object(alias_id)
+        return current_object_id
 
     def register_placeholder(self, alias_id: str) -> None:
         """Register a logical alias bundle before its first production."""
@@ -706,13 +780,15 @@ class RuntimeBridge:
             self._registered.add(alias_id)
             self._zero_generations.setdefault(alias_id, 0)
             return
+        runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
             self.library.shadowspill_pytorch_register_placeholder_object(
-                _dense_id(alias_id, "alias_"), self._size(alias_id), 0
+                runtime_object_id, self._size(alias_id), 0
             ),
             "register placeholder object",
         )
         self._registered.add(alias_id)
+        self._bind_plan_object(alias_id)
 
     def write_spill_tensor(self, alias_id: str, tensor: torch.Tensor) -> None:
         if alias_id not in self._registered:
@@ -730,7 +806,7 @@ class RuntimeBridge:
             return
         self._require(
             self.library.shadowspill_pytorch_write_spill_object(
-                _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
+                self._runtime_object_id(alias_id), expected, storage.data_ptr()
             ),
             "write host object",
         )
@@ -749,7 +825,7 @@ class RuntimeBridge:
             return
         self._require(
             self.library.shadowspill_pytorch_read_spill_object(
-                _dense_id(alias_id, "alias_"), expected, storage.data_ptr()
+                self._runtime_object_id(alias_id), expected, storage.data_ptr()
             ),
             "read host object",
         )
@@ -764,11 +840,12 @@ class RuntimeBridge:
                 continue
             self._require(
                 self.library.shadowspill_pytorch_unregister_object(
-                    _dense_id(alias_id, "alias_")
+                    self._runtime_object_id(alias_id)
                 ),
                 "unregister object",
             )
             self._registered.remove(alias_id)
+            self._runtime_object_ids.pop(alias_id, None)
 
     def bind_registered_tensor(
         self, alias_id: str, tensor: torch.Tensor
@@ -780,7 +857,7 @@ class RuntimeBridge:
         storage = tensor.untyped_storage()
         self._require(
             self.library.shadowspill_pytorch_bind_registered_allocation(
-                _dense_id(alias_id, "alias_"),
+                self._runtime_object_id(alias_id),
                 storage.data_ptr(),
                 self._size(alias_id),
                 ctypes.byref(binding),
@@ -795,6 +872,7 @@ class RuntimeBridge:
             return self._zero_binding(alias_id)
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
+        runtime_object_id = self._allocate_runtime_object_id(alias_id)
         function = (
             self.library.shadowspill_pytorch_bind_registered_allocation
             if alias_id in self._registered
@@ -802,7 +880,7 @@ class RuntimeBridge:
         )
         self._require(
             function(
-                _dense_id(alias_id, "alias_"),
+                runtime_object_id,
                 storage.data_ptr(),
                 self._size(alias_id),
                 ctypes.byref(binding),
@@ -810,6 +888,7 @@ class RuntimeBridge:
             "bind task output",
         )
         self._registered.add(alias_id)
+        self._bind_plan_object(alias_id)
         return binding
 
     def replace_output(self, alias_id: str, tensor: torch.Tensor) -> ObjectBinding:
@@ -828,7 +907,7 @@ class RuntimeBridge:
         storage = tensor.untyped_storage()
         self._require(
             self.library.shadowspill_pytorch_replace_registered_allocation(
-                _dense_id(alias_id, "alias_"),
+                self._runtime_object_id(alias_id),
                 storage.data_ptr(),
                 self._size(alias_id),
                 ctypes.byref(binding),
@@ -852,10 +931,15 @@ class RuntimeBridge:
             for index, (tensor, alias_id) in enumerate(items)
             if self.requires_storage(alias_id)
         )
+        for _index, _tensor, alias_id in materialized:
+            self._allocate_runtime_object_id(alias_id)
         generations = (
             torch.ops.shadowspill._adopt_storages(
                 [tensor for _, tensor, _ in materialized],
-                [_dense_id(alias_id, "alias_") for _, _, alias_id in materialized],
+                [
+                    self._runtime_object_id(alias_id)
+                    for _, _, alias_id in materialized
+                ],
                 [self._size(alias_id) for _, _, alias_id in materialized],
                 [
                     2
@@ -872,6 +956,7 @@ class RuntimeBridge:
                 "storage adoption returned the wrong generation count"
             )
         self._registered.update(alias_id for _, alias_id in items)
+        self._bind_plan_objects(alias_id for _, alias_id in items)
         result = [0] * len(items)
         for (index, _tensor, _alias_id), generation in zip(
             materialized, generations, strict=True
@@ -899,13 +984,15 @@ class RuntimeBridge:
         bindings = (ObjectBinding * len(runtime_inputs))()
         admitted_inputs = self._admitted_tasks.get(task_id)
         if admitted_inputs is not None:
-            if admitted_inputs != runtime_inputs:
+            execution_handle, expected_inputs = admitted_inputs
+            if expected_inputs != runtime_inputs:
                 raise RuntimeExecutionError(
                     f"admitted task {task_id} input storage contract changed"
                 )
             self._require(
-                self.library.shadowspill_pytorch_before_execution(
-                    _dense_id(task_id, "task_"),
+                self.library.shadowspill_pytorch_before_execution_handle(
+                    execution_handle,
+                    _plan_local_id(task_id, "task_"),
                     stream.cuda_stream,
                     bindings if runtime_inputs else None,
                     len(runtime_inputs),
@@ -914,11 +1001,11 @@ class RuntimeBridge:
             )
             return self._expand_bindings(input_alias_ids, runtime_inputs, bindings)
         identifiers = (ctypes.c_uint64 * len(runtime_inputs))(
-            *(_dense_id(value, "alias_") for value in runtime_inputs)
+            *(self._runtime_object_id(value) for value in runtime_inputs)
         )
         self._require(
             self.library.shadowspill_pytorch_before_task(
-                _dense_id(task_id, "task_"),
+                _plan_local_id(task_id, "task_"),
                 stream.cuda_stream,
                 identifiers if runtime_inputs else None,
                 len(runtime_inputs),
@@ -945,7 +1032,7 @@ class RuntimeBridge:
         )
         stream = torch.cuda.current_stream()
         identifiers = (ctypes.c_uint64 * len(runtime_aliases))(
-            *(_dense_id(value, "alias_") for value in runtime_aliases)
+            *(self._runtime_object_id(value) for value in runtime_aliases)
         )
         bindings = (ObjectBinding * len(runtime_aliases))()
         task_open = False
@@ -987,9 +1074,12 @@ class RuntimeBridge:
         actions: Iterable[MemoryAction],
     ) -> None:
         if task_id in self._admitted_tasks:
+            execution_handle, _inputs = self._admitted_tasks[task_id]
             self._require(
-                self.library.shadowspill_pytorch_after_execution(
-                    _dense_id(task_id, "task_"), stream.cuda_stream
+                self.library.shadowspill_pytorch_after_execution_handle(
+                    execution_handle,
+                    _plan_local_id(task_id, "task_"),
+                    stream.cuda_stream,
                 ),
                 f"after admitted task {task_id}",
             )
@@ -1005,7 +1095,9 @@ class RuntimeBridge:
         updates = (ObjectUpdate * len(mutation_values))(
             *(
                 ObjectUpdate(
-                    _dense_id(self.alias_for_object(item.object_id), "alias_"),
+                    self._runtime_object_id(
+                        self.alias_for_object(item.object_id)
+                    ),
                     item.version_delta,
                 )
                 for item in mutation_values
@@ -1014,7 +1106,7 @@ class RuntimeBridge:
         runtime_actions = (RuntimeAction * len(action_values))(
             *(
                 _runtime_action(
-                    _dense_id(item.alias_group_id, "alias_"),
+                    self._runtime_object_id(item.alias_group_id),
                     _ACTION_KIND[item.kind],
                 )
                 for item in action_values
@@ -1022,7 +1114,7 @@ class RuntimeBridge:
         )
         self._require(
             self.library.shadowspill_pytorch_after_task(
-                _dense_id(task_id, "task_"),
+                _plan_local_id(task_id, "task_"),
                 stream.cuda_stream,
                 updates if mutation_values else None,
                 len(mutation_values),
@@ -1079,7 +1171,7 @@ class RuntimeBridge:
         runtime_actions = (RuntimeAction * len(runtime_actions_values))(
             *(
                 _runtime_action(
-                    _dense_id(item.alias_group_id, "alias_"),
+                    self._runtime_object_id(item.alias_group_id),
                     _ACTION_KIND[item.kind],
                 )
                 for item in runtime_actions_values
@@ -1101,7 +1193,9 @@ class RuntimeBridge:
         """Discard immutable execution records and their fixed layout."""
 
         self._require(
-            self.library.shadowspill_pytorch_clear_execution_plan(),
+            self.library.shadowspill_pytorch_plan_clear_execution(
+                self.plan_handle
+            ),
             "clear execution plan",
         )
         self._admitted_tasks.clear()
@@ -1126,7 +1220,7 @@ class RuntimeBridge:
                 continue
             torch.ops.shadowspill._transfer_storage_to_caller(
                 tensor,
-                _dense_id(alias_id, "alias_"),
+                self._runtime_object_id(alias_id),
                 binding.generation,
                 binding.allocation_id,
             )
@@ -1140,7 +1234,7 @@ class RuntimeBridge:
         torch.ops.shadowspill._rebind_storage(
             tensor,
             binding.pointer,
-            _dense_id(alias_id, "alias_"),
+            self._runtime_object_id(alias_id),
             binding.generation,
         )
 
@@ -1173,7 +1267,7 @@ class RuntimeBridge:
             return
         torch.ops.shadowspill._replace_storages(
             list(tensors),
-            _dense_id(alias_id, "alias_"),
+            self._runtime_object_id(alias_id),
             previous_generation,
             target_tensor.untyped_storage().data_ptr(),
             target_generation,
@@ -1237,9 +1331,14 @@ class RuntimeBridge:
             for index, (tensor, alias_id) in enumerate(adopted)
             if self.requires_storage(alias_id)
         )
+        for _index, _tensor, alias_id in materialized:
+            self._allocate_runtime_object_id(alias_id)
         generations = torch.ops.shadowspill._after_execution_storages(
             [tensor for _, tensor, _ in materialized],
-            [_dense_id(alias_id, "alias_") for _, _, alias_id in materialized],
+            [
+                self._runtime_object_id(alias_id)
+                for _, _, alias_id in materialized
+            ],
             [self._size(alias_id) for _, _, alias_id in materialized],
             [
                 2
@@ -1257,6 +1356,7 @@ class RuntimeBridge:
                 "task publication returned the wrong generation count"
             )
         self._registered.update(alias_id for _, alias_id in adopted)
+        self._bind_plan_objects(alias_id for _, alias_id in adopted)
         result = [0] * len(adopted)
         for (index, _tensor, _alias_id), generation in zip(
             materialized, generations, strict=True
@@ -1278,7 +1378,7 @@ class RuntimeBridge:
         if tensor.untyped_storage().data_ptr() == 0:
             return
         torch.ops.shadowspill._rebind_storage(
-            tensor, 0, _dense_id(alias_id, "alias_"), generation
+            tensor, 0, self._runtime_object_id(alias_id), generation
         )
 
     def dematerialize_many(
@@ -1309,7 +1409,7 @@ class RuntimeBridge:
             snapshot = ObjectSnapshot()
             status = int(
                 self.library.shadowspill_pytorch_object_snapshot(
-                    _dense_id(alias_id, "alias_"), ctypes.byref(snapshot)
+                    self._runtime_object_id(alias_id), ctypes.byref(snapshot)
                 )
             )
             if status != 0:
@@ -1339,12 +1439,23 @@ class RuntimeBridge:
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)
 
-    def adopt_registered(self, alias_ids: Iterable[str]) -> None:
+    def registered_runtime_objects(self) -> Mapping[str, int]:
+        """Return plan aliases and their stable runtime object identities."""
+
+        return {
+            alias_id: runtime_object_id
+            for alias_id, runtime_object_id in self._runtime_object_ids.items()
+            if alias_id in self._registered
+        }
+
+    def adopt_registered(self, objects: Mapping[str, int]) -> None:
         """Adopt objects registered by a compatible provisional bridge."""
 
-        for alias_id in alias_ids:
+        for alias_id, runtime_object_id in objects.items():
             self._size(alias_id)
             self._registered.add(alias_id)
+            self._record_runtime_object(alias_id, runtime_object_id)
+            self._bind_plan_object(alias_id)
             if not self.requires_storage(alias_id):
                 self._zero_generations.setdefault(alias_id, 0)
 
@@ -1357,7 +1468,7 @@ class RuntimeBridge:
         if self.requires_storage(alias_id):
             raise AssertionError("zero binding requested for a materialized alias")
         return ObjectBinding(
-            _dense_id(alias_id, "alias_"),
+            _plan_local_id(alias_id, "alias_"),
             self._zero_generations.setdefault(alias_id, 0),
             0,
             0,

@@ -145,7 +145,7 @@ class TrainingMaterializedState:
     ) -> None:
         """Switch from provisional identities and install fixed graph inputs."""
 
-        existing = self.bridge.registered_aliases()
+        existing = self.bridge.registered_runtime_objects()
         bridge.adopt_registered(existing)
         self.bridge = bridge
         active_objects = {
@@ -546,10 +546,15 @@ class TrainingMaterializedState:
     def _release_placeholder(
         self, alias_id: str, tensor: torch.Tensor, generation: int, ordinal: int
     ) -> None:
+        task_number = (1 << 61) + ordinal
+        actions = (
+            MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
+        )
+        self.bridge.admit_initial_actions(actions, task_number=task_number)
         self.bridge.dematerialize(tensor, alias_id, generation)
         self.bridge.submit_initial_actions(
-            (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),),
-            task_number=(1 << 61) + ordinal,
+            actions,
+            task_number=task_number,
         )
 
     def _read_model_aliases(

@@ -45,7 +45,8 @@ class _Runtime:
         self.prepared_error: BaseException | None = None
         self.released = False
 
-    def _adopt_plan(self) -> None:
+    def _adopt_plan(self, plan_handle: int) -> None:
+        assert plan_handle == 77
         self.adopted = True
 
     def _prepare_failure_cleanup(
@@ -54,7 +55,8 @@ class _Runtime:
         del kwargs
         self.prepared_error = error
 
-    def _release_plan(self) -> None:
+    def _release_plan(self, plan_handle: int) -> None:
+        assert plan_handle == 77
         self.released = True
         if self.fail_release:
             raise RuntimeError("plan cleanup failed")
@@ -80,6 +82,7 @@ def test_forward_failure_attempts_every_cleanup_without_masking_cause(
         state,  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
         runtime,  # type: ignore[arg-type]
+        77,
     )
 
     with pytest.raises(RuntimeError) as caught:
@@ -124,6 +127,7 @@ def test_training_failure_restores_optimizer_and_closes(
         optimizer,
         object(),  # type: ignore[arg-type]
         runtime,  # type: ignore[arg-type]
+        77,
     )
 
     with pytest.raises(RuntimeError) as caught:

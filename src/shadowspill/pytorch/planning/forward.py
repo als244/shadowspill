@@ -462,7 +462,7 @@ def admit_forward_plan(
             selected_admission.dynamic_provider_allocations()
         ),
     )
-    bridge = RuntimeBridge(captured.installed.library, execution_plan.program)
+    bridge = RuntimeBridge(memory.runtime, execution_plan.program, memory.plan_handle)
     state: MaterializedForwardState | None = None
     try:
         with timer.measure("materialization"):
@@ -511,6 +511,7 @@ def admit_forward_plan(
             state,
             report,
             memory.runtime,
+            memory.plan_handle,
         )
     except BaseException as error:
         if state is not None:

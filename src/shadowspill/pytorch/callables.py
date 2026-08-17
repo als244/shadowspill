@@ -38,6 +38,7 @@ class PlannedForward:
         state: MaterializedForwardState,
         report: PlanReport,
         runtime: Runtime,
+        plan_handle: int,
     ) -> None:
         self._model = model
         self._signature = signature
@@ -45,7 +46,8 @@ class PlannedForward:
         self._state = state
         self.plan_report = report
         self._runtime = runtime
-        self._runtime._adopt_plan()
+        self._plan_handle = plan_handle
+        self._runtime._adopt_plan(plan_handle)
         self._closed = False
         self._closing = False
         self._profiler_annotations_active = False
@@ -120,7 +122,10 @@ class PlannedForward:
             (
                 ("restore model state", self._state.restore_cpu_and_unregister),
                 ("release compiled executor", self._release_executor),
-                ("release runtime plan", self._runtime._release_plan),
+                (
+                    "release runtime plan",
+                    lambda: self._runtime._release_plan(self._plan_handle),
+                ),
                 (
                     "restore persistent object identities",
                     lambda: restore_persistent_object_ids(self._runtime),
@@ -179,6 +184,7 @@ class PlannedTrainStep:
         optimizer: torch.optim.Optimizer,
         report: PlanReport,
         runtime: Runtime,
+        plan_handle: int,
     ) -> None:
         self._model = model
         self._signatures = signatures
@@ -187,7 +193,8 @@ class PlannedTrainStep:
         self._optimizer = optimizer
         self.plan_report = report
         self._runtime = runtime
-        self._runtime._adopt_plan()
+        self._plan_handle = plan_handle
+        self._runtime._adopt_plan(plan_handle)
         self._step = 0
         self._closed = False
         self._closing = False
@@ -336,7 +343,10 @@ class PlannedTrainStep:
                 ("restore optimizer state", self._executor.restore_optimizer_cpu),
                 ("restore model state", self._state.restore_cpu_and_unregister),
                 ("release compiled executor", self._release_executor),
-                ("release runtime plan", self._runtime._release_plan),
+                (
+                    "release runtime plan",
+                    lambda: self._runtime._release_plan(self._plan_handle),
+                ),
                 (
                     "restore persistent object identities",
                     lambda: restore_persistent_object_ids(self._runtime),

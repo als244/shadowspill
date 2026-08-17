@@ -305,12 +305,13 @@ def materialize_training_state(
     *,
     opt: Callable[[Any], torch.optim.Optimizer],
     runtime: Runtime,
+    plan_handle: int,
     spill_pool: str,
     timer: PlanningTimer,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once."""
 
-    bridge = RuntimeBridge(captured.installed.library, captured.layout.program)
+    bridge = RuntimeBridge(runtime, captured.layout.program, plan_handle)
     state: TrainingMaterializedState | None = None
     optimizer: torch.optim.Optimizer | None = None
     try:
@@ -848,7 +849,9 @@ def admit_training_plan(
                     initial_admission.dynamic_provider_allocations()
                 ),
             )
-        bridge = RuntimeBridge(captured.installed.library, recurrent_plan.program)
+        bridge = RuntimeBridge(
+            memory.runtime, recurrent_plan.program, memory.plan_handle
+        )
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(
                 bridge,
@@ -912,6 +915,7 @@ def admit_training_plan(
             materialized.optimizer,
             report,
             memory.runtime,
+            memory.plan_handle,
         )
     except BaseException as error:
         _rollback_training_failure(
@@ -1186,6 +1190,7 @@ def make_training_program(
         captured,
         opt=opt,
         runtime=memory.runtime,
+        plan_handle=memory.plan_handle,
         spill_pool=memory.spill.name,
         timer=timer,
     )
@@ -1423,6 +1428,7 @@ def build_training(
         captured,
         opt=opt,
         runtime=memory.runtime,
+        plan_handle=memory.plan_handle,
         spill_pool=memory.spill.name,
         timer=timer,
     )

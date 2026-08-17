@@ -148,6 +148,7 @@ class PlanMemory:
     dynamic_scratch_reserve_bytes: int
     execution_device: int
     transfers: TransferCapabilities
+    plan_handle: int
 
 
 _runtime_lock = threading.Lock()
@@ -206,8 +207,8 @@ class Runtime:
             self._closed = False
             self._unusable_reason: str | None = None
             self._last_failure: RuntimeFailureDiagnostics | None = None
-            self._active_plans = 0
-            self._planning = False
+            self._active_plan_handles: set[int] = set()
+            self._planning_plan_handle: int | None = None
             self._persistent_state_count = 0
             self._next_persistent_object_id = 1 << 62
             execution_pool = MemoryPool(
@@ -290,7 +291,7 @@ class Runtime:
         with self._lock:
             if self._closed:
                 return
-            if self._active_plans != 0 or self._planning:
+            if self._active_plan_handles or self._planning_plan_handle is not None:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while a callable or in-progress plan owns it"
                 )
@@ -314,7 +315,7 @@ class Runtime:
         *,
         allow_in_progress_plan: bool = False,
     ) -> tuple[int, ...]:
-        """Reserve frontend-owned runtime identities outside dense plan IDs."""
+        """Reserve globally unique runtime object identities."""
 
         if count < 0:
             raise ValueError("persistent object count must be non-negative")
@@ -322,6 +323,15 @@ class Runtime:
             self._require_state_operation_allowed(
                 allow_in_progress_plan=allow_in_progress_plan
             )
+            return self._reserve_runtime_object_ids(count)
+
+    def _reserve_runtime_object_ids(self, count: int) -> tuple[int, ...]:
+        """Reserve runtime-global identities without changing state ownership."""
+
+        if count < 0:
+            raise ValueError("runtime object count must be non-negative")
+        with self._lock:
+            self._require_open()
             first = self._next_persistent_object_id
             limit = first + count
             if limit >= (1 << 63):
@@ -351,8 +361,9 @@ class Runtime:
     ) -> None:
         with self._lock:
             self._require_open()
-            if self._active_plans != 0 or (
-                self._planning and not allow_in_progress_plan
+            if self._active_plan_handles or (
+                self._planning_plan_handle is not None
+                and not allow_in_progress_plan
             ):
                 raise RuntimeConfigurationError(
                     "persistent state relocation requires an idle Runtime"
@@ -378,10 +389,9 @@ class Runtime:
     ) -> PlanMemory:
         with self._lock:
             self._require_open()
-            if self._active_plans != 0 or self._planning:
+            if self._planning_plan_handle is not None:
                 raise RuntimeConfigurationError(
-                    "this Runtime already has an active callable or in-progress "
-                    "plan; close it before creating another plan"
+                    "this Runtime already has an in-progress planning call"
                 )
             if execution == spill:
                 raise RuntimeConfigurationError(
@@ -421,6 +431,20 @@ class Runtime:
                 raise RuntimeConfigurationError(
                     f"route {execution!r} -> {spill!r} is not calibrated"
                 )
+            plan_handle_value = ctypes.c_size_t()
+            status = int(
+                self._installed.library.shadowspill_pytorch_plan_create(
+                    execution_pool.pool_id,
+                    spill_pool.pool_id,
+                    ctypes.byref(plan_handle_value),
+                )
+            )
+            if status != 0 or plan_handle_value.value == 0:
+                raise RuntimeConfigurationError(
+                    "native plan creation failed: "
+                    f"status={status}, execution={execution!r}, spill={spill!r}"
+                )
+            plan_handle = int(plan_handle_value.value)
             memory = PlanMemory(
                 runtime=self,
                 installed=self._installed,
@@ -431,52 +455,59 @@ class Runtime:
                 dynamic_scratch_reserve_bytes=resolved_scratch,
                 execution_device=resolved_device,
                 transfers=transfers,
+                plan_handle=plan_handle,
             )
-            self._planning = True
+            self._planning_plan_handle = plan_handle
             return memory
 
-    def _adopt_plan(self) -> None:
+    def _adopt_plan(self, plan_handle: int) -> None:
         with self._lock:
             self._require_open()
-            if not self._planning or self._active_plans != 0:
+            if self._planning_plan_handle != plan_handle:
                 raise RuntimeConfigurationError(
-                    "Runtime has no exclusive in-progress plan to adopt"
+                    "Runtime does not own this in-progress plan"
                 )
-            self._planning = False
-            self._active_plans = 1
+            self._planning_plan_handle = None
+            self._active_plan_handles.add(plan_handle)
 
-    def _release_plan(self) -> None:
+    def _release_plan(self, plan_handle: int) -> None:
         with self._lock:
-            if self._active_plans != 1 or self._planning:
+            if plan_handle not in self._active_plan_handles:
                 raise RuntimeError("Runtime plan ownership underflow")
             try:
-                self._clear_execution_plan()
+                self._close_and_destroy_plan(plan_handle)
             except BaseException as error:
                 self._unusable_reason = f"execution-plan teardown failed: {error}"
                 raise
             finally:
-                self._active_plans = 0
+                self._active_plan_handles.discard(plan_handle)
 
-    def _abort_plan(self) -> None:
+    def _abort_plan(self, plan_handle: int | None = None) -> None:
         """Release cold-path execution records after a failed planning call."""
 
         with self._lock:
-            if not self._planning or self._active_plans != 0:
+            target = (
+                self._planning_plan_handle if plan_handle is None else plan_handle
+            )
+            if target is None or self._planning_plan_handle != target:
                 raise RuntimeError("Runtime planning ownership underflow")
             try:
-                self._clear_execution_plan()
+                self._close_and_destroy_plan(target)
             except BaseException as error:
                 self._unusable_reason = f"execution-plan rollback failed: {error}"
                 raise
             finally:
-                self._planning = False
+                self._planning_plan_handle = None
 
-    def _clear_execution_plan(self) -> None:
-        status = int(self._installed.library.shadowspill_pytorch_clear_execution_plan())
+    def _close_and_destroy_plan(self, plan_handle: int) -> None:
+        status = int(
+            self._installed.library.shadowspill_pytorch_plan_close(plan_handle)
+        )
         if status != 0:
             raise RuntimeConfigurationError(
-                f"execution-plan teardown failed with status {status}"
+                f"native plan close failed with status {status}"
             )
+        self._installed.library.shadowspill_pytorch_plan_destroy(plan_handle)
 
     def _prepare_failure_cleanup(
         self,
@@ -541,7 +572,7 @@ class Runtime:
     ) -> TransferCapabilities:
         with self._lock:
             self._require_open()
-            if self._active_plans != 0 or self._planning:
+            if self._active_plan_handles or self._planning_plan_handle is not None:
                 raise RuntimeConfigurationError(
                     "transfer calibration requires no callable or in-progress plan"
                 )
