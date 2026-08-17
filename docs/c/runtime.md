@@ -128,6 +128,11 @@ runtime's pool, route, event, and object owners:
 
 Task handles bypass repeated task-ID lookup. Admission retains direct object
 references and predecoded actions for the complete plan lifetime.
+It also allocates the exact byte-state workspace used to validate that task's
+allocation contract, so `before_task()` never grows a thread-local matcher.
+One task handle is deliberately non-reentrant because its admitted action and
+validation records are reused in place; concurrent callables use distinct
+plan-owned handles and may remain active on the same runtime.
 Initial placement and caller-output acquisition use their dedicated handles;
 they never impersonate execution tasks or allocate per-invocation identities.
 

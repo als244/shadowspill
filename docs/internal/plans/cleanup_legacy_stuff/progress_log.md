@@ -1203,3 +1203,28 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   Python suite with four expected skips, Ruff, strict mypy over 178 installed
   source files, and focused ASan MemoryPool, AdmissionReplay, and runtime
   telemetry canaries.
+
+## 2026-08-17 — Admitted allocation-contract state
+
+- Found that the neutral `before_task()` path still resized a thread-local
+  allocation-contract matcher with `realloc()` when it first encountered a
+  larger structural task. The exact allocation ordinal count is already known
+  when the immutable task handle is admitted.
+- Moved that byte-state vector into the task record and initialize it in place
+  on entry. Repeated execution performs one bounded `memset` and no heap
+  growth. Non-task profiling scopes do not acquire or impersonate this state.
+- Made the existing non-reentrant nature of admitted action/validation state
+  explicit with an atomic invocation guard. Two distinct plan-owned handles
+  can remain active concurrently on the same runtime and separate dispatcher
+  threads; a concurrent second use of the same handle fails closed before it
+  touches the shared workspace.
+- Added a 100-process concurrency stress canary covering simultaneous handles
+  from two plans plus same-handle rejection. Focused native and PyTorch task
+  boundary canaries pass after the change.
+- Validation passed the warnings-as-errors build, all 28 native/CUDA/PyTorch
+  canaries, the complete Python suite with four expected skips, Ruff, strict
+  mypy over 178 installed source files, `git diff --check`, and focused ASan
+  runtime-plan and telemetry canaries under the debugger. The host's known
+  standalone ASan signal-handler failure again emitted recursive
+  `DEADLYSIGNAL` output before producing a report; both debugger-run binaries
+  exited normally without a program memory error.

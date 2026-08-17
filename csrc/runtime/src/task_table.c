@@ -101,6 +101,7 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     free(record->queued_actions);
     free(record->release_bindings);
     free(record->allocation_contract_steps);
+    free(record->allocation_contract_states);
     free(record);
 }
 
@@ -323,6 +324,7 @@ static ShadowSpillTaskRecord *create_record(
     atomic_init(&record->submission_sequence, 0U);
     atomic_init(&record->submission_invocation, 0U);
     atomic_init(&record->acknowledgement_sequence, 0U);
+    atomic_init(&record->invocation_active, 0U);
     record->input_count = description->input_count;
     record->update_count = description->update_count;
     record->publication_count = description->publication_count;
@@ -414,6 +416,16 @@ static ShadowSpillTaskRecord *create_record(
                 record->allocation_contract_allocation_count =
                     (uint32_t)(step->allocation_ordinal + 1U);
             }
+        }
+    }
+    if (record->allocation_contract_allocation_count != 0U) {
+        record->allocation_contract_states = calloc(
+            record->allocation_contract_allocation_count,
+            sizeof(*record->allocation_contract_states)
+        );
+        if (record->allocation_contract_states == NULL) {
+            destroy_record(record);
+            return NULL;
         }
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {

@@ -179,7 +179,10 @@ only explain individual components.
 
 The neutral `shadowspill_before_task_handle()` and
 `shadowspill_after_task_handle()` remain small object/lease/action
-orchestrators. They contain no PyTorch storage logic.
+orchestrators. They contain no PyTorch storage logic. Allocation-contract
+state is sized once with the admitted task record. Distinct task handles may
+be active concurrently, while a second concurrent invocation of the same
+mutable handle fails closed rather than sharing validation/action state.
 
 ## Failure and teardown
 

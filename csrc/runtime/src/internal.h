@@ -530,6 +530,7 @@ struct ShadowSpillTaskRecord {
     ShadowSpillTaskReleaseBinding *release_bindings;
     uint32_t release_binding_count;
     ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
+    uint8_t *allocation_contract_states;
     uint32_t allocation_contract_step_count;
     uint32_t allocation_contract_allocation_count;
     uint8_t enforce_allocation_contract;
@@ -543,6 +544,7 @@ struct ShadowSpillTaskRecord {
     _Atomic uint64_t submission_sequence;
     _Atomic uint64_t submission_invocation;
     _Atomic uint64_t acknowledgement_sequence;
+    _Atomic uint8_t invocation_active;
     uint8_t boundary_kind;
     struct ShadowSpillTaskRecord *hash_next;
     struct ShadowSpillTaskRecord *ownership_next;
