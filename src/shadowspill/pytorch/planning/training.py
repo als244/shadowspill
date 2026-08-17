@@ -864,7 +864,11 @@ def admit_training_plan(
                 optimizer=materialized.optimizer,
             )
         with timer.measure("physical_sealing"):
-            seal_physical_budget(captured.installed, recurrent_plan)
+            seal_physical_budget(
+                captured.installed,
+                recurrent_plan,
+                recurrent_fixed_layout,
+            )
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
                 None if initial_plan is None else (programs.initial, initial_plan),

@@ -19,7 +19,11 @@ from shadowspill.planner import (
     pressurefit,
 )
 from shadowspill.pytorch.planning.admission.admission_replay import replay_admission
-from shadowspill.pytorch.planning.admission.bindings import build_admission_topology
+from shadowspill.pytorch.planning.admission.bindings import (
+    TaskOutputBinding,
+    build_admission_topology,
+)
+from shadowspill.pytorch.planning.admission.physical import _runtime_record_reserve
 from shadowspill.pytorch.planning.admission.selection import (
     _task_memory_envelope,
 )
@@ -183,6 +187,46 @@ def test_admission_topology_derives_gradient_contribution_extents_from_trace() -
     assert topology.tasks[0].workspace_extents == (16, 32, 64)
 
 
+def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(AliasGroupSpec("state", "cuda_0", 4096),),
+        objects=(ObjectSpec("state_object", "state", 0, 4096),),
+        profiles=(TaskProfile("mutation_profile", 10, 8192, "mutation_contract"),),
+        tasks=(
+            TaskSpec(
+                "mutation",
+                COMPUTE,
+                "mutation_profile",
+                inputs=("state_object",),
+                mutations=(MutationSpec("state_object"),),
+            ),
+        ),
+    )
+    output = TaskAllocationEvent(
+        0,
+        TaskAllocationOperation.ALLOCATE,
+        4096,
+        8192,
+        output_leaf_indices=(0,),
+        output_view_offsets=(0,),
+    )
+
+    topology = build_admission_topology(
+        program,
+        execution_pool_bytes=16_384,
+        object_capacity_bytes=12_288,
+        output_bindings={
+            "mutation": (TaskOutputBinding(0, "state", replacement=True),)
+        },
+        allocation_traces_by_compatibility={"mutation_contract": (output,)},
+        alignment=1,
+    )
+
+    assert topology.tasks[0].workspace_extents == ()
+    assert topology.tasks[0].replacement_aliases == ("state",)
+
+
 def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
     measurement = TaskMeasurement(
         10,
@@ -205,6 +249,34 @@ def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
     assert envelope.maximum_charged_allocation_bytes == 96
     assert envelope.live_requested_allocation_limit_bytes == 2 << 20
     assert envelope.live_charged_allocation_limit_bytes == 2 << 20
+
+
+def test_runtime_record_reserve_covers_all_admitted_lifetimes() -> None:
+    assert (
+        _runtime_record_reserve(
+            selected_task_count=135,
+            initial_transfer_count=64,
+            scheduled_transfer_count=700,
+            event_pool_peak_in_use=32,
+            fixed_lifetime_count=2450,
+            dynamic_lifetime_count=2,
+        )
+        == 2516
+    )
+
+
+def test_runtime_record_reserve_preserves_event_inventory_floor() -> None:
+    assert (
+        _runtime_record_reserve(
+            selected_task_count=135,
+            initial_transfer_count=64,
+            scheduled_transfer_count=700,
+            event_pool_peak_in_use=32,
+            fixed_lifetime_count=100,
+            dynamic_lifetime_count=2,
+        )
+        == 1027
+    )
 
 
 def test_manual_scratch_reserve_expands_runtime_envelope() -> None:
