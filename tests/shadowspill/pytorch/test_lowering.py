@@ -5,12 +5,18 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.ir import MemoryLocation, ObjectRole
+from shadowspill.ir import (
+    MemoryLocation,
+    ObjectRole,
+    Persistence,
+    SharedResidencyPolicy,
+)
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.pytorch.lowering.catalog import ObjectCatalog
 from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
 )
@@ -170,4 +176,41 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
             if item.alias_group_id == buffer_alias
         )
         is MemoryLocation.HOST
+    )
+
+
+def test_shared_residency_is_read_only_unless_emitted_tasks_write_it() -> None:
+    catalog = ObjectCatalog(device_id="device_0")
+    first = catalog.add(
+        torch.ones(4),
+        role=ObjectRole.INPUT,
+        persistence=Persistence.STEP,
+    )
+    second = catalog.add(
+        torch.ones(5),
+        role=ObjectRole.INPUT,
+        persistence=Persistence.STEP,
+    )
+    catalog.mark_shared_residency(
+        first,
+        SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL,
+        retain_spill_copy=False,
+    )
+    catalog.mark_shared_residency(
+        second,
+        SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED,
+        retain_spill_copy=False,
+    )
+
+    catalog.finalize_shared_writes((second,))
+
+    policies = {
+        item.alias_group_id: item.shared_residency
+        for item in catalog.alias_groups()
+    }
+    assert policies[catalog.alias_id(first)] is (
+        SharedResidencyPolicy.SHARED_READ_ONLY
+    )
+    assert policies[catalog.alias_id(second)] is (
+        SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED
     )

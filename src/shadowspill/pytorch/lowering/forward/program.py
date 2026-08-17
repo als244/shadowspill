@@ -20,7 +20,7 @@ from ..profiles import TaskProfileCatalog
 from ..program import execution_device_id, publish_program
 from .artifacts import ForwardPhysicalLayout, LoweredForwardProgram
 from .objects import register_forward_objects
-from .residency import derive_forward_residency
+from .residency import derive_forward_residency, finalize_forward_shared_residency
 from .tasks import emit_forward_tasks
 
 
@@ -64,6 +64,7 @@ def lower_partitioned_forward_program(
         physical,
         device_id=device_id,
     )
+    finalize_forward_shared_residency(objects, graph)
     initial_residency, final_residency = derive_forward_residency(
         objects,
         graph,

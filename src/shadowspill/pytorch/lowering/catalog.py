@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import torch
@@ -455,6 +456,22 @@ class ObjectCatalog:
         self._shared_residency[record.alias_group_id] = policy
         if retain_spill_copy:
             self._retain_host.add(record.alias_group_id)
+
+    def finalize_shared_writes(self, written_object_ids: Iterable[str]) -> None:
+        """Downgrade proven non-writing shared roots to read-only residency."""
+
+        written_aliases = {
+            self._record(object_id).alias_group_id
+            for object_id in written_object_ids
+        }
+        for alias_id, policy in tuple(self._shared_residency.items()):
+            if alias_id in written_aliases or (
+                policy is SharedResidencyPolicy.SHARED_READ_ONLY
+            ):
+                continue
+            self._shared_residency[alias_id] = (
+                SharedResidencyPolicy.SHARED_READ_ONLY
+            )
 
     def _record(self, object_id: str) -> _ObjectRecord:
         index = int(object_id.removeprefix("object_"))
