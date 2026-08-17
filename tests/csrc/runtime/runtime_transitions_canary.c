@@ -69,7 +69,8 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
         .object_id = persistent_id,
         .size_bytes = 32U,
         .initial_version = 9U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
         .retain_spill_copy = 1U,
     };
     uint8_t payload[32];
@@ -87,8 +88,8 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
     int failed = shadowspill_register_object(fixture.runtime, &description) !=
-            SHADOWSPILL_RUNTIME_OK || shadowspill_write_spill_object(
-            fixture.runtime, persistent_id, payload, sizeof(payload)
+            SHADOWSPILL_RUNTIME_OK || shadowspill_write_object(
+            fixture.runtime, persistent_id, 1U, payload, sizeof(payload)
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_object_snapshot(
             fixture.runtime, persistent_id, &before
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_statistics(
@@ -108,8 +109,8 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
         after_statistics.spill_allocated_bytes !=
             before_statistics.spill_allocated_bytes ||
         after_statistics.registered_objects !=
-            before_statistics.registered_objects || shadowspill_read_spill_object(
-            fixture.runtime, plan_id, restored, sizeof(restored)
+            before_statistics.registered_objects || shadowspill_read_object(
+            fixture.runtime, plan_id, 1U, restored, sizeof(restored)
         ) != SHADOWSPILL_RUNTIME_OK ||
         memcmp(payload, restored, sizeof(payload)) != 0 ||
         shadowspill_test_submit_actions(
@@ -148,8 +149,18 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
-        {.object_id = 1U, .size_bytes = 32U, .initially_spill_resident = 1U},
-        {.object_id = 2U, .size_bytes = 32U, .initially_spill_resident = 1U},
+        {
+            .object_id = 1U,
+            .size_bytes = 32U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
+        {
+            .object_id = 2U,
+            .size_bytes = 32U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
     };
     const ShadowSpillRuntimeAction actions[] = {
         {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
@@ -244,7 +255,8 @@ static int inflight_prefetch_transfers_to_caller(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 71U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
@@ -373,8 +385,18 @@ static int trigger_reservation_failure_reports_no_progress(void) {
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
-        {.object_id = 1U, .size_bytes = 80U, .initially_spill_resident = 1U},
-        {.object_id = 2U, .size_bytes = 80U, .initially_spill_resident = 1U},
+        {
+            .object_id = 1U,
+            .size_bytes = 80U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
+        {
+            .object_id = 2U,
+            .size_bytes = 80U,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        },
     };
     const ShadowSpillRuntimeAction actions[] = {
         {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
@@ -411,7 +433,7 @@ static int trigger_reservation_failure_reports_no_progress(void) {
 }
 
 static int invalid_action(
-    uint8_t initially_spill_resident,
+    uint8_t initially_resident,
     uint8_t action_kind
 ) {
     Fixture fixture = {0};
@@ -421,7 +443,7 @@ static int invalid_action(
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_spill_resident = initially_spill_resident,
+        .initially_resident = initially_resident,
     };
     const ShadowSpillRuntimeAction action = {
         .object_id = object.object_id,
@@ -445,7 +467,7 @@ static int invalid_action(
     return result;
 }
 
-static int invalid_before_task(uint8_t initially_spill_resident) {
+static int invalid_before_task(uint8_t initially_resident) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
@@ -453,7 +475,7 @@ static int invalid_before_task(uint8_t initially_spill_resident) {
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_spill_resident = initially_spill_resident,
+        .initially_resident = initially_resident,
     };
     const uint64_t input = object.object_id;
     const ShadowSpillTaskDescription task = {
@@ -483,7 +505,8 @@ static int duplicate_action(void) {
     const ShadowSpillObjectDescription object = {
         .object_id = 1U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     ShadowSpillAllocation allocation = {0};
     const ShadowSpillRuntimeAction actions[] = {
@@ -690,12 +713,14 @@ static int valid_transition_paths(void) {
         .object_id = 1U,
         .size_bytes = 32U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillObjectDescription temporary_host = {
         .object_id = 2U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillObjectDescription device_created = {
         .object_id = 3U,
@@ -1529,7 +1554,8 @@ static int admitted_prefetch_reserves_dynamic_capacity(void) {
     const ShadowSpillObjectDescription description = {
         .object_id = 52U,
         .size_bytes = 32U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction prefetch = {
         .object_id = description.object_id,
@@ -1696,7 +1722,8 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
         .size_bytes = 32U,
         .initial_version = 3U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
@@ -1794,7 +1821,8 @@ static int queued_release_causally_precedes_fetch(void) {
         .size_bytes = 32U,
         .initial_version = 7U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction release = {
         .object_id = description.object_id,
@@ -1901,7 +1929,8 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         .size_bytes = 32U,
         .initial_version = 1U,
         .retain_spill_copy = 0U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
@@ -2104,7 +2133,8 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
         .size_bytes = 32U,
         .initial_version = 1U,
         .retain_spill_copy = 1U,
-        .initially_spill_resident = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,

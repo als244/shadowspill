@@ -76,57 +76,52 @@ static ShadowSpillRuntimeStatus release_object_residency(
     }
 
     ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    ShadowSpillObjectLocation *execution = shadowspill_execution_location(
-        runtime, object
-    );
-    ShadowSpillMemoryLease *execution_lease = execution->lease;
-    if (execution_lease != NULL) {
-        shadowspill_memory_pool_lock_foreground(
-            shadowspill_execution_pool(runtime)
+    for (uint32_t pool_id = 0U;
+         pool_id < object->location_count &&
+             status == SHADOWSPILL_RUNTIME_OK;
+         ++pool_id) {
+        ShadowSpillObjectLocation *location = shadowspill_object_location(
+            object, pool_id
         );
-        if (execution_lease->logical_freed ||
-            execution_lease->bound_object_id != object->object_id ||
-            object->allocation_id != execution_lease->allocation_id) {
+        ShadowSpillMemoryLease *lease = location->lease;
+        if (lease == NULL) {
+            continue;
+        }
+        ShadowSpillMemoryPool *pool = lease->pool;
+        if (pool == NULL || pool->pool_id != pool_id) {
             status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-        } else {
-            execution_lease->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-            execution_lease->plan_owned = 0;
-            object->retired_generation = object->generation;
-            object->retired_execution_pointer = execution_lease->pointer;
-            object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-            execution->lease = NULL;
-            execution->version = 0U;
-            execution->current = 0U;
-            shadowspill_release_execution_lease_locked(
-                runtime, execution_lease
-            );
-            status = shadowspill_failure_status(runtime);
+            break;
         }
-        shadowspill_memory_pool_unlock_foreground(
-            shadowspill_execution_pool(runtime)
-        );
-    }
-
-    ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-        runtime, object
-    );
-    if (status == SHADOWSPILL_RUNTIME_OK && spill->lease != NULL) {
-        ShadowSpillMemoryLease *spill_lease = spill->lease;
-        shadowspill_memory_pool_lock_foreground(shadowspill_spill_pool(runtime));
-        if (shadowspill_memory_pool_release_lease_locked(spill_lease) != 0) {
-            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-        } else {
-            spill->lease = NULL;
-            spill->version = 0U;
-            spill->current = 0U;
-            if (spill->owns_lease) {
-                free(spill_lease);
+        shadowspill_memory_pool_lock_foreground(pool);
+        const int is_execution_generation =
+            object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID &&
+            lease->allocation_id == object->allocation_id;
+        if (is_execution_generation) {
+            if (lease->logical_freed ||
+                lease->bound_object_id != object->object_id) {
+                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            } else {
+                lease->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+                lease->plan_owned = 0U;
+                object->retired_generation = object->generation;
+                object->retired_execution_pointer = lease->pointer;
+                object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+                shadowspill_release_execution_lease_locked(runtime, lease);
+                status = shadowspill_failure_status(runtime);
             }
-            spill->owns_lease = 0U;
+        } else if (shadowspill_memory_pool_release_lease_locked(lease) != 0) {
+            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
-        shadowspill_memory_pool_unlock_foreground(
-            shadowspill_spill_pool(runtime)
-        );
+        if (status == SHADOWSPILL_RUNTIME_OK) {
+            location->lease = NULL;
+            location->version = 0U;
+            location->current = 0U;
+            if (location->owns_lease) {
+                free(lease);
+            }
+            location->owns_lease = 0U;
+        }
+        shadowspill_memory_pool_unlock_foreground(pool);
     }
 
     if (status == SHADOWSPILL_RUNTIME_OK) {
@@ -258,7 +253,9 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     const ShadowSpillObjectDescription *description
 ) {
     if (runtime == NULL || description == NULL ||
-        description->object_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        description->object_id == SHADOWSPILL_RUNTIME_NO_ID ||
+        description->retain_spill_copy > 1U ||
+        description->initially_resident > 1U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
@@ -311,14 +308,25 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
     created->handoff_destination_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     created->handoff_next_source_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->residency = description->initially_spill_resident
+    created->residency = description->initially_resident
         ? SHADOWSPILL_OBJECT_SPILL_ONLY
         : SHADOWSPILL_OBJECT_RELEASED;
-    if (description->initially_spill_resident) {
-        ShadowSpillMemoryLease *spill_lease = calloc(
-            1U, sizeof(*spill_lease)
+    ShadowSpillMemoryPool *initial_pool = description->initially_resident
+        ? shadowspill_runtime_pool(runtime, description->initial_pool_id)
+        : NULL;
+    if (description->initially_resident && initial_pool == NULL) {
+        pthread_cond_destroy(&created->state_changed);
+        pthread_mutex_destroy(&created->lock);
+        free(created->locations);
+        free(created);
+        status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        goto done;
+    }
+    if (initial_pool != NULL) {
+        ShadowSpillMemoryLease *initial_lease = calloc(
+            1U, sizeof(*initial_lease)
         );
-        if (spill_lease == NULL) {
+        if (initial_lease == NULL) {
             pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created->locations);
@@ -326,17 +334,17 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done;
         }
-        shadowspill_memory_pool_lock_foreground(shadowspill_spill_pool(runtime));
+        shadowspill_memory_pool_lock_foreground(initial_pool);
         const int reserve_status = shadowspill_memory_pool_reserve_lease_locked(
-            shadowspill_spill_pool(runtime),
-            spill_lease,
+            initial_pool,
+            initial_lease,
             description->size_bytes,
             1U,
             SHADOWSPILL_MEMORY_FIRST_FIT
         );
-        shadowspill_memory_pool_unlock_foreground(shadowspill_spill_pool(runtime));
+        shadowspill_memory_pool_unlock_foreground(initial_pool);
         if (reserve_status != 0) {
-            free(spill_lease);
+            free(initial_lease);
             pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created->locations);
@@ -344,22 +352,29 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             status = SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
             goto done;
         }
-        shadowspill_spill_location(runtime, created)->lease = spill_lease;
-        shadowspill_spill_location(runtime, created)->owns_lease = 1U;
-        shadowspill_spill_location(runtime, created)->lease->state = SHADOWSPILL_LEASE_IN_USE;
-        shadowspill_spill_location(runtime, created)->current = 1U;
-        shadowspill_spill_location(runtime, created)->version = description->initial_version;
+        ShadowSpillObjectLocation *initial = shadowspill_object_location(
+            created, description->initial_pool_id
+        );
+        initial->lease = initial_lease;
+        initial->owns_lease = 1U;
+        initial->lease->state = SHADOWSPILL_LEASE_IN_USE;
+        initial->current = 1U;
+        initial->version = description->initial_version;
     }
     if (shadowspill_object_table_insert(&runtime->objects, created) != 0) {
-        if (shadowspill_spill_location(runtime, created)->lease != NULL) {
-            shadowspill_memory_pool_lock_foreground(shadowspill_spill_pool(runtime));
-            (void)shadowspill_memory_pool_release_lease_locked(
-                shadowspill_spill_location(runtime, created)->lease
+        ShadowSpillObjectLocation *initial = initial_pool == NULL
+            ? NULL : shadowspill_object_location(
+                created, description->initial_pool_id
             );
-            shadowspill_memory_pool_unlock_foreground(shadowspill_spill_pool(runtime));
-            free(shadowspill_spill_location(runtime, created)->lease);
-            shadowspill_spill_location(runtime, created)->lease = NULL;
-            shadowspill_spill_location(runtime, created)->owns_lease = 0U;
+        if (initial != NULL && initial->lease != NULL) {
+            shadowspill_memory_pool_lock_foreground(initial_pool);
+            (void)shadowspill_memory_pool_release_lease_locked(
+                initial->lease
+            );
+            shadowspill_memory_pool_unlock_foreground(initial_pool);
+            free(initial->lease);
+            initial->lease = NULL;
+            initial->owns_lease = 0U;
         }
         pthread_cond_destroy(&created->state_changed);
         pthread_mutex_destroy(&created->lock);
@@ -473,13 +488,14 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_write_spill_object(
+ShadowSpillRuntimeStatus shadowspill_write_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
+    uint32_t pool_id,
     const void *source,
     uint64_t bytes
 ) {
-    if (runtime == NULL || bytes > SIZE_MAX ||
+    if (shadowspill_runtime_pool(runtime, pool_id) == NULL || bytes > SIZE_MAX ||
         (bytes != 0U && source == NULL)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
@@ -490,59 +506,67 @@ ShadowSpillRuntimeStatus shadowspill_write_spill_object(
         goto done;
     }
     if (object == NULL || bytes != object->size_bytes ||
-        shadowspill_spill_location(runtime, object)->lease == NULL ||
+        shadowspill_object_location(object, pool_id)->lease == NULL ||
         object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
         object->allocation_id != SHADOWSPILL_RUNTIME_NO_ID) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
         goto done;
     }
     if (bytes != 0U) {
+        ShadowSpillObjectLocation *location = shadowspill_object_location(
+            object, pool_id
+        );
         memcpy(
-            shadowspill_spill_location(runtime, object)->lease->pointer,
+            location->lease->pointer,
             source,
             (size_t)bytes
         );
     }
-    shadowspill_spill_location(runtime, object)->current = 1U;
-    shadowspill_spill_location(runtime, object)->version = object->authoritative_version;
+    ShadowSpillObjectLocation *location = shadowspill_object_location(
+        object, pool_id
+    );
+    location->current = 1U;
+    location->version = object->authoritative_version;
 
 done:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_read_spill_object(
+ShadowSpillRuntimeStatus shadowspill_read_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
+    uint32_t pool_id,
     void *destination,
     uint64_t bytes
 ) {
-    if (runtime == NULL || bytes > SIZE_MAX ||
+    if (shadowspill_runtime_pool(runtime, pool_id) == NULL || bytes > SIZE_MAX ||
         (bytes != 0U && destination == NULL)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     ShadowSpillObject *object = shadowspill_find_object(runtime, object_id);
+    ShadowSpillObjectLocation *location = object == NULL
+        ? NULL : shadowspill_object_location(object, pool_id);
     if (status != SHADOWSPILL_RUNTIME_OK) {
-        goto done;
+        goto read_done;
     }
     if (object == NULL || bytes != object->size_bytes ||
-        shadowspill_spill_location(runtime, object)->lease == NULL || !shadowspill_spill_location(runtime, object)->current ||
-        shadowspill_spill_location(runtime, object)->version != object->authoritative_version ||
+        location->lease == NULL || !location->current ||
+        location->version != object->authoritative_version ||
         object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-        goto done;
+        goto read_done;
     }
     if (bytes != 0U) {
         memcpy(
             destination,
-            shadowspill_spill_location(runtime, object)->lease->pointer,
+            location->lease->pointer,
             (size_t)bytes
         );
     }
-
-done:
+read_done:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }

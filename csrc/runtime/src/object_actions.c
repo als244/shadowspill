@@ -7,7 +7,7 @@ typedef struct ShadowSpillProjectedObjectState {
 } ShadowSpillProjectedObjectState;
 
 static ShadowSpillProjectedObjectState projected_state_locked(
-    ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     ShadowSpillObject *object
 ) {
     ShadowSpillQueuedAction *tail = object->action_tail;
@@ -21,9 +21,9 @@ static ShadowSpillProjectedObjectState projected_state_locked(
     }
 
     const ShadowSpillObjectLocation *execution =
-        shadowspill_execution_location(runtime, object);
-    const ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-        runtime, object
+        shadowspill_plan_execution_location(plan, object);
+    const ShadowSpillObjectLocation *spill = shadowspill_plan_spill_location(
+        plan, object
     );
     return (ShadowSpillProjectedObjectState){
         .version = object->authoritative_version,
@@ -52,11 +52,10 @@ static void append_action_locked(
 }
 
 ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
-    ShadowSpillRuntime *runtime,
     ShadowSpillObject *object,
     ShadowSpillQueuedAction *action
 ) {
-    if (runtime == NULL || object == NULL || action == NULL ||
+    if (object == NULL || action == NULL || action->plan_owner == NULL ||
         action->object != object || action->object_previous != NULL ||
         action->object_next != NULL || action == object->action_head ||
         action == object->action_tail) {
@@ -64,7 +63,7 @@ ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
     }
 
     const ShadowSpillProjectedObjectState before = projected_state_locked(
-        runtime, object
+        action->plan_owner, object
     );
     action->scheduled_version = before.version;
     action->produces_current_execution = 0U;

@@ -75,6 +75,24 @@ ShadowSpillObjectLocation *shadowspill_spill_location(
         : shadowspill_object_location(object, SHADOWSPILL_SPILL_POOL_ID);
 }
 
+ShadowSpillObjectLocation *shadowspill_plan_execution_location(
+    const ShadowSpillPlan *plan,
+    ShadowSpillObject *object
+) {
+    return plan == NULL || plan->execution_pool == NULL
+        ? NULL
+        : shadowspill_object_location(object, plan->execution_pool->pool_id);
+}
+
+ShadowSpillObjectLocation *shadowspill_plan_spill_location(
+    const ShadowSpillPlan *plan,
+    ShadowSpillObject *object
+) {
+    return plan == NULL || plan->spill_pool == NULL
+        ? NULL
+        : shadowspill_object_location(object, plan->spill_pool->pool_id);
+}
+
 static void cpu_relax(void) {
 #if defined(__x86_64__) || defined(__i386__)
     __builtin_ia32_pause();

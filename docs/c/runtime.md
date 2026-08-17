@@ -48,7 +48,7 @@ structured no-progress status.
   public object-table membership.
 - `shadowspill_rekey_object()` changes the public identity without changing
   the retained object record.
-- `shadowspill_write_spill_object()` and `shadowspill_read_spill_object()` copy
+- `shadowspill_write_object()` and `shadowspill_read_object()` copy
   bytes through a declared pool route.
 - `shadowspill_bind_object()` publishes a lease as an object residency.
 - `shadowspill_replace_object_allocation()` atomically publishes a mutation or

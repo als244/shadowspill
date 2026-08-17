@@ -676,6 +676,7 @@ ShadowSpillRuntimeStatus shadowspill_before_task_handle(
     );
     ShadowSpillRuntimeStatus status = shadowspill_acquire_object_bindings(
         runtime,
+        record->plan_owner,
         record->task_id,
         record->unique_inputs,
         record->unique_input_count,

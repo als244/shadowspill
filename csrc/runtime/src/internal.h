@@ -854,6 +854,14 @@ ShadowSpillObjectLocation *shadowspill_spill_location(
     ShadowSpillRuntime *runtime,
     ShadowSpillObject *object
 );
+ShadowSpillObjectLocation *shadowspill_plan_execution_location(
+    const ShadowSpillPlan *plan,
+    ShadowSpillObject *object
+);
+ShadowSpillObjectLocation *shadowspill_plan_spill_location(
+    const ShadowSpillPlan *plan,
+    ShadowSpillObject *object
+);
 ShadowSpillMemoryLease *shadowspill_find_execution_lease(
     ShadowSpillMemoryPool *pool,
     uint64_t allocation_id
@@ -901,7 +909,6 @@ ShadowSpillRuntimeStatus shadowspill_object_owner_release(
     ShadowSpillObject *object
 );
 ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
-    ShadowSpillRuntime *runtime,
     ShadowSpillObject *object,
     ShadowSpillQueuedAction *action
 );
@@ -1104,6 +1111,7 @@ int shadowspill_task_table_initialize(
 void shadowspill_object_acquisitions_clear(ShadowSpillPlan *plan);
 ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     uint64_t trace_task_id,
     ShadowSpillObject *const *unique_objects,
     uint32_t unique_object_count,

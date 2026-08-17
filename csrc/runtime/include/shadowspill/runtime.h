@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 32U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 33U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -188,8 +188,9 @@ typedef struct ShadowSpillObjectDescription {
     uint64_t object_id;
     uint64_t size_bytes;
     uint64_t initial_version;
+    uint32_t initial_pool_id;
     uint8_t retain_spill_copy;
-    uint8_t initially_spill_resident;
+    uint8_t initially_resident;
 } ShadowSpillObjectDescription;
 
 typedef struct ShadowSpillObjectBinding {
@@ -668,25 +669,28 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_rekey_object(
 );
 
 /*
- * Copies one exact object payload into its existing spill lease before execution
- * materialization. The object must be SPILL_ONLY with no execution allocation.
- * Source is borrowed for the call and may be NULL only for a zero-size object.
+ * Copies one exact object payload into its existing lease in pool_id. The
+ * location must be the object's current authoritative generation. Source is
+ * borrowed for the call and may be NULL only for a zero-size object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_spill_object(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_write_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
+    uint32_t pool_id,
     const void *source,
     uint64_t bytes
 );
 
 /*
- * Copies one exact, current SPILL_ONLY payload into caller-owned memory. This
- * function does not wait for transfers; callers first use wait_idle or an
- * equivalent lifecycle boundary. Destination may be NULL only for zero size.
+ * Copies one exact, current object payload from pool_id into caller-owned
+ * memory. This function does not wait for transfers; callers first use
+ * wait_idle or an equivalent lifecycle boundary. Destination may be NULL only
+ * for zero size.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_spill_object(
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_read_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
+    uint32_t pool_id,
     void *destination,
     uint64_t bytes
 );

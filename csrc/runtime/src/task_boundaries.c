@@ -254,8 +254,12 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
             return SHADOWSPILL_RUNTIME_INVALID_STATE;
         }
         object->authoritative_version += update->version_delta;
-        shadowspill_execution_location(runtime, object)->version = object->authoritative_version;
-        shadowspill_spill_location(runtime, object)->current = 0U;
+        shadowspill_plan_execution_location(
+            record->plan_owner, object
+        )->version = object->authoritative_version;
+        shadowspill_plan_spill_location(
+            record->plan_owner, object
+        )->current = 0U;
         pthread_mutex_unlock(&object->lock);
     }
     return SHADOWSPILL_RUNTIME_OK;
@@ -397,9 +401,10 @@ static void discard_action_batch_locked(
                 action->object
             );
         } else {
-            ShadowSpillMemoryLease *source = shadowspill_execution_location(
-                runtime, action->object
-            )->lease;
+            ShadowSpillMemoryLease *source =
+                shadowspill_plan_execution_location(
+                    action->plan_owner, action->object
+                )->lease;
             if (source != NULL &&
                 source->state == SHADOWSPILL_LEASE_RETIRE_PENDING) {
                 (void)shadowspill_memory_pool_cancel_retirement_locked(source);
@@ -472,7 +477,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         }
         ShadowSpillRuntimeStatus status =
             shadowspill_object_schedule_action_locked(
-                runtime, object, queued
+                object, queued
             );
         if (status != SHADOWSPILL_RUNTIME_OK) {
             pthread_mutex_unlock(&object->lock);
@@ -489,7 +494,9 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
         const int destination_required =
             action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
             (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-             (shadowspill_spill_location(runtime, object)->lease == NULL ||
+             (shadowspill_plan_spill_location(
+                  record->plan_owner, object
+              )->lease == NULL ||
               !object->retain_spill_copy));
         queued->active = 1U;
         queued->activation_generation =
@@ -508,7 +515,9 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             shadowspill_object_note_fetch_queued_locked(object);
         } else {
             ShadowSpillMemoryLease *source =
-                shadowspill_execution_location(runtime, object)->lease;
+                shadowspill_plan_execution_location(
+                    record->plan_owner, object
+                )->lease;
             if (source == NULL) {
                 pthread_mutex_unlock(&object->lock);
                 return SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -517,7 +526,9 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
                 action->kind == SHADOWSPILL_RUNTIME_RELEASE &&
                 object->handoff_task_id == record->task_id;
             if (!keeps_lease_for_handoff) {
-                pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+                pthread_mutex_lock(
+                    &record->plan_owner->execution_pool->lock
+                );
                 const int retirement_status =
                     shadowspill_memory_pool_begin_retirement_locked(
                         source,
@@ -527,7 +538,7 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
                         action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
                     );
                 pthread_mutex_unlock(
-                    &shadowspill_execution_pool(runtime)->lock
+                    &record->plan_owner->execution_pool->lock
                 );
                 if (retirement_status != 0) {
                     pthread_mutex_unlock(&object->lock);
@@ -787,12 +798,12 @@ ShadowSpillRuntimeStatus shadowspill_after_task_record(
          * an allocator callback inside this task. Such frees occur after the
          * failure is latched and otherwise have no completion source.
          */
-        pthread_mutex_lock(&shadowspill_execution_pool(runtime)->lock);
+        pthread_mutex_lock(&record->plan_owner->execution_pool->lock);
         const ShadowSpillRuntimeStatus retirement_status =
             shadowspill_publish_task_retirement_event_locked(
                 runtime, record->task_id, compute_stream
             );
-        pthread_mutex_unlock(&shadowspill_execution_pool(runtime)->lock);
+        pthread_mutex_unlock(&record->plan_owner->execution_pool->lock);
         if (retirement_status != SHADOWSPILL_RUNTIME_OK) {
             shadowspill_latch_failure_locked(
                 runtime,

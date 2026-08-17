@@ -110,6 +110,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
 
 ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     ShadowSpillRuntime *runtime,
+    const ShadowSpillPlan *plan,
     uint64_t trace_task_id,
     ShadowSpillObject *const *unique_objects,
     uint32_t unique_object_count,
@@ -120,7 +121,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
-    if (runtime == NULL ||
+    if (runtime == NULL || plan == NULL || plan->runtime != runtime ||
         (object_count != 0U &&
          (unique_objects == NULL || object_unique_indices == NULL ||
           unique_first_positions == NULL || bindings == NULL)) ||
@@ -160,13 +161,13 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
             return SHADOWSPILL_RUNTIME_INVALID_STATE;
         }
         ShadowSpillMemoryLease *lease =
-            shadowspill_execution_location(runtime, object)->lease;
+            shadowspill_plan_execution_location(plan, object)->lease;
         if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
              object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
             lease == NULL || lease->pointer == NULL ||
             lease->allocation_id != allocation_id ||
             lease->generation != object->generation ||
-            shadowspill_execution_location(runtime, object)->version !=
+            shadowspill_plan_execution_location(plan, object)->version !=
                 object->authoritative_version) {
             pthread_mutex_unlock(&object->lock);
             shadowspill_latch_failure_locked(
@@ -263,6 +264,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_objects_handle(
     }
     return shadowspill_acquire_object_bindings(
         runtime,
+        record->plan_owner,
         SHADOWSPILL_RUNTIME_NO_ID,
         record->unique_objects,
         record->unique_object_count,
