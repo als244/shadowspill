@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from shadowspill.planner import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
@@ -94,6 +96,33 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     assert candidate.residency_strategy == "tight-transfer"
     assert candidate.prefetch_rule == "latest-safe"
     assert candidate.coalesced
+
+
+def test_pressurefit_diagnostics_rejects_old_flat_schema() -> None:
+    source = _diagnostics()
+    flat = {
+        "selected_candidate_id": source.selected_candidate_id,
+        "selected_selection_id": source.selected_selection_id,
+        "selected_makespan_ns": source.selected_makespan_ns,
+        "candidate_count": source.candidate_evaluation_count,
+        "valid_candidate_count": source.valid_candidate_evaluation_count,
+        "candidates": [],
+    }
+
+    with pytest.raises(ValueError, match="unsupported schema"):
+        PressureFitDiagnostics.from_value(flat, "diagnostics")
+
+
+def test_candidate_diagnostic_rejects_old_flat_schema() -> None:
+    with pytest.raises(ValueError, match="candidate_policy must be an object"):
+        CandidateDiagnostic.from_value(
+            {
+                "candidate_id": "tight-transfer/latest-safe",
+                "selection_id": "none",
+                "status": "valid",
+            },
+            "candidate",
+        )
 
 
 def test_physical_prediction_updates_nested_selected_candidate() -> None:

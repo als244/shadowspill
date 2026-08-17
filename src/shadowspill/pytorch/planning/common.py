@@ -298,7 +298,7 @@ def public_search_exhausted_error(
         item for item in error.diagnostics if item.status == "exhausted"
     )
     largest_repairs = max(
-        (item.repair_attempts for item in exhausted),
+        (item.repairs.total_attempts for item in exhausted),
         default=0,
     )
     return PlanSearchExhaustedError(

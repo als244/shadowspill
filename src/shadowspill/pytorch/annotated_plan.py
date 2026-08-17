@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from .planning.admission import FixedLayoutAttempt, FixedPhysicalLayout
 
 _ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v2"
-_LEGACY_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,18 +91,6 @@ class AnnotatedProgramPlan:
 
         measured = self.pressurefit_wall_time_ns + self.physical_admission_wall_time_ns
         return max(0, self.wall_time_ns - measured)
-
-    @property
-    def execution_budget_bytes(self) -> int:
-        """Compatibility shorthand for the physical execution budget."""
-
-        return self.memory_budgets.execution_bytes
-
-    @property
-    def spill_budget_bytes(self) -> int:
-        """Compatibility shorthand for the physical spill budget."""
-
-        return self.memory_budgets.spill_bytes
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -180,10 +167,7 @@ class AnnotatedProgramPlan:
         from .planning.admission import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
-        if data.get("schema") not in {
-            _ANNOTATED_PROGRAM_PLAN_SCHEMA,
-            _LEGACY_ANNOTATED_PROGRAM_PLAN_SCHEMA,
-        }:
+        if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:
             raise ValueError("annotated_program_plan.schema: unsupported schema")
         program = PressureFitProgram.from_value(
             data.get("source_program"), "annotated_program_plan.source_program"
@@ -201,21 +185,16 @@ class AnnotatedProgramPlan:
             "annotated_program_plan.physical_admission",
         )
         timing = _mapping(data.get("timing"), "annotated_program_plan.timing")
-        has_detailed_timing = "total_wall_time_ns" in timing
-        timing_attempts = (
-            ()
-            if not has_detailed_timing
-            else tuple(
-                _mapping(
-                    item,
-                    "annotated_program_plan.timing."
-                    f"refinement_attempts[{index}]",
-                )
-                for index, item in enumerate(
-                    _list(
-                        timing.get("refinement_attempts"),
-                        "annotated_program_plan.timing.refinement_attempts",
-                    )
+        timing_attempts = tuple(
+            _mapping(
+                item,
+                "annotated_program_plan.timing."
+                f"refinement_attempts[{index}]",
+            )
+            for index, item in enumerate(
+                _list(
+                    timing.get("refinement_attempts"),
+                    "annotated_program_plan.timing.refinement_attempts",
                 )
             )
         )
@@ -324,20 +303,15 @@ class AnnotatedProgramPlan:
             physical.get("attempts"),
             "annotated_program_plan.physical_admission.attempts",
         )
-        if has_detailed_timing:
-            if len(timing_attempts) != len(attempts_value):
-                raise ValueError(
-                    "annotated timing/refinement-attempt counts differ"
-                )
-            for index, item in enumerate(timing_attempts):
-                if _integer(
-                    item.get("attempt_index"),
-                    "annotated_program_plan.timing."
-                    f"refinement_attempts[{index}].attempt_index",
-                ) != index:
-                    raise ValueError(
-                        "annotated refinement-attempt timing order differs"
-                    )
+        if len(timing_attempts) != len(attempts_value):
+            raise ValueError("annotated timing/refinement-attempt counts differ")
+        for index, item in enumerate(timing_attempts):
+            if _integer(
+                item.get("attempt_index"),
+                "annotated_program_plan.timing."
+                f"refinement_attempts[{index}].attempt_index",
+            ) != index:
+                raise ValueError("annotated refinement-attempt timing order differs")
         attempts = tuple(
             FixedLayoutAttempt(
                 requested_object_capacity_bytes=_integer(
@@ -365,26 +339,16 @@ class AnnotatedProgramPlan:
                     "annotated_program_plan.physical_admission."
                     f"attempts[{index}].accepted",
                 ),
-                pressurefit_wall_time_ns=(
-                    0
-                    if not has_detailed_timing
-                    else _integer(
-                        timing_attempts[index].get("pressurefit_wall_time_ns"),
-                        "annotated_program_plan.timing."
-                        f"refinement_attempts[{index}].pressurefit_wall_time_ns",
-                    )
+                pressurefit_wall_time_ns=_integer(
+                    timing_attempts[index].get("pressurefit_wall_time_ns"),
+                    "annotated_program_plan.timing."
+                    f"refinement_attempts[{index}].pressurefit_wall_time_ns",
                 ),
-                physical_admission_wall_time_ns=(
-                    0
-                    if not has_detailed_timing
-                    else _integer(
-                        timing_attempts[index].get(
-                            "physical_admission_wall_time_ns"
-                        ),
-                        "annotated_program_plan.timing."
-                        f"refinement_attempts[{index}]."
-                        "physical_admission_wall_time_ns",
-                    )
+                physical_admission_wall_time_ns=_integer(
+                    timing_attempts[index].get("physical_admission_wall_time_ns"),
+                    "annotated_program_plan.timing."
+                    f"refinement_attempts[{index}]."
+                    "physical_admission_wall_time_ns",
                 ),
                 pressurefit_diagnostics=(
                     None
@@ -405,41 +369,36 @@ class AnnotatedProgramPlan:
             )
         )
         total_wall_time_ns = _integer(
-            timing.get(
-                "pressurefit_and_admission_wall_time_ns"
-                if not has_detailed_timing
-                else "total_wall_time_ns"
-            ),
+            timing.get("total_wall_time_ns"),
             "annotated_program_plan.timing.total_wall_time_ns",
         )
-        if has_detailed_timing:
-            pressurefit_wall_time_ns = _integer(
-                timing.get("pressurefit_wall_time_ns"),
-                "annotated_program_plan.timing.pressurefit_wall_time_ns",
-            )
-            admission_wall_time_ns = _integer(
-                timing.get("physical_admission_wall_time_ns"),
-                "annotated_program_plan.timing.physical_admission_wall_time_ns",
-            )
-            orchestration_wall_time_ns = _integer(
-                timing.get("orchestration_wall_time_ns"),
-                "annotated_program_plan.timing.orchestration_wall_time_ns",
-            )
-            if pressurefit_wall_time_ns != sum(
-                item.pressurefit_wall_time_ns for item in attempts
-            ):
-                raise ValueError("annotated PressureFit timing total differs")
-            if admission_wall_time_ns != sum(
-                item.physical_admission_wall_time_ns for item in attempts
-            ):
-                raise ValueError("annotated physical-admission timing total differs")
-            if (
-                pressurefit_wall_time_ns
-                + admission_wall_time_ns
-                + orchestration_wall_time_ns
-                != total_wall_time_ns
-            ):
-                raise ValueError("annotated selection timing does not reconcile")
+        pressurefit_wall_time_ns = _integer(
+            timing.get("pressurefit_wall_time_ns"),
+            "annotated_program_plan.timing.pressurefit_wall_time_ns",
+        )
+        admission_wall_time_ns = _integer(
+            timing.get("physical_admission_wall_time_ns"),
+            "annotated_program_plan.timing.physical_admission_wall_time_ns",
+        )
+        orchestration_wall_time_ns = _integer(
+            timing.get("orchestration_wall_time_ns"),
+            "annotated_program_plan.timing.orchestration_wall_time_ns",
+        )
+        if pressurefit_wall_time_ns != sum(
+            item.pressurefit_wall_time_ns for item in attempts
+        ):
+            raise ValueError("annotated PressureFit timing total differs")
+        if admission_wall_time_ns != sum(
+            item.physical_admission_wall_time_ns for item in attempts
+        ):
+            raise ValueError("annotated physical-admission timing total differs")
+        if (
+            pressurefit_wall_time_ns
+            + admission_wall_time_ns
+            + orchestration_wall_time_ns
+            != total_wall_time_ns
+        ):
+            raise ValueError("annotated selection timing does not reconcile")
         transfer = TransferBandwidths.from_value(
             data.get("transfer_bandwidths"),
             "annotated_program_plan.transfer_bandwidths",

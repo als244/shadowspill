@@ -571,7 +571,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     )
     assert len(exhausted_candidates) == 1
     assert exhausted_candidates[0].failure_kind == "repair_budget_exhausted"
-    assert exhausted_candidates[0].repair_attempts == 1
+    assert exhausted_candidates[0].repairs.total_attempts == 1
 
     result = pressurefit(
         program,
@@ -587,8 +587,8 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     )
 
     assert result.diagnostics.admission_refinements == ()
-    diagnostic = result.diagnostics.candidates[0]
-    assert diagnostic.repair_attempts == 2
+    diagnostic = result.diagnostics.recomputation_contexts[0].candidate_evaluations[0]
+    assert diagnostic.repairs.total_attempts == 2
     assert diagnostic.repairs.admission_prefetch_delay_attempts == 1
     assert diagnostic.repairs.admission_pressure_boundary_attempts == 1
     assert diagnostic.work.admission_calls == 3

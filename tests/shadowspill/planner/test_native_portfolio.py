@@ -81,6 +81,12 @@ def test_native_portfolio_is_deterministic(
     assert native.diagnostics.selected_makespan_ns == (
         repeated.diagnostics.selected_makespan_ns
     )
-    assert tuple(item.candidate_id for item in native.diagnostics.candidates) == tuple(
-        item.candidate_id for item in repeated.diagnostics.candidates
+    assert tuple(
+        candidate.candidate_id
+        for context in native.diagnostics.recomputation_contexts
+        for candidate in context.candidate_evaluations
+    ) == tuple(
+        candidate.candidate_id
+        for context in repeated.diagnostics.recomputation_contexts
+        for candidate in context.candidate_evaluations
     )
