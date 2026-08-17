@@ -276,3 +276,34 @@ ShadowSpillRuntimeStatus shadowspill_acquire_objects_handle(
         binding_capacity
     );
 }
+
+ShadowSpillRuntimeStatus shadowspill_transfer_acquired_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillObjectAcquisitionHandle *handle,
+    uint32_t object_ordinal,
+    ShadowSpillBackendStream consumer_stream,
+    const void *expected_pointer,
+    uint64_t expected_generation,
+    uint64_t expected_allocation_id,
+    ShadowSpillAllocation *allocation
+) {
+    const ShadowSpillObjectAcquisitionRecord *record = handle;
+    if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
+        record->plan_owner->runtime != runtime || allocation == NULL ||
+        object_ordinal >= record->object_count || expected_pointer == NULL ||
+        expected_allocation_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    return shadowspill_transfer_object_to_caller_direct(
+        runtime,
+        record->plan_owner->execution_pool,
+        record->plan_owner->spill_pool,
+        record->objects[object_ordinal],
+        consumer_stream,
+        expected_pointer,
+        expected_generation,
+        expected_allocation_id,
+        1U,
+        allocation
+    );
+}

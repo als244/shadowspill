@@ -69,6 +69,7 @@ semantics:
   `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_plan_admit_object_acquisition()` and
   `shadowspill_pytorch_acquire_objects_handle()`
+- `shadowspill_pytorch_transfer_acquired_object_to_caller()`
 - `shadowspill_pytorch_plan_admit_fixed_layout()`
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
 - `shadowspill_pytorch_plan_clear_tasks()`

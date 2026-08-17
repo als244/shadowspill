@@ -682,6 +682,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     const ShadowSpillActionBatchHandle *batch = NULL;
     const ShadowSpillObjectAcquisitionHandle *acquisition = NULL;
     ShadowSpillObjectBinding bindings[2] = {{0}};
+    ShadowSpillAllocation caller_allocation = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(runtime, &object) !=
@@ -721,6 +722,34 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
                 NULL,
                 0U
             ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_transfer_acquired_object_to_caller(
+                runtime,
+                acquisition,
+                0U,
+                compute,
+                bindings[0].pointer,
+                bindings[0].generation + 1U,
+                bindings[0].allocation_id,
+                &caller_allocation
+            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            shadowspill_transfer_acquired_object_to_caller(
+                runtime,
+                acquisition,
+                0U,
+                compute,
+                bindings[0].pointer,
+                bindings[0].generation,
+                bindings[0].allocation_id,
+                &caller_allocation
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            caller_allocation.pointer != bindings[0].pointer ||
+            shadowspill_memory_pool_free(
+                runtime,
+                caller_allocation.pool_id,
+                caller_allocation.allocation_id,
+                compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
             shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
     }
     if (object_handle != NULL) {

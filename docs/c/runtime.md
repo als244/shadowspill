@@ -101,6 +101,8 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_admit_object_acquisition()` creates an immutable direct
   object set; `shadowspill_acquire_objects_handle()` snapshots its current
   generations and inserts readiness waits without opening a task boundary.
+- `shadowspill_transfer_acquired_object_to_caller()` transfers one acquired
+  ordinal after atomically validating its expected address and generation.
 - `shadowspill_plan_admit_fixed_layout()` and
   `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.

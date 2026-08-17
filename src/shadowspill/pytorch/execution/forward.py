@@ -403,7 +403,10 @@ class ForwardExecutor:
                 acquisition_handle=self._caller_acquisition_handle,
             )
             self._bridge.transfer_outputs_to_caller(
-                self._caller_output_aliases, caller_tensors, bindings
+                self._caller_output_aliases,
+                caller_tensors,
+                bindings,
+                acquisition_handle=self._caller_acquisition_handle,
             )
         created = self._retain_shared_outputs(public_leaves)
         for alias_id in dict.fromkeys(self._public_output_aliases):

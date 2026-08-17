@@ -1094,20 +1094,25 @@ class RuntimeBridge:
         alias_ids: tuple[str, ...],
         tensors: tuple[torch.Tensor, ...],
         bindings: tuple[ObjectBinding, ...],
+        *,
+        acquisition_handle: int,
     ) -> None:
         if not (len(alias_ids) == len(tensors) == len(bindings)):
             raise RuntimeExecutionError("caller output lease count differs")
         seen: set[str] = set()
-        for alias_id, tensor, binding in zip(alias_ids, tensors, bindings, strict=True):
+        for object_ordinal, (alias_id, tensor, binding) in enumerate(
+            zip(alias_ids, tensors, bindings, strict=True)
+        ):
             if alias_id in seen:
                 continue
             if not self.requires_storage(alias_id):
                 self._zero_generations.pop(alias_id, None)
                 seen.add(alias_id)
                 continue
-            torch.ops.shadowspill._transfer_storage_to_caller(
+            torch.ops.shadowspill._transfer_acquired_storage_to_caller(
                 tensor,
-                self._runtime_object_id(alias_id),
+                acquisition_handle,
+                object_ordinal,
                 binding.generation,
                 binding.allocation_id,
             )

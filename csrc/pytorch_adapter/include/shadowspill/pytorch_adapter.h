@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 42U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 43U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -243,6 +243,17 @@ shadowspill_pytorch_acquire_objects_handle(
     uintptr_t consumer_stream_address,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_transfer_acquired_object_to_caller(
+    uintptr_t acquisition_handle,
+    uint32_t object_ordinal,
+    uintptr_t consumer_stream,
+    uint64_t expected_address,
+    uint64_t expected_generation,
+    uint64_t expected_allocation_id,
+    ShadowSpillAllocation *allocation
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus

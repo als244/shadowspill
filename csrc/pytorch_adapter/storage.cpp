@@ -598,15 +598,17 @@ std::vector<int64_t> after_task_storages(
   return generations;
 }
 
-at::Tensor transfer_storage_to_caller(
+at::Tensor transfer_acquired_storage_to_caller(
     const at::Tensor& tensor,
-    int64_t object_id,
+    int64_t acquisition_handle,
+    int64_t object_ordinal,
     int64_t generation,
     int64_t allocation_id
 ) {
   RangeGuard range_guard("shadowspill.pytorch.caller_lease");
   TORCH_CHECK(tensor.is_cuda(), "caller transfer requires a CUDA tensor");
-  TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
+  TORCH_CHECK(acquisition_handle > 0, "acquisition handle must be positive");
+  TORCH_CHECK(object_ordinal >= 0, "object ordinal must be nonnegative");
   TORCH_CHECK(generation >= 0, "generation must be nonnegative");
   TORCH_CHECK(allocation_id >= 0, "allocation ID must be nonnegative");
 
@@ -614,21 +616,17 @@ at::Tensor transfer_storage_to_caller(
   const uint64_t address = static_cast<uint64_t>(
       reinterpret_cast<uintptr_t>(storage.data_ptr().get()));
   TORCH_CHECK(address != 0U, "caller output storage is dematerialized");
-  ShadowSpillRuntimeStatus status = shadowspill_pytorch_validate_object_binding(
-      static_cast<uint64_t>(object_id),
-      address,
-      static_cast<uint64_t>(generation));
-  TORCH_CHECK(
-      status == SHADOWSPILL_RUNTIME_OK,
-      "caller output binding is invalid: ",
-      shadowspill_runtime_status_string(status));
-
   ShadowSpillAllocation allocation = {};
   const c10::cuda::CUDAStream stream = c10::cuda::getCurrentCUDAStream(
       static_cast<c10::DeviceIndex>(tensor.get_device()));
-  status = shadowspill_pytorch_transfer_output_to_caller(
-      static_cast<uint64_t>(object_id),
+  const ShadowSpillRuntimeStatus status =
+      shadowspill_pytorch_transfer_acquired_object_to_caller(
+      static_cast<uintptr_t>(acquisition_handle),
+      static_cast<uint32_t>(object_ordinal),
       reinterpret_cast<uintptr_t>(stream.stream()),
+      address,
+      static_cast<uint64_t>(generation),
+      static_cast<uint64_t>(allocation_id),
       &allocation);
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
@@ -681,8 +679,9 @@ TORCH_LIBRARY(shadowspill, library) {
       "Tensor(a!)[] dematerialized_tensors, int task_handle, int task_id, "
       "int device_ordinal) -> int[]");
   library.def(
-      "_transfer_storage_to_caller(Tensor(a!) tensor, int object_id, "
-      "int generation, int allocation_id) -> Tensor(a!)");
+      "_transfer_acquired_storage_to_caller(Tensor(a!) tensor, int "
+      "acquisition_handle, int object_ordinal, int generation, int "
+      "allocation_id) -> Tensor(a!)");
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CPU, library) {
@@ -702,5 +701,6 @@ TORCH_LIBRARY_IMPL(shadowspill, CUDA, library) {
   library.impl(
       "_after_task_storages", TORCH_FN(after_task_storages));
   library.impl(
-      "_transfer_storage_to_caller", TORCH_FN(transfer_storage_to_caller));
+      "_transfer_acquired_storage_to_caller",
+      TORCH_FN(transfer_acquired_storage_to_caller));
 }

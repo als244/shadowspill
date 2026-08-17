@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 34U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 35U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -826,6 +826,19 @@ shadowspill_plan_admit_object_acquisition(
     const uint64_t *object_ids,
     uint32_t object_count,
     const ShadowSpillObjectAcquisitionHandle **handle
+);
+
+/* Hand one acquired ordinal to caller ownership through its direct object. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_transfer_acquired_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillObjectAcquisitionHandle *handle,
+    uint32_t object_ordinal,
+    ShadowSpillBackendStream consumer_stream,
+    const void *expected_pointer,
+    uint64_t expected_generation,
+    uint64_t expected_allocation_id,
+    ShadowSpillAllocation *allocation
 );
 
 /* Admit an immutable action-only trigger batch without creating a task. */

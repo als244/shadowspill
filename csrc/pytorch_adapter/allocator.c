@@ -1656,6 +1656,33 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_acquire_objects_handle(
         );
 }
 
+ShadowSpillRuntimeStatus
+shadowspill_pytorch_transfer_acquired_object_to_caller(
+    uintptr_t acquisition_handle,
+    uint32_t object_ordinal,
+    uintptr_t consumer_stream,
+    uint64_t expected_address,
+    uint64_t expected_generation,
+    uint64_t expected_allocation_id,
+    ShadowSpillAllocation *allocation
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_transfer_acquired_object_to_caller(
+              runtime,
+              (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
+              object_ordinal,
+              shadowspill_cuda_wrap_stream(consumer_stream),
+              (const void *)(uintptr_t)expected_address,
+              expected_generation,
+              expected_allocation_id,
+              allocation
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
     uint64_t task_id,
