@@ -59,6 +59,47 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _task_admission(
+    task_id: str,
+    *,
+    workspace_extents: tuple[int, ...] = (),
+    output_extents: tuple[tuple[str, int], ...] = (),
+) -> TaskAdmissionSpec:
+    """Build explicit physical evidence for one hand-authored test task."""
+
+    steps: list[TaskAllocationStep] = []
+    workspace_ordinals: list[int] = []
+    for extent in workspace_extents:
+        ordinal = len(steps)
+        workspace_ordinals.append(ordinal)
+        steps.append(
+            TaskAllocationStep(
+                ordinal,
+                TaskAllocationStepKind.ALLOCATE,
+                extent,
+            )
+        )
+    for alias_id, extent in output_extents:
+        steps.append(
+            TaskAllocationStep(
+                len(steps),
+                TaskAllocationStepKind.ALLOCATE,
+                extent,
+                alias_id,
+            )
+        )
+    steps.extend(
+        TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE)
+        for ordinal in workspace_ordinals
+    )
+    return TaskAdmissionSpec(
+        task_id,
+        workspace_extents=workspace_extents,
+        fresh_output_aliases=tuple(alias_id for alias_id, _ in output_extents),
+        allocation_steps=tuple(steps),
+    )
+
+
 def _causal_topology() -> AdmissionTopology:
     program = causal_program()
     return AdmissionTopology(
@@ -84,7 +125,6 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=96,
         topology=topology,
     )
     reference = simulation_admission_from_replay(
@@ -158,9 +198,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=64,
         topology=topology,
-        alignment=1,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -185,15 +223,25 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
         224,
         1,
         tuple(
-            TaskAdmissionSpec(
-                task_id=task.task_id,
+            _task_admission(
+                task.task_id,
                 workspace_extents=(
                     (profiles[task.profile_id].workspace_bytes,)
                     if profiles[task.profile_id].workspace_bytes
                     else ()
                 ),
-                fresh_output_aliases=tuple(
-                    dict.fromkeys(object_alias[item] for item in task.outputs)
+                output_extents=tuple(
+                    (
+                        alias_id,
+                        next(
+                            item.size_bytes
+                            for item in program.alias_groups
+                            if item.alias_group_id == alias_id
+                        ),
+                    )
+                    for alias_id in dict.fromkeys(
+                        object_alias[item] for item in task.outputs
+                    )
                 ),
             )
             for task in program.tasks
@@ -259,7 +307,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
             1,
             (
                 TaskAdmissionSpec("release_middle"),
-                TaskAdmissionSpec("use_workspace", workspace_extents=extents),
+                _task_admission("use_workspace", workspace_extents=extents),
             ),
         )
         return evaluate_schedule_admission(
@@ -282,9 +330,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     aliases = ("first", "second", "third")
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
-        alias_groups=tuple(
-            AliasGroupSpec(alias, "cuda_0", 8) for alias in aliases
-        ),
+        alias_groups=tuple(AliasGroupSpec(alias, "cuda_0", 8) for alias in aliases),
         objects=tuple(ObjectSpec(alias, alias, 0, 8) for alias in aliases),
         profiles=(
             TaskProfile("release_profile", 1, 0, "release_abi"),
@@ -328,7 +374,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
         1,
         (
             TaskAdmissionSpec("release_all"),
-            TaskAdmissionSpec("use_workspace", workspace_extents=(24,)),
+            _task_admission("use_workspace", workspace_extents=(24,)),
         ),
     )
     template = compile_simulation_template(program, (), config)
@@ -341,9 +387,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=24,
         topology=topology,
-        alignment=1,
     )
 
     assert len(replay.pool.dependencies) == 3
@@ -446,9 +490,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=20,
         topology=ordered_topology,
-        alignment=1,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -468,14 +510,27 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     # The bytes remain physically charged across that task boundary, so the
     # successor adds no new physical capacity at task start.
     assert task_deltas["ordered_task"] == (0, -10)
-    with pytest.raises(ValueError, match="dynamic MemoryPool admission"):
-        evaluate(
-            TaskAdmissionSpec(
-                "ordered_task",
-                workspace_extents=(4, 6),
-                fresh_output_aliases=("out",),
-            )
+    with pytest.raises(
+        ValueError,
+        match="physical admission requires explicit allocation steps",
+    ):
+        TaskAdmissionSpec(
+            "ordered_task",
+            workspace_extents=(4, 6),
+            fresh_output_aliases=("out",),
         )
+
+
+def test_admission_topology_uses_only_the_current_physical_schema() -> None:
+    topology = _causal_topology()
+    payload = topology.to_dict()
+
+    assert payload["schema"] == "shadowspill.admission_topology/v3"
+    assert AdmissionTopology.from_json(topology.to_json()) == topology
+
+    payload["schema"] = "shadowspill.admission_topology/v2"
+    with pytest.raises(ValueError, match="unsupported schema"):
+        AdmissionTopology.from_dict(payload)
 
 
 def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
@@ -565,9 +620,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
             ),
         )
     exhausted_candidates = tuple(
-        item
-        for item in exhausted.value.diagnostics
-        if item.status == "exhausted"
+        item for item in exhausted.value.diagnostics if item.status == "exhausted"
     )
     assert len(exhausted_candidates) == 1
     assert exhausted_candidates[0].failure_kind == "repair_budget_exhausted"

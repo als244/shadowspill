@@ -170,12 +170,21 @@ shadowspill.pressurefit_program/v1
 | `residency.initial`, `residency.final` | Required alias-group location/version at the phase boundaries. |
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
-| `admission_topology` | Per-task allocation geometry, ownership transitions, handoffs, and physical capacity. |
+| `admission_topology` | Current-schema (`shadowspill.admission_topology/v3`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
 | `pressurefit_options` | Bounded search controls and repair limits. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`
 in the neutral IR). These serialized IR labels should not be confused with
 user-chosen runtime pool names such as `execution` and `spill`.
+
+Each admission task contains `allocation_steps`, `workspace_extents`, fresh
+and replacement alias lists, and storage handoffs. Allocation steps record
+allocate/free order, charged bytes, stable task-local ordinals, optional
+persistent alias ownership, and same-task reuse. They never contain pointers
+or slab offsets. `workspace_extents` is the anonymous peak reconstructed from
+those steps, not a second source of physical geometry. Missing allocation
+evidence is a planning error; loaders do not synthesize it or accept an older
+schema.
 
 The capacity contract keys are:
 

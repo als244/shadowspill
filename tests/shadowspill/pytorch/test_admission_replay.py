@@ -18,6 +18,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionTopology,
+    StorageHandoff,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -27,7 +28,6 @@ from shadowspill.pytorch.planning.admission.admission_replay import (
     OwnershipTransitionKind,
     replay_admission,
 )
-from shadowspill.pytorch.planning.admission.bindings import TaskOutputBinding
 from shadowspill.runtime import AdmissionReplayOperationKind
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 
@@ -46,6 +46,59 @@ def _program(
         objects=objects,
         profiles=(TaskProfile("profile", runtime_ns, workspace_bytes, "abi"),),
         tasks=tasks,
+    )
+
+
+def _task_admission(
+    task_id: str,
+    *,
+    workspace_extents: tuple[int, ...] = (),
+    fresh_outputs: tuple[tuple[str, int], ...] = (),
+    replacements: tuple[tuple[str, int], ...] = (),
+) -> TaskAdmissionSpec:
+    """Build explicit allocation evidence for a hand-authored replay fixture."""
+
+    steps: list[TaskAllocationStep] = []
+    workspace_ordinals: list[int] = []
+    for extent in workspace_extents:
+        ordinal = len(steps)
+        workspace_ordinals.append(ordinal)
+        steps.append(
+            TaskAllocationStep(
+                ordinal,
+                TaskAllocationStepKind.ALLOCATE,
+                extent,
+            )
+        )
+    for alias_id, extent in (*fresh_outputs, *replacements):
+        steps.append(
+            TaskAllocationStep(
+                len(steps),
+                TaskAllocationStepKind.ALLOCATE,
+                extent,
+                alias_id,
+            )
+        )
+    steps.extend(
+        TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE)
+        for ordinal in workspace_ordinals
+    )
+    return TaskAdmissionSpec(
+        task_id,
+        workspace_extents=workspace_extents,
+        fresh_output_aliases=tuple(alias for alias, _ in fresh_outputs),
+        replacement_aliases=tuple(alias for alias, _ in replacements),
+        allocation_steps=tuple(steps),
+    )
+
+
+def _empty_topology(program: Program, pool_bytes: int) -> AdmissionTopology:
+    return AdmissionTopology(
+        "cuda_0",
+        pool_bytes,
+        pool_bytes,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
 
 
@@ -79,8 +132,19 @@ def test_admission_replay_reserves_workspace_for_complete_task_interval() -> Non
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=128,
-        alignment=1,
+        topology=AdmissionTopology(
+            "cuda_0",
+            128,
+            128,
+            1,
+            (
+                _task_admission(
+                    "forward",
+                    workspace_extents=(32,),
+                    fresh_outputs=(("output", 32),),
+                ),
+            ),
+        ),
     )
 
     assert replay.pool.peak_allocated_bytes == 128
@@ -126,15 +190,13 @@ def test_admission_replay_treats_shared_input_as_externally_resident() -> None:
         32,
         32,
         1,
-        (TaskAdmissionSpec("forward", fresh_output_aliases=("output",)),),
+        (_task_admission("forward", fresh_outputs=(("output", 32),)),),
     )
 
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=32,
         topology=topology,
-        alignment=1,
     )
 
     assert replay.pool.peak_allocated_bytes == 32
@@ -180,9 +242,7 @@ def test_task_local_reuse_preserves_one_physical_lease() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=32,
         topology=topology,
-        alignment=1,
     )
 
     assert replay.pool.peak_allocated_bytes == 32
@@ -228,8 +288,7 @@ def test_after_task_fetch_reserves_task_released_range_causally() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=64,
-        alignment=1,
+        topology=_empty_topology(program, 64),
     )
 
     assert replay.pool.peak_allocated_bytes == 64
@@ -277,8 +336,7 @@ def test_admission_replay_emits_causal_eviction_to_fetch_dependency() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=96,
-        alignment=1,
+        topology=_empty_topology(program, 96),
     )
 
     assert replay.pool.peak_allocated_bytes == 96
@@ -324,9 +382,19 @@ def test_admission_replay_replaces_mutation_without_double_charging() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=144,
-        output_bindings={"update": (TaskOutputBinding(0, "weight", replacement=True),)},
-        alignment=1,
+        topology=AdmissionTopology(
+            "cuda_0",
+            144,
+            144,
+            1,
+            (
+                _task_admission(
+                    "update",
+                    workspace_extents=(16,),
+                    replacements=(("weight", 64),),
+                ),
+            ),
+        ),
     )
 
     assert replay.workspace_bytes_by_task == (("update", 16),)
@@ -375,17 +443,18 @@ def test_admission_replay_handoff_changes_owner_without_allocating() -> None:
     replay = replay_admission(
         program,
         schedule,
-        execution_pool_bytes=64,
-        output_bindings={
-            "backward": (
-                TaskOutputBinding(
-                    0,
-                    "gradient",
-                    source_alias_group_id="residual",
+        topology=AdmissionTopology(
+            "cuda_0",
+            64,
+            64,
+            1,
+            (
+                TaskAdmissionSpec(
+                    "backward",
+                    storage_handoffs=(StorageHandoff("residual", "gradient"),),
                 ),
-            )
-        },
-        alignment=1,
+            ),
+        ),
     )
 
     assert replay.pool.peak_allocated_bytes == 64
@@ -412,8 +481,17 @@ def test_admission_replay_physical_decisions_ignore_task_timing() -> None:
         (ResidencySpec("state", MemoryLocation.DEVICE),),
     )
 
-    first = replay_admission(base, schedule, execution_pool_bytes=64, alignment=1)
-    second = replay_admission(slower, schedule, execution_pool_bytes=64, alignment=1)
+    topology = _empty_topology(base, 64)
+    first = replay_admission(
+        base,
+        schedule,
+        topology=topology,
+    )
+    second = replay_admission(
+        slower,
+        schedule,
+        topology=topology,
+    )
 
     assert first.pool.decision_digest == second.pool.decision_digest
     assert first.pool.decisions == second.pool.decisions

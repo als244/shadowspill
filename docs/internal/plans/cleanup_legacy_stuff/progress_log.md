@@ -1300,3 +1300,31 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   the complete Python suite with four expected skips; Ruff; strict mypy over
   178 installed source files; `git diff --check`; and ASan runtime-plan and
   telemetry canaries under the debugger.
+
+## 2026-08-17 — Explicit-only physical admission evidence
+
+- Removed both remaining synthetic physical-admission implementations. The
+  compiled planner binding no longer invents allocation steps from workspace
+  and output totals, and the Python AdmissionReplay oracle no longer acquires
+  synthetic task leases when allocation steps are absent.
+- Found a second mixed-authority path in PyTorch topology construction:
+  missing workspace geometry was reconstructed from mutation alias sizes and
+  a scalar workspace remainder. Replaced it with one generic rule. Persistent
+  output/replacement allocations are identified in the measured allocation
+  trace; the exact maximum simultaneously-live set of every remaining
+  allocation becomes the task's anonymous workspace extents. The derived
+  peak must equal the Program workspace charge.
+- `build_admission_topology()` now requires explicit allocation evidence for
+  every structural profile, including an explicitly empty trace for a task
+  with no allocations. `replay_admission()` accepts one already validated
+  topology and no longer accepts enough parallel arguments to rebuild one.
+  Hand-authored logical Programs remain valid PressureFit/simulator inputs by
+  omitting physical admission entirely.
+- Bumped strict admission serialization to
+  `shadowspill.admission_topology/v3`; v2 is rejected rather than migrated.
+  Updated architecture, C planner, and JSON-format documentation and added
+  focused fail-closed and current-schema tests.
+- Validation passed the complete Python suite with four expected skips, Ruff,
+  strict mypy over 178 installed source files, documentation/source-boundary
+  tests, `git diff --check`, the warnings-as-errors build, and all 28
+  native/CUDA/PyTorch canaries.
