@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /*
  * This canary links the generic MemoryPool implementation directly. These
@@ -35,13 +36,27 @@ static int initialize_pool(ShadowSpillMemoryPool *pool) {
         .next_request_sequence = 1U,
         .next_release_sequence = 1U,
     };
+    pool->release_frontier_capacity = 8U;
+    pool->release_range_capacity = 18U;
+    pool->release_frontier_workspace = calloc(
+        (size_t)pool->release_frontier_capacity,
+        sizeof(*pool->release_frontier_workspace)
+    );
+    pool->release_range_workspace = calloc(
+        (size_t)pool->release_range_capacity,
+        sizeof(*pool->release_range_workspace)
+    );
     atomic_init(&pool->capacity_epoch, 0U);
-    return pthread_mutex_init(&pool->lock, NULL) != 0 ||
+    return pool->release_frontier_workspace == NULL ||
+        pool->release_range_workspace == NULL ||
+        pthread_mutex_init(&pool->lock, NULL) != 0 ||
         shadowspill_range_initialize(&pool->ranges, 128U) != 0;
 }
 
 static void destroy_pool(ShadowSpillMemoryPool *pool) {
     shadowspill_range_destroy(&pool->ranges);
+    free(pool->release_range_workspace);
+    free(pool->release_frontier_workspace);
     pthread_mutex_destroy(&pool->lock);
 }
 
@@ -339,6 +354,45 @@ static int range_metadata_reuses_its_high_water_inventory(void) {
     return failed ? -1 : 0;
 }
 
+static int release_frontier_uses_cold_reserved_workspace(void) {
+    ShadowSpillMemoryPool pool = {0};
+    ShadowSpillMemoryLease first = {.generation = 1U};
+    ShadowSpillMemoryLease second = {.generation = 2U};
+    ShadowSpillEventLease first_event = {0};
+    ShadowSpillEventLease second_event = {0};
+    if (initialize_pool(&pool) != 0) {
+        return -1;
+    }
+    initialize_event(&first_event);
+    initialize_event(&second_event);
+    int failed = shadowspill_memory_pool_reserve_lease_locked(
+            &pool, &first, 32U, 1U, SHADOWSPILL_MEMORY_BEST_FIT_LOW
+        ) != 0 || shadowspill_memory_pool_reserve_lease_locked(
+            &pool, &second, 32U, 1U, SHADOWSPILL_MEMORY_BEST_FIT_LOW
+        ) != 0 || shadowspill_memory_pool_begin_retirement_locked(
+            &first, &first_event, 0
+        ) != 0 || shadowspill_memory_pool_begin_retirement_locked(
+            &second, &second_event, 0
+        ) != 0;
+    uint64_t frontier_count = 0U;
+    failed = failed || shadowspill_memory_pool_can_reserve_after_releases_locked(
+            &pool, 96U, 1U
+        ) != 1 || shadowspill_memory_pool_find_release_frontier_locked(
+            &pool,
+            96U,
+            1U,
+            pool.release_frontier_workspace,
+            pool.release_frontier_capacity,
+            &frontier_count
+        ) != 1 || frontier_count != 2U ||
+        pool.release_frontier_workspace[0] != &first ||
+        pool.release_frontier_workspace[1] != &second;
+    failed = failed || shadowspill_memory_pool_release_lease_locked(&first) != 0 ||
+        shadowspill_memory_pool_release_lease_locked(&second) != 0;
+    destroy_pool(&pool);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (completion_without_successor_frees_and_coalesces() != 0) {
         fprintf(stderr, "completion-to-free transition failed\n");
@@ -366,6 +420,10 @@ int main(void) {
     }
     if (range_metadata_reuses_its_high_water_inventory() != 0) {
         fprintf(stderr, "range metadata high-water reuse failed\n");
+        return 1;
+    }
+    if (release_frontier_uses_cold_reserved_workspace() != 0) {
+        fprintf(stderr, "release frontier workspace reuse failed\n");
         return 1;
     }
     return 0;

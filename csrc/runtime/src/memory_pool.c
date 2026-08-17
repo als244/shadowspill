@@ -183,6 +183,8 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
         return;
     }
     shadowspill_range_destroy(&pool->ranges);
+    free(pool->release_range_workspace);
+    free(pool->release_frontier_workspace);
     free(pool->reusable_leases_by_size);
     free(pool->leases_by_pointer);
     free(pool->leases_by_id);
@@ -197,6 +199,22 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
     }
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};
+}
+
+static void free_unowned_lease_records(ShadowSpillMemoryLease *records) {
+    while (records != NULL) {
+        ShadowSpillMemoryLease *next = records->free_record_next;
+        free(records);
+        records = next;
+    }
+}
+
+static void free_unowned_use_records(ShadowSpillLeaseUseRecord *records) {
+    while (records != NULL) {
+        ShadowSpillLeaseUseRecord *next = records->free_next;
+        free(records);
+        records = next;
+    }
 }
 
 ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
@@ -215,7 +233,29 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
             minimum_free_records
         ? minimum_free_records - pool->use_record_available
         : 0U;
-    if (additional_leases == 0U && additional_uses == 0U) {
+    if (additional_leases > UINT64_MAX - pool->lease_record_capacity) {
+        pthread_mutex_unlock(&pool->lock);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    const uint64_t target_lease_capacity =
+        pool->lease_record_capacity + additional_leases;
+    if (target_lease_capacity > (UINT64_MAX - 2U) / 2U) {
+        pthread_mutex_unlock(&pool->lock);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    const uint64_t target_range_capacity =
+        2U * target_lease_capacity + 2U;
+    if (target_lease_capacity > SIZE_MAX / sizeof(ShadowSpillMemoryLease *) ||
+        target_range_capacity > SIZE_MAX / sizeof(ShadowSpillRange)) {
+        pthread_mutex_unlock(&pool->lock);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    const int grow_frontier = pool->release_frontier_capacity <
+        target_lease_capacity;
+    const int grow_ranges = pool->release_range_capacity <
+        target_range_capacity;
+    if (additional_leases == 0U && additional_uses == 0U &&
+        !grow_frontier && !grow_ranges) {
         pool->lease_records_sealed = 1U;
         pool->use_records_sealed = 1U;
         pthread_mutex_unlock(&pool->lock);
@@ -228,12 +268,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
     while (created_lease_count < additional_leases) {
         ShadowSpillMemoryLease *record = calloc(1U, sizeof(*record));
         if (record == NULL) {
-            while (created_leases != NULL) {
-                ShadowSpillMemoryLease *next =
-                    created_leases->free_record_next;
-                free(created_leases);
-                created_leases = next;
-            }
+            free_unowned_lease_records(created_leases);
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
         record->free_record_next = created_leases;
@@ -245,17 +280,8 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
     while (created_use_count < additional_uses) {
         ShadowSpillLeaseUseRecord *record = calloc(1U, sizeof(*record));
         if (record == NULL) {
-            while (created_uses != NULL) {
-                ShadowSpillLeaseUseRecord *next = created_uses->free_next;
-                free(created_uses);
-                created_uses = next;
-            }
-            while (created_leases != NULL) {
-                ShadowSpillMemoryLease *next =
-                    created_leases->free_record_next;
-                free(created_leases);
-                created_leases = next;
-            }
+            free_unowned_use_records(created_uses);
+            free_unowned_lease_records(created_leases);
             return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
         }
         record->free_next = created_uses;
@@ -263,7 +289,24 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         ++created_use_count;
     }
 
+    ShadowSpillMemoryLease **frontier = grow_frontier
+        ? calloc((size_t)target_lease_capacity, sizeof(*frontier))
+        : NULL;
+    ShadowSpillRange *ranges = grow_ranges
+        ? calloc((size_t)target_range_capacity, sizeof(*ranges))
+        : NULL;
+    if ((grow_frontier && frontier == NULL) ||
+        (grow_ranges && ranges == NULL)) {
+        free(ranges);
+        free(frontier);
+        free_unowned_use_records(created_uses);
+        free_unowned_lease_records(created_leases);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+
     pthread_mutex_lock(&pool->lock);
+    ShadowSpillMemoryLease **old_frontier = NULL;
+    ShadowSpillRange *old_ranges = NULL;
     while (created_leases != NULL) {
         ShadowSpillMemoryLease *next = created_leases->free_record_next;
         created_leases->metadata_owner = pool;
@@ -286,9 +329,21 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
     pool->lease_record_available += created_lease_count;
     pool->use_record_capacity += created_use_count;
     pool->use_record_available += created_use_count;
+    if (frontier != NULL) {
+        old_frontier = pool->release_frontier_workspace;
+        pool->release_frontier_workspace = frontier;
+        pool->release_frontier_capacity = target_lease_capacity;
+    }
+    if (ranges != NULL) {
+        old_ranges = pool->release_range_workspace;
+        pool->release_range_workspace = ranges;
+        pool->release_range_capacity = target_range_capacity;
+    }
     pool->lease_records_sealed = 1U;
     pool->use_records_sealed = 1U;
     pthread_mutex_unlock(&pool->lock);
+    free(old_ranges);
+    free(old_frontier);
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -760,23 +815,23 @@ int shadowspill_memory_pool_can_reserve_after_releases_locked(
             ++candidate_count;
         }
     }
-    ShadowSpillMemoryLease **frontier = candidate_count == 0U
-        ? NULL
-        : calloc((size_t)candidate_count, sizeof(*frontier));
-    if (candidate_count != 0U && frontier == NULL) {
+    if (candidate_count == 0U) {
+        return 0;
+    }
+    if (pool->release_frontier_workspace == NULL ||
+        pool->release_range_workspace == NULL ||
+        candidate_count > pool->release_frontier_capacity) {
         return -1;
     }
     uint64_t frontier_count = 0U;
-    const int status = shadowspill_memory_pool_find_release_frontier_locked(
+    return shadowspill_memory_pool_find_release_frontier_locked(
         pool,
         bytes,
         alignment,
-        frontier,
-        candidate_count,
+        pool->release_frontier_workspace,
+        pool->release_frontier_capacity,
         &frontier_count
     );
-    free(frontier);
-    return status;
 }
 
 int shadowspill_memory_pool_find_release_frontier_locked(
@@ -798,9 +853,17 @@ int shadowspill_memory_pool_find_release_frontier_locked(
     if (alignment < pool->minimum_alignment) {
         alignment = pool->minimum_alignment;
     }
+    if (pool->release_range_workspace == NULL ||
+        pool->release_range_capacity == 0U) {
+        return -1;
+    }
     ShadowSpillRangeAllocator future = {0};
-    if (shadowspill_range_clone_extended(
-            &pool->ranges, pool->ranges.capacity, &future
+    if (shadowspill_range_clone_extended_with_nodes(
+            &pool->ranges,
+            pool->ranges.capacity,
+            &future,
+            pool->release_range_workspace,
+            pool->release_range_capacity
         ) != 0) {
         return -1;
     }
