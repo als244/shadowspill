@@ -38,16 +38,36 @@ def _create_trace(path: Path) -> None:
             INSERT INTO ENUM_CUDA_MEMCPY_OPER VALUES (1, 'Host-to-Device');
 
             INSERT INTO NVTX_EVENTS VALUES
-              (0, 1000, 'shadowspill.task.forward.task_000000', 10, NULL),
-              (0, 100, 'shadowspill.before_task.task_000000', 10, NULL),
-              (100, 200, 'shadowspill.storage_rebind.task_000000', 10, NULL),
-              (200, 600, 'shadowspill.compiled_call.task_000000', 10, NULL),
-              (600, 900, 'shadowspill.after_task.task_000000', 10, NULL),
-              (1000, 2000, 'shadowspill.task.optimizer.task_000001', 10, NULL),
-              (1000, 1100, 'shadowspill.before_task.task_000001', 10, NULL),
-              (1100, 1200, 'shadowspill.storage_rebind.task_000001', 10, NULL),
-              (1200, 1600, 'shadowspill.compiled_call.task_000001', 10, NULL),
-              (1600, 1900, 'shadowspill.after_task.task_000001', 10, NULL),
+              (0, 1000,
+               'shadowspill.pytorch.task.execution_000000.microbatch_0000.stage_0000.forward.recompute',
+               10, NULL),
+              (0, 100,
+               'shadowspill.before_task.execution_000000.microbatch_0000.stage_0000.forward.recompute',
+               10, NULL),
+              (100, 200,
+               'shadowspill.storage_rebind.execution_000000.microbatch_0000.stage_0000.forward.recompute',
+               10, NULL),
+              (200, 600,
+               'shadowspill.compiled_call.execution_000000.microbatch_0000.stage_0000.forward.recompute',
+               10, NULL),
+              (600, 900,
+               'shadowspill.after_task.execution_000000.microbatch_0000.stage_0000.forward.recompute',
+               10, NULL),
+              (1000, 2000,
+               'shadowspill.pytorch.task.execution_000001.optimizer.stage_0000.recurrent',
+               10, NULL),
+              (1000, 1100,
+               'shadowspill.before_task.execution_000001.optimizer.stage_0000.recurrent',
+               10, NULL),
+              (1100, 1200,
+               'shadowspill.storage_rebind.execution_000001.optimizer.stage_0000.recurrent',
+               10, NULL),
+              (1200, 1600,
+               'shadowspill.compiled_call.execution_000001.optimizer.stage_0000.recurrent',
+               10, NULL),
+              (1600, 1900,
+               'shadowspill.after_task.execution_000001.optimizer.stage_0000.recurrent',
+               10, NULL),
               (700, 900, 'shadowspill.runtime.transfer.fetch.alias_000001', 20, NULL);
 
             INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES
@@ -91,7 +111,10 @@ def test_extracts_tasks_optimizer_idle_and_transfers(tmp_path: Path) -> None:
     assert isinstance(tasks, list)
     first = tasks[0]
     assert isinstance(first, dict)
-    assert first["task_id"] == "task_000000"
+    assert first["task_id"] == "execution_000000"
+    assert first["semantic_name"] == (
+        "microbatch_0000.stage_0000.forward.recompute"
+    )
     assert first["host_segments_ns"] == {
         "before_task": 100,
         "storage_rebind": 100,
