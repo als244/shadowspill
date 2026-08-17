@@ -1123,12 +1123,7 @@ class RuntimeBridge:
     ) -> None:
         if not self.requires_storage(alias_id):
             return
-        torch.ops.shadowspill._rebind_storage(
-            tensor,
-            binding.pointer,
-            self._runtime_object_id(alias_id),
-            binding.generation,
-        )
+        torch.ops.shadowspill._acquire_storages([tensor], [binding.pointer])
 
     def rebind_many(
         self,
@@ -1255,11 +1250,10 @@ class RuntimeBridge:
     def dematerialize(
         self, tensor: torch.Tensor, alias_id: str, generation: int
     ) -> None:
+        del alias_id, generation
         if tensor.untyped_storage().data_ptr() == 0:
             return
-        torch.ops.shadowspill._rebind_storage(
-            tensor, 0, self._runtime_object_id(alias_id), generation
-        )
+        torch.ops.shadowspill._dematerialize_storages([tensor])
 
     def dematerialize_many(
         self,

@@ -788,3 +788,21 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   PyTorch canaries; the complete Python suite with four expected skips; the
   real public forward path; Ruff; strict mypy over 177 installed source files;
   and `git diff --check`.
+
+## 2026-08-17 — Single storage-install path
+
+- Deleted the raw-ID `_rebind_storage` and `_rebind_storages` operators and
+  their adapter-side object snapshot validator. Admitted task/acquisition
+  handles now establish object identity and generation exactly once; the
+  storage adapter only installs the validated addresses or dematerializes the
+  selected storages transactionally.
+- Converted cold/caller binding and native integration canaries to the same
+  `_acquire_storages` and `_dematerialize_storages` primitives used by the
+  canonical frontend. Generation mismatch rollback remains tested at the
+  handle-owned publication and handoff transactions, where ownership can
+  actually change.
+- Removed 261 lines of redundant lookup, validation, and compatibility code.
+  The PyTorch adapter ABI is now 44.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.

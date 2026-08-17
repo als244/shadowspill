@@ -38,8 +38,10 @@ compiled code can use an invalid address.
 - `shadowspill_pytorch_bind_registered_allocation()`,
   `shadowspill_pytorch_replace_registered_allocation()`, and
   `shadowspill_pytorch_promote_allocation()` publish storages and generations.
-- `shadowspill_pytorch_validate_object_binding()` and
-  `shadowspill_pytorch_validate_spill_binding()` enforce frontend invariants.
+- `shadowspill_pytorch_validate_spill_binding()` rejects stale imported CPU
+  storage views. Device storage acquisition is validated by its admitted task
+  or object-acquisition handle before the adapter installs the returned
+  address.
 - `shadowspill_pytorch_write_spill_object()` and
   `shadowspill_pytorch_read_spill_object()` move persistent state.
 - `shadowspill_pytorch_transfer_output_to_caller()` and
