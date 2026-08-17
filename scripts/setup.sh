@@ -122,6 +122,9 @@ import torch
 
 from shadowspill._libraries import resolve_library
 from shadowspill.planner._capi import load_planner_library, planner_library_path
+from shadowspill.pytorch.runtime_adapter.allocator import (
+    _REQUIRED_STORAGE_OPERATIONS,
+)
 from shadowspill.simulator._capi import load_simulator_library, simulator_library_path
 
 libraries = (
@@ -149,20 +152,14 @@ print(f"Simulator backend: compiled C ({simulator_library_path()})")
 adapter = resolve_library("libshadowspill_pytorch.so")
 assert adapter is not None
 ctypes.CDLL(str(adapter), mode=ctypes.RTLD_GLOBAL)
-required_storage_operations = (
-    "_rebind_storage",
-    "_rebind_storages",
-    "_before_execution_storages",
-    "_after_execution_storages",
-)
 missing_operations = [
     name
-    for name in required_storage_operations
+    for name in _REQUIRED_STORAGE_OPERATIONS
     if not hasattr(torch.ops.shadowspill, name)
 ]
 if missing_operations:
     raise RuntimeError(
-        "PyTorch adapter was built without storage rebinding: "
+        "PyTorch adapter is missing canonical storage operations: "
         + ", ".join(missing_operations)
     )
 print("PyTorch storage adapter: available")

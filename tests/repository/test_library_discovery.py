@@ -24,7 +24,8 @@ def test_packaged_and_editable_candidates_have_stable_precedence(
     )
 
     assert candidates[0] == package / "lib" / "libshadowspill_example.so"
-    assert candidates[1] == (
+    assert candidates[1].parent.name.startswith("cp")
+    assert candidates[2] == (
         tmp_path / "project" / "build" / "dev" / "libshadowspill_example.so"
     )
     assert len(candidates) == 3
