@@ -872,6 +872,29 @@ SHADOWSPILL_RUNTIME_API void shadowspill_abort_task(
 );
 
 /*
+ * Attribute allocator activity to one non-execution scope. This is used by
+ * structural profiling and other isolated measurements that need causal
+ * retirement fences without pretending to execute an admitted task. The end
+ * call records a completion event only when the scope retired allocations.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_scope_begin(
+    ShadowSpillRuntime *runtime,
+    uint64_t scope_id
+);
+
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_allocation_scope_end(
+    ShadowSpillRuntime *runtime,
+    uint64_t scope_id,
+    ShadowSpillBackendStream stream
+);
+
+SHADOWSPILL_RUNTIME_API void shadowspill_allocation_scope_abort(
+    ShadowSpillRuntime *runtime
+);
+
+/*
  * Starts one bounded allocation-lifetime capture. Storage is allocated before
  * capture begins, so allocator callbacks only append fixed-size records. A
  * full buffer latches ALLOCATION_FAILURE rather than silently losing evidence.

@@ -494,6 +494,19 @@ shadowspill_pytorch_after_task(
     uint32_t action_count
 );
 
+/* Attribute isolated profiling allocations without opening a fake task. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_scope_begin(uint64_t scope_id);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_allocation_scope_end(
+    uint64_t scope_id,
+    uintptr_t compute_stream_address
+);
+
+SHADOWSPILL_PYTORCH_API void
+shadowspill_pytorch_allocation_scope_abort(void);
+
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_object_snapshot(
     uint64_t object_id,

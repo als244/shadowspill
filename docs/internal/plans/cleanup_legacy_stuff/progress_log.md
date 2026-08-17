@@ -515,3 +515,26 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors build; all 28 native, CUDA, and PyTorch
   canaries; the complete Python suite with four expected skips; Ruff; strict
   mypy over 177 source files; and `git diff --check`.
+
+## 2026-08-17 — Dedicated profiling allocation scopes
+
+- Removed structural profiling's fake execution-task boundary. Profiling now
+  opens a dedicated allocator-attribution scope, executes the isolated
+  callable, and closes that scope against the actual compute stream.
+- The neutral allocation-scope API cannot resolve execution records, publish
+  mutations or outputs, decode actions, or enter a plan. It exists solely to
+  apply the production allocator's causal retirement rules to isolated
+  compilation and profiling work.
+- Decoupled allocation-telemetry shutdown from task-scope shutdown. Telemetry
+  now owns only capture state; the allocation scope owns its own lifetime and
+  retirement fence.
+- Scope completion records a backend event only when the scope actually
+  retired allocations. Abort finalizes only the active non-execution scope and
+  cannot accidentally close an admitted task.
+- Updated the PyTorch adapter, ctypes boundary, profiler, native telemetry
+  canary, tests, and C API references around the new contract. No compatibility
+  alias was retained.
+- Validation passed: warnings-as-errors rebuild; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; 44
+  focused allocator/compiler/profiling tests; documentation contract tests;
+  Ruff; strict mypy over 177 source files; and `git diff --check`.

@@ -85,6 +85,10 @@ handling](../architecture/physical-admission.md).
 
 ## Profiling and tracing
 
+- `shadowspill_pytorch_allocation_scope_begin()`,
+  `shadowspill_pytorch_allocation_scope_end()`, and
+  `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
+  allocations without creating a fake execution task.
 - `shadowspill_pytorch_profiler_annotations_set()` enables the profiler
   backend.
 - `shadowspill_pytorch_profile_range_begin()`,

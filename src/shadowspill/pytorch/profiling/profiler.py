@@ -120,7 +120,7 @@ class CudaTaskProfiler:
         self._telemetry_capacity = telemetry_capacity
         self._allocation_probe_seeds = allocation_probe_seeds
         self._allocation_probe_repetitions = allocation_probe_repetitions
-        self._next_task_id = 1 << 62
+        self._next_scope_id = 1 << 62
         self._executables = ProfileExecutableStore(
             device_ordinal=device_ordinal,
             allocation_check=lambda operation: raise_if_allocator_failed(
@@ -284,8 +284,8 @@ class CudaTaskProfiler:
             executable = self._restore_example_arguments(executable)
         torch.cuda.set_device(self._device_ordinal)
         stream = torch.cuda.current_stream(self._device_ordinal)
-        task_id = self._open_profile_task(stream)
-        task_open = True
+        scope_id = self._open_allocation_scope()
+        scope_open = True
         output: object | None = None
         try:
             output = executable()
@@ -302,14 +302,14 @@ class CudaTaskProfiler:
                 for position, value in enumerate(saved)
             )
             output = None
-            self._close_profile_task(task_id, stream)
-            task_open = False
+            self._close_allocation_scope(scope_id, stream)
+            scope_open = False
             stream.synchronize()
             self._diagnose_allocator_idle(context="saved-control producer")
             return values
         except BaseException:
-            if task_open:
-                self._library.shadowspill_pytorch_abort_task_range()
+            if scope_open:
+                self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
         finally:
             output = None
@@ -667,13 +667,13 @@ class CudaTaskProfiler:
         executable: Callable[[], object],
         stream: torch.cuda.Stream,
     ) -> None:
-        task_id = self._open_profile_task(stream)
+        scope_id = self._open_allocation_scope()
         try:
             output = executable()
             del output
-            self._close_profile_task(task_id, stream)
+            self._close_allocation_scope(scope_id, stream)
         except BaseException:
-            self._library.shadowspill_pytorch_abort_task_range()
+            self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
 
     def _measure_task_once(
@@ -682,15 +682,15 @@ class CudaTaskProfiler:
         stream: torch.cuda.Stream,
     ) -> int:
         start, finish = self._timing_event_pair()
-        task_id = self._open_profile_task(stream)
+        scope_id = self._open_allocation_scope()
         try:
             start.record(stream)
             output = executable()
             del output
             finish.record(stream)
-            self._close_profile_task(task_id, stream)
+            self._close_allocation_scope(scope_id, stream)
         except BaseException:
-            self._library.shadowspill_pytorch_abort_task_range()
+            self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
         finish.synchronize()
         self._library.shadowspill_pytorch_allocator_wait_idle()
@@ -736,26 +736,30 @@ class CudaTaskProfiler:
         self._library.shadowspill_pytorch_allocator_wait_idle()
         self._device_conditioned = True
 
-    def _open_profile_task(self, stream: torch.cuda.Stream) -> int:
-        task_id = self._next_task_id
-        self._next_task_id += 1
+    def _open_allocation_scope(self) -> int:
+        scope_id = self._next_scope_id
+        self._next_scope_id += 1
         status = int(
-            self._library.shadowspill_pytorch_before_task(
-                task_id, stream.cuda_stream, None, 0, None, 0
-            )
+            self._library.shadowspill_pytorch_allocation_scope_begin(scope_id)
         )
         if status != 0:
-            raise CaptureError(f"profiling before_task failed with status {status}")
-        return task_id
+            raise CaptureError(
+                f"profiling allocation scope begin failed with status {status}"
+            )
+        return scope_id
 
-    def _close_profile_task(self, task_id: int, stream: torch.cuda.Stream) -> None:
+    def _close_allocation_scope(
+        self, scope_id: int, stream: torch.cuda.Stream
+    ) -> None:
         status = int(
-            self._library.shadowspill_pytorch_after_task(
-                task_id, stream.cuda_stream, None, 0, None, 0
+            self._library.shadowspill_pytorch_allocation_scope_end(
+                scope_id, stream.cuda_stream
             )
         )
         if status != 0:
-            raise CaptureError(f"profiling after_task failed with status {status}")
+            raise CaptureError(
+                f"profiling allocation scope end failed with status {status}"
+            )
 
     def _audit_workspace_retention(
         self,
@@ -1101,8 +1105,8 @@ class CudaTaskProfiler:
     def _measure_workspace(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
     ) -> Any:
-        task_id = self._next_task_id
-        self._next_task_id += 1
+        task_id = self._next_scope_id
+        self._next_scope_id += 1
         execution_started = time.perf_counter_ns()
         start_allocation_telemetry(self._library, capacity=self._telemetry_capacity)
         task_open = False
@@ -1110,12 +1114,13 @@ class CudaTaskProfiler:
         primary_error: BaseException | None = None
         try:
             status = int(
-                self._library.shadowspill_pytorch_before_task(
-                    task_id, stream.cuda_stream, None, 0, None, 0
-                )
+                self._library.shadowspill_pytorch_allocation_scope_begin(task_id)
             )
             if status != 0:
-                raise CaptureError(f"profiling before_task failed with status {status}")
+                raise CaptureError(
+                    "profiling allocation scope begin failed with status "
+                    f"{status}"
+                )
             task_open = True
             output = executable()
             output_allocations, output_input_bindings = self._output_allocation_views(
@@ -1132,19 +1137,22 @@ class CudaTaskProfiler:
             # physical ranges against the active compute stream.
             output = None
             status = int(
-                self._library.shadowspill_pytorch_after_task(
-                    task_id, stream.cuda_stream, None, 0, None, 0
+                self._library.shadowspill_pytorch_allocation_scope_end(
+                    task_id, stream.cuda_stream
                 )
             )
             task_open = False
             if status != 0:
-                raise CaptureError(f"profiling after_task failed with status {status}")
+                raise CaptureError(
+                    "profiling allocation scope end failed with status "
+                    f"{status}"
+                )
             stream.synchronize()
             self._library.shadowspill_pytorch_allocator_wait_idle()
         except BaseException as error:
             primary_error = error
             if task_open:
-                self._library.shadowspill_pytorch_abort_task_range()
+                self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
         finally:
             try:

@@ -111,6 +111,19 @@ for the layout certificate and offset coordinate systems.
 
 ## Telemetry and failure
 
+Structural profiling attributes allocator activity through a dedicated,
+non-execution boundary:
+
+- `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope.
+- `shadowspill_allocation_scope_end()` retires its anonymous allocations behind
+  the supplied stream fence and closes the scope.
+- `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.
+
+Allocation scopes do not resolve execution records, publish object mutations,
+decode actions, or enter the task API. They exist only where isolated
+compilation/profiling needs the runtime allocator and its causal retirement
+rules.
+
 Allocation profiling uses:
 
 - `shadowspill_allocation_telemetry_start()`

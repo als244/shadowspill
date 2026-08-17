@@ -702,7 +702,6 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_stop(
     }
     runtime->allocation_telemetry_active = 0;
     pthread_mutex_unlock(&runtime->mutex);
-    shadowspill_leave_task_scope(runtime);
     return status;
 }
 

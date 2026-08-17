@@ -2,6 +2,7 @@ add_library(
   shadowspill_runtime
   SHARED
   src/admission_replay.c
+  src/allocation_scope.c
   src/allocations.c
   src/completion_tracker.c
   src/event_pool.c

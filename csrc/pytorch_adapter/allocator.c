@@ -1759,6 +1759,62 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_begin(
+    uint64_t scope_id
+) {
+    if (task_range_active) {
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    const uint64_t profiling_base = UINT64_C(1) << 62U;
+    char range_name[192];
+    (void)snprintf(
+        range_name,
+        sizeof(range_name),
+        "shadowspill.pytorch.profiling.allocation_scope_%06llu",
+        (unsigned long long)(
+            scope_id >= profiling_base ? scope_id - profiling_base : scope_id
+        )
+    );
+    task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
+    task_range_active = 1;
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    const ShadowSpillRuntimeStatus status = runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_scope_begin(runtime, scope_id);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        end_task_range();
+    }
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_end(
+    uint64_t scope_id,
+    uintptr_t compute_stream_address
+) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    const ShadowSpillRuntimeStatus status = runtime == NULL
+        ? SHADOWSPILL_RUNTIME_CLOSED
+        : shadowspill_allocation_scope_end(
+              runtime,
+              scope_id,
+              shadowspill_cuda_wrap_stream(compute_stream_address)
+          );
+    end_task_range();
+    return status;
+}
+
+void shadowspill_pytorch_allocation_scope_abort(void) {
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    shadowspill_allocation_scope_abort(runtime);
+    end_task_range();
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot

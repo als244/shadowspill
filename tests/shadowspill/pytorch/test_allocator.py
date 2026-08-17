@@ -86,6 +86,9 @@ class _Library:
     shadowspill_pytorch_replace_registered_allocation = _Function()
     shadowspill_pytorch_transfer_output_to_caller = _Function()
     shadowspill_pytorch_promote_allocation = _Function()
+    shadowspill_pytorch_allocation_scope_begin = _Function()
+    shadowspill_pytorch_allocation_scope_end = _Function()
+    shadowspill_pytorch_allocation_scope_abort = _Function()
     shadowspill_pytorch_before_task = _Function()
     shadowspill_pytorch_after_task = _Function()
     shadowspill_pytorch_plan_create = _Function()
@@ -288,6 +291,14 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(RuntimeAction),
         ctypes.c_uint32,
     ]
+    assert library.shadowspill_pytorch_allocation_scope_begin.argtypes == [
+        ctypes.c_uint64
+    ]
+    assert library.shadowspill_pytorch_allocation_scope_end.argtypes == [
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+    ]
+    assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
     assert library.shadowspill_pytorch_abort_task_range.argtypes == []
 
 

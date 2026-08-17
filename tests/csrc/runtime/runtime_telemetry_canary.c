@@ -56,9 +56,8 @@ static int ordered_task_capture(void) {
     };
     int failed = shadowspill_allocation_telemetry_start(runtime, 8U) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_task(
-            runtime, 42U, compute, NULL, 0U, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_allocation_scope_begin(runtime, 42U) !=
+            SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocate(runtime, 64U, 1U, compute, &first) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_free(runtime, first.allocation_id, compute) !=
@@ -69,7 +68,7 @@ static int ordered_task_capture(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_bind_object(runtime, object.object_id, second.allocation_id) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_after_task(runtime, 42U, compute, NULL, 0U, NULL, 0U) !=
+        shadowspill_allocation_scope_end(runtime, 42U, compute) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_allocation_telemetry_stop(runtime) !=
             SHADOWSPILL_RUNTIME_OK;
