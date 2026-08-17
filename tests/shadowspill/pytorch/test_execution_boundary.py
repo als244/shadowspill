@@ -179,8 +179,8 @@ class _TraceBoundaryBridge:
         self.calls = calls
         self.statistics_value = object()
 
-    def wait_idle(self) -> None:
-        self.calls.append("wait_idle")
+    def wait_plan_idle(self) -> None:
+        self.calls.append("wait_plan_idle")
 
     def statistics(self) -> object:
         self.calls.append("statistics")
@@ -221,7 +221,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
     assert selected is run
     assert calls == [
         "origin",
-        "wait_idle",
+        "wait_plan_idle",
         "statistics",
         ("begin_runtime_trace", 4),
         "refresh_inputs",

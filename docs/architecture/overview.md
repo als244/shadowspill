@@ -161,6 +161,13 @@ plan independently binds its execution pool, spill pool, fetch route, and
 evict route. The worker services route submission, completion frontiers, and
 deferred releases without holding a general-purpose global runtime mutex.
 
+At the Python boundary, `submit()` returns one invocation-owned result handle.
+Its `result()` method synchronizes that invocation's public completion event.
+Different planned callables can therefore be host-dispatched together, while
+each callable retains a simple single-outstanding-invocation invariant. A
+later invocation waits only for the same plan's terminal actions and
+retirements; unrelated plans continue independently.
+
 ## Component ownership
 
 | Component | Owns | Does not own |

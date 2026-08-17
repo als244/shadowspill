@@ -215,27 +215,55 @@ static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
 int shadowspill_claim_task_invocation(
     const ShadowSpillTaskRecord *record
 ) {
-    if (record == NULL) {
+    if (record == NULL || record->plan_owner == NULL) {
+        return -1;
+    }
+    ShadowSpillPlan *plan = record->plan_owner;
+    if (atomic_load_explicit(&plan->closing, memory_order_acquire) != 0U ||
+        atomic_load_explicit(&plan->closed, memory_order_acquire) != 0U) {
+        return -1;
+    }
+    (void)atomic_fetch_add_explicit(
+        &plan->active_task_scopes, 1U, memory_order_acq_rel
+    );
+    if (atomic_load_explicit(&plan->closing, memory_order_acquire) != 0U ||
+        atomic_load_explicit(&plan->closed, memory_order_acquire) != 0U) {
+        (void)atomic_fetch_sub_explicit(
+            &plan->active_task_scopes, 1U, memory_order_release
+        );
         return -1;
     }
     ShadowSpillTaskRecord *mutable_record = (ShadowSpillTaskRecord *)record;
     uint8_t expected_active = 0U;
-    return atomic_compare_exchange_strong_explicit(
+    if (atomic_compare_exchange_strong_explicit(
         &mutable_record->invocation_active,
         &expected_active,
         1U,
         memory_order_acq_rel,
         memory_order_acquire
-    ) ? 0 : -1;
+    )) {
+        return 0;
+    }
+    (void)atomic_fetch_sub_explicit(
+        &plan->active_task_scopes, 1U, memory_order_release
+    );
+    return -1;
 }
 
 void shadowspill_release_task_invocation(
     const ShadowSpillTaskRecord *record
 ) {
-    if (record != NULL) {
-        atomic_store_explicit(
+    if (record == NULL || record->plan_owner == NULL) {
+        return;
+    }
+    if (atomic_exchange_explicit(
             &((ShadowSpillTaskRecord *)record)->invocation_active,
             0U,
+            memory_order_acq_rel
+        ) != 0U) {
+        (void)atomic_fetch_sub_explicit(
+            &record->plan_owner->active_task_scopes,
+            1U,
             memory_order_release
         );
     }

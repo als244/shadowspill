@@ -342,6 +342,87 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     return failed ? -1 : 0;
 }
 
+static int plan_idle_wait_ignores_other_plan_actions(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+        .fetch_delay_nanoseconds = UINT64_C(200000000),
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *idle_plan = NULL;
+    ShadowSpillPlan *busy_plan = NULL;
+    ShadowSpillObjectHandle *object_handle = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    const ShadowSpillObjectDescription object = {
+        .object_id = 4101U,
+        .size_bytes = 64U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
+    };
+    const ShadowSpillRuntimeAction fetch = {
+        .object_id = 1U,
+        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+    };
+    const ShadowSpillActionBatchHandle *batch = NULL;
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &idle_plan) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &busy_plan) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, object.object_id, &object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            busy_plan, 1U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_action_batch(
+            busy_plan, 0U, &fetch, 1U, &batch
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+    if (!failed) {
+        failed = shadowspill_submit_action_batch_handle(
+                runtime, batch, compute
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_plan_wait_idle(idle_plan) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            statistics.queued_actions != 1U ||
+            shadowspill_plan_wait_idle(busy_plan) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            statistics.queued_actions != 0U;
+    }
+    if (object_handle != NULL) {
+        (void)shadowspill_object_handle_release(object_handle);
+    }
+    shadowspill_plan_destroy(idle_plan);
+    shadowspill_plan_destroy(busy_plan);
+    if (runtime != NULL) {
+        (void)shadowspill_unregister_object(runtime, object.object_id);
+    }
+    if (compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 static int plan_selects_nondefault_pool_pair(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
@@ -962,6 +1043,10 @@ int main(void) {
     }
     if (shared_runtime_accepts_overlapping_plan_tasks() != 0) {
         fprintf(stderr, "runtime plan canary failed: shared runtime\n");
+        return EXIT_FAILURE;
+    }
+    if (plan_idle_wait_ignores_other_plan_actions() != 0) {
+        fprintf(stderr, "runtime plan canary failed: plan-local idle\n");
         return EXIT_FAILURE;
     }
     if (plan_selects_nondefault_pool_pair() != 0) {

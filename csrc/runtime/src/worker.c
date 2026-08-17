@@ -80,6 +80,7 @@ static void complete_action(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
+    ShadowSpillPlan *plan_owner = action->plan_owner;
     ShadowSpillObject *object = action->object;
     pthread_mutex_lock(&object->lock);
     if (shadowspill_object_remove_action_locked(
@@ -180,6 +181,11 @@ static void complete_action(
         free(action);
     }
     shadowspill_memory_lease_release(caller_handoff_lease);
+    if (plan_owner != NULL) {
+        (void)atomic_fetch_sub_explicit(
+            &plan_owner->pending_actions, 1U, memory_order_release
+        );
+    }
     const uint64_t previous_actions = atomic_fetch_sub_explicit(
         &runtime->actions.count, 1U, memory_order_release
     );

@@ -1615,6 +1615,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_clear_tasks(
         : shadowspill_plan_clear_tasks((ShadowSpillPlan *)plan_handle);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_wait_idle(
+    uintptr_t plan_handle
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_wait_idle((ShadowSpillPlan *)plan_handle);
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_object_acquisition(
     uintptr_t plan_handle,
     const uint64_t *object_ids,

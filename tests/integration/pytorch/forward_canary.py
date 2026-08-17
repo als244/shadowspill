@@ -248,6 +248,17 @@ def main() -> int:
             planning_cachedir=cache,
             profiling_metadata={"shared_input": "scalar_mean"},
         )
+        peer_consumer = plan_forward(
+            consumer_model,
+            example_inputs=[
+                shared_input(second_reference, require_in="execution")
+            ],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata={"shared_input": "scalar_mean"},
+        )
         before_consumer = _statistics()
         consumed = consumer([second_reference])
         expected_consumed = reference(inputs, 16)["mean"] * 2.0 + 1.0
@@ -270,12 +281,21 @@ def main() -> int:
             raise AssertionError("recurrent shared output changed logical identity")
         if third_reference.generation == second_reference.generation:
             raise AssertionError("recurrent shared output did not replace its value")
-        repeated = consumer([third_reference])
+        submitted_consumer = consumer.submit([third_reference])
+        submitted_peer = peer_consumer.submit([third_reference])
+        if submitted_consumer.resolved or submitted_peer.resolved:
+            raise AssertionError("concurrent forwards synchronized during dispatch")
+        repeated = submitted_consumer.result()
+        peer_repeated = submitted_peer.result()
         torch.testing.assert_close(
             repeated.cpu(), expected_consumed, rtol=2e-5, atol=2e-6
         )
+        torch.testing.assert_close(
+            peer_repeated.cpu(), expected_consumed, rtol=2e-5, atol=2e-6
+        )
 
         consumer.close()
+        peer_consumer.close()
         shared.close()
         if not _object_exists(runtime, shared_object_id):
             raise AssertionError("callable close destroyed a public shared output")
@@ -301,6 +321,9 @@ def main() -> int:
         del consumed
         del first
         del repeated
+        del peer_repeated
+        del submitted_consumer
+        del submitted_peer
         del replay
         del retained
         del second

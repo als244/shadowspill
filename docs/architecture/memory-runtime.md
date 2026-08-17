@@ -203,11 +203,18 @@ The same record owns its expanded input-binding array, so input snapshots are
 published as a borrowed view without a repeated allocation or copy.
 
 Multiple plan and task handles may coexist in the neutral runtime. The public
-PyTorch callables currently dispatch synchronously, and one admitted task
-handle is intentionally non-reentrant because it reuses preallocated mutable
-validation and action state. Concurrent Python invocation and invocation-owned
-async results are not yet supported; the runtime does not claim that contract
-until mutable state and physical-layout ownership are invocation-scoped.
+PyTorch frontend exposes `submit()` for explicit invocation ownership. Host
+dispatch runs immediately and returns an `InvocationResult`; `result()` is the
+single synchronization point for that invocation's public result. Distinct
+callables own distinct admitted task records and may remain active together on
+one runtime. One callable permits one outstanding submitted invocation because
+its physical layout and preallocated validation/action records are reused.
+
+Reusing or closing a callable waits only for that plan's claimed task scopes,
+actions, and task-owned retirements. It never waits for unrelated plans.
+Within a plan, one admitted task handle remains deliberately non-reentrant.
+The wait is an active atomic poll; neither dispatcher nor worker enters a
+condition wait, sleep, or scheduler yield.
 
 ## Failure and teardown
 

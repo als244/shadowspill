@@ -82,6 +82,7 @@ semantics:
 - `shadowspill_pytorch_plan_admit_fixed_layout()`
 - `shadowspill_pytorch_plan_seal_fixed_layout()`
 - `shadowspill_pytorch_plan_clear_tasks()`
+- `shadowspill_pytorch_plan_wait_idle()`
 
 Plan creation receives explicit execution/spill pool IDs and fetch/evict route
 IDs. The adapter does not infer routes from global runtime roles.
@@ -129,6 +130,8 @@ and offset handling](../architecture/physical-admission.md).
 `shadowspill_pytorch_allocator_failure()` and
 `shadowspill_pytorch_allocator_statistics()` return structured state.
 `shadowspill_pytorch_allocator_wait_idle()` is an explicit lifecycle barrier;
+`shadowspill_pytorch_plan_wait_idle()` is the plan-local active-poll boundary
+used for callable recurrence and teardown. It ignores unrelated plans;
 `shadowspill_pytorch_recover_no_progress()` performs the documented recovery
 operation.
 

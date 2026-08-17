@@ -1740,3 +1740,35 @@ the following work from the merged commit in this order:
 - The classification is alias-root based, so views cannot disagree about write
   ownership. The focused lowering, callable-lifecycle, and invocation suites
   passed, as did Ruff, strict mypy, and the diff-integrity check.
+
+## 2026-08-17 — Plan-local asynchronous callable ownership
+
+- Added `PlannedForward.submit()` and `PlannedTrainStep.submit()`. Dispatch
+  still executes the complete host-side task sequence, but returns an
+  `InvocationResult` without synchronizing the compute stream. `result()` and
+  `wait()` cross one explicit completion boundary exactly once. A failed
+  completion remains failed on every later access instead of returning an
+  invalid payload.
+- Each callable cold-creates one timing-disabled completion event and reuses
+  it. One submitted invocation may be outstanding per callable, while
+  separately planned callables may have outstanding work together on one
+  runtime. Close resolves its own pending invocation before releasing state.
+- Removed runtime-global quiescence from callable recurrence, profiler
+  annotation draining, optimizer-state exposure, and executor release. Each
+  admitted plan now tracks claimed task scopes, queued actions, and task-owned
+  retirement records with monotonic atomic counters. The new
+  `shadowspill_plan_wait_idle()` actively polls only those counters and does
+  not sleep, wait on a condition variable, or include unrelated plans.
+- Task claim is race-safe with plan close: the claimant increments the plan
+  scope count, rechecks closing state, and rolls back if close won. Task scope
+  release uses an atomic exchange so abort/error cleanup cannot decrement the
+  plan twice. Actions and retirement records retain their plan owner through
+  worker completion and runtime teardown.
+- Added a native two-plan regression in which one plan owns a delayed 200-ms
+  fetch while the other plan's local idle wait returns with that action still
+  queued. The real forward canary now submits two independent consumers of the
+  same execution-resident shared object before resolving either result; the
+  training canary covers submitted replay.
+- Bumped the neutral runtime ABI to 46 and the PyTorch adapter ABI to 56. The
+  complete Python suite, documentation audit, Ruff, strict PyTorch typing,
+  warnings-as-errors build, and all 29 compiled C/CUDA/PyTorch canaries pass.

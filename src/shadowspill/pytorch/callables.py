@@ -14,6 +14,7 @@ from shadowspill.pytorch.diagnostics.plan import PlanReport
 from shadowspill.pytorch.diagnostics.step import DiagnosticsHandle, StepResult
 from shadowspill.pytorch.execution import ForwardExecutor, TrainingExecutor
 from shadowspill.pytorch.guards import InputSignature, validate_training_inputs
+from shadowspill.pytorch.invocation import InvocationResult
 from shadowspill.pytorch.materialization import (
     MaterializedForwardState,
     TrainingMaterializedState,
@@ -51,12 +52,58 @@ class PlannedForward:
         self._closed = False
         self._closing = False
         self._profiler_annotations_active = False
+        self._pending_invocation: InvocationResult[object] | None = None
 
     def __call__(
         self,
         inputs: Sequence[Any],
         *,
         profiler_annotations: bool = False,
+    ) -> object:
+        self._require_no_pending_invocation()
+        return self._invoke(
+            inputs,
+            profiler_annotations=profiler_annotations,
+        )
+
+    def submit(
+        self,
+        inputs: Sequence[Any],
+        *,
+        profiler_annotations: bool = False,
+    ) -> InvocationResult[object]:
+        """Dispatch without synchronizing and return explicit result ownership."""
+
+        self._require_no_pending_invocation()
+        output = self._invoke(
+            inputs,
+            profiler_annotations=profiler_annotations,
+        )
+        try:
+            synchronize = self._executor.record_invocation_completion()
+        except BaseException as error:
+            self._close_after_failure(
+                error,
+                operation="record planned forward completion",
+            )
+            raise
+        invocation = InvocationResult(
+            output,
+            synchronize,
+            on_resolved=self._finish_pending_invocation,
+            on_failure=lambda error: self._close_after_failure(
+                error,
+                operation="synchronize planned forward",
+            ),
+        )
+        self._pending_invocation = invocation
+        return invocation
+
+    def _invoke(
+        self,
+        inputs: Sequence[Any],
+        *,
+        profiler_annotations: bool,
     ) -> object:
         if self._closed:
             raise RuntimeError("planned forward callable is closed")
@@ -81,6 +128,21 @@ class PlannedForward:
                 error, operation="execute planned forward"
             )
             raise
+
+    def _require_no_pending_invocation(self) -> None:
+        pending = self._pending_invocation
+        if pending is not None and not pending.resolved:
+            raise RuntimeError(
+                "resolve the preceding submitted forward invocation before "
+                "reusing this callable"
+            )
+
+    def _finish_pending_invocation(
+        self,
+        invocation: InvocationResult[object],
+    ) -> None:
+        if self._pending_invocation is invocation:
+            self._pending_invocation = None
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         """Synchronously return a normal CPU model state mapping."""
@@ -119,6 +181,16 @@ class PlannedForward:
             return
         self._closing = True
         operations: list[tuple[str, Any]] = []
+        if (
+            self._pending_invocation is not None
+            and not self._pending_invocation.resolved
+        ):
+            operations.append(
+                (
+                    "resolve pending invocation",
+                    self._pending_invocation._resolve_for_close,
+                )
+            )
         if self._profiler_annotations_active:
             operations.append(
                 ("finish profiler annotations", self._finish_profiler_annotations)
@@ -148,16 +220,18 @@ class PlannedForward:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        executor = self._executor
-        del self._executor
-        del executor
         status = int(
-            self._runtime._installed.library.shadowspill_pytorch_allocator_wait_idle()
+            self._runtime._installed.library.shadowspill_pytorch_plan_wait_idle(
+                self._plan_handle
+            )
         )
         if status != 0:
             raise RuntimeError(
                 f"compiled forward executor did not become idle (status {status})"
             )
+        executor = self._executor
+        del self._executor
+        del executor
 
     def __enter__(self) -> PlannedForward:
         if self._closed:
@@ -206,6 +280,7 @@ class PlannedTrainStep:
         self._trace_prepared = False
         self._pending_diagnostics: DiagnosticsHandle | None = None
         self._profiler_annotations_active = False
+        self._pending_invocation: InvocationResult[StepResult] | None = None
 
     def __call__(
         self,
@@ -213,6 +288,55 @@ class PlannedTrainStep:
         *,
         runtime_trace: bool = False,
         profiler_annotations: bool = False,
+    ) -> StepResult:
+        self._require_no_pending_invocation()
+        return self._invoke(
+            inputs,
+            runtime_trace=runtime_trace,
+            profiler_annotations=profiler_annotations,
+        )
+
+    def submit(
+        self,
+        inputs: Sequence[Sequence[Any]],
+        *,
+        runtime_trace: bool = False,
+        profiler_annotations: bool = False,
+    ) -> InvocationResult[StepResult]:
+        """Dispatch without synchronizing and return explicit result ownership."""
+
+        self._require_no_pending_invocation()
+        result = self._invoke(
+            inputs,
+            runtime_trace=runtime_trace,
+            profiler_annotations=profiler_annotations,
+        )
+        try:
+            synchronize = self._executor.record_invocation_completion()
+        except BaseException as error:
+            self._close_after_failure(
+                error,
+                operation="record planned training completion",
+            )
+            raise
+        invocation = InvocationResult(
+            result,
+            synchronize,
+            on_resolved=self._finish_pending_invocation,
+            on_failure=lambda error: self._close_after_failure(
+                error,
+                operation="synchronize planned training step",
+            ),
+        )
+        self._pending_invocation = invocation
+        return invocation
+
+    def _invoke(
+        self,
+        inputs: Sequence[Sequence[Any]],
+        *,
+        runtime_trace: bool,
+        profiler_annotations: bool,
     ) -> StepResult:
         if self._closed:
             raise RuntimeError("planned training callable is closed")
@@ -266,6 +390,21 @@ class PlannedTrainStep:
         )
         self._pending_diagnostics = diagnostics
         return StepResult(objectives, metrics, self._step, diagnostics)
+
+    def _require_no_pending_invocation(self) -> None:
+        pending = self._pending_invocation
+        if pending is not None and not pending.resolved:
+            raise RuntimeError(
+                "resolve the preceding submitted training invocation before "
+                "reusing this callable"
+            )
+
+    def _finish_pending_invocation(
+        self,
+        invocation: InvocationResult[StepResult],
+    ) -> None:
+        if self._pending_invocation is invocation:
+            self._pending_invocation = None
 
     def _arm_selected_span_timing(self) -> None:
         """Arm production-like two-event task-span timing."""
@@ -332,6 +471,16 @@ class PlannedTrainStep:
         self._closing = True
         operations: list[tuple[str, Any]] = []
         if (
+            self._pending_invocation is not None
+            and not self._pending_invocation.resolved
+        ):
+            operations.append(
+                (
+                    "resolve pending invocation",
+                    self._pending_invocation._resolve_for_close,
+                )
+            )
+        if (
             self._pending_diagnostics is not None
             and not self._pending_diagnostics.resolved
         ):
@@ -369,16 +518,18 @@ class PlannedTrainStep:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        executor = self._executor
-        del self._executor
-        del executor
         status = int(
-            self._runtime._installed.library.shadowspill_pytorch_allocator_wait_idle()
+            self._runtime._installed.library.shadowspill_pytorch_plan_wait_idle(
+                self._plan_handle
+            )
         )
         if status != 0:
             raise RuntimeError(
                 f"compiled training executor did not become idle (status {status})"
             )
+        executor = self._executor
+        del self._executor
+        del executor
 
     def _clear_parameter_gradients(self) -> None:
         for parameter in self._model.parameters():

@@ -290,6 +290,7 @@ typedef struct ShadowSpillFixedLayoutState {
 typedef struct ShadowSpillRetirementRecord {
     ShadowSpillMemoryLease *allocation;
     ShadowSpillMemoryPool *pool;
+    struct ShadowSpillPlan *plan_owner;
     uint64_t allocation_id;
     uint64_t allocation_generation;
     /*
@@ -606,7 +607,9 @@ struct ShadowSpillPlan {
     ShadowSpillObjectAcquisitionRecord *object_acquisitions;
     ShadowSpillFixedLayoutState fixed_layout;
     pthread_mutex_t lifecycle_lock;
-    _Atomic uint32_t active_invocations;
+    _Atomic uint32_t active_task_scopes;
+    _Atomic uint64_t pending_actions;
+    _Atomic uint64_t pending_retirements;
     _Atomic uint8_t closing;
     _Atomic uint8_t closed;
     uint8_t lifecycle_lock_initialized;

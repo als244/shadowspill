@@ -85,6 +85,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
     ShadowSpillQueuedAction *action = runtime->actions.head;
     while (action != NULL) {
         ShadowSpillQueuedAction *next = action->next;
+        ShadowSpillPlan *plan_owner = action->plan_owner;
         pthread_mutex_lock(&action->object->lock);
         (void)shadowspill_object_remove_action_locked(
             action->object, action
@@ -142,6 +143,13 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             action->object_next = NULL;
             action->lane_previous = NULL;
             action->lane_next = NULL;
+        }
+        if (plan_owner != NULL) {
+            (void)atomic_fetch_sub_explicit(
+                &plan_owner->pending_actions,
+                1U,
+                memory_order_release
+            );
         }
         action = next;
     }

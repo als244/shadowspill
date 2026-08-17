@@ -29,6 +29,7 @@ from shadowspill.pytorch.diagnostics.timing import (
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
+from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingTaskEntrypoint,
@@ -210,6 +211,7 @@ class TrainingExecutor:
         ] = {}
         self._span_start_event: torch.cuda.Event | None = None
         self._span_end_event: torch.cuda.Event | None = None
+        self._completion = ReusableCompletionEvent(state.device)
 
     def _admit_run(
         self,
@@ -314,7 +316,7 @@ class TrainingExecutor:
 
         if not self._task_annotations.enabled:
             return
-        self._bridge.wait_idle()
+        self._bridge.wait_plan_idle()
         self.set_profiler_annotations(False)
 
     def __call__(
@@ -331,6 +333,11 @@ class TrainingExecutor:
             timing.host_call_finished_ns = time.perf_counter_ns()
         return losses, metrics
 
+    def record_invocation_completion(self) -> Callable[[], None]:
+        """Record the explicit public-result completion boundary."""
+
+        return self._completion.record()
+
     def _begin_invocation(
         self,
         inputs: Sequence[Sequence[Any]],
@@ -344,7 +351,7 @@ class TrainingExecutor:
             # StepResult construction, but do not accidentally overlap the
             # next invocation with terminal transfers from the prior plan.
             started_ns = time.perf_counter_ns() if timing is not None else 0
-            self._bridge.wait_idle()
+            self._bridge.wait_plan_idle()
             if timing is not None:
                 timing.host_startup_wait_ns = time.perf_counter_ns() - started_ns
         run = (
@@ -1342,7 +1349,7 @@ class TrainingExecutor:
     def _expose_optimizer_state_cpu(
         self,
     ) -> tuple[_ExposedOptimizerTensor, ...]:
-        self._bridge.wait_idle()
+        self._bridge.wait_plan_idle()
         current = self._current_optimizer_bindings()
         exposed: list[_ExposedOptimizerTensor] = []
         owners: dict[str, torch.Tensor] = {}
