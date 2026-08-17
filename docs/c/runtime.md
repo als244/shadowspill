@@ -50,11 +50,12 @@ structured no-progress status.
   the retained object record.
 - `shadowspill_write_object()` and `shadowspill_read_object()` copy
   bytes through a declared pool route.
-- `shadowspill_bind_object()` publishes a lease as an object residency.
-- `shadowspill_replace_object_allocation()` atomically publishes a mutation or
-  output replacement generation.
-- `shadowspill_transfer_object_to_caller()` hands a terminal allocation to
-  caller ownership while preserving stream readiness.
+- `shadowspill_plan_publish_initial_allocation()` publishes cold residency
+  through one plan-local object binding.
+- `shadowspill_task_publish_allocation()` atomically publishes a task output
+  or replacement generation through a predecoded publication ordinal.
+- `shadowspill_transfer_acquired_object_to_caller()` hands an acquired terminal
+  generation to caller ownership while preserving stream readiness.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view.
 - `shadowspill_object_handle_acquire()` creates an opaque retained owner for a
   runtime-global logical object.

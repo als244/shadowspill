@@ -571,7 +571,7 @@ read_done:
     return status;
 }
 
-static ShadowSpillRuntimeStatus bind_object_allocation(
+ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
@@ -676,31 +676,6 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_bind_object(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    uint64_t allocation_id
-) {
-    if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-    }
-    ShadowSpillObject *object = shadowspill_object_table_acquire(
-        &runtime->objects, object_id
-    );
-    if (object == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    ShadowSpillRuntimeStatus status = bind_object_allocation(
-        runtime,
-        shadowspill_execution_pool(runtime),
-        object,
-        allocation_id,
-        NULL
-    );
-    shadowspill_object_release(object);
-    return status;
-}
-
 ShadowSpillRuntimeStatus shadowspill_plan_publish_initial_allocation(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
@@ -726,7 +701,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_publish_initial_allocation(
             &allocation
         );
     if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = bind_object_allocation(
+        status = shadowspill_object_bind_allocation(
             plan->runtime,
             plan->execution_pool,
             object,
@@ -738,7 +713,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_publish_initial_allocation(
     return status;
 }
 
-static ShadowSpillRuntimeStatus replace_object_allocation(
+ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
@@ -857,32 +832,6 @@ done:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_replace_object_allocation(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    ShadowSpillObjectBinding *binding
-) {
-    if (runtime == NULL || binding == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-    }
-    ShadowSpillObject *object = shadowspill_object_table_acquire(
-        &runtime->objects, object_id
-    );
-    if (object == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    ShadowSpillRuntimeStatus status = replace_object_allocation(
-        runtime,
-        shadowspill_execution_pool(runtime),
-        object,
-        allocation_id,
-        binding
-    );
-    shadowspill_object_release(object);
-    return status;
-}
-
 ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -915,7 +864,7 @@ ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
         return status;
     }
     if (publication->kind == SHADOWSPILL_TASK_PUBLICATION_REPLACE) {
-        return replace_object_allocation(
+        return shadowspill_object_replace_allocation(
             runtime,
             record->plan_owner->execution_pool,
             publication->object,
@@ -923,7 +872,7 @@ ShadowSpillRuntimeStatus shadowspill_task_publish_allocation(
             binding
         );
     }
-    return bind_object_allocation(
+    return shadowspill_object_bind_allocation(
         runtime,
         record->plan_owner->execution_pool,
         publication->object,
@@ -962,7 +911,7 @@ ShadowSpillRuntimeStatus shadowspill_task_validate_publication_binding(
         : SHADOWSPILL_RUNTIME_INVALID_STATE;
 }
 
-ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller_direct(
+ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *execution_pool,
     ShadowSpillMemoryPool *spill_pool,
@@ -1120,37 +1069,6 @@ done_object:
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
-    ShadowSpillRuntime *runtime,
-    uint64_t object_id,
-    ShadowSpillBackendStream consumer_stream,
-    ShadowSpillAllocation *allocation
-) {
-    if (runtime == NULL || allocation == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-    }
-    ShadowSpillObject *object = shadowspill_object_table_acquire(
-        &runtime->objects, object_id
-    );
-    if (object == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    const ShadowSpillRuntimeStatus status =
-        shadowspill_transfer_object_to_caller_direct(
-            runtime,
-            shadowspill_execution_pool(runtime),
-            shadowspill_spill_pool(runtime),
-            object,
-            consumer_stream,
-            NULL,
-            0U,
-            SHADOWSPILL_RUNTIME_NO_ID,
-            0U,
-            allocation
-        );
-    shadowspill_object_release(object);
-    return status;
-}
 
 ShadowSpillRuntimeStatus shadowspill_object_snapshot(
     ShadowSpillRuntime *runtime,

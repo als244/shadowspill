@@ -72,6 +72,70 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_bind_object(
     return status == SHADOWSPILL_RUNTIME_OK ? release_status : status;
 }
 
+static inline ShadowSpillRuntimeStatus shadowspill_test_publish_initial(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    const void *pointer,
+    ShadowSpillObjectBinding *binding
+) {
+    ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
+    if (record == NULL || pointer == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        record, object_id
+    );
+    ShadowSpillObjectBinding ignored = {0};
+    return status == SHADOWSPILL_RUNTIME_OK
+        ? shadowspill_plan_publish_initial_allocation(
+              record->plan,
+              object_id,
+              pointer,
+              binding == NULL ? &ignored : binding
+          )
+        : status;
+}
+
+static inline ShadowSpillRuntimeStatus
+shadowspill_test_transfer_object_to_caller(
+    ShadowSpillRuntime *runtime,
+    uint64_t object_id,
+    ShadowSpillBackendStream stream,
+    ShadowSpillAllocation *allocation
+) {
+    ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
+    if (record == NULL || allocation == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        record, object_id
+    );
+    const ShadowSpillObjectAcquisitionHandle *handle = NULL;
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_plan_admit_object_acquisition(
+            record->plan, &object_id, 1U, &handle
+        );
+    }
+    ShadowSpillObjectBinding binding = {0};
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_acquire_objects_handle(
+            runtime, handle, stream, &binding, 1U
+        );
+    }
+    return status == SHADOWSPILL_RUNTIME_OK
+        ? shadowspill_transfer_acquired_object_to_caller(
+              runtime,
+              handle,
+              0U,
+              stream,
+              binding.pointer,
+              binding.generation,
+              binding.allocation_id,
+              allocation
+          )
+        : status;
+}
+
 static inline ShadowSpillRuntimeStatus shadowspill_test_bind_task_objects(
     ShadowSpillTestRuntime *record,
     const ShadowSpillTaskDescription *description

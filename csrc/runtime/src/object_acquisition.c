@@ -294,7 +294,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_acquired_object_to_caller(
         expected_allocation_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    return shadowspill_transfer_object_to_caller_direct(
+    return shadowspill_object_transfer_to_caller(
         runtime,
         record->plan_owner->execution_pool,
         record->plan_owner->spill_pool,

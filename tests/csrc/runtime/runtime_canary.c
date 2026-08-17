@@ -314,8 +314,8 @@ int main(void) {
         statistics.spill_allocated_bytes != 128U ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_bind_object(
-            runtime, object.object_id, first_generation.allocation_id
+        shadowspill_test_publish_initial(
+            runtime, object.object_id, first_generation.pointer, NULL
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0) {
         return EXIT_FAILURE;

@@ -824,3 +824,30 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Remove raw neutral object publication
+
+- Removed the public neutral-C bind, replacement, and caller-handoff functions
+  that accepted runtime object IDs. The only public publication operations are
+  now plan-local initial publication, task-handle publication ordinals, and
+  object-acquisition ordinals.
+- Kept one internal object-component implementation for binding and replacing
+  a physical lease. Both initial publication and repeated task publication call
+  those helpers after resolving a directly retained object and explicit pool;
+  there is no duplicated transition implementation.
+- Converted legacy transition canaries to plan-owned initial publication and
+  explicit task replacement descriptors. Caller-handoff tests now admit and
+  acquire object handles before transferring ownership.
+- The first test-helper draft passed a null output binding to the canonical
+  initial-publication API. This caused immediate `INVALID_ARGUMENT` failures
+  and left one telemetry scope open during cleanup. The helper now supplies a
+  local ignored binding when the test does not inspect it; no runtime behavior
+  was changed to accommodate the test.
+- One eight-way canary run subsequently left the planning-failure process
+  stalled. The identical fresh-process canary completed in 6.4 seconds, and a
+  complete repeated parallel run passed it in 14.52 seconds. No persistent
+  failure or changed runtime state was found.
+- The runtime ABI is now 36.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
