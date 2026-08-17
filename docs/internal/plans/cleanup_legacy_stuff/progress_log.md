@@ -701,3 +701,34 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   strict mypy over 177 installed source files; and `git diff --check`.
 - Passing structural commit: `e7124e1` (`Move allocation ownership into memory
   pools`).
+
+## 2026-08-17 — Plan-owned object residency
+
+- Changed object registration to name an explicit initial pool and changed the
+  neutral object read/write APIs to require a pool ID. Object teardown now
+  visits every owned location instead of assuming pools zero and one.
+- Routed acquisition, projected action state, mutation publication,
+  destination reservation, retirement, worker dispatch, and worker completion
+  through the immutable execution/spill pools retained by the owning plan.
+  These repeated paths no longer consult runtime-global pool roles.
+- Strengthened the three-pool canary from a construction-only check into an
+  end-to-end alternate-pair test: it imports a payload into pool 2, fetches it
+  over route 2 into pool 0, consumes and evicts it over route 3, reads it back
+  from pool 2, unregisters it, and proves the complete pool-2 range is reusable.
+- Bumped the runtime ABI to 33 and PyTorch adapter ABI to 41 for the changed
+  object description and neutral C object APIs.
+- One first parallel validation run reported a non-reproducing native-canary
+  segmentation fault. The affected canary then passed 20 isolated repetitions,
+  and ten consecutive complete eight-way parallel suites passed. No failure
+  state, core file, or deterministic path was found, so no speculative behavior
+  change was made.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; ten repeated complete parallel canary suites; the complete
+  Python suite with four expected skips; Ruff; strict mypy over 177 installed
+  source files; and `git diff --check`.
+- Passing structural commit: `49396cb` (`Route object residency through
+  plan-owned pools`).
+- Remaining transitional surface is now isolated to cold object publication,
+  caller handoff, snapshots, and role-shaped aggregate statistics. The next
+  milestone replaces publication with immutable task-owned records and then
+  removes those runtime-global helpers.
