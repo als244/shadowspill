@@ -20,7 +20,7 @@ from ._validation import (
 from .program import Program, RecomputationSelection
 from .schedule import MemorySchedule
 
-EXECUTION_PLAN_SCHEMA = "shadowspill.execution_plan/v1"
+EXECUTION_PLAN_SCHEMA = "shadowspill.execution_plan/v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,17 +28,17 @@ class EntrypointSpec:
     task_id: str
     entrypoint_id: str
     executor_id: str
-    abi_digest: str
+    contract_digest: str
 
     def __post_init__(self) -> None:
         require_identifier(self.task_id, "entrypoint.task_id")
         require_identifier(self.entrypoint_id, "entrypoint.entrypoint_id")
         require_identifier(self.executor_id, "entrypoint.executor_id")
-        require_identifier(self.abi_digest, "entrypoint.abi_digest")
+        require_identifier(self.contract_digest, "entrypoint.contract_digest")
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
-            "abi_digest": self.abi_digest,
+            "contract_digest": self.contract_digest,
             "entrypoint_id": self.entrypoint_id,
             "executor_id": self.executor_id,
             "task_id": self.task_id,
@@ -55,8 +55,8 @@ class EntrypointSpec:
             executor_id=expect_string(
                 field(data, "executor_id", path), f"{path}.executor_id"
             ),
-            abi_digest=expect_string(
-                field(data, "abi_digest", path), f"{path}.abi_digest"
+            contract_digest=expect_string(
+                field(data, "contract_digest", path), f"{path}.contract_digest"
             ),
         )
 

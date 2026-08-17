@@ -32,9 +32,9 @@ class PlanPhaseTiming:
 
 @dataclass(frozen=True, slots=True)
 class PlanCompilerProfile:
-    """Non-overlapping compiler phases for one structural task ABI."""
+    """Non-overlapping compiler phases for one structural task contract."""
 
-    structural_abi_key: str
+    structural_contract_key: str
     phases: tuple[PlanPhaseTiming, ...]
 
     @property
@@ -43,7 +43,7 @@ class PlanCompilerProfile:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "structural_abi_key": self.structural_abi_key,
+            "structural_contract_key": self.structural_contract_key,
             "phases": [item.as_dict() for item in self.phases],
             "total_wall_time_ns": self.total_wall_time_ns,
         }
@@ -306,10 +306,10 @@ class PlanRepresentativeInput:
 
 @dataclass(frozen=True, slots=True)
 class PlanGraphProfile:
-    """Measured cost and memory geometry for one executable graph ABI."""
+    """Measured cost and memory geometry for one executable graph contract."""
 
     direction: str
-    structural_abi_key: str
+    structural_contract_key: str
     semantic_contract_digest: str
     semantic_contract_capture_ns: int
     semantic_roots: tuple[PlanStorageRoot, ...]
@@ -355,7 +355,7 @@ class PlanGraphProfile:
     def as_dict(self) -> dict[str, object]:
         return {
             "direction": self.direction,
-            "structural_abi_key": self.structural_abi_key,
+            "structural_contract_key": self.structural_contract_key,
             "semantic_contract_digest": self.semantic_contract_digest,
             "semantic_contract_capture_ns": self.semantic_contract_capture_ns,
             "semantic_roots": [item.as_dict() for item in self.semantic_roots],
@@ -484,7 +484,7 @@ class PlanTaskStage:
     microbatch: int | None
     stage_occurrence_id: str | None
     unique_stage_id: str
-    structural_abi_key: str
+    structural_contract_key: str
     semantic_contract_digest: str | None
     executable_contract_digest: str | None
     compiled_layout_digest: str | None
@@ -504,7 +504,7 @@ class PlanTaskStage:
             "microbatch": self.microbatch,
             "stage_occurrence_id": self.stage_occurrence_id,
             "unique_stage_id": self.unique_stage_id,
-            "structural_abi_key": self.structural_abi_key,
+            "structural_contract_key": self.structural_contract_key,
             "semantic_contract_digest": self.semantic_contract_digest,
             "executable_contract_digest": self.executable_contract_digest,
             "compiled_layout_digest": self.compiled_layout_digest,
@@ -658,7 +658,7 @@ class PlanDiagnostics:
     allocation_probe_seeds: int
     allocation_probe_repetitions: int
     captured_stage_count: int
-    aot_unique_stage_abis: int
+    aot_unique_stage_contracts: int
     aot_graph_pair_cache_hits: int
     aot_graph_pair_cache_misses: int
     recomputation_cache_hits: int
@@ -700,8 +700,8 @@ class PlanDiagnostics:
                 "measured_wall_time_ns": sum(
                     duration for _name, duration in self.compiler_phase_timings_ns
                 ),
-                "structural_abis": {
-                    item.structural_abi_key: item.as_dict()
+                "structural_contracts": {
+                    item.structural_contract_key: item.as_dict()
                     for item in self.compiler_profiles
                 },
             },
@@ -710,7 +710,7 @@ class PlanDiagnostics:
             "profiling_metadata": [item.as_dict() for item in self.profiling_metadata],
             "capture": {
                 "stage_count": self.captured_stage_count,
-                "aot_unique_stage_abis": self.aot_unique_stage_abis,
+                "aot_unique_stage_contracts": self.aot_unique_stage_contracts,
                 "aot_graph_pair_cache_hits": self.aot_graph_pair_cache_hits,
                 "aot_graph_pair_cache_misses": self.aot_graph_pair_cache_misses,
             },
@@ -797,7 +797,7 @@ class PlanReport:
     recomputation_cache_misses: int = 0
     fixed_slab_bytes: int = 0
     captured_stage_count: int = 0
-    aot_unique_stage_abis: int = 0
+    aot_unique_stage_contracts: int = 0
     aot_graph_pair_cache_hits: int = 0
     aot_graph_pair_cache_misses: int = 0
     pressurefit_results: tuple[PressureFitResult, ...] = ()

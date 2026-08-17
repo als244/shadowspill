@@ -97,8 +97,8 @@ The other planning-cost views are:
 
 | Field | Interpretation |
 |---|---|
-| `compiler_phase_timings_ns` | Aggregate compiler phases across structural ABIs. |
-| `compiler_profiles` | Per-structural-ABI compiler phase breakdown. |
+| `compiler_phase_timings_ns` | Aggregate compiler phases across structural contracts. |
+| `compiler_profiles` | Per-structural-contract compiler phase breakdown. |
 | `profile_unique_keys` | Number of structural profiles needed by the call. |
 | `profile_cache_hits`, `profile_cache_misses` | Measurement reuse versus fresh profiling. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Reuse versus construction of differentiated graph pairs. |
@@ -126,7 +126,7 @@ print(task.semantic_name)
 print(task.phase, task.microbatch)
 print(task.task_id)
 print(task.unique_stage_id)
-print(task.structural_abi_key)
+print(task.structural_contract_key)
 print(task.chosen_graph_pair_variant)
 ```
 
@@ -141,7 +141,7 @@ was absent from execution.
 ## Unique stages and graph pairs
 
 `unique_stages` deduplicates repeated model positions with the same structural
-ABI. Each `PlanUniqueStage` records module targets, occurrence count, and all
+contract. Each `PlanUniqueStage` records module targets, occurrence count, and all
 legal `PlanGraphPair` alternatives.
 
 ```python

@@ -1,6 +1,6 @@
 """Profile-keyed sidecars for compiler-owned task storage manifests.
 
-The ordinary profile cache already proves that a structural ABI has measured
+The ordinary profile cache already proves that a structural contract has measured
 timing and allocation geometry.  This adjacent sidecar preserves the exact
 Inductor storage contract from that same compilation, allowing planning to
 lower and select graph-pair variants before rebuilding executable callables.

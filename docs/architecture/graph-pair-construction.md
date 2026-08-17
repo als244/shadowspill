@@ -10,7 +10,7 @@ The three layers have deliberately different outputs:
 
 | Layer | Unit of work | Output |
 |---|---|---|
-| Graph-pair construction | One structural stage ABI | A `GraphPairPortfolio` containing named forward/backward variants |
+| Graph-pair construction | One structural stage contract | A `GraphPairPortfolio` containing named forward/backward variants |
 | Recomputation selection | All occurrence-level `RecomputationGroup` values in one Program | A bounded tuple of complete `RecomputationSelection` assignments |
 | PressureFit | One complete assignment plus the Program and machine model | A residency/action schedule with simulated cost |
 
@@ -23,10 +23,10 @@ runtime contracts.
 | Term | Meaning |
 |---|---|
 | Stage occurrence | One ordered partition in one captured input geometry or accumulation round. |
-| Structural ABI | The deterministic graph/input/storage identity shared by equivalent stage occurrences. |
+| Structural contract | The deterministic graph/input/storage identity shared by equivalent stage occurrences. |
 | Graph pair | One mutually compatible AOTAutograd forward graph and backward graph. |
 | Variant | A named graph pair produced by one partitioning policy, such as `save` or `recompute`. |
-| Portfolio | Every configured legal variant for one structural ABI. |
+| Portfolio | Every configured legal variant for one structural contract. |
 | Recomputation group | The occurrence-level Program choice whose options activate one variant's forward and backward tasks. |
 
 A graph pair is not a pair of chronological execution IDs. Construction
@@ -50,7 +50,7 @@ It returns an immutable `GraphPairPortfolio`:
 
 ```text
 GraphPairPortfolio
-├── structural_abi
+├── structural_contract
 ├── root_output_indices
 ├── reference_option_id
 └── variants
@@ -77,7 +77,7 @@ cotangents remain real task inputs because they carry activation gradients.
 
 ## Structural deduplication
 
-Before AOT capture, ShadowSpill computes the stage structural ABI from:
+Before AOT capture, ShadowSpill computes the stage structural contract from:
 
 - normalized FX graph semantics;
 - tensor geometry and static arguments;
@@ -88,13 +88,13 @@ Before AOT capture, ShadowSpill computes the stage structural ABI from:
 `GraphPairRepository` keys a portfolio by:
 
 ```text
-(structural_abi, differentiable_root_positions, specialize_unit_tangents)
+(structural_contract, differentiable_root_positions, specialize_unit_tangents)
 ```
 
 The first occurrence constructs or restores the portfolio. Equivalent later
 occurrences reuse its graph code and contracts while rebinding authentic
 occurrence-local inputs and input provenance. This makes graph construction
-scale with unique structural ABIs rather than model positions.
+scale with unique structural contracts rather than model positions.
 
 ## Constructing one variant
 
@@ -107,7 +107,7 @@ callbacks that capture the emitted forward and backward FX graphs as
 The `save` variant uses AOTAutograd's ordinary partitioning path. Values needed
 by backward are returned by the forward graph and become inputs to its paired
 backward graph. Its `memory_budget` is `None`, and it is the reference variant
-used to establish the canonical public stage-boundary ABI.
+used to establish the canonical public stage-boundary contract.
 
 ### Recompute
 
@@ -161,7 +161,7 @@ code, runtimes, workspace, allocation paths, and mutation transition bytes.
 Graph-pair construction produces semantic graph artifacts; it does not assign
 task runtimes or workspace from AOT heuristics. The profiling pipeline later
 compiles and measures the forward and backward artifact of every unique
-variant ABI independently.
+variant contract independently.
 
 Compilation/profiling records, for both halves of every pair:
 
@@ -198,7 +198,7 @@ immutable Program but are excluded by `Program.selected_tasks()`.
 
 Structural deduplication and occurrence-level choice are both preserved:
 
-- `PlanReport.diagnostics.unique_stages` describes one structural ABI and all
+- `PlanReport.diagnostics.unique_stages` describes one structural contract and all
   profiled graph pairs;
 - the execution-task map identifies each occurrence and its selected variant;
 - the Program's recomputation groups carry the exact occurrence-level task and
@@ -230,7 +230,7 @@ ConstructGraphPairs(partitioned_export):
     for occurrence in partitioned_export.stages:
         roots = differentiable_stage_roots(occurrence)
         terminal = occurrence is final stage
-        key = structural_abi(occurrence, roots, terminal)
+        key = structural_contract(occurrence, roots, terminal)
 
         portfolio = repository.lookup(key)
         if portfolio is absent:

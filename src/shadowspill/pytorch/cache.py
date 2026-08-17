@@ -525,7 +525,7 @@ class PlanningCache:
             digest=execution_plan.digest,
             path=plan_path,
             access="write",
-            schema="shadowspill.execution_plan/v1",
+            schema="shadowspill.execution_plan/v2",
             dependencies=(execution_plan.program.digest,),
         )
         initial_path: Path | None = None
@@ -538,7 +538,7 @@ class PlanningCache:
                 digest=initial_execution_plan.digest,
                 path=initial_path,
                 access="write",
-                schema="shadowspill.execution_plan/v1",
+                schema="shadowspill.execution_plan/v2",
                 dependencies=(initial_execution_plan.program.digest,),
             )
         manifest_path = directory / "manifest.json"

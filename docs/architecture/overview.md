@@ -70,7 +70,7 @@ The planning components answer deliberately different questions:
 | Component | Question answered |
 |---|---|
 | Stage partitioning | Where is the captured model divided into ordered compiled tasks? |
-| Graph-pair construction | What legal forward/backward implementations exist for one structural task ABI? |
+| Graph-pair construction | What legal forward/backward implementations exist for one structural task contract? |
 | Recomputation selection | Which complete assignments of those local alternatives should the planner consider? |
 | PressureFit | For one complete assignment, which objects reside where and when do memory actions trigger? |
 | Simulator | What compute, transfer, dependency, and capacity timeline does that policy imply? |
@@ -78,7 +78,7 @@ The planning components answer deliberately different questions:
 | Materialization | How are the admitted records and compiled callables installed into the runtime? |
 
 Graph-pair construction is local: it builds options such as save and full
-recompute for one structural ABI. Recomputation selection is global: one
+recompute for one structural contract. Recomputation selection is global: one
 selection chooses an option for every occurrence-level group. PressureFit then
 evaluates each selected assignment together with residency and fetch policy.
 
@@ -216,8 +216,8 @@ Pointers therefore describe current placement, not semantic identity.
 | Term | Meaning |
 |---|---|
 | Stage | One ordered partition of the captured model graph. |
-| Structural ABI | Shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
-| Graph-pair portfolio | Every configured forward/backward alternative for one differentiated structural ABI. |
+| Structural contract | Shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
+| Graph-pair portfolio | Every configured forward/backward alternative for one differentiated structural contract. |
 | Recomputation selection | One complete choice of graph-pair option for every occurrence-level group. |
 | Storage root | One semantic allocation identity shared by all of its views. |
 | Program object | One logical alias bundle with size, role, persistence, and task dependencies. |

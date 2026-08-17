@@ -249,7 +249,7 @@ def main() -> int:
                 )
             if not isinstance(error, CompilationError):
                 raise AssertionError("compiler failure lost its public error type")
-            if error.structural_abi is None or not error.operators:
+            if error.structural_contract is None or not error.operators:
                 raise AssertionError("compiler failure omitted structural context")
             if error.__cause__ is None:
                 raise AssertionError("compiler failure lost its PyTorch cause")
@@ -268,10 +268,11 @@ def main() -> int:
                 for note in error.__notes__
             ):
                 raise AssertionError("compiled-task failure omitted its phase")
-            if not any("structural ABI" in note for note in error.__notes__) and (
-                not isinstance(error, ProfilingError) or error.structural_abi is None
+            if not any("structural contract" in note for note in error.__notes__) and (
+                not isinstance(error, ProfilingError)
+                or error.structural_contract is None
             ):
-                raise AssertionError("profile failure omitted its ABI")
+                raise AssertionError("profile failure omitted its structural contract")
             if not isinstance(error.__cause__, RuntimeError):
                 raise AssertionError("profile failure lost its provider cause")
         finally:

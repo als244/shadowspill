@@ -1,4 +1,4 @@
-"""Physical output layout observed for one isolated compiled task ABI.
+"""Physical output layout observed for one isolated compiled task contract.
 
 The semantic contract is authoritative for ownership and aliasing.  This
 module accepts only physical observations that satisfy that contract; it can
@@ -80,7 +80,7 @@ class CompiledOutputView:
 
 @dataclass(frozen=True, slots=True)
 class CompiledTaskLayout:
-    """Validated physical ABI for one semantic task contract."""
+    """Validated physical contract for one semantic task contract."""
 
     contract_digest: str
     roots: tuple[CompiledRootLayout, ...]

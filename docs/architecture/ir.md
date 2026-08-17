@@ -31,7 +31,7 @@ IR does not restrict the number of alternatives. A
 
 Stage partitioning and recomputation are separate concepts. A stage is an
 ordered model partition. Structurally equivalent stage occurrences may share
-one graph-pair ABI after shapes and input roles are known. See [graph-pair
+one graph-pair contract after shapes and input roles are known. See [graph-pair
 construction](graph-pair-construction.md) for how those alternatives are
 built and [recomputation selection](recomputation-selection.md) for how complete
 occurrence-level assignments are selected.

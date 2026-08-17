@@ -237,7 +237,7 @@ def test_manifest_hydration_restores_arguments_before_measurement() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
+def test_optimizer_compilation_uses_no_grad_mutation_contract() -> None:
     model = nn.Sequential(nn.Linear(6, 10), nn.Linear(10, 3))
     optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
     for parameter in model.parameters():
@@ -256,7 +256,7 @@ def test_optimizer_compilation_uses_no_grad_mutation_abi() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_explicit_optimizer_preserves_outer_aot_mutation_abi() -> None:
+def test_explicit_optimizer_preserves_outer_aot_mutation_contract() -> None:
     model = nn.Sequential(nn.Linear(6, 10), nn.Linear(10, 3))
     optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
     for parameter in model.parameters():
@@ -603,7 +603,7 @@ def test_compiler_failure_has_structural_context_and_preserves_cause(
     with pytest.raises(CompilationError, match="compiler exploded") as captured:
         profiler._compiled(artifact)
 
-    assert captured.value.structural_abi == artifact.compatibility_digest
+    assert captured.value.structural_contract == artifact.compatibility_digest
     assert captured.value.task_kind == artifact.kind
     assert captured.value.operators == artifact.operator_targets
     assert isinstance(captured.value.__cause__, RuntimeError)
@@ -638,13 +638,13 @@ def test_profile_failure_has_structural_context_and_preserves_cause(
     with pytest.raises(ProfilingError, match="kernel exploded") as captured:
         profiler.measure(artifact)
 
-    assert captured.value.structural_abi == artifact.compatibility_digest
+    assert captured.value.structural_contract == artifact.compatibility_digest
     assert captured.value.task_kind == artifact.kind
     assert captured.value.operators == artifact.operator_targets
     assert isinstance(captured.value.__cause__, RuntimeError)
 
 
-def test_measurement_releases_cuda_examples_between_structural_abis(
+def test_measurement_releases_cuda_examples_between_structural_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from shadowspill.pytorch.profiling import TaskMeasurement

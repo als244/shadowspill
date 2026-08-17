@@ -266,7 +266,7 @@ def capture_training_objective(
 
 
 def inference_artifact(capture: ExportCapture) -> GraphArtifact:
-    """Create the structural task ABI for a functional Export graph."""
+    """Create the structural task contract for a functional Export graph."""
 
     return GraphArtifact.capture(
         kind="inference",
@@ -277,7 +277,7 @@ def inference_artifact(capture: ExportCapture) -> GraphArtifact:
 
 
 def export_capture_digest(capture: ExportCapture) -> str:
-    """Return the stable semantic/input ABI of one freshly exported graph."""
+    """Return the stable semantic/input contract of one exported graph."""
 
     return GraphArtifact.input_compatibility_digest(
         graph_module=capture.exported_program.graph_module,
@@ -312,7 +312,7 @@ def capture_graph_pair(
     explicit_mutations: tuple[ExplicitMutation, ...] = (),
     input_provenance: tuple[TaskInputProvenance, ...] | None = None,
 ) -> AotGraphPair:
-    """Differentiate one functional graph with a flat tensor/static ABI."""
+    """Differentiate one functional graph with a flat tensor/static signature."""
 
     _validate_activation_budget(recomputation, activation_memory_budget)
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
@@ -570,7 +570,7 @@ def _backward_input_provenance(
                 source = forward.input_provenance[root.source_input]
             except IndexError as exc:
                 raise CaptureError(
-                    "saved forward input root is outside the task ABI"
+                    "saved forward input root is outside the task contract"
                 ) from exc
             result.append(_saved_input_view_provenance(source, view))
         else:
@@ -602,7 +602,7 @@ def rebind_backward_input_provenance(
     pair: AotGraphPair,
     forward: GraphArtifact,
 ) -> tuple[TaskInputProvenance, ...]:
-    """Rebuild saved-value provenance for one occurrence-local forward ABI."""
+    """Rebuild saved-value provenance for one occurrence-local forward contract."""
 
     original_output_count = forward.output_count - pair.saved_value_count
     if original_output_count < 0:
@@ -668,7 +668,7 @@ def _tensor_only_mutations(
     mutations: tuple[ExplicitMutation, ...],
     inputs: tuple[object, ...],
 ) -> tuple[ExplicitMutation, ...]:
-    """Translate a mixed positional ABI to AOT's tensor-only forward ABI."""
+    """Translate a mixed positional signature to AOT's tensor-only forward contract."""
 
     tensor_position = {
         original: compact
@@ -719,7 +719,7 @@ def _specialize_terminal_unit_tangents(
     if not anchors:
         # A device-relative scalar cannot be constructed without either a
         # tensor anchor or a backend-specific device literal. Preserve the
-        # explicit tangent ABI for this degenerate graph.
+        # explicit tangent contract for this degenerate graph.
         return backward, 0
     anchor = anchors[0]
     for placeholder, tangent in zip(placeholders[-count:], tangents, strict=True):

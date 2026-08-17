@@ -162,7 +162,7 @@ def _slice_outputs(
             target = leaves[output_index]
         except IndexError as error:
             raise CaptureError(
-                f"producer output index {output_index} is outside its stage ABI"
+                f"producer output index {output_index} is outside its stage contract"
             ) from error
         if not isinstance(target, Node):
             raise CaptureError(
@@ -212,7 +212,9 @@ def _resolve_slice_input(
         captured = record.inputs[position]
         source = record.input_sources[position]
     except IndexError as error:
-        raise CaptureError("producer slice input is outside the stage ABI") from error
+        raise CaptureError(
+            "producer slice input is outside the stage contract"
+        ) from error
     if not isinstance(captured, torch.Tensor):
         return captured
     if source is None:
@@ -257,7 +259,9 @@ def _stage_output_tensor(
     try:
         value = leaves[output_index]
     except IndexError as error:
-        raise CaptureError(f"stage output {key} is outside its recorded ABI") from error
+        raise CaptureError(
+            f"stage output {key} is outside its recorded contract"
+        ) from error
     if not isinstance(value, torch.Tensor):
         raise CaptureError(f"stage output {key} is not a tensor")
     if not _requires_authentic(value):

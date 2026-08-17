@@ -86,9 +86,9 @@ class RepresentativeInputSummary:
 
 @dataclass(frozen=True, slots=True)
 class RepresentativeInputSet:
-    """One independently materialized structural ABI input set."""
+    """One independently materialized structural contract input set."""
 
-    structural_abi_key: str
+    structural_contract_key: str
     policy_version: str
     probe_index: int
     arguments: tuple[object, ...]
@@ -126,7 +126,7 @@ def materialize_representative_inputs(
     ):
         raise AssertionError("representative task input materialization is incomplete")
     return RepresentativeInputSet(
-        structural_abi_key=artifact.compatibility_digest,
+        structural_contract_key=artifact.compatibility_digest,
         policy_version=REPRESENTATIVE_VALUE_POLICY,
         probe_index=probe_index,
         arguments=tuple(value for value in arguments if value is not None),
@@ -136,7 +136,9 @@ def materialize_representative_inputs(
 
 def _validate_representative_artifact(artifact: GraphArtifact) -> None:
     if len(artifact.example_arguments) != len(artifact.input_provenance):
-        raise CaptureError("task input provenance differs from the compiled tensor ABI")
+        raise CaptureError(
+            "task input provenance differs from the compiled tensor contract"
+        )
     if len(artifact.tensor_argument_alias_groups) != len(artifact.example_arguments):
         raise CaptureError("task input alias groups differ from argument arity")
 
@@ -159,7 +161,7 @@ def _materialize_alias_group(
 ) -> tuple[tuple[int, torch.Tensor, RepresentativeInputSummary], ...]:
     examples = tuple(artifact.example_arguments[position] for position in positions)
     if any(not isinstance(value, torch.Tensor) for value in examples):
-        raise CaptureError("compiled task tensor ABI contains a static argument")
+        raise CaptureError("compiled task tensor contract contains a static argument")
     tensors = tuple(value for value in examples if isinstance(value, torch.Tensor))
     target_device = _representative_device(tensors, device_ordinal)
     owner = torch.empty(
@@ -170,7 +172,7 @@ def _materialize_alias_group(
     if allocation_check is not None:
         allocation_check(
             "materialize representative input "
-            f"for ABI {artifact.compatibility_digest}, alias group {group}"
+            f"for contract {artifact.compatibility_digest}, alias group {group}"
         )
     values: list[tuple[int, torch.Tensor, RepresentativeInputSummary]] = []
     for position, example in zip(positions, tensors, strict=True):
@@ -184,7 +186,7 @@ def _materialize_alias_group(
         policy = _populate_value(
             target,
             provenance,
-            structural_abi_key=artifact.compatibility_digest,
+            structural_contract_key=artifact.compatibility_digest,
             position=position,
             probe_index=probe_index,
         )
@@ -248,7 +250,7 @@ def _populate_value(
     target: torch.Tensor,
     provenance: TaskInputProvenance,
     *,
-    structural_abi_key: str,
+    structural_contract_key: str,
     position: int,
     probe_index: int,
 ) -> str:
@@ -257,7 +259,7 @@ def _populate_value(
         _validate_reference(
             reference,
             target,
-            structural_abi_key=structural_abi_key,
+            structural_contract_key=structural_contract_key,
             position=position,
             provenance=provenance,
         )
@@ -269,7 +271,7 @@ def _populate_value(
         )
     if provenance.role in _REQUIRED_REFERENCE_ROLES:
         raise _value_error(
-            structural_abi_key,
+            structural_contract_key,
             position,
             provenance,
             target,
@@ -280,7 +282,7 @@ def _populate_value(
         return "lazy_optimizer_state_zero"
     if not target.is_floating_point() and not target.is_complex():
         raise _value_error(
-            structural_abi_key,
+            structural_contract_key,
             position,
             provenance,
             target,
@@ -288,7 +290,7 @@ def _populate_value(
             "caller-supplied value",
         )
 
-    seed = _seed(structural_abi_key, position, probe_index)
+    seed = _seed(structural_contract_key, position, probe_index)
     try:
         if target.is_floating_point():
             generator = torch.Generator(device=target.device).manual_seed(seed)
@@ -305,7 +307,7 @@ def _populate_value(
         raise AssertionError("floating/complex representative policy is incomplete")
     except BaseException as exc:
         raise _value_error(
-            structural_abi_key,
+            structural_contract_key,
             position,
             provenance,
             target,
@@ -317,7 +319,7 @@ def _validate_reference(
     reference: torch.Tensor,
     target: torch.Tensor,
     *,
-    structural_abi_key: str,
+    structural_contract_key: str,
     position: int,
     provenance: TaskInputProvenance,
 ) -> None:
@@ -327,16 +329,16 @@ def _validate_reference(
         or reference.dtype != target.dtype
     ):
         raise _value_error(
-            structural_abi_key,
+            structural_contract_key,
             position,
             provenance,
             target,
-            "authentic value geometry differs from the structural ABI",
+            "authentic value geometry differs from the structural contract",
         )
 
 
 def _value_error(
-    structural_abi_key: str,
+    structural_contract_key: str,
     position: int,
     provenance: TaskInputProvenance,
     target: torch.Tensor,
@@ -345,15 +347,15 @@ def _value_error(
     consumers = provenance.consumer_targets or ("<output-only>",)
     return CaptureError(
         "representative task input is invalid: "
-        f"abi={structural_abi_key}, position={position}, "
+        f"contract={structural_contract_key}, position={position}, "
         f"role={provenance.role.value}, dtype={target.dtype}, "
         f"consumers={consumers}: {detail}"
     )
 
 
-def _seed(structural_abi_key: str, position: int, probe_index: int) -> int:
+def _seed(structural_contract_key: str, position: int, probe_index: int) -> int:
     encoded = (
-        f"{REPRESENTATIVE_VALUE_POLICY}:{structural_abi_key}:"
+        f"{REPRESENTATIVE_VALUE_POLICY}:{structural_contract_key}:"
         f"{position}:{probe_index}"
     ).encode()
     return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "little") & (

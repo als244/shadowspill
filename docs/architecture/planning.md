@@ -60,7 +60,7 @@ the program and plan make this input explicit and serializable.
 ## Plan report
 
 Planning diagnostics are always present. `PlanReport` maps chronological
-execution IDs to semantic tasks, unique stages, structural ABIs, selected
+execution IDs to semantic tasks, unique stages, structural contracts, selected
 graph-pair variants, storage contracts, physical layouts, allocation events,
 profile measurements, cache artifacts, transfer calibration, and phase times.
 Verbose console output is only presentation; disabling it does not remove the

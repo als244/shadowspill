@@ -102,7 +102,7 @@ class ProfileExecutableStore:
         self._warmed: set[str] = set()
         self._compilation_wall_time_ns = 0
         self._phase_totals: dict[str, int] = {}
-        self._phases_by_abi: dict[str, tuple[tuple[str, int], ...]] = {}
+        self._phases_by_contract: dict[str, tuple[tuple[str, int], ...]] = {}
 
     @property
     def compilation_wall_time_ns(self) -> int:
@@ -113,10 +113,10 @@ class ProfileExecutableStore:
         return tuple(self._phase_totals.items())
 
     @property
-    def compilation_phase_timings_by_abi(
+    def compilation_phase_timings_by_contract(
         self,
     ) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
-        return tuple(sorted(self._phases_by_abi.items()))
+        return tuple(sorted(self._phases_by_contract.items()))
 
     def prepare_manifests(
         self,
@@ -236,7 +236,7 @@ class ProfileExecutableStore:
                     device_ordinal=self._device_ordinal,
                 )
             except CompilationError as error:
-                if error.structural_abi is not None:
+                if error.structural_contract is not None:
                     raise
                 raise _compilation_error(artifact, error) from error
             except BaseException as error:
@@ -244,7 +244,7 @@ class ProfileExecutableStore:
             phases = compiled.compilation_phase_timings_ns
             for name, duration in phases:
                 self._phase_totals[name] = self._phase_totals.get(name, 0) + duration
-            self._phases_by_abi[artifact.compatibility_digest] = phases
+            self._phases_by_contract[artifact.compatibility_digest] = phases
             occurrence_values = OccurrenceValueOwner(compiled.example_arguments)
             compiled_without_values = replace(compiled, example_arguments=())
             return ProfileExecutable(
@@ -322,10 +322,10 @@ def _compilation_error(
     operators = tuple(artifact.operator_targets)
     operator_text = ", ".join(operators) or "none"
     return CompilationError(
-        "ShadowSpill failed to compile structural ABI "
+        "ShadowSpill failed to compile structural contract "
         f"{artifact.compatibility_digest} "
         f"(kind={artifact.kind}, operators=[{operator_text}]): {cause}",
-        structural_abi=artifact.compatibility_digest,
+        structural_contract=artifact.compatibility_digest,
         task_kind=artifact.kind,
         operators=operators,
     )

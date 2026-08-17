@@ -20,7 +20,7 @@ All public exceptions below are exported by `shadowspill.pytorch`.
 | Runtime construction or lifecycle | `RuntimeConfigurationError` | Pool configuration, allocator installation, calibration, ownership, or close is invalid. |
 | Planning | `PlanningError` | Base class for failures before a callable is published. |
 | Capture | `CaptureError` | Export, AOTAutograd, partitioning, or semantic-contract extraction cannot represent the requested fixed graph. |
-| Compilation | `CompilationError` | A captured structural task cannot be compiled into the required executable ABI. |
+| Compilation | `CompilationError` | A captured structural task cannot be compiled into the required executable contract. |
 | Profiling | `ProfilingError` | Isolated task timing, workspace measurement, or allocation-path validation fails. |
 | Physical admission | `AdmissionError` | Runtime pools cannot admit the selected execution plan. |
 | Plan feasibility | `PlanInfeasibleError` | No schedule satisfies a declared capacity or another planning constraint. |
@@ -29,7 +29,7 @@ All public exceptions below are exported by `shadowspill.pytorch`.
 | Call input validation | `InputGuardError` | Runtime inputs differ from the fixed planning template. No task has run and no state was mutated. |
 | Planned execution | `RuntimeExecutionError` | The runtime, allocator, worker, or a task-specific execution contract rejected the step. |
 
-`CompilationError` and `ProfilingError` retain `structural_abi`, `task_kind`,
+`CompilationError` and `ProfilingError` retain `structural_contract`, `task_kind`,
 and `operators` when that context is available. `PlanInfeasibleError` retains
 the failure `kind`, device, boundary task, required bytes, and capacity bytes.
 The original PyTorch exception remains the cause, so its traceback identifies

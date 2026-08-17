@@ -383,7 +383,7 @@ def profile_training_tasks(
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
-    """Compile/profile each unique graph-pair and optimizer structural ABI."""
+    """Compile/profile each unique graph-pair and optimizer structural contract."""
 
     profiler = CudaTaskProfiler(
         captured.installed.library,
@@ -1042,7 +1042,7 @@ def _training_plan_report(
         captured_stage_count=sum(
             len(capture.stages) for capture in captured.partitioned
         ),
-        aot_unique_stage_abis=artifact_cache.graph_pairs.unique_keys,
+        aot_unique_stage_contracts=artifact_cache.graph_pairs.unique_keys,
         aot_graph_pair_cache_hits=artifact_cache.graph_pairs.hits,
         aot_graph_pair_cache_misses=artifact_cache.graph_pairs.misses,
         pressurefit_results=(
@@ -1053,8 +1053,8 @@ def _training_plan_report(
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
         compiler_phase_timings_ns=profiled.profiler.compilation_phase_timings_ns,
-        compiler_phase_timings_by_abi=(
-            profiled.profiler.compilation_phase_timings_by_abi
+        compiler_phase_timings_by_contract=(
+            profiled.profiler.compilation_phase_timings_by_contract
         ),
         cache_directories=artifact_cache.store.diagnostics(),
         touched_cache_artifacts=cache_artifacts(artifact_cache.store),
@@ -1601,7 +1601,7 @@ def _verify_compiled_manifest_identity(
             expected.compatibility_digest != manifest.compatibility_digest
         ):
             raise CompilationError(
-                "selected compiled entrypoint changed its storage ABI: "
+                "selected compiled entrypoint changed its storage contract: "
                 f"artifact={digest}"
             )
 

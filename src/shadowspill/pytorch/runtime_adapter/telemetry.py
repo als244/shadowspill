@@ -127,7 +127,7 @@ class _TraceNormalizer:
         self.pending_by_span: dict[tuple[int, int], tuple[int, int]] = {}
         self.pending_span_by_id: dict[int, tuple[int, int]] = {}
         self.trace: list[TaskAllocationEvent] = []
-        self.abi_trace: list[TaskAllocationEvent] = []
+        self.allocation_contract_trace: list[TaskAllocationEvent] = []
 
     def normalize(
         self,
@@ -154,10 +154,10 @@ class _TraceNormalizer:
             if event.allocation_ordinal not in persistent_ordinals
         )
         # Persistent provider allocations still occur inside the callable and
-        # therefore remain part of its runtime callback ABI.  Only the
+        # therefore remain part of its runtime callback contract. Only the
         # task-memory replay excludes them: their bounded high-water is carved
         # from the execution pool separately.
-        return filtered, tuple(self.abi_trace), persistent_ids
+        return filtered, tuple(self.allocation_contract_trace), persistent_ids
 
     def _create(self, event: CapturedAllocationEvent) -> None:
         if event.allocation_id in self.ordinal_by_id:
@@ -187,7 +187,7 @@ class _TraceNormalizer:
             event.alignment_bytes,
         )
         self.trace.append(normalized)
-        self.abi_trace.append(normalized)
+        self.allocation_contract_trace.append(normalized)
 
     def _free(self, event: CapturedAllocationEvent) -> None:
         ordinal = self.ordinal_by_id.get(event.allocation_id)
@@ -201,7 +201,7 @@ class _TraceNormalizer:
             charged,
             alignment_bytes=alignment,
         )
-        self.abi_trace.append(normalized)
+        self.allocation_contract_trace.append(normalized)
         if event.allocation_id not in self.output_views:
             self.trace.append(normalized)
         span = event.slab_offset, event.charged_bytes

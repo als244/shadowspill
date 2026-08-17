@@ -92,13 +92,13 @@ class ProfileEnvironment:
 
 @dataclass(frozen=True, slots=True)
 class TaskMeasurement:
-    """Calibrated task time and allocator behavior for one structural ABI.
+    """Calibrated task time and allocator behavior for one structural contract.
 
     ``persistent_extent_bytes`` is the incremental slab growth attributable to
     bounded provider or custom-operation state first observed by this profile.
     It excludes profiler-owned task arguments and task-local workspace.  Since
     profiles run serially against one live provider inventory, a shared cache
-    allocation is charged only by the first structural ABI that creates it.
+    allocation is charged only by the first structural contract that creates it.
     """
 
     runtime_ns: int
@@ -196,7 +196,7 @@ class TaskMeasurement:
                 for event in self.allocation_trace
                 if event.operation is TaskAllocationOperation.ALLOCATE
             )
-            abi_geometry = tuple(
+            contract_geometry = tuple(
                 (
                     step.allocation_ordinal,
                     step.operation,
@@ -209,7 +209,7 @@ class TaskMeasurement:
                 if step.operation is TaskAllocationOperation.ALLOCATE
                 and not (step.persistent_after_task and not step.output_leaf_indices)
             )
-            if trace_geometry != abi_geometry:
+            if trace_geometry != contract_geometry:
                 raise ValueError(
                     "task allocation contract allocations disagree with its trace"
                 )
@@ -224,13 +224,13 @@ class TaskMeasurement:
                 for event in self.allocation_trace
                 if event.operation is TaskAllocationOperation.FREE
             )
-            abi_frees = tuple(
+            contract_frees = tuple(
                 step.allocation_ordinal
                 for step in self.allocation_contract.steps
                 if step.operation is TaskAllocationOperation.FREE
                 and step.allocation_ordinal not in output_ordinals
             )
-            if trace_frees != abi_frees:
+            if trace_frees != contract_frees:
                 raise ValueError(
                     "task allocation contract temporary frees disagree with its trace"
                 )

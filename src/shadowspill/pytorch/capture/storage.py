@@ -34,7 +34,7 @@ class StorageRootKind(StrEnum):
 class StorageRoot:
     """One normalized semantic storage root.
 
-    Input roots name the canonical ABI argument position for an input alias
+    Input roots name the canonical argument position for an input alias
     group. Fresh roots name one FX producer and result index. Physical
     allocation sizes deliberately do not appear in this record.
     """
@@ -54,7 +54,7 @@ class StorageRoot:
             raise TypeError("storage-root kind has an invalid type")
         if self.kind is StorageRootKind.INPUT:
             if self.source_input is None or self.source_input < 0:
-                raise ValueError("input root requires an ABI input position")
+                raise ValueError("input root requires an input position")
             if any(
                 value is not None
                 for value in (
@@ -66,7 +66,7 @@ class StorageRoot:
                 raise ValueError("input root cannot name an FX producer")
         else:
             if self.source_input is not None:
-                raise ValueError("fresh root cannot name an ABI input")
+                raise ValueError("fresh root cannot name a task input")
             if not self.producer_node or not self.producer_target:
                 raise ValueError("fresh root requires FX producer provenance")
             if self.producer_result is None or self.producer_result < 0:
@@ -124,13 +124,13 @@ class OutputView:
 
 @dataclass(frozen=True, slots=True)
 class MutationBinding:
-    """One task operation that updates an ABI input storage.
+    """One task operation that updates an input storage.
 
     ``replacement_output_leaf`` distinguishes Export's functional mutation
     form from a dispatcher-schema write.  The executable replacement normally
     has fresh storage and becomes the input object's next authoritative
     generation.  Inductor may prove a no-op update and return the target input
-    itself; that preserves the mutation ABI without requiring a generation
+    itself; that preserves the mutation contract without requiring a generation
     replacement.  A schema write has no replacement output because the
     compiled operation writes in place.
     """
@@ -164,7 +164,7 @@ class MutationBinding:
 
 @dataclass(frozen=True, slots=True)
 class TaskStorageContract:
-    """Deterministic semantic storage contract for one functional task ABI."""
+    """Deterministic semantic storage contract for one functional task contract."""
 
     roots: tuple[StorageRoot, ...]
     output_views: tuple[OutputView, ...]

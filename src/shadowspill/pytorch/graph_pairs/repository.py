@@ -27,7 +27,7 @@ from .serialization import (
     valid_cached_variant,
 )
 
-_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v6"
+_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v7"
 
 
 class GraphPairRepository:
@@ -63,13 +63,13 @@ class GraphPairRepository:
         *,
         specialize_unit_tangents: bool,
     ) -> GraphPairPortfolio:
-        stage_abi = GraphArtifact.input_compatibility_digest(
+        stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
             explicit_mutations=example.stage.mutations,
             input_provenance=example.stage.input_provenance,
         )
-        key = (stage_abi, roots, specialize_unit_tangents)
+        key = (stage_contract, roots, specialize_unit_tangents)
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
         if existing is None:
@@ -95,13 +95,13 @@ class GraphPairRepository:
             return None
         payload = {
             "schema": _GRAPH_PAIR_CACHE_SCHEMA,
-            "structural_task_abi": key[0],
+            "structural_task_contract": key[0],
             "roots": key[1],
             "specialize_unit_tangents": key[2],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         selection = hashlib.sha256(encoded.encode()).hexdigest()
-        return self._root / "v6" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
+        return self._root / "v7" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
 
     def _manifest_path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         path = self._path(key)
@@ -144,7 +144,7 @@ class GraphPairRepository:
         ):
             raise CaptureError(f"AOT graph-pair cache entry {path} has invalid data")
         result = GraphPairPortfolio(
-            structural_abi=key[0],
+            structural_contract=key[0],
             root_output_indices=key[1],
             variants=tuple(restore_cached_variant(item) for item in variants),
             reference_option_id=reference_option_id,
@@ -199,7 +199,7 @@ class GraphPairRepository:
         assert manifest_path is not None
         manifest = {
             "schema": _GRAPH_PAIR_CACHE_SCHEMA,
-            "structural_task_abi": key[0],
+            "structural_task_contract": key[0],
             "differentiable_root_positions": list(key[1]),
             "specialize_unit_tangents": key[2],
             "reference_option_id": pairs.reference_option_id,

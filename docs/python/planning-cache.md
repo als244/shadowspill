@@ -30,10 +30,10 @@ Artifact keys compose only the inputs relevant to that layer:
 
 - Export: callable semantics, graph signature, fixed input geometry, and
   implementation revision.
-- Graph pair: normalized stage semantic ABI, differentiation options, and
+- Graph pair: normalized stage semantic contract, differentiation options, and
   partition inputs.
-- Compiled manifest: graph-pair ABI, compiler/provider identity, and physical
-  ABI.
+- Compiled manifest: graph-pair contract, compiler/provider identity, and
+  physical storage contract.
 - Profile: compiled manifest, hardware, representative-value policy,
   `profiling_metadata`, and allocation-probe policy.
 - PressureFit program: canonical `Program`, residency, capacity contract,

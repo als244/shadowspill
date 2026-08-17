@@ -354,9 +354,9 @@ class TaskBindingResolver:
     def _resolve_input_object(self, contract_position: int) -> str:
         if contract_position >= len(self._artifact_input_position):
             raise CaptureError("task mutation has an invalid input position")
-        abi_position = self._artifact_input_position[contract_position]
+        artifact_position = self._artifact_input_position[contract_position]
         try:
-            return self._input_by_position[abi_position]
+            return self._input_by_position[artifact_position]
         except KeyError as exc:
             raise CaptureError(
                 "task mutation target is absent from its tensor input slots"

@@ -100,7 +100,7 @@ def test_workspace_classifies_unbound_live_allocation_as_persistent() -> None:
     assert all(event.allocation_ordinal == 0 for event in profile.allocation_trace)
 
 
-def test_workspace_keeps_provider_growth_in_runtime_abi_only() -> None:
+def test_workspace_keeps_provider_growth_in_runtime_callback_only() -> None:
     events = (
         _event(0, 10, AllocationEventKind.CREATED, 64),
         _event(1, 11, AllocationEventKind.CREATED, 32),

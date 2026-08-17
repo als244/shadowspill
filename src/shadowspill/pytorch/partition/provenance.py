@@ -35,7 +35,7 @@ def root_input_provenance(
     if representative_root_inputs is not None and len(
         representative_root_inputs
     ) != len(inputs):
-        raise CaptureError("representative root inputs differ from the Export ABI")
+        raise CaptureError("representative root inputs differ from the Export contract")
     specs = tuple(capture.exported_program.graph_signature.input_specs)
     if len(specs) != len(inputs):
         raise CaptureError("Export input signature differs from flattened inputs")
@@ -73,7 +73,7 @@ def build_stage_examples(
     representative_root_inputs: tuple[object, ...] | None = None,
     caller_stage_values: Mapping[StageOutputKey, torch.Tensor] | None = None,
 ) -> tuple[StageExample, ...]:
-    """Build occurrence-local stage ABIs from one split root graph."""
+    """Build occurrence-local stage contracts from one split root graph."""
 
     mutations = _partition_mutations(capture, split)
     user_outputs = _partition_user_outputs(capture, split)
@@ -224,7 +224,7 @@ def _stage_input_provenance(
             return roots[source.root_input_index]
         except IndexError as exc:
             raise CaptureError(
-                "stage input provenance is outside the root ABI"
+                "stage input provenance is outside the root contract"
             ) from exc
     assert source.producer_stage_index is not None
     assert source.producer_output_index is not None

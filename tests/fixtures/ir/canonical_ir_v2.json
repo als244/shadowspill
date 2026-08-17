@@ -1,8 +1,8 @@
 {
-  "schema": "shadowspill.ir_golden/v1",
+  "schema": "shadowspill.ir_golden/v2",
   "program_digest": "9f2bcd005a137b2fab7e7053c76c4eb0679f195093aa08b009a3cbb65c878710",
   "schedule_digest": "332f8ada15b358d303efc2f3589c6646acb7e841093e421cde3d885740410bae",
-  "execution_plan_digest": "a7c938a326b956627a3a8f6d5e21b6a5e22d3766078540d3781f66d535c6c2eb",
+  "execution_plan_digest": "4fb1d00a38bf9241f71beec854c9746dc5ec57a31b758f9ad621bcb9e6feca2e",
   "scheduling_digest": "e3f8048400abcc9dc68c6fdf71eeb9932860ee778f63052b8020963d1b2979f3",
   "device_ids": ["cuda_0"],
   "alias_group_ids": [

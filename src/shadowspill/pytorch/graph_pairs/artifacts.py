@@ -31,16 +31,16 @@ class GraphPairVariant:
 
 @dataclass(frozen=True, slots=True)
 class GraphPairPortfolio:
-    """All legal differentiated variants for one structural task ABI."""
+    """All legal differentiated variants for one structural task contract."""
 
-    structural_abi: str
+    structural_contract: str
     root_output_indices: tuple[int, ...]
     variants: tuple[GraphPairVariant, ...]
     reference_option_id: str = "save"
 
     def __post_init__(self) -> None:
-        if not self.structural_abi:
-            raise ValueError("graph-pair portfolio requires a structural ABI")
+        if not self.structural_contract:
+            raise ValueError("graph-pair portfolio requires a structural contract")
         if not self.root_output_indices:
             raise ValueError("graph-pair portfolio requires differentiable roots")
         option_ids = tuple(item.option_id for item in self.variants)
@@ -51,7 +51,7 @@ class GraphPairPortfolio:
 
     @property
     def reference(self) -> AotGraphPair:
-        """Return the pair used to establish the canonical stage boundary ABI."""
+        """Return the pair that establishes the canonical stage-boundary contract."""
 
         return self.variant(self.reference_option_id).pair
 

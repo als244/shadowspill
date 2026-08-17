@@ -229,9 +229,11 @@ def _training_task_stage(
     auxiliary_ordinal: int,
 ) -> PlanTaskStage:
     artifact = entrypoint.artifact
-    structural_abi = artifact.compatibility_digest if artifact is not None else "opaque"
+    structural_contract = (
+        artifact.compatibility_digest if artifact is not None else "opaque"
+    )
     occurrence = _training_occurrence_identity(
-        entrypoint, structural_abi, auxiliary_ordinal, index
+        entrypoint, structural_contract, auxiliary_ordinal, index
     )
     contract_digests = _task_contract_digests(
         artifact,
@@ -252,7 +254,7 @@ def _training_task_stage(
         microbatch=entrypoint.microbatch,
         stage_occurrence_id=occurrence[1],
         unique_stage_id=occurrence[2],
-        structural_abi_key=structural_abi,
+        structural_contract_key=structural_contract,
         semantic_contract_digest=contract_digests[0],
         executable_contract_digest=contract_digests[1],
         compiled_layout_digest=contract_digests[2],
@@ -266,7 +268,7 @@ def _training_task_stage(
 
 def _training_occurrence_identity(
     entrypoint: TrainingTaskEntrypoint,
-    structural_abi: str,
+    structural_contract: str,
     auxiliary_ordinal: int,
     index: _TrainingInventoryIndex,
 ) -> tuple[str, str | None, str, str | None]:
@@ -274,7 +276,7 @@ def _training_occurrence_identity(
         return (
             f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}",
             None,
-            f"auxiliary_abi_{structural_abi[:16]}",
+            f"auxiliary_contract_{structural_contract[:16]}",
             None,
         )
     occurrence = entrypoint.microbatch, entrypoint.stage_index
@@ -528,7 +530,7 @@ def _forward_task_stage(
         microbatch=None,
         stage_occurrence_id=f"stage_{occurrence:04d}",
         unique_stage_id=index.unique_id_by_key[profile.compatibility_digest],
-        structural_abi_key=artifact_key,
+        structural_contract_key=artifact_key,
         semantic_contract_digest=(
             entrypoint.artifact.storage_contract.compatibility_digest
         ),
@@ -671,7 +673,7 @@ def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
     measurement = context.measurement
     return PlanGraphProfile(
         direction=context.direction,
-        structural_abi_key=artifact.compatibility_digest,
+        structural_contract_key=artifact.compatibility_digest,
         semantic_contract_digest=artifact.storage_contract.compatibility_digest,
         semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
         semantic_roots=_plan_storage_roots(artifact.storage_contract),

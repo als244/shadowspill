@@ -12,7 +12,7 @@ from shadowspill.pytorch.profiling import (
 )
 
 
-def _abi(*sizes: int) -> TaskAllocationContract:
+def _contract(*sizes: int) -> TaskAllocationContract:
     events: list[TaskAllocationEvent] = []
     for ordinal, size in enumerate(sizes):
         events.append(
@@ -35,7 +35,7 @@ def _abi(*sizes: int) -> TaskAllocationContract:
 
 
 def test_identical_probe_matrix_keeps_exact_core() -> None:
-    reference = _abi(64, 128)
+    reference = _contract(64, 128)
     derived = derive_core_allocation_path(
         reference,
         (
@@ -50,8 +50,8 @@ def test_identical_probe_matrix_keeps_exact_core() -> None:
 
 
 def test_one_time_insertion_is_scratch_around_warmed_core() -> None:
-    reference = _abi(64, 128)
-    cold = _abi(24, 64, 128)
+    reference = _contract(64, 128)
+    cold = _contract(24, 64, 128)
     derived = derive_core_allocation_path(
         reference,
         (
@@ -68,8 +68,8 @@ def test_one_time_insertion_is_scratch_around_warmed_core() -> None:
 
 
 def test_same_geometry_insertion_is_rejected_as_ambiguous() -> None:
-    reference = _abi(64)
-    ambiguous = _abi(64, 64)
+    reference = _contract(64)
+    ambiguous = _contract(64, 64)
 
     with pytest.raises(AmbiguousAllocationPathError, match="multiple minimum-edit"):
         derive_core_allocation_path(

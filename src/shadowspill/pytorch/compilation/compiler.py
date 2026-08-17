@@ -110,7 +110,7 @@ def compile_artifact(
     device_ordinal: int,
     representative_arguments: Sequence[object] | None = None,
 ) -> CompiledTask:
-    """Compile one explicit FX task from its geometry-only task ABI."""
+    """Compile one explicit FX task from its geometry-only task contract."""
 
     del device_ordinal
     examples = tuple(

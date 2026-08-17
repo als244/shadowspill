@@ -1,7 +1,7 @@
 """Narrow PyTorch-version boundary for compiling one explicit task graph.
 
 Export/AOT describes logical values. Inductor may simplify those values before
-code generation and thereby change the executable output-alias ABI. The outer
+code generation and thereby change the executable output-alias contract. The outer
 ``compile_fx`` entrypoint may itself use AOTAutograd and append private saved
 outputs, so this adapter projects the optimized inner graph through Inductor's
 ``user_visible_output_idxs`` metadata before publishing a task manifest.
@@ -76,7 +76,7 @@ class ExecutableRootAllocation:
 
 @dataclass(frozen=True, slots=True)
 class ExecutableTaskManifest:
-    """Offline storage ABI emitted for one optimized compiled task."""
+    """Offline storage contract emitted for one optimized compiled task."""
 
     semantic_contract_digest: str
     storage_contract: TaskStorageContract
@@ -125,7 +125,7 @@ class ExecutableTaskManifest:
         }
 
     def to_dict(self) -> dict[str, object]:
-        """Serialize the compiler-owned storage ABI for a profile sidecar."""
+        """Serialize the compiler-owned storage contract for a profile sidecar."""
 
         if self.optimized_storage_contract is None:
             raise ValueError("compiled task manifest has no optimized contract")
@@ -145,7 +145,7 @@ class ExecutableTaskManifest:
         *,
         semantic_contract: TaskStorageContract,
     ) -> ExecutableTaskManifest:
-        """Restore and fully validate one cached compiler storage ABI."""
+        """Restore and validate one cached compiler storage contract."""
 
         expected = {
             "semantic_contract_digest",
@@ -160,7 +160,7 @@ class ExecutableTaskManifest:
         if payload["semantic_contract_digest"] != (
             semantic_contract.compatibility_digest
         ):
-            raise ValueError("compiled task manifest has the wrong semantic ABI")
+            raise ValueError("compiled task manifest has the wrong semantic contract")
         executable = payload["storage_contract"]
         optimized = payload["optimized_storage_contract"]
         capture_ns = payload["contract_capture_ns"]
@@ -239,7 +239,7 @@ _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
 _COMPILATION_PHASE_ORDER = (
     "shadowspill_compiler_input_setup",
     "torch_decomposition_normalization",
-    "shadowspill_output_abi_normalization",
+    "shadowspill_output_contract_normalization",
     "torch_compiler_configuration",
     "shadowspill_input_alias_normalization",
     "shadowspill_optimized_contract",
@@ -322,7 +322,7 @@ class _ManifestCompiler:
         started_ns = time.perf_counter_ns()
         inner = capture_task_storage_contract(graph, tuple(inputs))
         optimized = _project_callable_contract(graph, inner, self.semantic_contract)
-        _validate_value_abi(self.semantic_contract, optimized)
+        _validate_value_contract(self.semantic_contract, optimized)
         _ensure_tracing_shape_environment()
         duration = self._record("shadowspill_optimized_contract", started_ns)
         return inner, optimized, duration
@@ -441,7 +441,7 @@ def _manifest_inner_compile(
     canonicalize_input_aliases: bool = False,
     phase_timings: dict[str, int] | None = None,
 ) -> Callable[..., object]:
-    """Return the compiler callback that publishes one physical ABI."""
+    """Return the compiler callback that publishes one physical contract."""
 
     return _ManifestCompiler(
         semantic_contract,
@@ -457,7 +457,7 @@ def compile_inductor_task(
     *,
     semantic_contract: TaskStorageContract,
 ) -> InductorCompilation:
-    """Compile and capture the callable-visible optimized output ABI."""
+    """Compile and capture the callable-visible optimized output contract."""
 
     manifests: list[ExecutableTaskManifest] = []
     compilation_started = time.perf_counter_ns()
@@ -523,7 +523,9 @@ def compile_explicit_inductor_task(
     normalized = _normalize_explicit_graph(
         graph_module, fake_inputs, fake_mode, timings
     )
-    output_leaves, output_spec = _normalize_explicit_output_abi(normalized, timings)
+    output_leaves, output_spec = _normalize_explicit_output_contract(
+        normalized, timings
+    )
     manifests: list[ExecutableTaskManifest] = []
     inner_compile = _manifest_inner_compile(
         semantic_contract,
@@ -610,7 +612,7 @@ def _normalize_explicit_graph(
     return normalized
 
 
-def _normalize_explicit_output_abi(
+def _normalize_explicit_output_contract(
     graph: GraphModule,
     timings: dict[str, int],
 ) -> tuple[list[object], TreeSpec]:
@@ -621,7 +623,7 @@ def _normalize_explicit_output_abi(
     graph.graph.lint()
     graph.recompile()
     _record_compilation_phase(
-        timings, "shadowspill_output_abi_normalization", started_ns
+        timings, "shadowspill_output_contract_normalization", started_ns
     )
     return output_leaves, output_spec
 
@@ -741,7 +743,7 @@ def _canonicalize_input_alias_outputs(
     contract: TaskStorageContract,
     example_inputs: tuple[object, ...],
 ) -> None:
-    """Make every declared input-alias return explicit in the FX output ABI.
+    """Make every declared input-alias return explicit in the FX output contract.
 
     In-place operators may return their mutated argument, but direct Inductor
     lowering can otherwise materialize that return as a second output buffer.
@@ -844,8 +846,8 @@ def _make_manifest(
     *,
     capture_ns: int,
 ) -> ExecutableTaskManifest:
-    _validate_value_abi(semantic_contract, optimized_contract)
-    _validate_value_abi(semantic_contract, executable_contract)
+    _validate_value_contract(semantic_contract, optimized_contract)
+    _validate_value_contract(semantic_contract, executable_contract)
     identity = {
         "semantic_contract_digest": semantic_contract.compatibility_digest,
         "optimized_storage_contract": optimized_contract.identity(),
@@ -941,7 +943,7 @@ def _project_callable_contract(
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
 ) -> TaskStorageContract:
-    """Remove compiler-private saved outputs using Inductor's ABI metadata."""
+    """Remove compiler-private saved outputs using Inductor contract metadata."""
 
     roots, output_views = _project_visible_outputs(
         optimized_graph,
@@ -1024,7 +1026,7 @@ def _graph_lowering_contract(
     inner_contract: TaskStorageContract,
     semantic_contract: TaskStorageContract,
 ) -> _GraphLoweringManifest:
-    """Project Inductor's returned buffers into an executable storage ABI."""
+    """Project Inductor's returned buffers into an executable storage contract."""
 
     visible, outputs = _select_graph_outputs(
         graph, optimized_graph, inner_contract, semantic_contract
@@ -1055,7 +1057,7 @@ def _select_graph_outputs(
         raise CaptureError("Inductor GraphLowering omitted task outputs")
     if any(index >= len(graph.graph_outputs) for index in visible):
         raise CaptureError(
-            "Inductor callable-visible output index exceeds GraphLowering ABI"
+            "Inductor callable-visible output index exceeds GraphLowering contract"
         )
     inner_leaves = {view.leaf_index for view in inner_contract.output_views}
     outputs = tuple(
@@ -1432,7 +1434,7 @@ def _copy_view(view: OutputView, leaf_index: int, root_id: int) -> OutputView:
     )
 
 
-def _validate_value_abi(
+def _validate_value_contract(
     semantic: TaskStorageContract,
     executable: TaskStorageContract,
 ) -> None:
@@ -1442,7 +1444,7 @@ def _validate_value_abi(
     executable_views = {view.leaf_index: view for view in executable.output_views}
     if semantic_views.keys() != executable_views.keys():
         raise CaptureError(
-            "Inductor changed the tensor output leaves of the task ABI: "
+            "Inductor changed the tensor output leaves of the task contract: "
             f"semantic={sorted(semantic_views)}, "
             f"executable={sorted(executable_views)}"
         )
@@ -1493,7 +1495,7 @@ def _validate_value_abi(
     }
     if semantic_mutations != executable_mutations:
         raise CaptureError(
-            "Inductor changed the task mutation ABI: "
+            "Inductor changed the task mutation contract: "
             f"semantic={sorted(semantic_mutations)}, "
             f"executable={sorted(executable_mutations)}"
         )

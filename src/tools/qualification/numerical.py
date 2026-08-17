@@ -121,9 +121,7 @@ def _state_tensor_at_path(state: object, path: str) -> torch.Tensor:
                 # while compare_states() renders every path component as text.
                 value = value[int(component)]
             else:
-                raise KeyError(
-                    f"state metric path component {component!r} is absent"
-                )
+                raise KeyError(f"state metric path component {component!r} is absent")
         elif isinstance(value, (list, tuple)):
             value = value[int(component)]
         else:
@@ -789,9 +787,7 @@ def _planned_worker(
         "selected_recomputation": any(
             option != "save" for _group, option in selections
         ),
-        "recomputation_memory_saving_available": bool(
-            available_recomputation_savings
-        ),
+        "recomputation_memory_saving_available": bool(available_recomputation_savings),
         "maximum_recomputation_savings_bytes": available_recomputation_savings,
         "selected_recomputation_savings_bytes": selected_recomputation_savings,
         "selection_count": len(selections),
@@ -855,7 +851,7 @@ def _planned_worker(
         "profile_cache_misses": report.profile_cache_misses,
         "profile_unique_keys": report.profile_unique_keys,
         "captured_stage_count": report.captured_stage_count,
-        "aot_unique_stage_abis": report.aot_unique_stage_abis,
+        "aot_unique_stage_contracts": report.aot_unique_stage_contracts,
         "aot_graph_pair_cache_hits": report.aot_graph_pair_cache_hits,
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "recomputation_cache_hits": report.recomputation_cache_hits,
@@ -882,7 +878,7 @@ def _planned_worker(
         or (
             qualification_result["profile_cache_hits"] == 0
             and qualification_result["aot_graph_pair_cache_misses"]
-            == qualification_result["aot_unique_stage_abis"]
+            == qualification_result["aot_unique_stage_contracts"]
             and qualification_result["recomputation_cache_hits"] == 0
         )
     )
@@ -892,9 +888,7 @@ def _planned_worker(
         evicted_bytes=report.transfer_bytes_evicted,
         fetched_bytes=report.transfer_bytes_fetched,
     )
-    qualification_result["transfer_pressure_gate_passed"] = (
-        transfer_pressure_passed
-    )
+    qualification_result["transfer_pressure_gate_passed"] = transfer_pressure_passed
     qualification_result["pressure_gate_passed"] = transfer_pressure_passed
     qualification_result["passed"] = bool(
         not loss_failures

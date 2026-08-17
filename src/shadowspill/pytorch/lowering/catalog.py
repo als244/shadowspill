@@ -21,7 +21,7 @@ from ..contracts import CaptureError
 
 @dataclass(frozen=True, slots=True)
 class TensorSlot:
-    """Position of one tensor leaf in a framework task ABI."""
+    """Position of one tensor leaf in a framework task contract."""
 
     leaf_index: int
     object_id: str

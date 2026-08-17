@@ -115,7 +115,7 @@ Object roles are `input`, `parameter`, `buffer`, `activation`, `gradient`,
 | Profile | `profile_id` | Stable profile identity referenced by tasks. |
 | Profile | `runtime_ns` | Isolated measured task duration used by simulation. |
 | Profile | `workspace_bytes` | Peak anonymous task workspace used by logical simulation. |
-| Profile | `compatibility_digest` | Structural/physical ABI compatibility identity. |
+| Profile | `compatibility_digest` | Structural/physical contract compatibility identity. |
 | Task | `task_id` | Stable canonical IR identity. |
 | Task | `resource` | Device, resource kind, and lane. |
 | Task | `profile_id` | Cost profile reference. |

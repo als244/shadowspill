@@ -2,7 +2,7 @@
 
 The public partition orchestrator delegates here after a policy has selected
 one stage label for every executable node.  This module owns the mechanical
-work of splitting and observing the stage ABI. Semantic projection lives in
+work of splitting and observing the stage contract. Semantic projection lives in
 ``provenance.py``.
 """
 
@@ -44,7 +44,7 @@ class _StageRecorder(Interpreter):
         self, target: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         if kwargs:
-            raise CaptureError("automatic stage calls require a positional ABI")
+            raise CaptureError("automatic stage calls require a positional signature")
         output = super().call_module(target, args, kwargs)
         self.calls.append((str(target), args, output))
         return output

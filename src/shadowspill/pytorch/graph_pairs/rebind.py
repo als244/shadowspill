@@ -19,7 +19,7 @@ def rebind_graph_pair_portfolio(
     """Replace occurrence-local values while preserving structural graph code."""
 
     return GraphPairPortfolio(
-        structural_abi=portfolio.structural_abi,
+        structural_contract=portfolio.structural_contract,
         root_output_indices=portfolio.root_output_indices,
         variants=tuple(
             GraphPairVariant(

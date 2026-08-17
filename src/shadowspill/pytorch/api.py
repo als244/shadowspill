@@ -142,7 +142,7 @@ def plan_forward(
     requirement. It never reduces the measured reserve.
 
     ``allocation_probe_seeds`` controls independent randomized activation
-    probes per structural ABI. ``allocation_probe_repetitions`` repeats each
+    probes per structural contract. ``allocation_probe_repetitions`` repeats each
     seed identically to expose first-use allocation paths. The defaults are
     one seed and two repetitions.
     """
@@ -224,7 +224,7 @@ def plan_step(
     this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
     bindings; it never imports or releases model storage.
 
-    ``verbose=True`` reports each planning phase and unique structural ABI as
+    ``verbose=True`` reports each planning phase and unique structural contract as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
 

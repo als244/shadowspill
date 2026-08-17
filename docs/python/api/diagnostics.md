@@ -46,7 +46,7 @@ The public planning diagnostic records are:
 - `PlanUniqueStage`
 - `PlanTaskStage`
 
-Together they expose stage-to-structural-ABI mapping, every legal graph pair,
+Together they expose stage-to-structural-contract mapping, every legal graph pair,
 chosen variant per execution, semantic storage roots and views, compiled
 physical layout, input/output/mutation/workspace sizes, task timings,
 allocation behavior, profiling metadata, cache artifacts, and phase wall time.

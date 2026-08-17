@@ -40,7 +40,7 @@ def _resolve_stage(
     return replace(
         stage,
         graph_pairs=GraphPairPortfolio(
-            structural_abi=portfolio.structural_abi,
+            structural_contract=portfolio.structural_contract,
             root_output_indices=portfolio.root_output_indices,
             variants=tuple(
                 GraphPairVariant(

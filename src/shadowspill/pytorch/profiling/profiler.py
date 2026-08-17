@@ -152,12 +152,12 @@ class CudaTaskProfiler:
         return self._executables.compilation_phase_timings_ns
 
     @property
-    def compilation_phase_timings_by_abi(
+    def compilation_phase_timings_by_contract(
         self,
     ) -> tuple[tuple[str, tuple[tuple[str, int], ...]], ...]:
-        """Compiler subphases for every independently compiled structural ABI."""
+        """Compiler subphases for every independently compiled structural contract."""
 
-        return self._executables.compilation_phase_timings_by_abi
+        return self._executables.compilation_phase_timings_by_contract
 
     @property
     def profiling_wall_time_ns(self) -> int:
@@ -224,9 +224,9 @@ class CudaTaskProfiler:
             raise _profiling_error(artifact, error) from error
         else:
             # The compiled function does not own its example arguments. Keeping
-            # every unique ABI's CUDA examples alive until take_functions()
+            # every unique contract's device examples alive until take_functions()
             # makes isolated profiling scale with the sum of model-stage
-            # inputs, rather than the largest ABI. Retain only the executable.
+            # inputs, rather than the largest contract. Retain only the executable.
             self._executables.release_occurrence_values(executable)
             return measurement
         finally:
@@ -559,7 +559,7 @@ class CudaTaskProfiler:
         phase_timings.append(
             ("retention_audit", max(0, time.perf_counter_ns() - started - accounted))
         )
-        abi_started = time.perf_counter_ns()
+        contract_started = time.perf_counter_ns()
         workspace, allocation_contract, path_observations = (
             self._validate_allocation_contract(
                 executable,
@@ -569,7 +569,10 @@ class CudaTaskProfiler:
             )
         )
         phase_timings.append(
-            ("allocation_contract_validation", time.perf_counter_ns() - abi_started)
+            (
+                "allocation_contract_validation",
+                time.perf_counter_ns() - contract_started,
+            )
         )
         return workspace, high_water, allocation_contract, path_observations
 
@@ -966,7 +969,7 @@ class CudaTaskProfiler:
             )
         )
 
-        abi_started = time.perf_counter_ns()
+        contract_started = time.perf_counter_ns()
         allocation_contract = TaskAllocationContract.capture(
             workspace.allocation_contract_trace
         )
@@ -995,7 +998,10 @@ class CudaTaskProfiler:
                     f"independent profiles (repetition={repetition + 2})"
                 )
         phase_timings.append(
-            ("allocation_contract_validation", time.perf_counter_ns() - abi_started)
+            (
+                "allocation_contract_validation",
+                time.perf_counter_ns() - contract_started,
+            )
         )
         persistent_high_water = max(
             persistent_high_water,
@@ -1122,7 +1128,7 @@ class CudaTaskProfiler:
             )
             # Profiling does not retain task results. Release them while the
             # task range is still active so output-dependent temporary frees
-            # remain attributable to this ABI. The allocator retires their
+            # remain attributable to this contract. The allocator retires their
             # physical ranges against the active compute stream.
             output = None
             status = int(
@@ -1256,10 +1262,10 @@ def _profiling_error(
         operators = ()
     operator_text = ", ".join(operators) or "none"
     return ProfilingError(
-        "ShadowSpill failed to profile structural ABI "
+        "ShadowSpill failed to profile structural contract "
         f"{artifact.compatibility_digest} "
         f"(kind={kind}, operators=[{operator_text}]): {cause}",
-        structural_abi=artifact.compatibility_digest,
+        structural_contract=artifact.compatibility_digest,
         task_kind=kind,
         operators=operators,
     )

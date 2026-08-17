@@ -60,13 +60,13 @@ def build_forward_report(
     recomputation_cache_hit: bool = False,
     pressurefit_results: tuple[PressureFitResult, ...] = (),
     captured_stage_count: int = 0,
-    aot_unique_stage_abis: int = 0,
+    aot_unique_stage_contracts: int = 0,
     aot_graph_pair_cache_hits: int = 0,
     aot_graph_pair_cache_misses: int = 0,
     task_stage_map: tuple[PlanTaskStage, ...] = (),
     unique_stages: tuple[PlanUniqueStage, ...] = (),
     compiler_phase_timings_ns: tuple[tuple[str, int], ...] = (),
-    compiler_phase_timings_by_abi: tuple[
+    compiler_phase_timings_by_contract: tuple[
         tuple[str, tuple[tuple[str, int], ...]], ...
     ] = (),
     cache_directories: tuple[tuple[str, str], ...] = (),
@@ -85,13 +85,13 @@ def build_forward_report(
         profiles,
         recomputation_cache_hit=recomputation_cache_hit,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
         compiler_phase_timings_ns=compiler_phase_timings_ns,
-        compiler_phase_timings_by_abi=compiler_phase_timings_by_abi,
+        compiler_phase_timings_by_contract=compiler_phase_timings_by_contract,
         cache_directories=cache_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
@@ -112,7 +112,7 @@ def build_forward_report(
         recomputation_cache_hit=recomputation_cache_hit,
         pressurefit_results=pressurefit_results,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         memory=memory,
@@ -126,13 +126,15 @@ def _forward_diagnostics(
     *,
     recomputation_cache_hit: bool,
     captured_stage_count: int,
-    aot_unique_stage_abis: int,
+    aot_unique_stage_contracts: int,
     aot_graph_pair_cache_hits: int,
     aot_graph_pair_cache_misses: int,
     task_stage_map: tuple[PlanTaskStage, ...],
     unique_stages: tuple[PlanUniqueStage, ...],
     compiler_phase_timings_ns: tuple[tuple[str, int], ...],
-    compiler_phase_timings_by_abi: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+    compiler_phase_timings_by_contract: tuple[
+        tuple[str, tuple[tuple[str, int], ...]], ...
+    ],
     cache_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
@@ -149,7 +151,7 @@ def _forward_diagnostics(
         allocation_probe_seeds=profiles.allocation_probe_seeds,
         allocation_probe_repetitions=profiles.allocation_probe_repetitions,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         recomputation_cache_hits=int(recomputation_cache_hit),
@@ -159,10 +161,10 @@ def _forward_diagnostics(
         compiler_phase_timings_ns=compiler_phase_timings_ns,
         compiler_profiles=tuple(
             PlanCompilerProfile(
-                structural_abi_key,
+                structural_contract_key,
                 tuple(PlanPhaseTiming(name, duration) for name, duration in values),
             )
-            for structural_abi_key, values in compiler_phase_timings_by_abi
+            for structural_contract_key, values in compiler_phase_timings_by_contract
         ),
         cache_directories=cache_directories,
         cache_artifacts=touched_cache_artifacts,
@@ -186,7 +188,7 @@ def _forward_report(
     recomputation_cache_hit: bool,
     pressurefit_results: tuple[PressureFitResult, ...],
     captured_stage_count: int,
-    aot_unique_stage_abis: int,
+    aot_unique_stage_contracts: int,
     aot_graph_pair_cache_hits: int,
     aot_graph_pair_cache_misses: int,
     memory: PlanMemory,
@@ -218,7 +220,7 @@ def _forward_report(
         fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         pressurefit_results=pressurefit_results,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         diagnostics=diagnostics,
@@ -240,7 +242,7 @@ def _forward_capture_identity(
     identity = {
         "mode": "forward",
         "signature": signature_digest,
-        "artifacts": [item.abi_digest for item in execution_plan.entrypoints],
+        "artifacts": [item.contract_digest for item in execution_plan.entrypoints],
         "profiling_metadata": [item.digest for item in profiling_metadata],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
@@ -299,14 +301,16 @@ def build_training_report(
     recomputation_cache_hits: int,
     recomputation_cache_misses: int,
     captured_stage_count: int,
-    aot_unique_stage_abis: int,
+    aot_unique_stage_contracts: int,
     aot_graph_pair_cache_hits: int,
     aot_graph_pair_cache_misses: int,
     pressurefit_results: tuple[PressureFitResult, ...],
     task_stage_map: tuple[PlanTaskStage, ...],
     unique_stages: tuple[PlanUniqueStage, ...],
     compiler_phase_timings_ns: tuple[tuple[str, int], ...],
-    compiler_phase_timings_by_abi: tuple[tuple[str, tuple[tuple[str, int], ...]], ...],
+    compiler_phase_timings_by_contract: tuple[
+        tuple[str, tuple[tuple[str, int], ...]], ...
+    ],
     cache_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
@@ -319,7 +323,7 @@ def build_training_report(
     identity = {
         "mode": "training",
         "signatures": signature_digests,
-        "artifacts": [item.abi_digest for item in execution_plan.entrypoints],
+        "artifacts": [item.contract_digest for item in execution_plan.entrypoints],
         "optimizer_ordering": optimizer_ordering,
     }
     digest = hashlib.sha256(
@@ -332,11 +336,11 @@ def build_training_report(
         timings,
         started,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         compiler_phase_timings_ns=compiler_phase_timings_ns,
-        compiler_phase_timings_by_abi=compiler_phase_timings_by_abi,
+        compiler_phase_timings_by_contract=compiler_phase_timings_by_contract,
         cache_directories=cache_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
@@ -348,7 +352,7 @@ def build_training_report(
     diagnostics = replace(
         base,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         recomputation_cache_hits=recomputation_cache_hits,
@@ -366,7 +370,7 @@ def build_training_report(
         recomputation_cache_hits=recomputation_cache_hits,
         recomputation_cache_misses=recomputation_cache_misses,
         captured_stage_count=captured_stage_count,
-        aot_unique_stage_abis=aot_unique_stage_abis,
+        aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         pressurefit_results=pressurefit_results,

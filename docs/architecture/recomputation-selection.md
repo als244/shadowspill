@@ -20,7 +20,7 @@ For example, two occurrences can share one structural portfolio while still
 producing independent Program groups:
 
 ```text
-structural ABI A
+structural contract A
     variants = {save: (F_save, B_save), recompute: (F_recompute, B_recompute)}
 
 occurrence group g0 = {save, recompute}

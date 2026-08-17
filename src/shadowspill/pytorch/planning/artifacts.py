@@ -102,7 +102,7 @@ class TrainingMaterializationArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingProfileArtifacts:
-    """Unique structural ABI inventory, manifests, and task measurements."""
+    """Unique structural contract inventory, manifests, and task measurements."""
 
     partitioned: tuple[PartitionedTrainingCapture, ...]
     compile_tasks: tuple[OptimizerTaskArtifact, ...]

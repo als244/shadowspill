@@ -1,4 +1,4 @@
-"""Construct graph-pair portfolios for one structural stage ABI."""
+"""Construct graph-pair portfolios for one structural stage contract."""
 
 from __future__ import annotations
 
@@ -24,12 +24,12 @@ def build_default_portfolio(
 
     PyTorch's min-cut budget ``0.0`` is the full-recompute endpoint.  Fix it
     explicitly so ambient Functorch configuration cannot alter the structural
-    ABI.  The opposite endpoint, ``1.0``, retains the full saved-value set and
+    contract. The opposite endpoint, ``1.0``, retains the full saved-value set and
     therefore must not be exposed as recomputation.
     """
 
     stage = example.stage
-    structural_abi = GraphArtifact.input_compatibility_digest(
+    structural_contract = GraphArtifact.input_compatibility_digest(
         graph_module=stage.graph_module,
         example_inputs=example.inputs,
         explicit_mutations=stage.mutations,
@@ -66,7 +66,7 @@ def build_default_portfolio(
             ),
         ),
     )
-    return GraphPairPortfolio(structural_abi, roots, variants)
+    return GraphPairPortfolio(structural_contract, roots, variants)
 
 
 __all__ = ["build_default_portfolio"]

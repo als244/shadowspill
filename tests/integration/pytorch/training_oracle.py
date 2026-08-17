@@ -42,7 +42,7 @@ class ObjectivePairExecutor:
             != self._public_tensor_count + pair.saved_value_count
         ):
             raise CaptureError(
-                "AOT forward output count differs from objective and residual ABI"
+                "AOT forward output count differs from objective and residual contract"
             )
 
     def __call__(self, arguments: Sequence[object]) -> ObjectivePairResult:

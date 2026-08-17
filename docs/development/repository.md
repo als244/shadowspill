@@ -37,7 +37,7 @@ src/shadowspill/
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     ├── partition/         stage policies, splitting, provenance, authentic controls
-    ├── graph_pairs/       differentiation alternatives by structural ABI
+    ├── graph_pairs/       differentiation alternatives by structural contract
     ├── compilation/       Inductor adapter and executable storage manifests
     ├── profiling/         representative inputs, timing, allocation contract, workspace
     ├── lowering/          ObjectCatalog and task binding into Program

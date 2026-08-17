@@ -79,7 +79,7 @@ class TaskInputRole(StrEnum):
 class TaskInputProvenance:
     """Offline provenance and optional authentic value for one task input.
 
-    ``representative_value`` is deliberately excluded from equality and ABI
+    ``representative_value`` is deliberately excluded from equality and contract
     identity. It is an occurrence-local view of initialized/user-owned CPU
     storage and never becomes semantic identity evidence.
     """
@@ -92,6 +92,7 @@ class TaskInputProvenance:
         repr=False,
         compare=False,
     )
+
     def __post_init__(self) -> None:
         if not isinstance(self.role, TaskInputRole):
             raise TypeError("task input role has an invalid type")
@@ -111,7 +112,7 @@ class TaskInputProvenance:
 
 @dataclass(frozen=True, slots=True)
 class GraphArtifact:
-    """One explicit tensor graph and its structural ABI identity."""
+    """One explicit tensor graph and its structural contract identity."""
 
     kind: Literal["forward", "backward", "inference", "optimizer"]
     graph_module: GraphModule
@@ -136,7 +137,7 @@ class GraphArtifact:
         explicit_mutations: tuple[ExplicitMutation, ...] = (),
         input_provenance: tuple[TaskInputProvenance, ...] | None = None,
     ) -> str:
-        """Identify a graph/input ABI without evaluating the graph outputs."""
+        """Identify a graph/input contract without evaluating graph outputs."""
 
         original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
@@ -248,7 +249,7 @@ class GraphArtifact:
 
         Structural AOT cache hits reuse the exact same FX graph and storage
         contract.  Only their occurrence-specific tensor storages differ.  The
-        complete tensor geometry and input-alias ABI are sufficient to prove
+        complete tensor geometry and input-alias contract are sufficient to prove
         that the cached contract still applies; re-running the graph merely to
         rediscover that immutable contract is both redundant and expensive.
         """
@@ -256,13 +257,17 @@ class GraphArtifact:
         if len(example_arguments) != self.argument_count or any(
             not isinstance(value, torch.Tensor) for value in example_arguments
         ):
-            raise CaptureError("rebound graph arguments differ from the tensor ABI")
+            raise CaptureError(
+                "rebound graph arguments differ from the tensor contract"
+            )
         tensors = tuple(
             value for value in example_arguments if isinstance(value, torch.Tensor)
         )
         geometry = tuple(TensorGeometry.from_tensor(value) for value in tensors)
         if geometry != self.tensor_inputs:
-            raise CaptureError("rebound graph tensor geometry differs from its ABI")
+            raise CaptureError(
+                "rebound graph tensor geometry differs from its contract"
+            )
         alias_group_by_storage: dict[int, int] = {}
         alias_groups = tuple(
             alias_group_by_storage.setdefault(
@@ -271,7 +276,7 @@ class GraphArtifact:
             for value in tensors
         )
         if alias_groups != self.tensor_argument_alias_groups:
-            raise CaptureError("rebound graph input aliases differ from its ABI")
+            raise CaptureError("rebound graph input aliases differ from its contract")
         provenance = self.input_provenance
         if input_provenance is not None:
             if len(input_provenance) != len(provenance):
@@ -512,10 +517,10 @@ def _canonical_argument(value: object, identities: dict[Node, int]) -> object:
 def capture_forward_stage_artifacts(
     partitioned: PartitionedExport,
 ) -> tuple[GraphArtifact, ...]:
-    """Capture one structural inference ABI for each stage occurrence.
+    """Capture one structural inference contract for each stage occurrence.
 
     Partitioning itself stops at :class:`Stage`. This conversion belongs to
-    graph capture because it adds the geometry-dependent task ABI consumed by
+    graph capture because it adds the geometry-dependent task contract consumed by
     compilation and profiling.
     """
 

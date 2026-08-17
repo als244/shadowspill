@@ -99,9 +99,7 @@ def build_admission_topology(
     object_capacity_bytes: int,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
     workspace_extents_by_compatibility: Mapping[str, tuple[int, ...]] | None = None,
-    allocation_traces_by_compatibility: Mapping[
-        str, tuple[TaskAllocationEvent, ...]
-    ]
+    allocation_traces_by_compatibility: Mapping[str, tuple[TaskAllocationEvent, ...]]
     | None = None,
     alignment: int = 256,
 ) -> AdmissionTopology:
@@ -112,12 +110,8 @@ def build_admission_topology(
             "one admission topology currently describes one execution pool; "
             f"Program has {len(program.devices)} devices"
         )
-    alias_by_object = {
-        item.object_id: item.alias_group_id for item in program.objects
-    }
-    alias_size = {
-        item.alias_group_id: item.size_bytes for item in program.alias_groups
-    }
+    alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
+    alias_size = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
     profile_by_id = {item.profile_id: item for item in program.profiles}
     profiled_extents = dict(workspace_extents_by_compatibility or {})
     profiled_traces = dict(allocation_traces_by_compatibility or {})
@@ -137,9 +131,7 @@ def build_admission_topology(
             for item in bindings
             if item.source_alias_group_id is not None
         )
-        handoff_destinations = {
-            item.destination_alias_group_id for item in handoffs
-        }
+        handoff_destinations = {item.destination_alias_group_id for item in handoffs}
         fresh = dict.fromkeys(alias_by_object[item] for item in task.outputs)
         for binding in bindings:
             if not binding.replacement and binding.source_alias_group_id is None:
@@ -222,7 +214,7 @@ def _task_allocation_steps(
     *,
     persistent_aliases: set[str],
 ) -> tuple[TaskAllocationStep, ...]:
-    """Project one physical profile without making it a runtime ABI.
+    """Project one physical profile without making it a runtime contract.
 
     The profiled order is used only by offline dynamic-pool admission.  Output
     leaves that do not become Program objects are released at task completion;
@@ -264,8 +256,7 @@ def _task_allocation_steps(
             continue
         if ordinal not in live:
             raise ValueError(
-                f"task {task_id} allocation trace releases unknown ordinal "
-                f"{ordinal}"
+                f"task {task_id} allocation trace releases unknown ordinal {ordinal}"
             )
         del live[ordinal]
         steps.append(TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE))

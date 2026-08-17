@@ -57,7 +57,7 @@ def _stage_parameter_names(
             spec = input_specs[source.root_input_index]
         except IndexError as exc:
             raise CaptureError(
-                "stage parameter provenance refers outside the Export ABI"
+                "stage parameter provenance refers outside the Export contract"
             ) from exc
         if spec.kind is not InputKind.PARAMETER:
             continue

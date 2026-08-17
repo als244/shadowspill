@@ -102,7 +102,7 @@ not slow.
 ## Quantitative allocator evidence
 
 The profile trace records each `malloc` and logical `free`. The most expensive
-structural ABIs were Qwen linear-attention/objective forward or backward stages
+structural contracts were Qwen linear-attention/objective forward or backward stages
 for the 64- and 96-token positions. Names below describe their role; the cache
 digest is included only to make the raw evidence reproducible.
 

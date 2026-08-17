@@ -53,7 +53,7 @@ class Stage:
 
 @dataclass(frozen=True, slots=True)
 class StageExample:
-    """One stage paired with representative values for its captured ABI."""
+    """One stage paired with representative values for its captured contract."""
 
     stage: Stage
     inputs: tuple[object, ...]

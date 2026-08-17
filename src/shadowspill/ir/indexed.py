@@ -103,7 +103,7 @@ class IndexedExecutionPlan:
     entrypoint_tasks: tuple[int, ...]
     entrypoint_ids: tuple[str, ...]
     entrypoint_executor_ids: tuple[str, ...]
-    entrypoint_abi_digests: tuple[str, ...]
+    entrypoint_contract_digests: tuple[str, ...]
     device_budget_bytes: int
     host_budget_bytes: int
     context_bytes: int
@@ -314,7 +314,9 @@ def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
         entrypoint_tasks=tuple(task_index[item.task_id] for item in plan.entrypoints),
         entrypoint_ids=tuple(item.entrypoint_id for item in plan.entrypoints),
         entrypoint_executor_ids=tuple(item.executor_id for item in plan.entrypoints),
-        entrypoint_abi_digests=tuple(item.abi_digest for item in plan.entrypoints),
+        entrypoint_contract_digests=tuple(
+            item.contract_digest for item in plan.entrypoints
+        ),
         device_budget_bytes=admission.device_budget_bytes,
         host_budget_bytes=admission.host_budget_bytes,
         context_bytes=admission.context_bytes,

@@ -1,4 +1,4 @@
-"""Profile each unique structural task ABI and scatter its measurement."""
+"""Profile each unique structural task contract and scatter its measurement."""
 
 from __future__ import annotations
 

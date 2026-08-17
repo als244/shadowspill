@@ -87,7 +87,7 @@ def test_explicit_pair_matches_autograd(variant: str) -> None:
         torch.testing.assert_close(actual, parameter.grad)
 
 
-def test_pair_executor_rejects_changed_abi() -> None:
+def test_pair_executor_rejects_changed_contract() -> None:
     model = _Model()
     values = [torch.randn(2, 3), torch.randn(2, 2)]
     captured = _capture(model, values)

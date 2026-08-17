@@ -227,7 +227,7 @@ def profile_forward_tasks(
     artifact_cache: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ForwardProfileArtifacts:
-    """Compile and profile every unique structural task ABI exactly once."""
+    """Compile and profile every unique structural task contract exactly once."""
 
     profiler = CudaTaskProfiler(
         captured.installed.library,
@@ -458,9 +458,7 @@ def admit_forward_plan(
         execution_plan.program,
         execution_plan.schedule,
         initial_task_id=INITIAL_PLACEMENT_TASK_ID,
-        dynamic_task_allocations=(
-            selected_admission.dynamic_provider_allocations()
-        ),
+        dynamic_task_allocations=(selected_admission.dynamic_provider_allocations()),
     )
     bridge = RuntimeBridge(memory.runtime, execution_plan.program, memory.plan_handle)
     state: MaterializedForwardState | None = None
@@ -557,7 +555,7 @@ def _forward_execution_plan(
             task_id=item.task_id,
             entrypoint_id=f"entrypoint_{index:06d}",
             executor_id="pytorch_inductor",
-            abi_digest=item.artifact.compatibility_digest,
+            contract_digest=item.artifact.compatibility_digest,
         )
         for index, item in enumerate(lowered.entrypoints)
     )
@@ -599,12 +597,12 @@ def _forward_plan_report(
         recomputation_cache_hit=selection.cache_hit,
         pressurefit_results=(admitted_result,),
         captured_stage_count=len(captured.partitioned.stages),
-        aot_unique_stage_abis=profiled.profiles.unique_keys,
+        aot_unique_stage_contracts=profiled.profiles.unique_keys,
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
         compiler_phase_timings_ns=profiled.profiler.compilation_phase_timings_ns,
-        compiler_phase_timings_by_abi=(
-            profiled.profiler.compilation_phase_timings_by_abi
+        compiler_phase_timings_by_contract=(
+            profiled.profiler.compilation_phase_timings_by_contract
         ),
         cache_directories=artifact_cache.store.diagnostics(),
         touched_cache_artifacts=cache_artifacts(artifact_cache.store),
@@ -708,7 +706,7 @@ def _verify_manifest_identity(
             expected.compatibility_digest != manifest.compatibility_digest
         ):
             raise CompilationError(
-                f"compiled entrypoint changed its storage ABI: artifact={digest}"
+                f"compiled entrypoint changed its storage contract: artifact={digest}"
             )
 
 

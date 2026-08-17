@@ -153,7 +153,7 @@ def test_structural_identity_includes_input_storage_aliases_and_offsets() -> Non
     assert aliased.compatibility_digest != distinct.compatibility_digest
 
 
-def test_artifact_rebind_preserves_contract_and_rejects_abi_changes() -> None:
+def test_artifact_rebind_preserves_contract_and_rejects_contract_changes() -> None:
     class _Pair(nn.Module):
         def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
             return left + right

@@ -23,12 +23,12 @@ class CompilationError(PlanningError):
         self,
         message: str,
         *,
-        structural_abi: str | None = None,
+        structural_contract: str | None = None,
         task_kind: str | None = None,
         operators: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
-        self.structural_abi = structural_abi
+        self.structural_contract = structural_contract
         self.task_kind = task_kind
         self.operators = operators
 
@@ -40,12 +40,12 @@ class ProfilingError(PlanningError):
         self,
         message: str,
         *,
-        structural_abi: str | None = None,
+        structural_contract: str | None = None,
         task_kind: str | None = None,
         operators: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
-        self.structural_abi = structural_abi
+        self.structural_contract = structural_contract
         self.task_kind = task_kind
         self.operators = operators
 

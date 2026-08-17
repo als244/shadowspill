@@ -174,7 +174,7 @@ def _register_stage_cotangents(
         : len(stage.differentiable_output_indices) - pair.specialized_unit_tangent_count
     ]
     if len(tangent_values) != len(explicit_indices):
-        raise CaptureError("stage tangent ABI differs from selected roots")
+        raise CaptureError("stage tangent contract differs from selected roots")
     for output_index, tangent in zip(
         explicit_indices,
         tangent_values,
@@ -426,9 +426,7 @@ def _stage_forward_outputs(
     root_by_leaf = {
         item.leaf_index: item.root_id for item in storage_contract.output_views
     }
-    view_by_leaf = {
-        item.leaf_index: item for item in storage_contract.output_views
-    }
+    view_by_leaf = {item.leaf_index: item for item in storage_contract.output_views}
     for index in range(pair.forward.output_count):
         try:
             role = serialized_dtype_role(

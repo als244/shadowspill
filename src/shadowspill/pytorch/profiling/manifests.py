@@ -42,7 +42,7 @@ def validate_compiled_profile(
     measurement: TaskMeasurement,
     manifests: dict[str, ExecutableTaskManifest],
 ) -> None:
-    """Reject a physical profile that disagrees with its compiler ABI."""
+    """Reject a physical profile that disagrees with its compiler contract."""
 
     if not isinstance(artifact, GraphArtifact):
         return
@@ -51,7 +51,7 @@ def validate_compiled_profile(
     except KeyError as exc:
         raise ProfilingError(
             "compiled task manifest is missing during profile validation",
-            structural_abi=artifact.compatibility_digest,
+            structural_contract=artifact.compatibility_digest,
             task_kind=artifact.kind,
             operators=tuple(artifact.operator_targets),
         ) from exc
@@ -63,9 +63,9 @@ def validate_compiled_profile(
         )
     except CaptureError as exc:
         raise ProfilingError(
-            "compiled task profile disagrees with structural ABI "
+            "compiled task profile disagrees with structural contract "
             f"{artifact.compatibility_digest}: {exc}",
-            structural_abi=artifact.compatibility_digest,
+            structural_contract=artifact.compatibility_digest,
             task_kind=artifact.kind,
             operators=tuple(artifact.operator_targets),
         ) from exc

@@ -162,7 +162,7 @@ Shared planning arguments have these meanings:
 | `partition` | `"auto"`, `"whole"`, or `PartitionPolicy`. |
 | `planning_cachedir` | Shared content-addressed artifact root. |
 | `profiling_metadata` | JSON-compatible identity for data-sensitive task measurement. |
-| `allocation_probe_seeds` | Independent randomized activation probes per structural ABI. |
+| `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
 | `save_plan`, `force_fresh`, `overwrite_plan` | Artifact cache policy. |
 | `implementation_revision` | Explicit implementation identity for compiler/profile invalidation. |
@@ -305,6 +305,6 @@ Planning exceptions preserve phase-specific meaning:
 - `ObjectiveError` — the training objective violates its contract.
 - `InputGuardError` — runtime inputs differ from the fixed template.
 
-Compiler and profiling errors retain structural ABI, task kind, and operator
+Compiler and profiling errors retain structural contract, task kind, and operator
 context when available. Runtime exceptions retain the first native failure and
 task identity.
