@@ -214,7 +214,6 @@ void shadowspill_object_release(ShadowSpillObject *object) {
         return;
     }
     free(object->locations);
-    pthread_cond_destroy(&object->state_changed);
     pthread_mutex_destroy(&object->lock);
     free(object);
 }

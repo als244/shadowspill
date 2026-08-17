@@ -332,7 +332,6 @@ struct ShadowSpillObject {
     _Atomic uint8_t registration_owned;
     _Atomic uint8_t detached;
     pthread_mutex_t lock;
-    pthread_cond_t state_changed;
     ShadowSpillObjectLocation *locations;
     uint32_t location_count;
     uint64_t generation;

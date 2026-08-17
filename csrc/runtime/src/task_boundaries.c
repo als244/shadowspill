@@ -370,7 +370,6 @@ static void discard_action_batch_locked(
                 (void)shadowspill_memory_pool_cancel_retirement_locked(source);
             }
         }
-        pthread_cond_broadcast(&action->object->state_changed);
         ShadowSpillEventLease *trigger_event = action->trigger_event;
         action->trigger_event = NULL;
         ShadowSpillObject *object = action->object;
