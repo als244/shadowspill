@@ -100,6 +100,31 @@ def _artifact_identity(path: Path) -> dict[str, object]:
     }
 
 
+def _report_runtime_transfer_capabilities(runtime: Runtime) -> dict[str, object]:
+    """Print and return the exact transfer measurements consumed by planning."""
+
+    capabilities = runtime.transfer_capabilities
+    print(
+        "runtime transfer capabilities: "
+        f"generation={capabilities.generation} digest={capabilities.digest}",
+        flush=True,
+    )
+    for route_name, route in runtime.routes.items():
+        profile = capabilities.route(route.source, route.destination)
+        print(
+            f"  {route_name} ({route.source}->{route.destination}): "
+            f"effective={profile.bandwidth_bytes_per_second / 1e9:.3f} GB/s "
+            f"concurrent={profile.concurrent_bandwidth_bytes_per_second / 1e9:.3f} "
+            f"GB/s solo={profile.solo_bandwidth_bytes_per_second / 1e9:.3f} GB/s "
+            f"latency={profile.latency_nanoseconds / 1e3:.3f} us "
+            f"mode={profile.calibration_mode} "
+            f"probe={profile.measured_copies}x"
+            f"{profile.large_copy_bytes / (1 << 20):.0f} MiB",
+            flush=True,
+        )
+    return capabilities.as_dict()
+
+
 def _manifest_with_overrides(
     family: str,
     implementation: str,
@@ -116,13 +141,36 @@ def _manifest_with_overrides(
     return replace(manifest, spill_budget_bytes=spill_budget_gib << 30)
 
 
+def _planning_spill_budget(
+    manifest: FullModelManifest,
+    *,
+    planning_spill_budget_gib: int | None,
+) -> int:
+    """Resolve a plan budget bounded by the runtime spill-pool capacity."""
+
+    if planning_spill_budget_gib is None:
+        return manifest.spill_budget_bytes
+    if planning_spill_budget_gib <= 0:
+        raise ValueError("planning-spill-budget-gib must be positive")
+    budget = planning_spill_budget_gib << 30
+    if budget > manifest.spill_budget_bytes:
+        raise ValueError(
+            "planning spill budget exceeds the configured runtime spill pool: "
+            f"budget={budget}, capacity={manifest.spill_budget_bytes}"
+        )
+    return budget
+
+
 def _run(arguments: argparse.Namespace) -> dict[str, object]:
     manifest = _manifest_with_overrides(
         arguments.family,
         arguments.implementation,
         spill_budget_gib=arguments.spill_budget_gib,
     )
-    case = build_case(manifest, seed=arguments.seed)
+    planning_spill_budget = _planning_spill_budget(
+        manifest,
+        planning_spill_budget_gib=arguments.planning_spill_budget_gib,
+    )
     output = arguments.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = (
@@ -130,19 +178,24 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         if arguments.planning_cachedir is not None
         else output.parent / "planning_cache" / manifest.identity
     )
+    # The runtime owns its physical capacities.  Register and calibrate those
+    # capacities before anonymous workload state claims the host pages that
+    # will otherwise back the spill arena and alter sustained DMA bandwidth.
+    runtime = Runtime(
+        pools={
+            "execution": device(
+                physical_capacity=manifest.device_physical_capacity_bytes
+            ),
+            "spill": pinned_host(capacity=manifest.spill_budget_bytes),
+        },
+        routes={
+            "fetch": transfer_route(source="spill", destination="execution"),
+            "evict": transfer_route(source="execution", destination="spill"),
+        },
+    )
+    runtime_transfer_capabilities = _report_runtime_transfer_capabilities(runtime)
+    case = build_case(manifest, seed=arguments.seed)
     with case.implementations():
-        runtime = Runtime(
-            pools={
-                "execution": device(
-                    physical_capacity=manifest.device_physical_capacity_bytes
-                ),
-                "spill": pinned_host(capacity=manifest.spill_budget_bytes),
-            },
-            routes={
-                "fetch": transfer_route(source="spill", destination="execution"),
-                "evict": transfer_route(source="execution", destination="spill"),
-            },
-        )
         case = import_case_model(case, runtime=runtime)
         model = case.model
         planning_started = time.perf_counter()
@@ -154,7 +207,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            spill_budget=manifest.spill_budget_bytes,
+            spill_budget=planning_spill_budget,
             optimizer_ordering="stage_interleaved",
             verbose=True,
             planning_cachedir=cache,
@@ -199,16 +252,22 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 "plan_report_artifact": _artifact_identity(plan_path),
                 "pressurefit_fixtures": fixtures,
                 "physical_budget_statuses": physical_statuses,
+                "planning_spill_budget_bytes": planning_spill_budget,
+                "runtime_transfer_capabilities": runtime_transfer_capabilities,
             }
             training.close()
             export_case_model(case, runtime=runtime)
             runtime.close()
             return result
 
-        checkpoint_started = time.perf_counter()
-        checkpoint = training.state_dict()
-        checkpoint_seconds = time.perf_counter() - checkpoint_started
-        checkpoint_step = checkpoint["step"]
+        checkpoint: dict[str, object] | None = None
+        checkpoint_seconds = 0.0
+        checkpoint_step = training._step
+        if not arguments.skip_checkpoint:
+            checkpoint_started = time.perf_counter()
+            checkpoint = training.state_dict()
+            checkpoint_seconds = time.perf_counter() - checkpoint_started
+            checkpoint_step = cast(int, checkpoint["step"])
         warm_started = time.perf_counter()
         warm_result = training(case.microbatches, runtime_trace=True)
         if warm_result.diagnostics is None:
@@ -218,10 +277,13 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         warm_objectives = [float(value) for value in warm_result.objectives]
         physical_statuses.append(check_physical_budget())
 
-        restore_started = time.perf_counter()
-        training.load_state_dict(checkpoint)
-        restore_seconds = time.perf_counter() - restore_started
-        checkpoint_restored = training._step == checkpoint_step
+        restore_seconds = 0.0
+        checkpoint_restored: bool | None = None
+        if checkpoint is not None:
+            restore_started = time.perf_counter()
+            training.load_state_dict(checkpoint)
+            restore_seconds = time.perf_counter() - restore_started
+            checkpoint_restored = training._step == checkpoint_step
         del checkpoint, warm_result
         gc.collect()
         _wait_idle(training)
@@ -257,6 +319,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 measured_objectives.append(
                     [float(value) for value in step_result.objectives]
                 )
+            # StepResult tensors are caller-owned runtime outputs.  Only the
+            # scalar qualification evidence is retained across groups.
+            del step_result, retained_results
             physical_statuses.append(check_physical_budget())
             print(
                 f"{manifest.identity} group {group + 1}: "
@@ -311,8 +376,10 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         historical_passed = bool(
             historical_ratio is None or historical_ratio >= _MINIMUM_HISTORICAL_RATIO
         )
+        expected_logical_steps = protocol_steps + int(arguments.skip_checkpoint)
         logical_steps_passed = bool(
-            checkpoint_restored and training._step == protocol_steps
+            (arguments.skip_checkpoint or checkpoint_restored)
+            and training._step == expected_logical_steps
         )
         result = {
             "schema": "shadowspill.full_model_qualification/v1",
@@ -333,6 +400,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "planning_seconds": planning_seconds,
             "phase_seconds": phases,
             "checkpoint_seconds": checkpoint_seconds,
+            "checkpoint_skipped": bool(arguments.skip_checkpoint),
             "warm_seconds": warm_seconds,
             "restore_seconds": restore_seconds,
             "checkpoint_restored": checkpoint_restored,
@@ -341,6 +409,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "measured_objectives": measured_objectives,
             "objectives_finite": objectives_finite,
             "logical_steps": training._step,
+            "expected_logical_steps": expected_logical_steps,
             "logical_steps_passed": logical_steps_passed,
             "group_seconds": group_seconds,
             "group_tokens_per_second": group_tokens_per_second,
@@ -362,9 +431,11 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "transfer_bytes_fetched": report.transfer_bytes_fetched,
             "physical_budget_statuses": physical_statuses,
             "physical_budget_passed": physical_passed,
+            "planning_spill_budget_bytes": planning_spill_budget,
             "strict_runtime_passed": strict_runtime,
             "runtime_delta": runtime_delta,
             "runtime_statistics": statistics_dict(execution_statistics),
+            "runtime_transfer_capabilities": runtime_transfer_capabilities,
             "plan_report_artifact": _artifact_identity(plan_path),
             "pressurefit_fixtures": fixtures,
         }
@@ -383,19 +454,39 @@ def main() -> int:
     parser.add_argument("--groups", type=int, default=3)
     parser.add_argument("--steps-per-group", type=int, default=4)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--skip-checkpoint",
+        action="store_true",
+        help=(
+            "run the throughput protocol without the anonymous full-state "
+            "checkpoint copy; this is a runtime probe, not checkpoint qualification"
+        ),
+    )
     parser.add_argument("--force-fresh", action="store_true")
     parser.add_argument("--planning-cachedir", type=Path)
     parser.add_argument("--implementation-revision")
     parser.add_argument(
         "--spill-budget-gib",
         type=int,
-        help="override the manifest's pinned spill-pool capacity",
+        help="override the manifest's runtime spill-pool capacity",
+    )
+    parser.add_argument(
+        "--planning-spill-budget-gib",
+        type=int,
+        help="use a smaller planning budget within the runtime spill pool",
     )
     arguments = parser.parse_args()
     if arguments.groups <= 0 or arguments.steps_per_group <= 0:
         parser.error("groups and steps-per-group must be positive")
+    if arguments.plan_only and arguments.skip_checkpoint:
+        parser.error("--skip-checkpoint has no effect with --plan-only")
     if arguments.spill_budget_gib is not None and arguments.spill_budget_gib <= 0:
         parser.error("--spill-budget-gib must be positive")
+    if (
+        arguments.planning_spill_budget_gib is not None
+        and arguments.planning_spill_budget_gib <= 0
+    ):
+        parser.error("--planning-spill-budget-gib must be positive")
     try:
         result = _run(arguments)
     except BaseException as error:

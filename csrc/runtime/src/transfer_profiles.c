@@ -9,12 +9,27 @@
 #include <string.h>
 #include <time.h>
 
+#define SHADOWSPILL_CALIBRATION_BATCH_SAMPLES 3U
+
 static uint64_t monotonic_nanoseconds(void) {
     struct timespec value;
     if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
         return 0U;
     }
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
+}
+
+static uint64_t median_batch_nanoseconds(const uint64_t values[3]) {
+    if (values[0] < values[1]) {
+        if (values[1] < values[2]) {
+            return values[1];
+        }
+        return values[0] < values[2] ? values[2] : values[0];
+    }
+    if (values[0] < values[2]) {
+        return values[0];
+    }
+    return values[1] < values[2] ? values[2] : values[1];
 }
 
 static uint32_t profile_index(
@@ -326,8 +341,8 @@ static int calibrate_route(
         }
     }
     uint64_t small_nanoseconds = 0U;
-    uint64_t large_nanoseconds = 0U;
-    if (status == 0 && (measure_copy(
+    uint64_t large_measurements[SHADOWSPILL_CALIBRATION_BATCH_SAMPLES] = {0};
+    if (status == 0 && measure_copy(
             route,
             *lane,
             destination_pointer,
@@ -335,16 +350,23 @@ static int calibrate_route(
             config->small_copy_bytes,
             config->measured_copies,
             &small_nanoseconds
-        ) != 0 || measure_copy_batch(
-            route,
-            *lane,
-            destination_pointer,
-            source_pointer,
-            config->large_copy_bytes,
-            config->measured_copies,
-            &large_nanoseconds
-        ) != 0)) {
+        ) != 0) {
         status = -1;
+    }
+    for (uint32_t sample = 0U;
+         status == 0 && sample < SHADOWSPILL_CALIBRATION_BATCH_SAMPLES;
+         ++sample) {
+        if (measure_copy_batch(
+                route,
+                *lane,
+                destination_pointer,
+                source_pointer,
+                config->large_copy_bytes,
+                config->measured_copies,
+                &large_measurements[sample]
+            ) != 0) {
+            status = -1;
+        }
     }
     release_probe_ranges(
         source,
@@ -356,6 +378,9 @@ static int calibrate_route(
     if (status != 0) {
         return status;
     }
+    const uint64_t large_nanoseconds = median_batch_nanoseconds(
+        large_measurements
+    );
     uint64_t bandwidth = measured_bandwidth(
         config->large_copy_bytes,
         config->measured_copies,
@@ -558,20 +583,28 @@ static int calibrate_reverse_pair(
         ) != 0) {
         status = -1;
     }
-    if (status == 0 && measure_concurrent_pair(
-            &first,
-            &second,
-            config->measured_copies,
-            &first_nanoseconds,
-            &second_nanoseconds
-        ) != 0) {
-        status = -1;
+    uint64_t first_measurements[SHADOWSPILL_CALIBRATION_BATCH_SAMPLES] = {0};
+    uint64_t second_measurements[SHADOWSPILL_CALIBRATION_BATCH_SAMPLES] = {0};
+    for (uint32_t sample = 0U;
+         status == 0 && sample < SHADOWSPILL_CALIBRATION_BATCH_SAMPLES;
+         ++sample) {
+        if (measure_concurrent_pair(
+                &first,
+                &second,
+                config->measured_copies,
+                &first_measurements[sample],
+                &second_measurements[sample]
+            ) != 0) {
+            status = -1;
+        }
     }
     release_probe(&second);
     release_probe(&first);
     if (status != 0) {
         return status;
     }
+    first_nanoseconds = median_batch_nanoseconds(first_measurements);
+    second_nanoseconds = median_batch_nanoseconds(second_measurements);
     ShadowSpillTransferProfile *profiles[2] = {
         first_profile, second_profile
     };

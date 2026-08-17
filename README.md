@@ -23,6 +23,10 @@ environment:
 
 ## Minimal example
 
+Initialize the runtime before constructing or loading model state. This lets
+the runtime register its physical pools and calibrate their real transfer
+routes before workload allocations claim host memory.
+
 ```python
 from functools import partial
 
