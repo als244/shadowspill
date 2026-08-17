@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from shadowspill.pytorch.capture.storage import (
@@ -124,6 +125,43 @@ class CompiledTaskLayout:
         except IndexError as exc:
             raise CaptureError("compiled layout references an unknown root") from exc
 
+    def additional_workspace_for_outputs(
+        self,
+        leaf_indices: Iterable[int],
+    ) -> int:
+        """Return the incremental live-set peak caused by transient outputs.
+
+        Isolated profiling excludes every returned allocation from anonymous
+        workspace.  Some returned tensors are nevertheless transient during
+        real execution: gradient contributions are accumulated into existing
+        objects, and functional mutations overlap the old object generation.
+        Their allocation sizes cannot simply be summed onto the anonymous
+        peak because their lifetimes may not overlap.  Replay the observed
+        allocation order and return only the increase in its live-set peak.
+        """
+
+        ordinal_by_leaf = {
+            view.leaf_index: view.allocation_ordinal for view in self.output_views
+        }
+        transient_ordinals: set[int] = set()
+        for leaf_index in leaf_indices:
+            try:
+                ordinal = ordinal_by_leaf[leaf_index]
+            except KeyError as exc:
+                raise CaptureError(
+                    f"compiled layout has no tensor output leaf {leaf_index}"
+                ) from exc
+            if ordinal is not None:
+                transient_ordinals.add(ordinal)
+        anonymous_peak = _allocation_live_set_peak(self.allocation_trace, set())
+        transient_peak = _allocation_live_set_peak(
+            self.allocation_trace,
+            transient_ordinals,
+        )
+        if transient_peak < anonymous_peak:
+            raise AssertionError("transient outputs reduced the allocation live set")
+        return transient_peak - anonymous_peak
+
     def to_json(self) -> str:
         """Return deterministic standalone diagnostic serialization."""
 
@@ -160,6 +198,34 @@ class _FreshAllocation:
     requested_bytes: int
     semantic_origin: int
     physical_origin: int
+
+
+def _allocation_live_set_peak(
+    trace: tuple[TaskAllocationEvent, ...],
+    transient_output_ordinals: set[int],
+) -> int:
+    """Replay anonymous storage plus selected returned allocations."""
+
+    live: dict[int, int] = {}
+    peak = 0
+    live_bytes = 0
+    for event in trace:
+        ordinal = event.allocation_ordinal
+        if event.operation is TaskAllocationOperation.ALLOCATE:
+            if event.output_leaf_indices and ordinal not in transient_output_ordinals:
+                continue
+            if ordinal in live:
+                raise CaptureError(
+                    f"allocation trace allocates ordinal {ordinal} twice"
+                )
+            live[ordinal] = event.charged_bytes
+            live_bytes += event.charged_bytes
+            peak = max(peak, live_bytes)
+            continue
+        released = live.pop(ordinal, None)
+        if released is not None:
+            live_bytes -= released
+    return peak
 
 
 def reconcile_compiled_task_layout(

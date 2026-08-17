@@ -151,15 +151,8 @@ def build_admission_topology(
             and alias_id not in handoff_destinations
             and alias_size[alias_id] != 0
         )
-        replacement_bytes = sum(alias_size[item] for item in replacements)
         profile = profile_by_id[task.profile_id]
         profiled_workspace = profile.workspace_bytes
-        if replacement_bytes > profiled_workspace:
-            raise ValueError(
-                f"task {task.task_id} replacement bytes exceed its workspace "
-                f"charge: replacements={replacement_bytes}, "
-                f"workspace={profiled_workspace}"
-            )
         try:
             trace = profiled_traces[profile.compatibility_digest]
         except KeyError as error:
@@ -174,13 +167,22 @@ def build_admission_topology(
             persistent_aliases=set(fresh_aliases) | set(replacements),
         )
         workspace_extents = _anonymous_peak_extents(allocation_steps)
-        expected_workspace = profiled_workspace - replacement_bytes
-        if sum(workspace_extents) != expected_workspace:
+        task_workspace_extents = _workspace_peak_extents(
+            allocation_steps,
+            transient_aliases=set(replacements),
+        )
+        if sum(task_workspace_extents) != profiled_workspace:
             raise ValueError(
                 f"task {task.task_id} physical allocation trace and Program "
                 "workspace disagree: "
-                f"trace_peak={sum(workspace_extents)}, "
-                f"program_workspace={expected_workspace}"
+                f"trace_peak={sum(task_workspace_extents)}, "
+                f"program_workspace={profiled_workspace}, "
+                f"phase={task.phase!r}, profile={profile.profile_id!r}, "
+                f"compatibility={profile.compatibility_digest!r}, "
+                f"profiled_workspace={profiled_workspace}, "
+                f"fresh_aliases={fresh_aliases!r}, "
+                f"replacement_aliases={replacements!r}, "
+                f"workspace_extents={task_workspace_extents!r}"
             )
         task_specs.append(
             TaskAdmissionSpec(
@@ -278,13 +280,26 @@ def _anonymous_peak_extents(
 ) -> tuple[int, ...]:
     """Return the exact anonymous live-set peak encoded by one task trace."""
 
+    return _workspace_peak_extents(steps, transient_aliases=set())
+
+
+def _workspace_peak_extents(
+    steps: tuple[TaskAllocationStep, ...],
+    *,
+    transient_aliases: set[str],
+) -> tuple[int, ...]:
+    """Return the live-set peak not charged as fresh Program output storage."""
+
     live: dict[int, int] = {}
     peak: tuple[int, ...] = ()
     live_bytes = 0
     peak_bytes = 0
     for step in steps:
         if step.kind is TaskAllocationStepKind.ALLOCATE:
-            if step.output_alias_group_id is None:
+            if (
+                step.output_alias_group_id is None
+                or step.output_alias_group_id in transient_aliases
+            ):
                 live[step.allocation_ordinal] = step.charged_bytes
                 live_bytes += step.charged_bytes
         else:

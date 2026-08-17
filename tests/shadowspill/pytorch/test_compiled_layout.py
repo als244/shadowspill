@@ -47,7 +47,7 @@ def test_repeated_output_reconciles_to_one_physical_allocation() -> None:
                 0,
                 TaskAllocationOperation.ALLOCATE,
                 32,
-                32,
+                256,
                 (0, 1),
                 (0, 0),
             )
@@ -56,8 +56,47 @@ def test_repeated_output_reconciles_to_one_physical_allocation() -> None:
 
     assert len(layout.roots) == 1
     assert layout.roots[0].requested_bytes == 32
+    assert layout.roots[0].charged_bytes == 256
     assert tuple(view.allocation_ordinal for view in layout.output_views) == (0, 0)
+    assert layout.additional_workspace_for_outputs((0, 1)) == 256
     assert layout.to_json() == layout.to_json()
+
+
+def test_transient_outputs_charge_their_actual_live_set_peak() -> None:
+    def function(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return torch.sin(value), torch.cos(value)
+
+    value = torch.randn(8)
+    contract = capture_task_storage_contract(make_fx(function)(value), (value,))
+    layout = reconcile_compiled_task_layout(
+        contract,
+        _measurement(
+            TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 64, 64),
+            TaskAllocationEvent(
+                1,
+                TaskAllocationOperation.ALLOCATE,
+                32,
+                1024,
+                (0,),
+                (0,),
+            ),
+            TaskAllocationEvent(0, TaskAllocationOperation.FREE, 64, 64),
+            TaskAllocationEvent(
+                2,
+                TaskAllocationOperation.ALLOCATE,
+                32,
+                32,
+                (1,),
+                (0,),
+            ),
+            workspace=64,
+        ),
+    )
+
+    # The later 32-byte output is live with the first output, but it does not
+    # exceed the earlier 64-byte workspace/output overlap.  Summing returned
+    # allocation sizes would incorrectly report 1,056 incremental bytes.
+    assert layout.additional_workspace_for_outputs((0, 1)) == 1024
 
 
 def test_allocator_profile_cannot_redefine_compiler_output_extent() -> None:

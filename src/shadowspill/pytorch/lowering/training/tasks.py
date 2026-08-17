@@ -116,8 +116,11 @@ class _TrainingTaskEmitter:
                     ResourceSpec(self.device_id, ResourceKind.COMPUTE),
                     self.profiles.profile_id(
                         item.pair.forward,
-                        self.profiles.mutation_transition_bytes(
+                        self.profiles.additional_workspace_for_outputs(
                             item.pair.forward,
+                            self.profiles.replacement_output_leaves(
+                                item.pair.forward
+                            ),
                             metadata_digest,
                         ),
                         metadata_digest=metadata_digest,
@@ -288,8 +291,22 @@ class _TrainingTaskEmitter:
         dependencies: tuple[str, ...],
         metadata_digest: str | None,
     ) -> TaskSpec:
-        mutation_bytes = sum(
-            self.objects.catalog.object_size(object_id) for object_id in mutated
+        transient_leaves = tuple(
+            dict.fromkeys(
+                (
+                    *self.profiles.replacement_output_leaves(item.pair.backward),
+                    *(
+                        slot.leaf_index
+                        for slot in item.contributions
+                        if slot.object_id in mutated
+                    ),
+                )
+            )
+        )
+        mutation_bytes = self.profiles.additional_workspace_for_outputs(
+            item.pair.backward,
+            transient_leaves,
+            metadata_digest,
         )
         inputs = [slot.object_id for slot in item.backward_inputs]
         inputs.extend(mutated)
