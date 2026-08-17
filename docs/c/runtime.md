@@ -60,6 +60,23 @@ after table removal until their own references are released.
 
 ## Task and execution API
 
+`ShadowSpillPlan` owns one callable's immutable topology while sharing the
+runtime's pool, route, event, and object owners:
+
+- `shadowspill_plan_create()` creates a plan from explicit pool and route IDs.
+- `shadowspill_plan_create_for_pools()` resolves the unique directed routes for
+  a selected pool pair.
+- `shadowspill_plan_bind_object()` maps a Program-local object identity to a
+  retained runtime object with causal or explicitly unordered consistency.
+- `shadowspill_plan_admit_execution()` and
+  `shadowspill_plan_resolve_execution()` publish and resolve immutable task
+  handles.
+- `shadowspill_plan_admit_fixed_layout()` and
+  `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
+- `shadowspill_plan_clear_execution()` discards admitted records and bindings.
+- `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
+  references without closing the shared runtime.
+
 The direct task boundary is `shadowspill_before_task()` /
 `shadowspill_after_task()`, with `shadowspill_abort_task()` for rollback.
 

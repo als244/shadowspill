@@ -1394,6 +1394,119 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_admit_execution(
         : shadowspill_admit_execution(runtime, description);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_create(
+    uint32_t execution_pool_id,
+    uint32_t spill_pool_id,
+    uintptr_t *plan_handle
+) {
+    if (plan_handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *plan_handle = 0U;
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillPlan *plan = NULL;
+    const ShadowSpillRuntimeStatus status =
+        shadowspill_plan_create_for_pools(
+            runtime, execution_pool_id, spill_pool_id, &plan
+        );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        *plan_handle = (uintptr_t)plan;
+    }
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_close(
+    uintptr_t plan_handle
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_close((ShadowSpillPlan *)plan_handle);
+}
+
+void shadowspill_pytorch_plan_destroy(uintptr_t plan_handle) {
+    shadowspill_plan_destroy((ShadowSpillPlan *)plan_handle);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_bind_object(
+    uintptr_t plan_handle,
+    uint64_t plan_object_id,
+    uint64_t runtime_object_id,
+    uint8_t consistency
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_bind_object(
+              (ShadowSpillPlan *)plan_handle,
+              plan_object_id,
+              runtime_object_id,
+              consistency
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_execution(
+    uintptr_t plan_handle,
+    const ShadowSpillExecutionDescription *description
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_admit_execution(
+              (ShadowSpillPlan *)plan_handle, description
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_fixed_layout(
+    uintptr_t plan_handle,
+    const ShadowSpillFixedLayoutDescription *description
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_admit_fixed_layout(
+              (ShadowSpillPlan *)plan_handle, description
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_seal_fixed_layout(
+    uintptr_t plan_handle
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_seal_fixed_layout(
+              (ShadowSpillPlan *)plan_handle
+          );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_clear_execution(
+    uintptr_t plan_handle
+) {
+    return plan_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_plan_clear_execution((ShadowSpillPlan *)plan_handle);
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_resolve_execution(
+    uintptr_t plan_handle,
+    uint64_t task_id,
+    uintptr_t *execution_handle
+) {
+    if (plan_handle == 0U || execution_handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *execution_handle = 0U;
+    const ShadowSpillExecutionHandle *handle = NULL;
+    const ShadowSpillRuntimeStatus status = shadowspill_plan_resolve_execution(
+        (ShadowSpillPlan *)plan_handle, task_id, &handle
+    );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        *execution_handle = (uintptr_t)handle;
+    }
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_admit_fixed_layout(
     const ShadowSpillFixedLayoutDescription *description
 ) {

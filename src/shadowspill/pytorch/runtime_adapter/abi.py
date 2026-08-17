@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 36
+ADAPTER_ABI_VERSION: Final = 37
 RUNTIME_ABI_VERSION: Final = 29
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
@@ -734,6 +734,60 @@ def _configure_task_boundaries(library: Any) -> None:
 
 
 def _configure_execution(library: Any) -> None:
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_create",
+        [ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_close",
+        [ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_destroy",
+        [ctypes.c_size_t],
+        None,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_bind_object",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_admit_execution",
+        [ctypes.c_size_t, ctypes.POINTER(ExecutionDescription)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_admit_fixed_layout",
+        [ctypes.c_size_t, ctypes.POINTER(FixedLayoutDescription)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_seal_fixed_layout",
+        [ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_clear_execution",
+        [ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_resolve_execution",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_uint32,
+    )
     _signature(
         library,
         "shadowspill_pytorch_admit_execution",

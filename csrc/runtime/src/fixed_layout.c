@@ -614,13 +614,14 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement
 ) {
-    ShadowSpillRuntime *runtime = plan->runtime;
     if (placement->kind == SHADOWSPILL_FIXED_INITIAL_OBJECT) {
-        ShadowSpillObject *object = shadowspill_find_object(
-            runtime, placement->object_id
+        ShadowSpillObject *object = shadowspill_plan_object_acquire(
+            plan, placement->object_id, NULL
         );
-        return object != NULL && object->size_bytes == placement->bytes
-            ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        const int valid = object != NULL && object->size_bytes == placement->bytes;
+        shadowspill_object_release(object);
+        return valid ? SHADOWSPILL_RUNTIME_OK
+                     : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
     }
     ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
         &plan->execution, placement->task_id
@@ -643,7 +644,7 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
     const ShadowSpillExecutionAction *action =
         &record->actions[placement->ordinal];
     return action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
-        action->object->object_id == placement->object_id &&
+        action->plan_object_id == placement->object_id &&
         action->object->size_bytes == placement->bytes
         ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
 }
@@ -701,7 +702,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
                         SHADOWSPILL_FIXED_ACTION_DESTINATION,
                         record->task_id,
                         index,
-                        action->object->object_id
+                        action->plan_object_id
                     ) != NULL) {
                     ++policy_count;
                 }
@@ -710,7 +711,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
                         SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
                         record->task_id,
                         index,
-                        action->object->object_id
+                        action->plan_object_id
                     ) != NULL) {
                     ++policy_count;
                 }
@@ -752,7 +753,7 @@ static ShadowSpillRuntimeStatus resolve_dependency(
             return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
         }
         successor_object_id = successor_record
-            ->actions[item->successor_ordinal].object->object_id;
+            ->actions[item->successor_ordinal].plan_object_id;
     }
     const ShadowSpillFixedPlacementDescription *successor =
         shadowspill_fixed_layout_find_placement(

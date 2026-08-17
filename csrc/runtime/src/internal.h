@@ -296,6 +296,7 @@ typedef enum ShadowSpillQueuedActionState {
 
 struct ShadowSpillQueuedAction {
     uint64_t task_id;
+    uint64_t plan_object_id;
     uint64_t action_ordinal;
     uint64_t activation_generation;
     uint64_t completed_generation;
@@ -365,11 +366,13 @@ typedef struct ShadowSpillIdleWakeup {
 
 typedef struct ShadowSpillExecutionUpdate {
     ShadowSpillObject *object;
+    uint64_t plan_object_id;
     uint64_t version_delta;
 } ShadowSpillExecutionUpdate;
 
 typedef struct ShadowSpillExecutionAction {
     ShadowSpillObject *object;
+    uint64_t plan_object_id;
     uint8_t kind;
     char *trace_label;
 } ShadowSpillExecutionAction;
@@ -378,6 +381,8 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillPlan *plan_owner;
     uint64_t task_id;
     ShadowSpillObject **inputs;
+    uint64_t *input_plan_object_ids;
+    uint8_t *input_consistency;
     uint32_t input_count;
     ShadowSpillObject **unique_inputs;
     uint32_t unique_input_count;
@@ -411,12 +416,29 @@ typedef struct ShadowSpillExecutionTable {
     uint8_t lock_initialized;
 } ShadowSpillExecutionTable;
 
+typedef struct ShadowSpillPlanObjectBinding {
+    uint64_t plan_object_id;
+    ShadowSpillObject *object;
+    uint8_t consistency;
+    struct ShadowSpillPlanObjectBinding *hash_next;
+    struct ShadowSpillPlanObjectBinding *ownership_next;
+} ShadowSpillPlanObjectBinding;
+
+typedef struct ShadowSpillPlanObjectTable {
+    pthread_rwlock_t lock;
+    ShadowSpillPlanObjectBinding **by_id;
+    ShadowSpillPlanObjectBinding *owned_head;
+    uint64_t bucket_count;
+    uint8_t lock_initialized;
+} ShadowSpillPlanObjectTable;
+
 struct ShadowSpillPlan {
     ShadowSpillRuntime *runtime;
     ShadowSpillMemoryPool *execution_pool;
     ShadowSpillMemoryPool *spill_pool;
     ShadowSpillRouteState *fetch_route;
     ShadowSpillRouteState *evict_route;
+    ShadowSpillPlanObjectTable object_bindings;
     ShadowSpillExecutionTable execution;
     ShadowSpillFixedLayoutState fixed_layout;
     pthread_mutex_t lifecycle_lock;
@@ -424,11 +446,24 @@ struct ShadowSpillPlan {
     _Atomic uint8_t closing;
     _Atomic uint8_t closed;
     uint8_t lifecycle_lock_initialized;
+    uint8_t object_bindings_initialized;
     uint8_t execution_initialized;
     uint8_t internal_default;
     struct ShadowSpillPlan *ownership_next;
     struct ShadowSpillPlan **ownership_previous_link;
 };
+
+int shadowspill_plan_object_table_initialize(
+    ShadowSpillPlanObjectTable *table,
+    uint64_t bucket_count
+);
+void shadowspill_plan_object_table_destroy(ShadowSpillPlanObjectTable *table);
+void shadowspill_plan_object_table_clear(ShadowSpillPlanObjectTable *table);
+ShadowSpillObject *shadowspill_plan_object_acquire(
+    ShadowSpillPlan *plan,
+    uint64_t plan_object_id,
+    uint8_t *consistency
+);
 
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */

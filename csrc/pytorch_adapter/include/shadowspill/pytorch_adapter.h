@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 36U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 37U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -148,6 +148,53 @@ shadowspill_pytorch_seal_physical_budget(
 );
 
 /* Cold-path immutable execution admission and hot predecoded boundaries. */
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_create(
+    uint32_t execution_pool_id,
+    uint32_t spill_pool_id,
+    uintptr_t *plan_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_close(uintptr_t plan_handle);
+
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_plan_destroy(
+    uintptr_t plan_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_bind_object(
+    uintptr_t plan_handle,
+    uint64_t plan_object_id,
+    uint64_t runtime_object_id,
+    uint8_t consistency
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_admit_execution(
+    uintptr_t plan_handle,
+    const ShadowSpillExecutionDescription *description
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_admit_fixed_layout(
+    uintptr_t plan_handle,
+    const ShadowSpillFixedLayoutDescription *description
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_seal_fixed_layout(uintptr_t plan_handle);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_clear_execution(uintptr_t plan_handle);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_resolve_execution(
+    uintptr_t plan_handle,
+    uint64_t task_id,
+    uintptr_t *execution_handle
+);
+
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_admit_execution(
     const ShadowSpillExecutionDescription *description

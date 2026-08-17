@@ -48,6 +48,19 @@ compiled code can use an invalid address.
 
 ## Execution boundaries
 
+The adapter exposes the neutral plan owner without introducing frontend object
+semantics:
+
+- `shadowspill_pytorch_plan_create()`
+- `shadowspill_pytorch_plan_close()`
+- `shadowspill_pytorch_plan_destroy()`
+- `shadowspill_pytorch_plan_bind_object()`
+- `shadowspill_pytorch_plan_admit_execution()`
+- `shadowspill_pytorch_plan_admit_fixed_layout()`
+- `shadowspill_pytorch_plan_seal_fixed_layout()`
+- `shadowspill_pytorch_plan_clear_execution()`
+- `shadowspill_pytorch_plan_resolve_execution()`
+
 Task and admitted-execution calls mirror the neutral runtime:
 
 - `shadowspill_pytorch_before_task()` / `shadowspill_pytorch_after_task()`

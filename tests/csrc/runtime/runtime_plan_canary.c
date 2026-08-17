@@ -163,6 +163,71 @@ static int plan_selects_nondefault_pool_pair(void) {
     return failed ? -1 : 0;
 }
 
+static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *first = NULL;
+    ShadowSpillPlan *second = NULL;
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    const ShadowSpillObjectDescription first_object = {
+        .object_id = 1001U,
+        .size_bytes = 64U,
+        .initially_spill_resident = 1U,
+    };
+    const ShadowSpillObjectDescription second_object = {
+        .object_id = 2002U,
+        .size_bytes = 64U,
+        .initially_spill_resident = 1U,
+    };
+    const uint64_t input = 7U;
+    const ShadowSpillExecutionDescription task = {
+        .task_id = 11U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+    };
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &first_object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &second_object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &first) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &second) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            first, 7U, 1001U, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            second, 7U, 2002U, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_execution(first, &task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_admit_execution(second, &task) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            first, 7U, 2002U, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
+    shadowspill_plan_destroy(first);
+    shadowspill_plan_destroy(second);
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (shared_runtime_accepts_overlapping_plan_tasks() != 0) {
         fprintf(stderr, "runtime plan canary failed: shared runtime\n");
@@ -170,6 +235,10 @@ int main(void) {
     }
     if (plan_selects_nondefault_pool_pair() != 0) {
         fprintf(stderr, "runtime plan canary failed: alternate pool pair\n");
+        return EXIT_FAILURE;
+    }
+    if (plans_bind_local_ids_to_explicit_runtime_objects() != 0) {
+        fprintf(stderr, "runtime plan canary failed: object bindings\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

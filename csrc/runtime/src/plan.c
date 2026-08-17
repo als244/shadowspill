@@ -51,6 +51,10 @@ static void destroy_plan_record(ShadowSpillPlan *plan) {
         shadowspill_execution_table_destroy(&plan->execution);
         plan->execution_initialized = 0U;
     }
+    if (plan->object_bindings_initialized) {
+        shadowspill_plan_object_table_destroy(&plan->object_bindings);
+        plan->object_bindings_initialized = 0U;
+    }
     if (plan->lifecycle_lock_initialized) {
         pthread_mutex_destroy(&plan->lifecycle_lock);
         plan->lifecycle_lock_initialized = 0U;
@@ -93,6 +97,13 @@ ShadowSpillRuntimeStatus shadowspill_plan_create(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     plan->lifecycle_lock_initialized = 1U;
+    if (shadowspill_plan_object_table_initialize(
+            &plan->object_bindings, 4096U
+        ) != 0) {
+        destroy_plan_record(plan);
+        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    }
+    plan->object_bindings_initialized = 1U;
     if (shadowspill_execution_table_initialize(&plan->execution, 4096U) != 0) {
         destroy_plan_record(plan);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
@@ -114,6 +125,48 @@ ShadowSpillRuntimeStatus shadowspill_plan_create(
     pthread_mutex_unlock(&runtime->plans_lock);
     *output = plan;
     return SHADOWSPILL_RUNTIME_OK;
+}
+
+ShadowSpillRuntimeStatus shadowspill_plan_create_for_pools(
+    ShadowSpillRuntime *runtime,
+    uint32_t execution_pool_id,
+    uint32_t spill_pool_id,
+    ShadowSpillPlan **output
+) {
+    if (runtime == NULL || output == NULL ||
+        execution_pool_id >= runtime->pool_count ||
+        spill_pool_id >= runtime->pool_count ||
+        execution_pool_id == spill_pool_id) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    uint32_t fetch_route_id = UINT32_MAX;
+    uint32_t evict_route_id = UINT32_MAX;
+    for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
+        const ShadowSpillTransferRoute *route = &runtime->routes[route_id].route;
+        if (route->source_pool_id == spill_pool_id &&
+            route->destination_pool_id == execution_pool_id) {
+            if (fetch_route_id != UINT32_MAX) {
+                return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            }
+            fetch_route_id = route_id;
+        } else if (route->source_pool_id == execution_pool_id &&
+                   route->destination_pool_id == spill_pool_id) {
+            if (evict_route_id != UINT32_MAX) {
+                return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            }
+            evict_route_id = route_id;
+        }
+    }
+    if (fetch_route_id == UINT32_MAX || evict_route_id == UINT32_MAX) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    const ShadowSpillPlanDescription description = {
+        .execution_pool_id = execution_pool_id,
+        .spill_pool_id = spill_pool_id,
+        .fetch_route_id = fetch_route_id,
+        .evict_route_id = evict_route_id,
+    };
+    return shadowspill_plan_create(runtime, &description, output);
 }
 
 ShadowSpillRuntimeStatus shadowspill_plan_close(ShadowSpillPlan *plan) {

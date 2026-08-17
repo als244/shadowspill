@@ -104,6 +104,8 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
         free(record->actions[index].trace_label);
     }
     free(record->inputs);
+    free(record->input_plan_object_ids);
+    free(record->input_consistency);
     free(record->unique_inputs);
     free(record->input_unique_indices);
     free(record->unique_first_positions);
@@ -212,13 +214,13 @@ static int same_description(
         return 0;
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
-        if (record->inputs[index]->object_id !=
+        if (record->input_plan_object_ids[index] !=
             description->input_object_ids[index]) {
             return 0;
         }
     }
     for (uint32_t index = 0U; index < record->update_count; ++index) {
-        if (record->updates[index].object->object_id !=
+        if (record->updates[index].plan_object_id !=
                 description->updates[index].object_id ||
             record->updates[index].version_delta !=
                 description->updates[index].version_delta) {
@@ -226,7 +228,7 @@ static int same_description(
         }
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (record->actions[index].object->object_id !=
+        if (record->actions[index].plan_object_id !=
                 description->actions[index].object_id ||
             record->actions[index].kind !=
                 description->actions[index].kind ||
@@ -260,7 +262,6 @@ static ShadowSpillExecutionRecord *create_record(
     ShadowSpillPlan *plan,
     const ShadowSpillExecutionDescription *description
 ) {
-    ShadowSpillRuntime *runtime = plan->runtime;
     ShadowSpillExecutionRecord *record = calloc(1U, sizeof(*record));
     if (record == NULL) {
         return NULL;
@@ -288,6 +289,12 @@ static ShadowSpillExecutionRecord *create_record(
         description->dynamic_scratch_live_limit_bytes;
     if (record->input_count != 0U) {
         record->inputs = calloc(record->input_count, sizeof(*record->inputs));
+        record->input_plan_object_ids = calloc(
+            record->input_count, sizeof(*record->input_plan_object_ids)
+        );
+        record->input_consistency = calloc(
+            record->input_count, sizeof(*record->input_consistency)
+        );
         record->unique_inputs = calloc(
             record->input_count, sizeof(*record->unique_inputs)
         );
@@ -314,7 +321,8 @@ static ShadowSpillExecutionRecord *create_record(
         );
     }
     if ((record->input_count != 0U &&
-         (record->inputs == NULL || record->unique_inputs == NULL ||
+         (record->inputs == NULL || record->input_plan_object_ids == NULL ||
+          record->input_consistency == NULL || record->unique_inputs == NULL ||
           record->input_unique_indices == NULL ||
           record->unique_first_positions == NULL)) ||
         (record->update_count != 0U && record->updates == NULL) ||
@@ -344,14 +352,18 @@ static ShadowSpillExecutionRecord *create_record(
         }
     }
     for (uint32_t index = 0U; index < record->input_count; ++index) {
-        ShadowSpillObject *object = shadowspill_object_table_acquire(
-            &runtime->objects, description->input_object_ids[index]
+        uint8_t consistency = SHADOWSPILL_OBJECT_CAUSAL;
+        ShadowSpillObject *object = shadowspill_plan_object_acquire(
+            plan, description->input_object_ids[index], &consistency
         );
         if (object == NULL) {
             destroy_record(record);
             return NULL;
         }
         record->inputs[index] = object;
+        record->input_plan_object_ids[index] =
+            description->input_object_ids[index];
+        record->input_consistency[index] = consistency;
         uint32_t unique_index = record->unique_input_count;
         for (uint32_t previous = 0U;
              previous < record->unique_input_count; ++previous) {
@@ -368,8 +380,8 @@ static ShadowSpillExecutionRecord *create_record(
         record->input_unique_indices[index] = unique_index;
     }
     for (uint32_t index = 0U; index < record->update_count; ++index) {
-        ShadowSpillObject *object = shadowspill_object_table_acquire(
-            &runtime->objects, description->updates[index].object_id
+        ShadowSpillObject *object = shadowspill_plan_object_acquire(
+            plan, description->updates[index].object_id, NULL
         );
         if (object == NULL) {
             destroy_record(record);
@@ -377,6 +389,7 @@ static ShadowSpillExecutionRecord *create_record(
         }
         record->updates[index] = (ShadowSpillExecutionUpdate){
             .object = object,
+            .plan_object_id = description->updates[index].object_id,
             .version_delta = description->updates[index].version_delta,
         };
     }
@@ -392,8 +405,8 @@ static ShadowSpillExecutionRecord *create_record(
                 return NULL;
             }
         }
-        ShadowSpillObject *object = shadowspill_object_table_acquire(
-            &runtime->objects, description->actions[index].object_id
+        ShadowSpillObject *object = shadowspill_plan_object_acquire(
+            plan, description->actions[index].object_id, NULL
         );
         if (object == NULL) {
             destroy_record(record);
@@ -409,11 +422,13 @@ static ShadowSpillExecutionRecord *create_record(
         }
         record->actions[index] = (ShadowSpillExecutionAction){
             .object = object,
+            .plan_object_id = description->actions[index].object_id,
             .kind = description->actions[index].kind,
             .trace_label = trace_label,
         };
         record->queued_actions[index] = (ShadowSpillQueuedAction){
             .task_id = record->task_id,
+            .plan_object_id = description->actions[index].object_id,
             .action_ordinal = index,
             .kind = description->actions[index].kind,
             .object = object,
@@ -573,6 +588,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_clear_execution(
         return status;
     }
     shadowspill_execution_table_clear(&plan->execution);
+    shadowspill_plan_object_table_clear(&plan->object_bindings);
     return SHADOWSPILL_RUNTIME_OK;
 }
 
@@ -580,9 +596,45 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionDescription *description
 ) {
-    return runtime == NULL || runtime->default_plan == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
-        : shadowspill_plan_admit_execution(runtime->default_plan, description);
+    if (runtime == NULL || runtime->default_plan == NULL ||
+        description == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillPlan *plan = runtime->default_plan;
+    for (uint32_t index = 0U; index < description->input_count; ++index) {
+        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
+            plan,
+            description->input_object_ids[index],
+            description->input_object_ids[index],
+            SHADOWSPILL_OBJECT_CAUSAL
+        );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+    }
+    for (uint32_t index = 0U; index < description->update_count; ++index) {
+        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
+            plan,
+            description->updates[index].object_id,
+            description->updates[index].object_id,
+            SHADOWSPILL_OBJECT_CAUSAL
+        );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+    }
+    for (uint32_t index = 0U; index < description->action_count; ++index) {
+        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
+            plan,
+            description->actions[index].object_id,
+            description->actions[index].object_id,
+            SHADOWSPILL_OBJECT_CAUSAL
+        );
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+    }
+    return shadowspill_plan_admit_execution(plan, description);
 }
 
 ShadowSpillRuntimeStatus shadowspill_clear_execution_plan(

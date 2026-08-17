@@ -125,6 +125,23 @@ typedef struct ShadowSpillPlanDescription {
     uint32_t evict_route_id;
 } ShadowSpillPlanDescription;
 
+typedef enum ShadowSpillObjectConsistency {
+    SHADOWSPILL_OBJECT_CAUSAL = 0,
+    SHADOWSPILL_OBJECT_UNORDERED = 1,
+} ShadowSpillObjectConsistency;
+
+/*
+ * Binds one Program-local object identity to one runtime-owned logical object.
+ * Equal plan-local IDs in different plans have no relationship unless both
+ * bindings name the same runtime object.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
+    ShadowSpillPlan *plan,
+    uint64_t plan_object_id,
+    uint64_t runtime_object_id,
+    uint8_t consistency
+);
+
 typedef struct ShadowSpillAllocation {
     uint64_t allocation_id;
     uint64_t generation;
@@ -464,6 +481,19 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_plan_create(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlanDescription *description,
+    ShadowSpillPlan **plan
+);
+
+/*
+ * Creates a plan for one pool pair by resolving the unique configured route
+ * in each direction. This is the usual frontend entry point when routes are
+ * identified by their pool endpoints rather than registry ordinals.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_create_for_pools(
+    ShadowSpillRuntime *runtime,
+    uint32_t execution_pool_id,
+    uint32_t spill_pool_id,
     ShadowSpillPlan **plan
 );
 
