@@ -8,7 +8,13 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec, Persistence
+from shadowspill.ir import (
+    AliasGroupSpec,
+    ObjectRole,
+    ObjectSpec,
+    Persistence,
+    SharedResidencyPolicy,
+)
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
     live_storage_identity,
@@ -144,6 +150,7 @@ class ObjectCatalog:
         self._alias_by_storage: dict[int, str] = {}
         self._alias_sizes: dict[str, int] = {}
         self._retain_host: set[str] = set()
+        self._shared_residency: dict[str, SharedResidencyPolicy] = {}
         self._object_by_key: dict[_TensorKey, str] = {}
         self._objects: list[_ObjectRecord] = []
         self._object_specs: tuple[ObjectSpec, ...] | None = None
@@ -430,6 +437,25 @@ class ObjectCatalog:
             record.role = ObjectRole.OUTPUT
             self._object_specs = None
 
+    def mark_shared_residency(
+        self,
+        object_id: str,
+        policy: SharedResidencyPolicy,
+        *,
+        retain_spill_copy: bool,
+    ) -> None:
+        """Declare one externally owned alias as execution-resident."""
+
+        record = self._record(object_id)
+        existing = self._shared_residency.get(record.alias_group_id)
+        if existing is not None and existing is not policy:
+            raise CaptureError(
+                "aliased shared inputs declare different consistency policies"
+            )
+        self._shared_residency[record.alias_group_id] = policy
+        if retain_spill_copy:
+            self._retain_host.add(record.alias_group_id)
+
     def _record(self, object_id: str) -> _ObjectRecord:
         index = int(object_id.removeprefix("object_"))
         return self._objects[index]
@@ -441,6 +467,7 @@ class ObjectCatalog:
                 self._device_id,
                 size_bytes,
                 retain_spill_copy=alias_group_id in self._retain_host,
+                shared_residency=self._shared_residency.get(alias_group_id),
             )
             for alias_group_id, size_bytes in self._alias_sizes.items()
         )

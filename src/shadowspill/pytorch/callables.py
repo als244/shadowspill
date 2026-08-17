@@ -68,13 +68,14 @@ class PlannedForward:
         elif profiler_annotations and not self._profiler_annotations_active:
             self._executor.set_profiler_annotations(True)
             self._profiler_annotations_active = True
-        self._signature.validate(inputs)
+        prepared_inputs = self._executor.prepare_invocation(inputs)
+        self._signature.validate(prepared_inputs)
         # Ownership conflicts are invocation preconditions, not execution
         # failures.  Reject them before entering failure cleanup so releasing
         # the outstanding reference makes this callable immediately reusable.
         self._executor.validate_invocation()
         try:
-            return self._executor(inputs)
+            return self._executor(prepared_inputs)
         except BaseException as error:
             self._close_after_failure(
                 error, operation="execute planned forward"

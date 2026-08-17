@@ -18,6 +18,7 @@ from shadowspill.pytorch import (
     export_model_state,
     import_model_state,
     plan_forward,
+    shared_input,
     shared_output,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, ObjectSnapshot
@@ -34,6 +35,11 @@ class _ForwardModel(nn.Module):
         for layer in self.layers:
             value = torch.relu(layer(value))
         return {"slice": value[:, :width], "mean": value.mean()}
+
+
+class _ConsumerModel(nn.Module):
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return value * 2.0 + 1.0
 
 
 def _statistics() -> AdapterStatistics:
@@ -78,6 +84,12 @@ def main() -> int:
         )
         model = import_model_state(
             model,
+            runtime=runtime,
+            pool="spill",
+            release_source=True,
+        )
+        consumer_model = import_model_state(
+            _ConsumerModel().eval(),
             runtime=runtime,
             pool="spill",
             release_source=True,
@@ -218,14 +230,59 @@ def main() -> int:
             raise AssertionError("shared output recurrence changed logical identity")
         if second_reference.generation == first_generation:
             raise AssertionError("shared output recurrence did not replace generation")
+
+        consumer = plan_forward(
+            consumer_model,
+            example_inputs=[
+                shared_input(second_reference, require_in="execution")
+            ],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata={"shared_input": "scalar_mean"},
+        )
+        before_consumer = _statistics()
+        consumed = consumer([second_reference])
+        expected_consumed = reference(inputs, 16)["mean"] * 2.0 + 1.0
+        torch.testing.assert_close(
+            consumed.cpu(), expected_consumed, rtol=2e-5, atol=2e-6
+        )
+        after_consumer = _statistics()
+        if (
+            after_consumer.runtime.fetch_transfers
+            != before_consumer.runtime.fetch_transfers
+        ):
+            raise AssertionError("execution-resident shared input was fetched")
+
+        second_reference.close()
+        third = shared([inputs, 16])
+        third_reference = third["mean"]
+        if not isinstance(third_reference, TensorRef):
+            raise AssertionError("recurrent shared output lost its reference")
+        if third_reference.object.object_id != shared_object_id:
+            raise AssertionError("recurrent shared output changed logical identity")
+        if third_reference.generation == second_reference.generation:
+            raise AssertionError("recurrent shared output did not replace its value")
+        repeated = consumer([third_reference])
+        torch.testing.assert_close(
+            repeated.cpu(), expected_consumed, rtol=2e-5, atol=2e-6
+        )
+
+        consumer.close()
         shared.close()
         if not _object_exists(runtime, shared_object_id):
             raise AssertionError("callable close destroyed a public shared output")
-        second_reference.close()
+        third_reference.close()
         if _object_exists(runtime, shared_object_id):
             raise AssertionError("final shared-output owner did not reclaim object")
 
         export_model_state(model, runtime=runtime, release_runtime=True)
+        export_model_state(
+            consumer_model,
+            runtime=runtime,
+            release_runtime=True,
+        )
         runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("close replaced a Parameter object")

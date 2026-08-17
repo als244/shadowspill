@@ -10,11 +10,28 @@ from torch.utils._pytree import (
     GetAttrKey,
     MappingKey,
     SequenceKey,
+    tree_flatten,
     tree_flatten_with_path,
+    tree_unflatten,
 )
 
-from .declarations import SharedOutput
+from shadowspill.pytorch.contracts import PlanningError
+from shadowspill.runtime import ObjectConsistency
+
+from .declarations import SharedInput, SharedOutput
 from .paths import PytreePath, format_path, resolve_path
+from .references import TensorRef
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSharedInput:
+    """One runtime-backed public input leaf and its plan-time requirements."""
+
+    public_leaf_index: int
+    reference: TensorRef
+    require_in: str
+    consistency: ObjectConsistency
+    root_input_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +41,111 @@ class ResolvedSharedOutput:
     public_leaf_index: int
     path: PytreePath
     retain_in: tuple[str, ...]
+
+
+def resolve_shared_inputs(
+    values: object,
+    *,
+    pool_names: Sequence[str],
+    runtime: object,
+) -> tuple[object, tuple[ResolvedSharedInput, ...]]:
+    """Replace shared-reference leaves with deterministic CPU representatives."""
+
+    leaves, tree_spec = tree_flatten(values)
+    available = frozenset(pool_names)
+    resolved: list[ResolvedSharedInput] = []
+    owners: dict[int, torch.Tensor] = {}
+    for index, value in enumerate(leaves):
+        if not isinstance(value, SharedInput):
+            continue
+        reference = value.reference
+        reference.object._require_open()
+        if not reference.object._belongs_to(runtime):
+            raise PlanningError(
+                f"shared input leaf {index} belongs to another Runtime"
+            )
+        if value.require_in not in available:
+            raise PlanningError(
+                f"shared input leaf {index} requires unknown pool "
+                f"{value.require_in!r}"
+            )
+        if value.require_in not in reference.retained_pools:
+            raise PlanningError(
+                f"shared input leaf {index} requires pool {value.require_in!r}, "
+                "but its reference does not guarantee that residency"
+            )
+        owner = owners.get(reference.object.object_id)
+        if owner is None:
+            owner = torch.empty(reference.object.size_bytes, dtype=torch.uint8)
+            owners[reference.object.object_id] = owner
+        representative = torch.empty(0, dtype=reference.dtype).set_(
+            owner.untyped_storage(),
+            reference.storage_offset,
+            reference.shape,
+            reference.stride,
+        )
+        representative.requires_grad_(reference.requires_grad)
+        _populate_shared_representative(
+            representative,
+            value.profiling_value,
+            leaf_index=index,
+        )
+        leaves[index] = representative
+        resolved.append(
+            ResolvedSharedInput(
+                public_leaf_index=index,
+                reference=reference,
+                require_in=value.require_in,
+                consistency=value.consistency,
+            )
+        )
+    return tree_unflatten(leaves, tree_spec), tuple(resolved)
+
+
+def _populate_shared_representative(
+    destination: torch.Tensor,
+    supplied: torch.Tensor | None,
+    *,
+    leaf_index: int,
+) -> None:
+    with torch.no_grad():
+        if supplied is not None:
+            if supplied.device.type != "cpu":
+                raise PlanningError(
+                    f"shared input leaf {leaf_index} profiling value must be CPU"
+                )
+            if tuple(supplied.shape) != tuple(destination.shape) or (
+                supplied.dtype != destination.dtype
+            ):
+                raise PlanningError(
+                    f"shared input leaf {leaf_index} profiling value geometry differs"
+                )
+            destination.copy_(supplied)
+            return
+        if not destination.is_floating_point() and not destination.is_complex():
+            raise PlanningError(
+                f"shared input leaf {leaf_index} has control dtype "
+                f"{destination.dtype}; provide profiling_value"
+            )
+        generator = torch.Generator(device="cpu").manual_seed(
+            0x5348_0000 + leaf_index
+        )
+        if destination.is_floating_point():
+            destination.copy_(
+                torch.randn(
+                    tuple(destination.shape),
+                    dtype=torch.float32,
+                    generator=generator,
+                ).to(dtype=destination.dtype)
+            )
+            return
+        real = torch.randn(
+            tuple(destination.shape), dtype=torch.float32, generator=generator
+        )
+        imaginary = torch.randn(
+            tuple(destination.shape), dtype=torch.float32, generator=generator
+        )
+        destination.copy_(torch.complex(real, imaginary).to(dtype=destination.dtype))
 
 
 def resolve_shared_outputs(
@@ -102,4 +224,9 @@ def _public_path(keys: tuple[object, ...]) -> PytreePath:
     return tuple(result)
 
 
-__all__ = ["ResolvedSharedOutput", "resolve_shared_outputs"]
+__all__ = [
+    "ResolvedSharedInput",
+    "ResolvedSharedOutput",
+    "resolve_shared_inputs",
+    "resolve_shared_outputs",
+]

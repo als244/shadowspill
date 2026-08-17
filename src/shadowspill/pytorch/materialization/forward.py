@@ -10,16 +10,21 @@ from typing import Any
 import torch
 import torch.nn as nn
 from torch.export.graph_signature import InputKind
-from torch.utils._pytree import tree_map
+from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
-from shadowspill.pytorch.contracts import PlanningError, TensorSpec
+from shadowspill.pytorch.contracts import InputGuardError, PlanningError, TensorSpec
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.sharing import (
+    ResolvedSharedInput,
+    SharedInput,
+    TensorRef,
+)
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
@@ -131,6 +136,9 @@ class _Registration:
     tensor: torch.Tensor
 
 
+type _MaterializationEntry = tuple[torch.Tensor, int | None]
+
+
 class MaterializedForwardState:
     """Own CUDA placeholders and restore original registered objects on close."""
 
@@ -144,12 +152,14 @@ class MaterializedForwardState:
         *,
         runtime: Runtime,
         device_ordinal: int,
+        shared_inputs: tuple[ResolvedSharedInput, ...] = (),
     ) -> None:
         self.model = model
         self.lowered = lowered
         self.capture = capture
         self.bridge = bridge
         self.runtime = runtime
+        self._shared_inputs = tuple(shared_inputs)
         self.device = torch.device("cuda", device_ordinal)
         self.root_arguments = flat_runtime_arguments(capture, model, example_inputs)
         self.object_store: dict[str, torch.Tensor] = {}
@@ -161,6 +171,7 @@ class MaterializedForwardState:
         self._persistent_aliases: set[str] = set()
         self._persistent_state = persistent_state(runtime, model)
         self._user_alias_by_position: dict[int, str] = {}
+        self._shared_alias_by_position: dict[int, str] = {}
         self._object_ids_by_alias: dict[str, tuple[str, ...]] = {
             group.alias_group_id: tuple(
                 item.object_id
@@ -251,6 +262,83 @@ class MaterializedForwardState:
             if not isinstance(value, torch.Tensor):
                 self.root_arguments[index] = value
         return tuple(self.root_arguments)
+
+    def prepare_invocation(self, inputs: Sequence[Any]) -> Sequence[object]:
+        """Validate shared references and replace them with frontend shells."""
+
+        leaves, tree_spec = tree_flatten(inputs)
+        for item in self._shared_inputs:
+            if item.root_input_index is None:
+                raise AssertionError("shared input has no root position")
+            try:
+                supplied = leaves[item.public_leaf_index]
+            except IndexError as error:
+                raise InputGuardError(
+                    f"shared input leaf {item.public_leaf_index} is missing"
+                ) from error
+            if isinstance(supplied, SharedInput):
+                if supplied.require_in != item.require_in or (
+                    supplied.consistency is not item.consistency
+                ):
+                    raise InputGuardError(
+                        f"shared input leaf {item.public_leaf_index} changed its "
+                        "pool or consistency declaration"
+                    )
+                reference = supplied.reference
+            elif isinstance(supplied, TensorRef):
+                reference = supplied
+            else:
+                raise InputGuardError(
+                    f"shared input leaf {item.public_leaf_index} must be a "
+                    "SharedInput or TensorRef"
+                )
+            self._validate_shared_reference(item, reference)
+            shell = self.root_arguments[item.root_input_index]
+            if not isinstance(shell, torch.Tensor):
+                raise RuntimeError("shared input shell became static")
+            leaves[item.public_leaf_index] = shell
+        normalized = tree_unflatten(leaves, tree_spec)
+        if not isinstance(normalized, tuple | list):
+            raise InputGuardError("forward inputs must be a list or tuple")
+        return normalized
+
+    def _validate_shared_reference(
+        self,
+        expected: ResolvedSharedInput,
+        actual: TensorRef,
+    ) -> None:
+        actual.object._require_open()
+        if not actual.object._belongs_to(self.runtime):
+            raise InputGuardError("shared input belongs to another Runtime")
+        reference = expected.reference
+        geometry = (
+            actual.object.object_id,
+            actual.object.size_bytes,
+            actual.dtype,
+            actual.shape,
+            actual.stride,
+            actual.storage_offset,
+            actual.requires_grad,
+        )
+        expected_geometry = (
+            reference.object.object_id,
+            reference.object.size_bytes,
+            reference.dtype,
+            reference.shape,
+            reference.stride,
+            reference.storage_offset,
+            reference.requires_grad,
+        )
+        if geometry != expected_geometry:
+            raise InputGuardError(
+                f"shared input leaf {expected.public_leaf_index} changed runtime "
+                "identity or tensor geometry"
+            )
+        if expected.require_in not in actual.retained_pools:
+            raise InputGuardError(
+                f"shared input leaf {expected.public_leaf_index} no longer "
+                f"guarantees pool {expected.require_in!r}"
+            )
 
     def replace_alias_generation(
         self,
@@ -365,7 +453,32 @@ class MaterializedForwardState:
     def _materialize(self) -> None:
         registrations = self._registrations()
         registration_by_id = {id(item.tensor): item for item in registrations}
-        entries: dict[str, list[tuple[torch.Tensor, int | None]]] = {}
+        entries, shared_by_root = self._collect_materialization_entries(registrations)
+        retain = {
+            group.alias_group_id: group.retain_spill_copy
+            for group in self.lowered.program.alias_groups
+        }
+        for ordinal, group in enumerate(self.lowered.program.alias_groups):
+            values = entries.get(group.alias_group_id)
+            if values:
+                self._materialize_alias(
+                    group.alias_group_id,
+                    values,
+                    registration_by_id,
+                    shared_by_root,
+                    retain_spill_copy=retain[group.alias_group_id],
+                    ordinal=ordinal,
+                )
+        self.bridge.wait_idle()
+
+    def _collect_materialization_entries(
+        self,
+        registrations: tuple[_Registration, ...],
+    ) -> tuple[
+        dict[str, list[_MaterializationEntry]],
+        dict[int, ResolvedSharedInput],
+    ]:
+        entries: dict[str, list[_MaterializationEntry]] = {}
         for item in registrations:
             alias_id = self.bridge.alias_for_object(item.binding.object_id)
             self._model_aliases.add(alias_id)
@@ -373,83 +486,171 @@ class MaterializedForwardState:
         slot_by_position = {
             slot.leaf_index: slot for slot in self.lowered.root_input_slots
         }
+        shared_by_root = {
+            item.root_input_index: item
+            for item in self._shared_inputs
+            if item.root_input_index is not None
+        }
         for position, value in enumerate(self.root_arguments):
             slot = slot_by_position.get(position)
             if slot is None or not isinstance(value, torch.Tensor):
                 continue
             alias_id = self.bridge.alias_for_object(slot.object_id)
             if alias_id not in self._model_aliases:
-                self._user_alias_by_position[position] = alias_id
+                if position in shared_by_root:
+                    self._shared_alias_by_position[position] = alias_id
+                else:
+                    self._user_alias_by_position[position] = alias_id
                 entries.setdefault(alias_id, []).append((value, position))
+        return entries, shared_by_root
 
-        retain = {
-            group.alias_group_id: group.retain_spill_copy
-            for group in self.lowered.program.alias_groups
-        }
-        for ordinal, alias_id in enumerate(
-            group.alias_group_id for group in self.lowered.program.alias_groups
-        ):
-            values = entries.get(alias_id)
-            if not values:
-                continue
-            source = values[0][0]
-            persistent = adopt_persistent_tensor(
-                self.runtime,
-                self.model,
-                source,
-                self.bridge,
+    def _materialize_alias(
+        self,
+        alias_id: str,
+        values: list[_MaterializationEntry],
+        registration_by_id: dict[int, _Registration],
+        shared_by_root: dict[int, ResolvedSharedInput],
+        *,
+        retain_spill_copy: bool,
+        ordinal: int,
+    ) -> None:
+        source = values[0][0]
+        shared_items = self._shared_items(alias_id, values, shared_by_root)
+        if shared_items:
+            self._adopt_shared_alias(alias_id, shared_items)
+        else:
+            self._adopt_or_register_alias(
                 alias_id,
+                source,
+                retain_spill_copy=retain_spill_copy,
             )
-            if persistent is None:
-                if alias_id in self._model_aliases:
-                    raise PlanningError(
-                        f"registered model alias {alias_id!r} has no imported "
-                        "runtime storage"
-                    )
-                self.bridge.register_host_tensor(
-                    alias_id, source, retain_spill_copy=retain[alias_id]
-                )
-            else:
-                self._persistent_aliases.add(alias_id)
-            if alias_id in self._model_aliases:
-                self._registered_model_aliases.add(alias_id)
-            owner = torch.empty(
-                source.untyped_storage().nbytes(), dtype=torch.uint8, device=self.device
-            )
-            views: dict[int, torch.Tensor] = {}
-            for source_tensor, root_position in values:
-                view = views.get(id(source_tensor))
-                if view is None:
-                    view = torch.empty(0, dtype=source_tensor.dtype, device=self.device)
-                    view.set_(
-                        owner.untyped_storage(),
-                        source_tensor.storage_offset(),
-                        tuple(source_tensor.shape),
-                        tuple(source_tensor.stride()),
-                    )
-                    view.requires_grad_(source_tensor.requires_grad)
-                    registered = registration_by_id.get(id(source_tensor))
-                    if registered is not None:
-                        source_tensor.data = view
-                        view = source_tensor
-                    views[id(source_tensor)] = view
-                if root_position is not None:
-                    self.root_arguments[root_position] = view
-            representative = next(iter(views.values()), owner)
-            binding = self.bridge.bind_registered_tensor(alias_id, owner)
+        if alias_id in self._model_aliases:
+            self._registered_model_aliases.add(alias_id)
+        owner, representative = self._build_device_views(
+            values,
+            registration_by_id,
+        )
+        if shared_items:
+            torch.ops.shadowspill._dematerialize_storages([representative])
             self.object_store[alias_id] = representative
-            self.generations[alias_id] = binding.generation
-            task_number = (1 << 61) + ordinal
-            actions = (
-                MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
+            self.generations[alias_id] = shared_items[0].reference.generation
+            return
+        binding = self.bridge.bind_registered_tensor(alias_id, owner)
+        self.object_store[alias_id] = representative
+        self.generations[alias_id] = binding.generation
+        task_number = (1 << 61) + ordinal
+        actions = (
+            MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
+        )
+        self.bridge.admit_initial_actions(actions, task_number=task_number)
+        self.bridge.dematerialize(representative, alias_id, binding.generation)
+        self.bridge.submit_initial_actions(
+            actions,
+            task_number=task_number,
+        )
+
+    def _shared_items(
+        self,
+        alias_id: str,
+        values: list[_MaterializationEntry],
+        shared_by_root: dict[int, ResolvedSharedInput],
+    ) -> tuple[ResolvedSharedInput, ...]:
+        items = tuple(
+            shared_by_root[position]
+            for position, candidate in self._shared_alias_by_position.items()
+            if candidate == alias_id
+        )
+        if not items:
+            return ()
+        ordinary_positions = tuple(
+            position
+            for _value, position in values
+            if position is not None and position not in shared_by_root
+        )
+        if ordinary_positions:
+            raise PlanningError(
+                "every public input view of a shared storage root must be "
+                "declared as SharedInput; ordinary root positions are "
+                f"{ordinary_positions}"
             )
-            self.bridge.admit_initial_actions(actions, task_number=task_number)
-            self.bridge.dematerialize(representative, alias_id, binding.generation)
-            self.bridge.submit_initial_actions(
-                actions,
-                task_number=task_number,
+        first = items[0]
+        if any(
+            item.reference.object.object_id != first.reference.object.object_id
+            or item.consistency is not first.consistency
+            for item in items[1:]
+        ):
+            raise PlanningError(
+                "aliased shared input views disagree on object identity or consistency"
             )
-        self.bridge.wait_idle()
+        return items
+
+    def _adopt_shared_alias(
+        self,
+        alias_id: str,
+        items: tuple[ResolvedSharedInput, ...],
+    ) -> None:
+        first = items[0]
+        self.bridge.adopt_shared_object(
+            alias_id,
+            first.reference.object,
+            consistency=first.consistency,
+        )
+
+    def _adopt_or_register_alias(
+        self,
+        alias_id: str,
+        source: torch.Tensor,
+        *,
+        retain_spill_copy: bool,
+    ) -> None:
+        persistent = adopt_persistent_tensor(
+            self.runtime,
+            self.model,
+            source,
+            self.bridge,
+            alias_id,
+        )
+        if persistent is not None:
+            self._persistent_aliases.add(alias_id)
+            return
+        if alias_id in self._model_aliases:
+            raise PlanningError(
+                f"registered model alias {alias_id!r} has no imported runtime storage"
+            )
+        self.bridge.register_host_tensor(
+            alias_id,
+            source,
+            retain_spill_copy=retain_spill_copy,
+        )
+
+    def _build_device_views(
+        self,
+        values: list[_MaterializationEntry],
+        registration_by_id: dict[int, _Registration],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        source = values[0][0]
+        owner = torch.empty(
+            source.untyped_storage().nbytes(), dtype=torch.uint8, device=self.device
+        )
+        views: dict[int, torch.Tensor] = {}
+        for source_tensor, root_position in values:
+            view = views.get(id(source_tensor))
+            if view is None:
+                view = torch.empty(0, dtype=source_tensor.dtype, device=self.device)
+                view.set_(
+                    owner.untyped_storage(),
+                    source_tensor.storage_offset(),
+                    tuple(source_tensor.shape),
+                    tuple(source_tensor.stride()),
+                )
+                view.requires_grad_(source_tensor.requires_grad)
+                if id(source_tensor) in registration_by_id:
+                    source_tensor.data = view
+                    view = source_tensor
+                views[id(source_tensor)] = view
+            if root_position is not None:
+                self.root_arguments[root_position] = view
+        return owner, next(iter(views.values()), owner)
 
     def _registrations(self) -> tuple[_Registration, ...]:
         values: list[_Registration] = []

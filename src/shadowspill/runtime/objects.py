@@ -8,7 +8,15 @@ but this module deliberately has no tensor or device-backend dependency.
 from __future__ import annotations
 
 import threading
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
+
+
+class ObjectConsistency(StrEnum):
+    """Cross-plan value-ordering policy for one object binding."""
+
+    CAUSAL = "causal"
+    UNORDERED = "unordered"
 
 
 @runtime_checkable
@@ -115,4 +123,4 @@ class ObjectRef:
         )
 
 
-__all__ = ["ObjectRef", "ObjectReferenceOwner"]
+__all__ = ["ObjectConsistency", "ObjectRef", "ObjectReferenceOwner"]

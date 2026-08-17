@@ -41,7 +41,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 )
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
-from shadowspill.runtime import ObjectRef
+from shadowspill.runtime import ObjectConsistency, ObjectRef
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.profiling.allocation_contract import TaskAllocationContract
@@ -175,6 +175,8 @@ class RuntimeBridge:
         }
         self._zero_generations: dict[str, int] = {}
         self._registered: set[str] = set()
+        self._borrowed: set[str] = set()
+        self._binding_consistency: dict[str, int] = {}
         self._runtime_object_ids: dict[str, int] = {}
         self._debug_task_timing_capacity = 0
         self._admitted_tasks: dict[str, tuple[int, tuple[str, ...]]] = {}
@@ -249,9 +251,23 @@ class RuntimeBridge:
         self._record_runtime_object(alias_id, runtime_object_id)
         return runtime_object_id
 
-    def _bind_plan_object(self, alias_id: str, *, consistency: int = 0) -> None:
+    def _bind_plan_object(
+        self,
+        alias_id: str,
+        *,
+        consistency: int | None = None,
+    ) -> None:
         if not self.requires_storage(alias_id):
             return
+        resolved_consistency = self._binding_consistency.get(alias_id, 0)
+        if consistency is not None:
+            existing = self._binding_consistency.get(alias_id)
+            if existing is not None and existing != consistency:
+                raise RuntimeExecutionError(
+                    f"plan object {alias_id!r} changed consistency policy"
+                )
+            resolved_consistency = consistency
+            self._binding_consistency[alias_id] = consistency
         handle = ctypes.c_size_t()
         self._require(
             self.library.shadowspill_pytorch_object_handle_acquire(
@@ -269,7 +285,7 @@ class RuntimeBridge:
                     self.plan_handle,
                     _plan_local_id(alias_id, "alias_"),
                     handle.value,
-                    consistency,
+                    resolved_consistency,
                 ),
                 f"bind plan object {alias_id}",
             )
@@ -819,6 +835,34 @@ class RuntimeBridge:
         self._bind_plan_object(alias_id)
         return current_object_id
 
+    def adopt_shared_object(
+        self,
+        alias_id: str,
+        reference: ObjectRef,
+        *,
+        consistency: ObjectConsistency,
+    ) -> None:
+        """Bind a plan alias to an externally owned runtime object."""
+
+        reference._require_open()
+        if not reference._belongs_to(self.runtime):
+            raise PlanningError("shared input belongs to another Runtime")
+        expected = self._size(alias_id)
+        if reference.size_bytes != expected:
+            raise PlanningError(
+                f"shared input for {alias_id!r} has "
+                f"{reference.size_bytes} bytes; the plan requires {expected}"
+            )
+        runtime_object_id = reference.object_id
+        self._record_runtime_object(alias_id, runtime_object_id)
+        self._registered.add(alias_id)
+        self._borrowed.add(alias_id)
+        consistency_code = 0 if consistency is ObjectConsistency.CAUSAL else 1
+        self._bind_plan_object(
+            alias_id,
+            consistency=consistency_code,
+        )
+
     def register_placeholder(self, alias_id: str) -> None:
         """Register a logical alias bundle before its first production."""
 
@@ -882,6 +926,12 @@ class RuntimeBridge:
         for alias_id in dict.fromkeys(alias_ids):
             if alias_id not in self._registered:
                 continue
+            if alias_id in self._borrowed:
+                self._borrowed.remove(alias_id)
+                self._registered.remove(alias_id)
+                self._runtime_object_ids.pop(alias_id, None)
+                self._binding_consistency.pop(alias_id, None)
+                continue
             if not self.requires_storage(alias_id):
                 self._registered.remove(alias_id)
                 self._zero_generations.pop(alias_id, None)
@@ -894,6 +944,7 @@ class RuntimeBridge:
             )
             self._registered.remove(alias_id)
             self._runtime_object_ids.pop(alias_id, None)
+            self._binding_consistency.pop(alias_id, None)
 
     def bind_registered_tensor(
         self, alias_id: str, tensor: torch.Tensor

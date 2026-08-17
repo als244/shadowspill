@@ -29,6 +29,15 @@ generation and allows producers to publish a replacement lease.
 introducing cross-callable ordering; readers may therefore observe an older,
 newer, or concurrently changing value.
 
+Every callable uses its own plan-local alias IDs and fixed-layout slice. A
+shared-input binding maps one of those local aliases to an existing
+runtime-global object handle. Physical admission validates that the alias is
+externally resident but assigns it no plan-owned offset. Closing either plan
+releases only that plan's ownership; the object remains until its final plan
+or public reference closes. Recurrent producers preserve the logical object
+and replace only its residency generation, so already-admitted consumers do
+not need to be rebuilt.
+
 Lease states have one meaning across execution and spill pools:
 
 | State | Meaning |

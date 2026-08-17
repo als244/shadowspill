@@ -147,6 +147,11 @@ class _AdmissionScriptBuilder:
         self.alias_size = {
             alias.alias_group_id: alias.size_bytes for alias in program.alias_groups
         }
+        self.shared_aliases = frozenset(
+            alias.alias_group_id
+            for alias in program.alias_groups
+            if alias.shared_residency is not None
+        )
         self.alias_by_object = {
             item.object_id: item.alias_group_id for item in program.objects
         }
@@ -352,7 +357,9 @@ class _AdmissionScriptBuilder:
         missing = sorted(
             alias_id
             for alias_id in required
-            if self.alias_size[alias_id] != 0 and alias_id not in self.active_aliases
+            if self.alias_size[alias_id] != 0
+            and alias_id not in self.shared_aliases
+            and alias_id not in self.active_aliases
         )
         if missing:
             raise ValueError(

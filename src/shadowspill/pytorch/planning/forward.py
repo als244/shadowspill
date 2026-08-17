@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Any, NoReturn
 
 import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
+from torch.export.graph_signature import InputKind
 from torch.utils._pytree import TreeSpec, tree_flatten
 
 from shadowspill.ir import (
@@ -16,6 +18,7 @@ from shadowspill.ir import (
     ExecutionPlan,
     MemoryLocation,
     PhysicalAdmission,
+    SharedResidencyPolicy,
 )
 from shadowspill.planner import (
     PressureFitInfeasibleError,
@@ -47,6 +50,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.runtime import ObjectConsistency
 
 from ..cache import PlanningCache
 from ..callables import PlannedForward
@@ -66,7 +70,13 @@ from ..partition import (
     partition_export,
 )
 from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
-from ..sharing import ResolvedSharedOutput, SharedOutput, resolve_shared_outputs
+from ..sharing import (
+    ResolvedSharedInput,
+    ResolvedSharedOutput,
+    SharedOutput,
+    resolve_shared_inputs,
+    resolve_shared_outputs,
+)
 from .admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
@@ -120,11 +130,13 @@ def capture_forward_graph(
     """Validate and capture one forward graph without numerical CUDA execution."""
 
     with timer.measure("validation"):
-        signature, cpu_inputs, workload = _prepare_forward_inputs(
-            model,
-            example_inputs,
-            memory,
-            profiling_metadata,
+        signature, cpu_inputs, workload, resolved_shared_inputs = (
+            _prepare_forward_inputs(
+                model,
+                example_inputs,
+                memory,
+                profiling_metadata,
+            )
         )
     with timer.measure("runtime_binding"):
         installed = memory.installed
@@ -158,6 +170,7 @@ def capture_forward_graph(
         partitioned,
         tasks,
         output_tree_spec,
+        _resolve_shared_input_roots(capture, resolved_shared_inputs),
         resolved_shared_outputs,
     )
 
@@ -167,19 +180,56 @@ def _prepare_forward_inputs(
     example_inputs: Sequence[Any],
     memory: PlanMemory,
     profiling_metadata: object,
-) -> tuple[InputSignature, tuple[object, ...], ProfilingMetadata]:
+) -> tuple[
+    InputSignature,
+    tuple[object, ...],
+    ProfilingMetadata,
+    tuple[ResolvedSharedInput, ...],
+]:
     validate_cpu_model(model)
     validate_budgets(memory.execution_budget, memory.spill_budget)
     if not isinstance(example_inputs, list | tuple):
         raise PlanningError("example_inputs must be a list or tuple")
-    signature = capture_input_signature(example_inputs)
-    cpu_inputs = tuple(representative_cpu_inputs(example_inputs))
+    resolved_inputs, shared_inputs = resolve_shared_inputs(
+        example_inputs,
+        pool_names=tuple(memory.runtime.pools),
+        runtime=memory.runtime,
+    )
+    representative_inputs = representative_cpu_inputs(resolved_inputs)
+    signature = capture_input_signature(representative_inputs)
+    cpu_inputs = tuple(representative_inputs)
     estimate_spill_reservation(model, cpu_inputs, memory.spill_budget)
     return (
         signature,
         cpu_inputs,
         canonicalize_profiling_metadata(profiling_metadata),
+        shared_inputs,
     )
+
+
+def _resolve_shared_input_roots(
+    capture: ExportCapture,
+    shared_inputs: tuple[ResolvedSharedInput, ...],
+) -> tuple[ResolvedSharedInput, ...]:
+    """Map public input leaves to Export's explicit root-input positions."""
+
+    input_specs = capture.exported_program.graph_signature.input_specs
+    user_positions = tuple(
+        index
+        for index, spec in enumerate(input_specs)
+        if spec.kind is InputKind.USER_INPUT
+    )
+    result: list[ResolvedSharedInput] = []
+    for item in shared_inputs:
+        if item.public_leaf_index >= len(user_positions):
+            raise CaptureError(
+                "shared input leaf has no corresponding Export user input: "
+                f"leaf={item.public_leaf_index}, user_inputs={len(user_positions)}"
+            )
+        result.append(
+            replace(item, root_input_index=user_positions[item.public_leaf_index])
+        )
+    return tuple(result)
 
 
 def _capture_partitioned_forward(
@@ -356,6 +406,7 @@ def build_forward_program(
             device_ordinal=captured.device_ordinal,
             profile_compatibility_digests=profiled.profiles.key_digests,
             public_output_locations=_shared_output_locations(captured, memory),
+            shared_residency_by_root=_shared_input_residency(captured, memory),
         )
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
@@ -500,6 +551,7 @@ def admit_forward_plan(
                 bridge,
                 runtime=memory.runtime,
                 device_ordinal=captured.device_ordinal,
+                shared_inputs=captured.shared_inputs,
             )
         with timer.measure("physical_sealing"):
             seal_physical_budget(captured.installed, execution_plan)
@@ -765,6 +817,30 @@ def _shared_output_locations(
                 f"or spill pool"
             )
         result[output.public_leaf_index] = location
+    return result
+
+
+def _shared_input_residency(
+    captured: ForwardCaptureArtifacts,
+    memory: PlanMemory,
+) -> dict[int, tuple[SharedResidencyPolicy, bool]]:
+    """Project guaranteed execution residency into the canonical Program."""
+
+    result: dict[int, tuple[SharedResidencyPolicy, bool]] = {}
+    for item in captured.shared_inputs:
+        if item.root_input_index is None:
+            raise AssertionError("shared input has no resolved root position")
+        if item.require_in != memory.execution.name:
+            continue
+        policy = (
+            SharedResidencyPolicy.SHARED_WRITABLE_CAUSAL
+            if item.consistency is ObjectConsistency.CAUSAL
+            else SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED
+        )
+        result[item.root_input_index] = (
+            policy,
+            memory.spill.name in item.reference.retained_pools,
+        )
     return result
 
 

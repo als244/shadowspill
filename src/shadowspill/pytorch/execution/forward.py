@@ -362,6 +362,13 @@ class ForwardExecutor:
 
         self._require_shared_output_slots_available()
 
+    def prepare_invocation(
+        self, arguments: Sequence[object]
+    ) -> Sequence[object]:
+        """Resolve public shared references to the callable's tensor shells."""
+
+        return self._state.prepare_invocation(arguments)
+
     def _require_shared_output_slots_available(self) -> None:
         busy = []
         for item in self._shared_outputs:
@@ -395,6 +402,7 @@ class ForwardExecutor:
                         object_reference,
                         tensor,
                         generation=generation,
+                        retained_pools=output.retain_in,
                     )
                 except BaseException:
                     object_reference.close()
