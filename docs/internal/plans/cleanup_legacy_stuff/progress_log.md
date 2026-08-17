@@ -1706,3 +1706,24 @@ the following work from the merged commit in this order:
   lifetime accounting), `72e4e15` (runtime-record capacity from admitted
   lifetimes), and `78a14b8` (runtime-first route calibration and qualification
   lifecycle). Documentation and this frozen handoff are committed separately.
+
+## 2026-08-17 — In-place editable-install discovery fix
+
+- The first setup invocation after fast-forwarding the normal worktree built
+  current ABI-12 libraries successfully but failed verification because
+  library discovery selected a stale, manually configured `build/dev` planner
+  with ABI 11 ahead of the freshly produced tagged editable-build artifact.
+- Corrected the precedence to packaged wheel artifact, current Python/platform
+  tagged editable artifact, then ad-hoc `build/dev` fallback. An explicit
+  editable installation is now authoritative, while source-only development
+  without an installation can still use `build/dev`.
+- This is an upgrade-path defect rather than a planner defect: the verifier
+  failed at the ABI boundary before planning. A repeated one-line setup must
+  now select and ABI-check only the artifacts it just built.
+- The next verification exposed a second stale setup contract: its operation
+  list still named the deleted raw rebind/execution-storage operators. Defined
+  one canonical operation inventory in the runtime adapter, made normal runtime
+  installation validate it immediately after loading the library, and made the
+  setup verifier consume that same inventory. Setup therefore checks the exact
+  handle-oriented storage surface used by production instead of duplicating
+  historical names.

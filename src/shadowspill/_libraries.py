@@ -14,7 +14,7 @@ def library_candidates(
     *,
     package_root: Path = _PACKAGE_ROOT,
 ) -> tuple[Path, ...]:
-    """Return package and configured editable-build locations in precedence order."""
+    """Return installed, editable, and ad-hoc build locations in precedence order."""
 
     packaged = package_root / "lib" / filename
     project = _editable_project_root(package_root)
@@ -26,8 +26,8 @@ def library_candidates(
     platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_")
     return (
         packaged,
-        build_root / "dev" / filename,
         build_root / f"{python_tag}-{python_tag}-{platform_tag}" / filename,
+        build_root / "dev" / filename,
     )
 
 

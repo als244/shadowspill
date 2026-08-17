@@ -22,6 +22,17 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     configure_adapter_library,
 )
 
+_REQUIRED_STORAGE_OPERATIONS = (
+    "_import_cpu_storages",
+    "_export_cpu_storages",
+    "_make_runtime_cpu_storage",
+    "_acquire_storages",
+    "_before_task_storages",
+    "_dematerialize_storages",
+    "_after_task_storages",
+    "_transfer_acquired_storage_to_caller",
+)
+
 
 class AllocatorInstallError(RuntimeError):
     """Raised when the process-global PyTorch allocator cannot be installed."""
@@ -366,6 +377,16 @@ def _available_cuda_frontend() -> Any:
 
 def _load_adapter(path: Path) -> Any:
     library = ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+    missing_operations = [
+        name
+        for name in _REQUIRED_STORAGE_OPERATIONS
+        if not hasattr(torch.ops.shadowspill, name)
+    ]
+    if missing_operations:
+        raise AllocatorInstallError(
+            "PyTorch adapter is missing canonical storage operations: "
+            + ", ".join(missing_operations)
+        )
     configure_adapter_library(library)
     capabilities = AdapterCapabilities()
     status = int(
