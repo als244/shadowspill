@@ -1,3 +1,5 @@
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,6 +7,126 @@
 
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
+
+typedef struct ConcurrentTaskInvocation {
+    ShadowSpillRuntime *runtime;
+    const ShadowSpillTaskHandle *handle;
+    ShadowSpillBackendStream stream;
+    _Atomic uint32_t *ready;
+    _Atomic uint8_t *release;
+    ShadowSpillRuntimeStatus before_status;
+    ShadowSpillRuntimeStatus after_status;
+} ConcurrentTaskInvocation;
+
+static void *run_concurrent_task(void *context) {
+    ConcurrentTaskInvocation *invocation = context;
+    invocation->before_status = shadowspill_before_task_handle(
+        invocation->runtime,
+        invocation->handle,
+        invocation->stream,
+        NULL,
+        0U
+    );
+    (void)atomic_fetch_add_explicit(
+        invocation->ready, 1U, memory_order_release
+    );
+    while (atomic_load_explicit(
+               invocation->release, memory_order_acquire
+           ) == 0U) {
+        atomic_signal_fence(memory_order_seq_cst);
+    }
+    invocation->after_status = invocation->before_status ==
+            SHADOWSPILL_RUNTIME_OK
+        ? shadowspill_after_task_handle(
+              invocation->runtime, invocation->handle, invocation->stream
+          )
+        : invocation->before_status;
+    return NULL;
+}
+
+static void await_ready(_Atomic uint32_t *ready, uint32_t count) {
+    while (atomic_load_explicit(ready, memory_order_acquire) < count) {
+        atomic_signal_fence(memory_order_seq_cst);
+    }
+}
+
+static int distinct_task_handles_overlap(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *first_handle,
+    ShadowSpillBackendStream first_stream,
+    const ShadowSpillTaskHandle *second_handle,
+    ShadowSpillBackendStream second_stream
+) {
+    _Atomic uint32_t ready = 0U;
+    _Atomic uint8_t release = 0U;
+    ConcurrentTaskInvocation invocations[2] = {
+        {
+            .runtime = runtime,
+            .handle = first_handle,
+            .stream = first_stream,
+            .ready = &ready,
+            .release = &release,
+        },
+        {
+            .runtime = runtime,
+            .handle = second_handle,
+            .stream = second_stream,
+            .ready = &ready,
+            .release = &release,
+        },
+    };
+    pthread_t threads[2];
+    const int first_started = pthread_create(
+        &threads[0], NULL, run_concurrent_task, &invocations[0]
+    ) == 0;
+    const int second_started = pthread_create(
+        &threads[1], NULL, run_concurrent_task, &invocations[1]
+    ) == 0;
+    int failed = !first_started || !second_started;
+    if (!failed) {
+        await_ready(&ready, 2U);
+        failed = invocations[0].before_status != SHADOWSPILL_RUNTIME_OK ||
+            invocations[1].before_status != SHADOWSPILL_RUNTIME_OK;
+    }
+    atomic_store_explicit(&release, 1U, memory_order_release);
+    failed = (first_started && pthread_join(threads[0], NULL) != 0) ||
+        (second_started && pthread_join(threads[1], NULL) != 0) || failed ||
+        (first_started && invocations[0].after_status !=
+            SHADOWSPILL_RUNTIME_OK) ||
+        (second_started && invocations[1].after_status !=
+            SHADOWSPILL_RUNTIME_OK);
+    return failed ? -1 : 0;
+}
+
+static int same_task_handle_rejects_overlap(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream owner_stream,
+    ShadowSpillBackendStream competing_stream
+) {
+    _Atomic uint32_t ready = 0U;
+    _Atomic uint8_t release = 0U;
+    ConcurrentTaskInvocation invocation = {
+        .runtime = runtime,
+        .handle = handle,
+        .stream = owner_stream,
+        .ready = &ready,
+        .release = &release,
+    };
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, run_concurrent_task, &invocation) != 0) {
+        return -1;
+    }
+    await_ready(&ready, 1U);
+    int failed = invocation.before_status != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_before_task_handle(
+            runtime, handle, competing_stream, NULL, 0U
+        ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
+    atomic_store_explicit(&release, 1U, memory_order_release);
+    failed = pthread_join(thread, NULL) != 0 || failed ||
+        invocation.after_status != SHADOWSPILL_RUNTIME_OK;
+    return failed ? -1 : 0;
+}
 
 static int runtime_accepts_generic_and_sparse_topologies(void) {
     ShadowSpillMockBackend *mock = NULL;
@@ -110,6 +232,7 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     const ShadowSpillTaskDescription task = {.task_id = 7U};
     const ShadowSpillTaskHandle *first_handle = NULL;
     const ShadowSpillTaskHandle *second_handle = NULL;
+    ShadowSpillBackendStream second_compute = {{0U, 0U}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
@@ -122,21 +245,21 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
             SHADOWSPILL_RUNTIME_OK ||
         first_handle == NULL || second_handle == NULL ||
         first_handle == second_handle ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        shadowspill_mock_create_compute_stream(mock, &second_compute) != 0;
     if (!failed) {
-        failed = shadowspill_before_task_handle(
-                runtime, first_handle, compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_after_task_handle(
-                runtime, first_handle, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_before_task_handle(
-                runtime, second_handle, compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_after_task_handle(
-                runtime, second_handle, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+        failed = distinct_task_handles_overlap(
+            runtime, first_handle, compute, second_handle, second_compute
+        ) != 0;
+    }
+    if (!failed) {
+        failed = same_task_handle_rejects_overlap(
+            runtime, first_handle, compute, second_compute
+        ) != 0;
+    }
+    if (!failed) {
+        failed = shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_RUNTIME_OK;
     }
     if (first != NULL) {
         failed = shadowspill_plan_close(first) != SHADOWSPILL_RUNTIME_OK || failed;
@@ -148,6 +271,9 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     }
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    }
+    if (second_compute.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, second_compute);
     }
     shadowspill_runtime_destroy(runtime);
     shadowspill_mock_backend_destroy(mock);

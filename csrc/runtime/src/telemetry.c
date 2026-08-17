@@ -17,7 +17,6 @@ typedef struct ShadowSpillTaskScope {
     uint8_t pending_allocation;
     uint8_t *allocation_states;
     uint32_t allocation_state_count;
-    uint32_t allocation_state_capacity;
     uint64_t live_requested_bytes;
     uint64_t live_charged_bytes;
     uint64_t peak_requested_bytes;
@@ -141,6 +140,7 @@ int shadowspill_enter_allocation_scope(
     task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     task_scope.pending_is_scratch = 0U;
     task_scope.pending_allocation = 0U;
+    task_scope.allocation_states = NULL;
     task_scope.allocation_state_count = 0U;
     task_scope.live_requested_bytes = 0U;
     task_scope.live_charged_bytes = 0U;
@@ -157,23 +157,15 @@ int shadowspill_enter_allocation_scope(
     return 0;
 }
 
-static int prepare_allocation_matcher(
+static void prepare_allocation_matcher(
     const ShadowSpillTaskRecord *record
 ) {
     const uint32_t count = record->allocation_contract_allocation_count;
-    if (count > task_scope.allocation_state_capacity) {
-        uint8_t *states = realloc(task_scope.allocation_states, count);
-        if (states == NULL) {
-            return -1;
-        }
-        task_scope.allocation_states = states;
-        task_scope.allocation_state_capacity = count;
-    }
+    task_scope.allocation_states = record->allocation_contract_states;
     if (count != 0U) {
         memset(task_scope.allocation_states, 0, count);
     }
     task_scope.allocation_state_count = count;
-    return 0;
 }
 
 static const ShadowSpillTaskAllocationContractStep *expected_allocation_step(void) {
@@ -231,13 +223,22 @@ int shadowspill_enter_task_scope(
         ) != 0) {
         return -1;
     }
-    task_scope.task = record;
-    if (prepare_allocation_matcher(record) != 0) {
+    ShadowSpillTaskRecord *mutable_record = (ShadowSpillTaskRecord *)record;
+    uint8_t expected_active = 0U;
+    if (!atomic_compare_exchange_strong_explicit(
+            &mutable_record->invocation_active,
+            &expected_active,
+            1U,
+            memory_order_acq_rel,
+            memory_order_acquire
+        )) {
         shadowspill_leave_task_scope(runtime);
         return -1;
     }
+    task_scope.task = record;
+    prepare_allocation_matcher(record);
     task_scope.invocation = atomic_fetch_add_explicit(
-        &((ShadowSpillTaskRecord *)record)->invocation_count,
+        &mutable_record->invocation_count,
         1U,
         memory_order_acq_rel
     ) + 1U;
@@ -555,6 +556,8 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
 
 void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
     if (task_scope.runtime == runtime) {
+        ShadowSpillTaskRecord *record =
+            (ShadowSpillTaskRecord *)task_scope.task;
         ShadowSpillMemoryLease *retirement = task_scope.retirement_head;
         while (retirement != NULL) {
             ShadowSpillMemoryLease *next =
@@ -581,6 +584,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.pending_is_scratch = 0U;
         task_scope.pending_allocation = 0U;
+        task_scope.allocation_states = NULL;
         task_scope.allocation_state_count = 0U;
         task_scope.live_requested_bytes = 0U;
         task_scope.live_charged_bytes = 0U;
@@ -594,6 +598,11 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.scratch_allocation_count = 0U;
         task_scope.retirement_head = NULL;
         task_scope.retirement_tail = NULL;
+        if (record != NULL) {
+            atomic_store_explicit(
+                &record->invocation_active, 0U, memory_order_release
+            );
+        }
     }
 }
 
