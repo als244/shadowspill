@@ -273,8 +273,12 @@ typedef struct ShadowSpillRetirementRecord {
     ShadowSpillMemoryPool *pool;
     uint64_t allocation_id;
     uint64_t allocation_generation;
-    ShadowSpillEventLease **events;
-    uint32_t event_count;
+    /*
+     * The queue owns these immutable requirements.  The allocation borrows
+     * the same pointers while its generation remains retirement-pending so
+     * the allocator can make causal-reuse decisions without copying them.
+     */
+    ShadowSpillEventRecord *events;
     ShadowSpillEventLease *task_completion_event;
     struct ShadowSpillRetirementRecord *next;
     struct ShadowSpillRetirementRecord *free_next;
