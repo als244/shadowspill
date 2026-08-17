@@ -76,10 +76,10 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/callables.py:PlannedForward.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",
     "src/shadowspill/pytorch/runtime_adapter/runtime.py:Runtime.__init__",
-    "src/shadowspill/pytorch/state/model.py:externalize_model_state",
-    "src/shadowspill/pytorch/state/model.py:relocate_model_state",
-    "src/shadowspill/pytorch/state/optimizer.py:externalize_optimizer_state",
-    "src/shadowspill/pytorch/state/optimizer.py:relocate_optimizer_state",
+    "src/shadowspill/pytorch/state/model.py:export_model_state",
+    "src/shadowspill/pytorch/state/model.py:import_model_state",
+    "src/shadowspill/pytorch/state/optimizer.py:export_optimizer_state",
+    "src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state",
 }
 
 
@@ -387,7 +387,7 @@ def test_examples_cover_complete_public_workflows() -> None:
     expected = {
         "training-lifecycle.md": (
             "Runtime(",
-            "relocate_model_state(",
+            "import_model_state(",
             "plan_step(",
             "state_dict()",
             "train_step.close()",

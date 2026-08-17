@@ -14,9 +14,9 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     InputGuardError,
     Runtime,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     plan_forward,
-    relocate_model_state,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
@@ -65,7 +65,7 @@ def main() -> int:
             },
             library_path=adapter,
         )
-        model = relocate_model_state(
+        model = import_model_state(
             model,
             runtime=runtime,
             pool="spill",
@@ -168,7 +168,7 @@ def main() -> int:
 
         planned.close()
         planned.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        export_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:
             raise AssertionError("close replaced a Parameter object")

@@ -298,7 +298,7 @@ class Runtime:
             if self._persistent_state_count != 0:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while persistent PyTorch state remains; "
-                    "externalize it with release_runtime=True first"
+                    "export it with release_runtime=True first"
                 )
             status = int(
                 self._installed.library.shadowspill_pytorch_allocator_wait_idle()
@@ -366,7 +366,7 @@ class Runtime:
                 and not allow_in_progress_plan
             ):
                 raise RuntimeConfigurationError(
-                    "persistent state relocation requires an idle Runtime"
+                    "persistent state import requires an idle Runtime"
                 )
 
     def __enter__(self) -> Runtime:

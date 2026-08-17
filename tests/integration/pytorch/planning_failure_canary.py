@@ -20,9 +20,9 @@ from shadowspill.pytorch import (
     PlanInfeasibleError,
     ProfilingError,
     Runtime,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     plan_forward,
-    relocate_model_state,
 )
 
 
@@ -152,8 +152,8 @@ class _ProfilingOOM(nn.Module):
         )
 
 
-def _relocated(runtime: Runtime, model: nn.Module) -> nn.Module:
-    return relocate_model_state(
+def _imported(runtime: Runtime, model: nn.Module) -> nn.Module:
+    return import_model_state(
         model,
         runtime=runtime,
         pool="spill",
@@ -162,7 +162,7 @@ def _relocated(runtime: Runtime, model: nn.Module) -> nn.Module:
 
 
 def _release(runtime: Runtime, model: nn.Module) -> None:
-    externalize_model_state(model, runtime=runtime, release_runtime=True)
+    export_model_state(model, runtime=runtime, release_runtime=True)
 
 
 def _expect(
@@ -227,7 +227,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as cache:
         inputs = torch.randn(2, 2048)
 
-        invalid = _relocated(runtime, _DataDependentModel())
+        invalid = _imported(runtime, _DataDependentModel())
         try:
             error = _expect(
                 CaptureError,
@@ -239,7 +239,7 @@ def main() -> int:
         finally:
             _release(runtime, invalid)
 
-        unsupported = _relocated(runtime, _UnsupportedCompilation())
+        unsupported = _imported(runtime, _UnsupportedCompilation())
         try:
             with inductor_config.patch(implicit_fallbacks=False):
                 error = _expect(
@@ -256,7 +256,7 @@ def main() -> int:
         finally:
             _release(runtime, unsupported)
 
-        broken = _relocated(runtime, _MissingCudaImplementation())
+        broken = _imported(runtime, _MissingCudaImplementation())
         try:
             error = _expect(
                 ProfilingError,
@@ -277,7 +277,7 @@ def main() -> int:
         finally:
             _release(runtime, broken)
 
-        profiling_oom = _relocated(runtime, _ProfilingOOM())
+        profiling_oom = _imported(runtime, _ProfilingOOM())
         try:
             error = _expect(
                 ProfilingError,
@@ -289,7 +289,7 @@ def main() -> int:
         finally:
             _release(runtime, profiling_oom)
 
-        constrained = _relocated(runtime, _LargeStage())
+        constrained = _imported(runtime, _LargeStage())
         try:
             _expect(
                 AdmissionError,

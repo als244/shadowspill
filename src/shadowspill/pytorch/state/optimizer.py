@@ -1,4 +1,4 @@
-"""Public relocation operations for materialized optimizer state."""
+"""Public optimizer-state import and export operations."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
 from .storage import (
     NamedTensor,
-    externalize_tensors,
+    export_tensors,
+    import_tensors,
     release_persistent_tensors,
-    relocate_tensors,
 )
 
 
-def relocate_optimizer_state(
+def import_optimizer_state(
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
@@ -25,7 +25,7 @@ def relocate_optimizer_state(
 ) -> torch.optim.Optimizer:
     """Copy optimizer tensors into runtime objects and release sources by default."""
 
-    relocate_tensors(
+    import_tensors(
         optimizer,
         _optimizer_tensors(optimizer),
         runtime=runtime,
@@ -35,7 +35,7 @@ def relocate_optimizer_state(
     return optimizer
 
 
-def externalize_optimizer_state(
+def export_optimizer_state(
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
@@ -43,7 +43,7 @@ def externalize_optimizer_state(
 ) -> torch.optim.Optimizer:
     """Copy optimizer tensors back into ordinary CPU allocations."""
 
-    externalize_tensors(
+    export_tensors(
         optimizer,
         runtime=runtime,
         release_runtime=release_runtime,
@@ -51,7 +51,7 @@ def externalize_optimizer_state(
     return optimizer
 
 
-def relocate_optimizer_state_for_plan(
+def import_optimizer_state_for_plan(
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
@@ -59,7 +59,7 @@ def relocate_optimizer_state_for_plan(
 ) -> None:
     """Move initialized state into spill storage owned by an active plan build."""
 
-    relocate_tensors(
+    import_tensors(
         optimizer,
         _optimizer_tensors(optimizer),
         runtime=runtime,
@@ -115,4 +115,4 @@ def _walk_tensors(
             yield from _walk_tensors(item, f"{path}.{index}", excluded)
 
 
-__all__ = ["externalize_optimizer_state", "relocate_optimizer_state"]
+__all__ = ["export_optimizer_state", "import_optimizer_state"]

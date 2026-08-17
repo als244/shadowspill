@@ -22,7 +22,7 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-from tools.qualification.model_state import externalize_case_model, relocate_case_model
+from tools.qualification.model_state import export_case_model, import_case_model
 from tools.qualification.pressurefit_fixtures import write_pressurefit_fixtures
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
@@ -139,7 +139,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 "spill": pinned_host(capacity=manifest.spill_budget_bytes),
             }
         )
-        case = relocate_case_model(case, runtime=runtime)
+        case = import_case_model(case, runtime=runtime)
         model = case.model
         planning_started = time.perf_counter()
         training = plan_step(
@@ -197,7 +197,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 "physical_budget_statuses": physical_statuses,
             }
             training.close()
-            externalize_case_model(case, runtime=runtime)
+            export_case_model(case, runtime=runtime)
             runtime.close()
             return result
 
@@ -365,7 +365,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "pressurefit_fixtures": fixtures,
         }
         training.close()
-        externalize_case_model(case, runtime=runtime)
+        export_case_model(case, runtime=runtime)
         runtime.close()
         return result
 

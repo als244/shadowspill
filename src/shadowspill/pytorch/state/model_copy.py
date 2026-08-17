@@ -19,7 +19,7 @@ def copy_model_with_spill_storages(
     """Copy a module hierarchy without copying registered tensor payloads."""
 
     memo: dict[int, object] = {}
-    relocated: list[PersistentStorage] = []
+    imported: list[PersistentStorage] = []
     for storage in storages:
         owner = _spill_owner(storage)
         views: list[TensorView] = []
@@ -38,12 +38,12 @@ def copy_model_with_spill_storages(
             )
         storage.anchor = owner
         storage.views = tuple(views)
-        storage.source_is_external = False
-        relocated.append(storage)
+        storage.frontend_storage_is_separate = False
+        imported.append(storage)
     copied = copy.deepcopy(model, memo)
     if copied is model:
         raise RuntimeError("model copy unexpectedly retained source identity")
-    return copied, tuple(relocated)
+    return copied, tuple(imported)
 
 
 def _spill_owner(storage: PersistentStorage) -> torch.Tensor:

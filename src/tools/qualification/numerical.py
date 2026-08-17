@@ -26,7 +26,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
-from tools.qualification.model_state import externalize_case_model, relocate_case_model
+from tools.qualification.model_state import export_case_model, import_case_model
 from workloads.numerical import (
     DEFAULT_DEVICE_BUDGETS,
     ModelImplementation,
@@ -519,7 +519,7 @@ def _planned_worker(
                 "spill": pinned_host(capacity=_HOST_BUDGET),
             }
         )
-        case = relocate_case_model(case, runtime=runtime)
+        case = import_case_model(case, runtime=runtime)
         model = case.model
         planning_started = time.perf_counter()
         training = plan_step(
@@ -637,7 +637,7 @@ def _planned_worker(
         report = training.plan_report
         runtime_statistics = _adapter_statistics()
         training.close()
-        externalize_case_model(case, runtime=runtime)
+        export_case_model(case, runtime=runtime)
         runtime.close()
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)

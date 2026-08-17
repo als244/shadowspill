@@ -1,11 +1,11 @@
-"""Persistent PyTorch state relocation and externalization."""
+"""Persistent PyTorch state import and export."""
 
-from .model import externalize_model_state, relocate_model_state
-from .optimizer import externalize_optimizer_state, relocate_optimizer_state
+from .model import export_model_state, import_model_state
+from .optimizer import export_optimizer_state, import_optimizer_state
 
 __all__ = [
-    "externalize_model_state",
-    "externalize_optimizer_state",
-    "relocate_model_state",
-    "relocate_optimizer_state",
+    "export_model_state",
+    "export_optimizer_state",
+    "import_model_state",
+    "import_optimizer_state",
 ]

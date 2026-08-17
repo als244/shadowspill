@@ -1,4 +1,4 @@
-"""Public relocation operations for registered model state."""
+"""Public model-state import and export operations."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from .model_copy import copy_model_with_spill_storages
 from .storage import (
     NamedTensor,
-    externalize_tensors,
+    export_tensors,
     own_persistent_state,
     persistent_state,
     register_tensor_storages,
@@ -19,7 +19,7 @@ from .storage import (
 )
 
 
-def relocate_model_state[ModelT: nn.Module](
+def import_model_state[ModelT: nn.Module](
     model: ModelT,
     *,
     runtime: Runtime,
@@ -38,7 +38,7 @@ def relocate_model_state[ModelT: nn.Module](
     exist. Set ``release_source=False`` only when the original model must
     remain available independently::
 
-        model = relocate_model_state(
+        model = import_model_state(
             model, runtime=runtime, pool="spill", release_source=True
         )
     """
@@ -51,18 +51,18 @@ def relocate_model_state[ModelT: nn.Module](
         pool=pool,
     )
     try:
-        relocated, relocated_storages = copy_model_with_spill_storages(model, storages)
+        imported, imported_storages = copy_model_with_spill_storages(model, storages)
         own_persistent_state(
-            relocated,
+            imported,
             runtime=runtime,
             pool=pool,
-            storages=relocated_storages,
+            storages=imported_storages,
             source_owner=None if release_source else model,
         )
     except BaseException:
         unregister_tensor_storages(storages, runtime=runtime)
         raise
-    return cast(ModelT, relocated)
+    return cast(ModelT, imported)
 
 
 def require_model_state_for_plan(
@@ -71,13 +71,13 @@ def require_model_state_for_plan(
     runtime: Runtime,
     pool: str,
 ) -> None:
-    """Require model state to have been explicitly relocated into ``pool``."""
+    """Require model state to have been explicitly imported into ``pool``."""
 
     existing = persistent_state(runtime, model)
     if existing is None:
         raise RuntimeError(
             "model state is not owned by this Runtime; call "
-            "relocate_model_state(model, runtime=runtime, pool=spill, ...) "
+            "import_model_state(model, runtime=runtime, pool=spill, ...) "
             "before planning"
         )
     if existing.pool != pool:
@@ -86,7 +86,7 @@ def require_model_state_for_plan(
         )
 
 
-def externalize_model_state[ModelT: nn.Module](
+def export_model_state[ModelT: nn.Module](
     model: ModelT,
     *,
     runtime: Runtime,
@@ -100,7 +100,7 @@ def externalize_model_state[ModelT: nn.Module](
     copy.
     """
 
-    externalize_tensors(model, runtime=runtime, release_runtime=release_runtime)
+    export_tensors(model, runtime=runtime, release_runtime=release_runtime)
     return model
 
 
@@ -118,7 +118,7 @@ def _model_tensors(model: nn.Module) -> tuple[NamedTensor, ...]:
 
 
 __all__ = [
-    "externalize_model_state",
-    "relocate_model_state",
+    "export_model_state",
+    "import_model_state",
     "require_model_state_for_plan",
 ]

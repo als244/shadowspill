@@ -403,7 +403,7 @@ class MaterializedForwardState:
             if persistent is None:
                 if alias_id in self._model_aliases:
                     raise PlanningError(
-                        f"registered model alias {alias_id!r} has no relocated "
+                        f"registered model alias {alias_id!r} has no imported "
                         "runtime storage"
                     )
                 self.bridge.register_host_tensor(

@@ -10,12 +10,12 @@ import torch.nn as nn
 
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
-    relocate_model_state,
+    export_model_state,
+    import_model_state,
 )
 
 
-def relocate_case_model[CaseT](
+def import_case_model[CaseT](
     case: CaseT,
     *,
     runtime: Runtime,
@@ -25,33 +25,33 @@ def relocate_case_model[CaseT](
 
     The returned case must replace the caller's original case reference. This
     prevents a case container from accidentally retaining the anonymous CPU
-    model after ``release_source=True`` relocation.
+    model after ``release_source=True`` import.
     """
 
     source = _case_model(case)
-    relocated = relocate_model_state(
+    imported = import_model_state(
         source,
         runtime=runtime,
         pool=pool,
         release_source=True,
     )
     try:
-        updated = _replace_case_model(case, relocated)
+        updated = _replace_case_model(case, imported)
     except BaseException:
-        externalize_model_state(relocated, runtime=runtime, release_runtime=True)
+        export_model_state(imported, runtime=runtime, release_runtime=True)
         raise
     return cast(CaseT, updated)
 
 
-def externalize_case_model(
+def export_case_model(
     case: object,
     *,
     runtime: Runtime,
     release_runtime: bool = True,
 ) -> nn.Module:
-    """Externalize the model currently owned by a qualification case."""
+    """Export the model currently owned by a qualification case."""
 
-    return externalize_model_state(
+    return export_model_state(
         _case_model(case),
         runtime=runtime,
         release_runtime=release_runtime,
@@ -72,7 +72,7 @@ def _replace_case_model(case: object, model: nn.Module) -> object:
                 "model attribute"
             ) from exc
     if _case_model(updated) is not model:
-        raise RuntimeError("qualification case did not adopt the relocated model")
+        raise RuntimeError("qualification case did not adopt the imported model")
     return updated
 
 
@@ -83,4 +83,4 @@ def _case_model(case: object) -> nn.Module:
     return model
 
 
-__all__ = ["externalize_case_model", "relocate_case_model"]
+__all__ = ["export_case_model", "import_case_model"]

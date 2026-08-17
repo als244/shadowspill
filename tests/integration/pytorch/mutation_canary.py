@@ -12,9 +12,9 @@ import torch.nn as nn
 from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     plan_forward,
-    relocate_model_state,
 )
 
 
@@ -46,7 +46,7 @@ def main() -> int:
             },
             library_path=adapter,
         )
-        model = relocate_model_state(
+        model = import_model_state(
             model,
             runtime=runtime,
             pool="spill",
@@ -86,7 +86,7 @@ def main() -> int:
         state = planned.state_dict()
         torch.testing.assert_close(state["running"], reference.running)
         planned.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        export_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
         if model.running.device.type != "cpu":
             raise AssertionError("close did not restore mutated buffer to the CPU")

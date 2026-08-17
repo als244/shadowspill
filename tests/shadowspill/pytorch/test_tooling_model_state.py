@@ -16,16 +16,16 @@ class _Case:
     model: nn.Module
 
 
-def test_tooling_replaces_case_source_with_relocated_model(
+def test_tooling_replaces_case_source_with_imported_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = nn.Linear(4, 4)
-    relocated = nn.Linear(4, 4)
+    imported = nn.Linear(4, 4)
     source_id = id(source)
     source_reference = weakref.ref(source)
     calls: dict[str, object] = {}
 
-    def relocate(
+    def import_state(
         model: nn.Module,
         *,
         runtime: object,
@@ -38,12 +38,12 @@ def test_tooling_replaces_case_source_with_relocated_model(
             pool=pool,
             release_source=release_source,
         )
-        return relocated
+        return imported
 
-    monkeypatch.setattr(model_state, "relocate_model_state", relocate)
+    monkeypatch.setattr(model_state, "import_model_state", import_state)
     runtime = object()
     case = _Case(source)
-    case = model_state.relocate_case_model(
+    case = model_state.import_case_model(
         case,
         runtime=cast(Any, runtime),
     )
@@ -51,7 +51,7 @@ def test_tooling_replaces_case_source_with_relocated_model(
     gc.collect()
 
     assert source_reference() is None
-    assert case.model is relocated
+    assert case.model is imported
     assert calls == {
         "source_id": source_id,
         "runtime": runtime,
@@ -60,14 +60,14 @@ def test_tooling_replaces_case_source_with_relocated_model(
     }
 
 
-def test_tooling_externalizes_the_case_model(
+def test_tooling_exports_the_case_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = nn.Linear(4, 4)
     case = _Case(model)
     calls: dict[str, object] = {}
 
-    def externalize(
+    def export_state(
         value: nn.Module,
         *,
         runtime: object,
@@ -80,9 +80,9 @@ def test_tooling_externalizes_the_case_model(
         )
         return value
 
-    monkeypatch.setattr(model_state, "externalize_model_state", externalize)
+    monkeypatch.setattr(model_state, "export_model_state", export_state)
     runtime = object()
-    result = model_state.externalize_case_model(
+    result = model_state.export_case_model(
         case,
         runtime=cast(Any, runtime),
     )

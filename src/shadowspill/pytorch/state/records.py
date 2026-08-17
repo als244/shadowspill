@@ -28,7 +28,7 @@ class PersistentStorage:
     spill_pointer: int
     anchor: torch.Tensor
     views: tuple[TensorView, ...]
-    source_is_external: bool
+    frontend_storage_is_separate: bool
 
     @property
     def storage_identity(self) -> int:

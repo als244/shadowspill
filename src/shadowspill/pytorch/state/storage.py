@@ -1,4 +1,4 @@
-"""Generic tensor-storage relocation into persistent runtime objects."""
+"""Generic tensor-storage import into persistent runtime objects."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class NamedTensor:
     tensor: torch.Tensor
 
 
-def relocate_tensors(
+def import_tensors(
     target: object,
     tensors: Iterable[NamedTensor],
     *,
@@ -47,7 +47,7 @@ def relocate_tensors(
     registry = registry_for(runtime)
     if registry.get(target) is not None:
         raise RuntimeConfigurationError(
-            "state is already relocated; externalize it before relocating again"
+            "state is already imported; export it before importing again"
         )
     created = list(
         register_tensor_storages(
@@ -59,14 +59,14 @@ def relocate_tensors(
     )
     try:
         if release_source and created:
-            torch.ops.shadowspill._relocate_cpu_storages(
+            torch.ops.shadowspill._import_cpu_storages(
                 [item.anchor for item in created],
                 [item.spill_pointer for item in created],
                 [item.current_object_id for item in created],
                 [item.size_bytes for item in created],
             )
             for item in created:
-                item.source_is_external = False
+                item.frontend_storage_is_separate = False
         state = PersistentState(
             target=target,
             pool=pool,
@@ -114,7 +114,7 @@ def register_tensor_storages(
                     1,
                     int(anchor.untyped_storage().data_ptr()),
                 ),
-                f"relocate persistent object {object_id}",
+                f"import persistent object {object_id}",
             )
             snapshot = _snapshot(library, object_id)
             spill_pointer = int(snapshot.spill_pointer or 0)
@@ -130,7 +130,7 @@ def register_tensor_storages(
                     spill_pointer=spill_pointer,
                     anchor=anchor,
                     views=views,
-                    source_is_external=True,
+                    frontend_storage_is_separate=True,
                 )
             )
         return tuple(created)
@@ -181,7 +181,7 @@ def release_persistent_tensors(
 ) -> PersistentState | None:
     """Release runtime objects after their frontend views are no longer used.
 
-    This is an internal ownership primitive.  Unlike ``externalize_tensors``,
+    This is an internal ownership primitive.  Unlike ``export_tensors``,
     it performs no copy and no storage rebinding.  The caller must already have
     rebound every live public tensor to independent storage, or be abandoning
     the target during rollback.
@@ -195,7 +195,7 @@ def release_persistent_tensors(
     return registry.remove(target)
 
 
-def externalize_tensors(
+def export_tensors(
     target: object,
     *,
     runtime: Runtime,
@@ -211,7 +211,7 @@ def externalize_tensors(
     library = runtime._installed.library
     _require_status(
         library.shadowspill_pytorch_allocator_wait_idle(),
-        "wait before state externalization",
+        "wait before state export",
     )
     owners = [
         torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
@@ -224,14 +224,14 @@ def externalize_tensors(
                 item.size_bytes,
                 int(owner.untyped_storage().data_ptr()),
             ),
-            f"externalize persistent object {item.current_object_id}",
+            f"export persistent object {item.current_object_id}",
         )
     if state.storages:
-        torch.ops.shadowspill._externalize_cpu_storages(
+        torch.ops.shadowspill._export_cpu_storages(
             [item.anchor for item in state.storages], owners
         )
     for item in state.storages:
-        item.source_is_external = True
+        item.frontend_storage_is_separate = True
     _restore_tensor_views(state)
     if release_runtime:
         for item in state.storages:
@@ -266,7 +266,7 @@ def adopt_persistent_tensor(
     if item is None:
         return None
     library = runtime._installed.library
-    if item.source_is_external:
+    if item.frontend_storage_is_separate:
         _require_status(
             library.shadowspill_pytorch_write_spill_object(
                 item.current_object_id,
@@ -294,7 +294,7 @@ def restore_persistent_state(
         return
     library = runtime._installed.library
     for item in state.storages:
-        if not item.source_is_external:
+        if not item.frontend_storage_is_separate:
             continue
         _require_status(
             library.shadowspill_pytorch_read_spill_object(
@@ -336,7 +336,7 @@ def _storage_roots(
             raise TypeError(f"state entry {item.name!r} is not a tensor")
         if tensor.device.type != "cpu":
             raise RuntimeConfigurationError(
-                f"state entry {item.name!r} must be CPU resident before relocation"
+                f"state entry {item.name!r} must be CPU resident before import"
             )
         if tensor.layout is not torch.strided:
             raise RuntimeConfigurationError(
@@ -392,7 +392,7 @@ def _validate_pool(
         raise RuntimeConfigurationError(f"unknown runtime pool {pool!r}") from exc
     if selected.kind != "pinned_host":
         raise RuntimeConfigurationError(
-            "the current PyTorch state relocation path requires a pinned-host pool"
+            "the current PyTorch state import path requires a pinned-host pool"
         )
 
 
@@ -414,12 +414,12 @@ def _require_status(raw_status: Any, operation: str) -> None:
 __all__ = [
     "NamedTensor",
     "adopt_persistent_tensor",
-    "externalize_tensors",
+    "export_tensors",
+    "import_tensors",
     "own_persistent_state",
     "persistent_state",
     "register_tensor_storages",
     "release_persistent_tensors",
-    "relocate_tensors",
     "restore_persistent_object_ids",
     "restore_persistent_state",
     "unregister_tensor_storages",

@@ -1096,14 +1096,14 @@ def opaque_optimizer_outputs(
                 dtype=torch.uint8,
                 device=target,
             )
-            relocated = torch.empty(0, dtype=tensor.dtype, device=target).set_(
+            target_tensor = torch.empty(0, dtype=tensor.dtype, device=target).set_(
                 owner.untyped_storage(),
                 int(tensor.storage_offset()),
                 tuple(tensor.shape),
                 tuple(tensor.stride()),
             )
-            relocated.copy_(tensor)
-            tensor.data = relocated
+            target_tensor.copy_(tensor)
+            tensor.data = target_tensor
         elif tensor.device != target:
             raise CaptureError(
                 f"opaque optimizer output {name!r} was created on {tensor.device}, "

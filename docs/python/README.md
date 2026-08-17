@@ -1,6 +1,6 @@
 # Python guide
 
-The Python package provides model-state relocation, PyTorch capture and
+The Python package provides model-state import, PyTorch capture and
 lowering, reusable planning artifacts, PressureFit, diagnostics, and callable
 execution.
 

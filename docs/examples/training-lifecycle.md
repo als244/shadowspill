@@ -1,6 +1,6 @@
 # Training loop
 
-This complete example creates a runtime, relocates model state, trains, and
+This complete example creates a runtime, imports model state, trains, and
 writes a checkpoint.
 
 ```python
@@ -13,7 +13,7 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
-    relocate_model_state,
+    import_model_state,
 )
 
 
@@ -38,7 +38,7 @@ model = nn.Sequential(
     nn.GELU(),
     nn.Linear(256, 128),
 )
-model = relocate_model_state(model, runtime=runtime, pool="spill")
+model = import_model_state(model, runtime=runtime, pool="spill")
 
 train_step = plan_step(
     model,

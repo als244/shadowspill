@@ -16,9 +16,9 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
     StepProgram,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     make_step_program,
-    relocate_model_state,
 )
 
 from .config import load_collection_config
@@ -50,7 +50,7 @@ def collect_program(
     case = build_program_case(request)
     print("PROGRAM PHASE build_model complete", flush=True)
     runtime: Runtime | None = None
-    relocated = False
+    imported = False
     program: StepProgram | None = None
     primary_error: BaseException | None = None
     device_ordinal = request.runtime.execution_device or 0
@@ -71,18 +71,18 @@ def collect_program(
                 }
             )
             print("PROGRAM PHASE runtime_initialize complete", flush=True)
-            print("PROGRAM PHASE relocate_model start", flush=True)
+            print("PROGRAM PHASE import_model start", flush=True)
             case = replace(
                 case,
-                model=relocate_model_state(
+                model=import_model_state(
                     case.model,
                     runtime=runtime,
                     pool="spill",
                     release_source=True,
                 ),
             )
-            relocated = True
-            print("PROGRAM PHASE relocate_model complete", flush=True)
+            imported = True
+            print("PROGRAM PHASE import_model complete", flush=True)
             print("PROGRAM PHASE capture_compile_profile_lower start", flush=True)
             program = make_step_program(
                 case.model,
@@ -116,15 +116,15 @@ def collect_program(
         primary_error = error
     finally:
         cleanup_errors: list[BaseException] = []
-        if relocated and runtime is not None:
+        if imported and runtime is not None:
             try:
-                print("PROGRAM PHASE externalize_model start", flush=True)
-                externalize_model_state(
+                print("PROGRAM PHASE export_model start", flush=True)
+                export_model_state(
                     case.model,
                     runtime=runtime,
                     release_runtime=True,
                 )
-                print("PROGRAM PHASE externalize_model complete", flush=True)
+                print("PROGRAM PHASE export_model complete", flush=True)
             except BaseException as cleanup_failure:
                 cleanup_errors.append(cleanup_failure)
         if runtime is not None:

@@ -21,16 +21,16 @@ runtime = Runtime(
 Pool names are user-defined. `execution="device"` and `spill="spill"` in the
 examples below select those names; they are not reserved strings.
 
-## Relocate model state
+## Import model state
 
 Planning requires registered model state to reside in the runtime spill pool.
 Assign the returned model so Python can release the original CPU module when
 no other references remain.
 
 ```python
-from shadowspill.pytorch import relocate_model_state
+from shadowspill.pytorch import import_model_state
 
-model = relocate_model_state(
+model = import_model_state(
     model,
     runtime=runtime,
     pool="spill",
@@ -158,14 +158,14 @@ outputs = run_forward([tokens, conditioning])
 
 ## Close
 
-Close the callable, externalize persistent state if ordinary CPU tensors are
+Close the callable, export persistent state if ordinary CPU tensors are
 needed, then close the Python runtime handle.
 
 ```python
-from shadowspill.pytorch import externalize_model_state
+from shadowspill.pytorch import export_model_state
 
 train_step.close()  # or run_forward.close()
-model = externalize_model_state(
+model = export_model_state(
     model,
     runtime=runtime,
     release_runtime=True,

@@ -6,9 +6,9 @@ import torch.nn as nn
 
 from shadowspill.pytorch import (
     InputGuardError,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     plan_forward,
-    relocate_model_state,
 )
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
@@ -41,7 +41,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     reference.load_state_dict(model.state_dict())
     inputs = torch.randn(3, 128)
     runtime = public_test_runtime()
-    model = relocate_model_state(
+    model = import_model_state(
         model,
         runtime=runtime,
         pool="spill",
@@ -105,7 +105,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         planned([inputs, 16])
     planned.close()
     planned.close()
-    externalize_model_state(model, runtime=runtime, release_runtime=True)
+    export_model_state(model, runtime=runtime, release_runtime=True)
 
     assert tuple(id(value) for value in model.parameters()) == parameter_ids
     assert all(value.device.type == "cpu" for value in model.parameters())

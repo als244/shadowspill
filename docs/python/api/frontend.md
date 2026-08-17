@@ -40,7 +40,7 @@ may coordinate several processes and invoke calibration concurrently to
 measure contended links.
 
 `Runtime.close()` rejects new frontend work after verifying that no planning,
-callable, or persistent relocated state remains. The installed process
+callable, or persistent imported state remains. The installed process
 allocator itself remains process-owned because PyTorch cannot uninstall it.
 
 The immutable runtime values are:
@@ -56,36 +56,36 @@ Configuration and execution failures use `RuntimeConfigurationError` and
 
 ## Persistent state
 
-<!-- source-signature: src/shadowspill/pytorch/state/model.py:relocate_model_state -->
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state -->
 ```text
-relocate_model_state(model, *, runtime, pool, release_source=True)
+import_model_state(model, *, runtime, pool, release_source=True)
 ```
 
-<!-- source-signature: src/shadowspill/pytorch/state/model.py:externalize_model_state -->
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:export_model_state -->
 ```text
-externalize_model_state(model, *, runtime, release_runtime=False)
+export_model_state(model, *, runtime, release_runtime=False)
 ```
 
-<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:relocate_optimizer_state -->
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state -->
 ```text
-relocate_optimizer_state(optimizer, *, runtime, pool, release_source=True)
+import_optimizer_state(optimizer, *, runtime, pool, release_source=True)
 ```
 
-<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:externalize_optimizer_state -->
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:export_optimizer_state -->
 ```text
-externalize_optimizer_state(optimizer, *, runtime, release_runtime=False)
+export_optimizer_state(optimizer, *, runtime, release_runtime=False)
 ```
 
-`relocate_model_state()` returns a copied module hierarchy whose registered
+`import_model_state()` returns a copied module hierarchy whose registered
 tensors point at runtime spill leases. `release_source=True` means ShadowSpill
 does not retain the input model; Python releases it when no caller reference
-remains. `externalize_model_state()` rebinds the same registered tensor
+remains. `export_model_state()` rebinds the same registered tensor
 identities to ordinary CPU storages and optionally releases runtime objects.
 
-`relocate_optimizer_state()` and `externalize_optimizer_state()` apply the same
+`import_optimizer_state()` and `export_optimizer_state()` apply the same
 storage policy to already materialized optimizer state. `plan_step()` normally
 constructs and manages its optimizer from the supplied factory, so direct
-optimizer relocation is an advanced lifecycle operation.
+optimizer import is an advanced lifecycle operation.
 
 ## Planning entrypoints
 
@@ -154,7 +154,7 @@ Shared planning arguments have these meanings:
 
 | Argument | Contract |
 |---|---|
-| `runtime` | Open runtime that owns the relocated model. |
+| `runtime` | Open runtime that owns the imported model. |
 | `execution`, `spill` | Keys in `runtime.pools`. |
 | `execution_budget`, `spill_budget` | Optional byte budgets no larger than configured pool limits. |
 | `dynamic_scratch_reserve_bytes` | Optional lower bound for bounded dynamic scratch; cannot reduce the measured requirement. |

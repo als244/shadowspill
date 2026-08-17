@@ -320,7 +320,7 @@ def main() -> int:
         final_statistics.pointer_lookup_failures != 0
         or final_statistics.callback_failures != 0
     ):
-        raise AssertionError("storage relocation caused an allocator callback failure")
+        raise AssertionError("storage import caused an allocator callback failure")
 
     host_source = torch.arange(4096, dtype=torch.uint8)
     status = int(

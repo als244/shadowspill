@@ -1,6 +1,6 @@
 # Forward-only execution
 
-Given the relocated `model` and open `runtime` from the [training
+Given the imported `model` and open `runtime` from the [training
 example](training-lifecycle.md), `plan_forward()` creates a fixed-shape
 forward-only callable:
 

@@ -117,9 +117,9 @@ def plan_forward(
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
-    ``model`` must be the value returned by :func:`relocate_model_state` for
+    ``model`` must be the value returned by :func:`import_model_state` for
     this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
-    bindings; it never relocates or releases model storage.
+    bindings; it never imports or releases model storage.
 
     The runtime and pool roles are explicit. The original model remains
     runtime-owned until the returned callable is closed. ``profiling_metadata``
@@ -220,9 +220,9 @@ def plan_step(
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
-    ``model`` must be the value returned by :func:`relocate_model_state` for
+    ``model`` must be the value returned by :func:`import_model_state` for
     this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
-    bindings; it never relocates or releases model storage.
+    bindings; it never imports or releases model storage.
 
     ``verbose=True`` reports each planning phase and unique structural ABI as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still

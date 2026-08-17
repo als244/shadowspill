@@ -26,23 +26,23 @@ struct CallerLease {
   int32_t device_ordinal;
 };
 
-void relocate_cpu_storages(
+void import_cpu_storages(
     at::TensorList tensors,
     at::IntArrayRef target_addresses,
     at::IntArrayRef object_ids,
     at::IntArrayRef sizes
 ) {
-  RangeGuard range_guard("shadowspill.pytorch.storage_relocate_cpu_batch");
+  RangeGuard range_guard("shadowspill.pytorch.storage_import_cpu_batch");
   const size_t count = tensors.size();
   TORCH_CHECK(
       target_addresses.size() == count && object_ids.size() == count &&
           sizes.size() == count,
-      "CPU storage relocation fields must have equal lengths");
+      "CPU storage import fields must have equal lengths");
   std::vector<uint64_t> current_addresses;
   current_addresses.reserve(count);
   for (const auto index : c10::irange(count)) {
     const at::Tensor& tensor = tensors[index];
-    TORCH_CHECK(tensor.device().is_cpu(), "storage relocation requires CPU tensors");
+    TORCH_CHECK(tensor.device().is_cpu(), "storage import requires CPU tensors");
     TORCH_CHECK(target_addresses[index] >= 0, "spill address must be nonnegative");
     TORCH_CHECK(object_ids[index] >= 0, "object ID must be nonnegative");
     TORCH_CHECK(sizes[index] >= 0, "storage size must be nonnegative");
@@ -57,7 +57,7 @@ void relocate_cpu_storages(
             static_cast<uint64_t>(sizes[index]));
     TORCH_CHECK(
         status == SHADOWSPILL_RUNTIME_OK,
-        "CPU storage relocation does not name a current spill lease: ",
+        "CPU storage import does not name a current spill lease: ",
         shadowspill_runtime_status_string(status));
     current_addresses.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
         tensor.storage().data_ptr().get())));
@@ -103,27 +103,27 @@ at::Tensor make_spill_cpu_storage(
       at::TensorOptions().dtype(at::kByte).device(at::kCPU));
 }
 
-void externalize_cpu_storages(
+void export_cpu_storages(
     at::TensorList tensors,
     at::TensorList owners
 ) {
-  RangeGuard range_guard("shadowspill.pytorch.storage_externalize_cpu_batch");
+  RangeGuard range_guard("shadowspill.pytorch.storage_export_cpu_batch");
   TORCH_CHECK(
       tensors.size() == owners.size(),
-      "CPU storage externalization fields must have equal lengths");
+      "CPU storage export fields must have equal lengths");
   for (const auto index : c10::irange(tensors.size())) {
     const at::Tensor& tensor = tensors[index];
     const at::Tensor& owner = owners[index];
     TORCH_CHECK(
         tensor.device().is_cpu() && owner.device().is_cpu(),
-        "storage externalization requires CPU tensors");
+        "storage export requires CPU tensors");
     TORCH_CHECK(
         tensor.storage().nbytes() == owner.storage().nbytes(),
-        "external CPU owner has the wrong storage size");
+        "destination CPU owner has the wrong storage size");
     TORCH_CHECK(
         owner.storage().data_ptr().get() != nullptr ||
             owner.storage().nbytes() == 0,
-        "external CPU owner has no allocation");
+        "destination CPU owner has no allocation");
   }
   for (const auto index : c10::irange(tensors.size())) {
     c10::Storage source = owners[index].storage();
@@ -633,10 +633,10 @@ at::Tensor transfer_storage_to_caller(
 
 TORCH_LIBRARY(shadowspill, library) {
   library.def(
-      "_relocate_cpu_storages(Tensor(a!)[] tensors, int[] addresses, "
+      "_import_cpu_storages(Tensor(a!)[] tensors, int[] addresses, "
       "int[] object_ids, int[] sizes) -> ()");
   library.def(
-      "_externalize_cpu_storages(Tensor(a!)[] tensors, Tensor[] owners) -> ()");
+      "_export_cpu_storages(Tensor(a!)[] tensors, Tensor[] owners) -> ()");
   library.def(
       "_make_spill_cpu_storage(Tensor dispatch, int address, int object_id, "
       "int size) -> Tensor");
@@ -669,8 +669,8 @@ TORCH_LIBRARY(shadowspill, library) {
 }
 
 TORCH_LIBRARY_IMPL(shadowspill, CPU, library) {
-  library.impl("_relocate_cpu_storages", TORCH_FN(relocate_cpu_storages));
-  library.impl("_externalize_cpu_storages", TORCH_FN(externalize_cpu_storages));
+  library.impl("_import_cpu_storages", TORCH_FN(import_cpu_storages));
+  library.impl("_export_cpu_storages", TORCH_FN(export_cpu_storages));
   library.impl("_make_spill_cpu_storage", TORCH_FN(make_spill_cpu_storage));
 }
 

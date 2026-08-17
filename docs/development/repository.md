@@ -47,7 +47,7 @@ src/shadowspill/
     ├── execution/         before/compiled/after task skeletons
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
     ├── diagnostics/       PlanReport and StepDiagnostics
-    ├── state/             persistent model/optimizer relocation
+    ├── state/             persistent model/optimizer import
     └── program_serialization/
 ```
 

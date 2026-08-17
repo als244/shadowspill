@@ -32,7 +32,7 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
-    relocate_model_state,
+    import_model_state,
 )
 
 runtime = Runtime(
@@ -42,7 +42,7 @@ runtime = Runtime(
     }
 )
 
-model = relocate_model_state(model, runtime=runtime, pool="spill")
+model = import_model_state(model, runtime=runtime, pool="spill")
 
 train_step = plan_step(
     model,

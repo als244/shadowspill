@@ -60,10 +60,10 @@ from .runtime_adapter import (
     TransferProfile,
 )
 from .state import (
-    externalize_model_state,
-    externalize_optimizer_state,
-    relocate_model_state,
-    relocate_optimizer_state,
+    export_model_state,
+    export_optimizer_state,
+    import_model_state,
+    import_optimizer_state,
 )
 
 __all__ = [
@@ -119,12 +119,12 @@ __all__ = [
     "TransferBandwidths",
     "TransferCapabilities",
     "TransferProfile",
-    "externalize_model_state",
-    "externalize_optimizer_state",
+    "export_model_state",
+    "export_optimizer_state",
+    "import_model_state",
+    "import_optimizer_state",
     "make_step_program",
     "plan_forward",
     "plan_step",
     "pressurefit_program",
-    "relocate_model_state",
-    "relocate_optimizer_state",
 ]

@@ -15,9 +15,9 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     ObjectiveResult,
     Runtime,
-    externalize_model_state,
+    export_model_state,
+    import_model_state,
     plan_step,
-    relocate_model_state,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
@@ -129,7 +129,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             },
             library_path=adapter,
         )
-        model = relocate_model_state(
+        model = import_model_state(
             model,
             runtime=runtime,
             pool="spill",
@@ -433,7 +433,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
 
         planned.close()
         planned.close()
-        externalize_model_state(model, runtime=runtime, release_runtime=True)
+        export_model_state(model, runtime=runtime, release_runtime=True)
         if tuple(id(parameter) for parameter in model.parameters()) != parameter_ids:
             raise AssertionError("training replaced a Parameter object")
         if any(parameter.device.type != "cpu" for parameter in model.parameters()):
@@ -456,7 +456,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training grew the configured spill pool")
 
         warm_model = _Model()
-        warm_model = relocate_model_state(
+        warm_model = import_model_state(
             warm_model,
             runtime=runtime,
             pool="spill",
@@ -488,7 +488,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         if not all(torch.isfinite(value).all() for value in warm_result.objectives):
             raise AssertionError("warm-cache execution produced a non-finite loss")
         warm.close()
-        externalize_model_state(warm_model, runtime=runtime, release_runtime=True)
+        export_model_state(warm_model, runtime=runtime, release_runtime=True)
         runtime.close()
     return 0
 

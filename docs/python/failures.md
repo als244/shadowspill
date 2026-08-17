@@ -165,12 +165,12 @@ Successful workflows close owners in reverse ownership order:
 
 ```text
 planned callable
-  -> externalize relocated state with release_runtime=True
+  -> export imported state with release_runtime=True
   -> Runtime
 ```
 
 `Runtime.close()` rejects an active callable, an in-progress plan, or
-persistent relocated state. This makes ownership leaks visible. The selected
+persistent imported state. This makes ownership leaks visible. The selected
 PyTorch allocator is process-global and cannot be uninstalled, so the neutral
 C runtime remains process-owned until registered exit cleanup stops and joins
 the worker and closes each memory-pool backend. Explicit close is still the

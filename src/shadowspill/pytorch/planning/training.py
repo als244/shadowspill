@@ -60,8 +60,8 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.state.optimizer import (
+    import_optimizer_state_for_plan,
     release_optimizer_state_from_plan,
-    relocate_optimizer_state_for_plan,
 )
 from shadowspill.simulator import SimulationConfig
 
@@ -340,8 +340,8 @@ def materialize_training_state(
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
-        with timer.measure("optimizer_state_relocation"):
-            relocate_optimizer_state_for_plan(
+        with timer.measure("optimizer_state_import"):
+            import_optimizer_state_for_plan(
                 optimizer,
                 runtime=runtime,
                 pool=spill_pool,

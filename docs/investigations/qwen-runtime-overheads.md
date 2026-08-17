@@ -598,7 +598,7 @@ typedef struct ShadowSpillObject {
 The device pointer and slab offset live in the referenced allocation lease;
 they are not duplicated as independently mutable object fields. A readiness
 event is tagged with the generation it makes ready, preventing an old
-completion from publishing state for a relocated object.
+completion from publishing state for an imported object.
 
 `residency` is the explicit state machine (`host_only`, `prefetching`,
 `device_ready`, `offloading`, `release_pending`, or `released`). The transfer
