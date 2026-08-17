@@ -41,6 +41,7 @@ from .diagnostics import (
     StepResult,
     StepTimingSummary,
 )
+from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
 from .program import (
     AnnotatedProgramPlan,
@@ -83,6 +84,7 @@ __all__ = [
     "ExecutionTaskIdentity",
     "ExecutionTiming",
     "InputGuardError",
+    "InvocationResult",
     "MemoryBudgets",
     "MemoryPool",
     "ObjectConsistency",

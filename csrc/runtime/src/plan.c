@@ -87,7 +87,9 @@ ShadowSpillRuntimeStatus shadowspill_plan_create(
     plan->spill_pool = &runtime->pools[description->spill_pool_id];
     plan->fetch_route = &runtime->routes[description->fetch_route_id];
     plan->evict_route = &runtime->routes[description->evict_route_id];
-    atomic_init(&plan->active_invocations, 0U);
+    atomic_init(&plan->active_task_scopes, 0U);
+    atomic_init(&plan->pending_actions, 0U);
+    atomic_init(&plan->pending_retirements, 0U);
     atomic_init(&plan->closing, 0U);
     atomic_init(&plan->closed, 0U);
     if (pthread_mutex_init(&plan->lifecycle_lock, NULL) != 0) {
@@ -135,13 +137,10 @@ ShadowSpillRuntimeStatus shadowspill_plan_close(ShadowSpillPlan *plan) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     atomic_store_explicit(&plan->closing, 1U, memory_order_release);
-    if (atomic_load_explicit(
-            &plan->active_invocations, memory_order_acquire
-        ) != 0U) {
-        pthread_mutex_unlock(&plan->lifecycle_lock);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    ShadowSpillRuntimeStatus status = shadowspill_plan_wait_idle(plan);
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_plan_clear_tasks(plan);
     }
-    ShadowSpillRuntimeStatus status = shadowspill_plan_clear_tasks(plan);
     if (status == SHADOWSPILL_RUNTIME_OK) {
         unlink_plan(plan);
         atomic_store_explicit(&plan->closed, 1U, memory_order_release);
@@ -156,11 +155,47 @@ void shadowspill_plan_destroy(ShadowSpillPlan *plan) {
     if (plan == NULL) {
         return;
     }
-    (void)shadowspill_plan_close(plan);
-    if (plan->ownership_previous_link != NULL) {
-        unlink_plan(plan);
+    if (shadowspill_plan_close(plan) != SHADOWSPILL_RUNTIME_OK) {
+        /*
+         * A failed runtime is terminal, but its worker may still own admitted
+         * records. Keep the plan linked so runtime teardown destroys actions
+         * and retirements before freeing the plan itself.
+         */
+        return;
     }
     destroy_plan_record(plan);
+}
+
+ShadowSpillRuntimeStatus shadowspill_plan_wait_idle(ShadowSpillPlan *plan) {
+    if (plan == NULL || plan->runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntime *runtime = plan->runtime;
+    for (;;) {
+        const ShadowSpillRuntimeStatus status =
+            shadowspill_failure_status(runtime);
+        if (status != SHADOWSPILL_RUNTIME_OK) {
+            return status;
+        }
+        if (atomic_load_explicit(&plan->closed, memory_order_acquire) != 0U) {
+            return SHADOWSPILL_RUNTIME_CLOSED;
+        }
+        if (atomic_load_explicit(
+                &plan->active_task_scopes, memory_order_acquire
+            ) == 0U && atomic_load_explicit(
+                &plan->pending_actions, memory_order_acquire
+            ) == 0U && atomic_load_explicit(
+                &plan->pending_retirements, memory_order_acquire
+            ) == 0U) {
+            return SHADOWSPILL_RUNTIME_OK;
+        }
+        if (atomic_load_explicit(
+                &runtime->worker_stop, memory_order_acquire
+            ) != 0U) {
+            return SHADOWSPILL_RUNTIME_CLOSED;
+        }
+        shadowspill_cpu_relax();
+    }
 }
 
 void shadowspill_plan_destroy_all(ShadowSpillRuntime *runtime) {

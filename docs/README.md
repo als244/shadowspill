@@ -64,6 +64,7 @@ trees.
 
 - [Training loop](examples/training-lifecycle.md)
 - [Forward-only execution](examples/forward-only.md)
+- [Concurrent planned callables](examples/concurrent-callables.md)
 - [Reusable planning and budget sweeps](examples/reusable-planning.md)
 - [Diagnosing a plan and real step](examples/diagnostics.md)
 - [Custom stage partitioning](examples/custom-partitioning.md)

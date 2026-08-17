@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 45U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 46U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -824,6 +824,13 @@ shadowspill_task_validate_replacement_binding(
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_clear_tasks(ShadowSpillPlan *plan);
+
+/*
+ * Actively wait until only this plan has no claimed task scope, queued action,
+ * or task-owned retirement. Work admitted by other plans does not participate.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_wait_idle(ShadowSpillPlan *plan);
 
 /*
  * Copies and validates one immutable physical-layout certificate and reserves

@@ -570,6 +570,11 @@ static void publish_action_batch_locked(
     if (batch->head == NULL) {
         return;
     }
+    (void)atomic_fetch_add_explicit(
+        &record->plan_owner->pending_actions,
+        record->action_count,
+        memory_order_release
+    );
     const uint64_t published_count = atomic_load_explicit(
         &runtime->actions.count, memory_order_acquire
     ) + record->action_count;

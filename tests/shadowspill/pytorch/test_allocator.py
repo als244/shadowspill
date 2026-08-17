@@ -114,6 +114,7 @@ class _Library:
     shadowspill_pytorch_plan_admit_fixed_layout = _Function()
     shadowspill_pytorch_plan_seal_fixed_layout = _Function()
     shadowspill_pytorch_plan_clear_tasks = _Function()
+    shadowspill_pytorch_plan_wait_idle = _Function()
     shadowspill_pytorch_plan_admit_object_acquisition = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_transfer_acquired_object_to_caller = _Function()
@@ -183,6 +184,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_plan_wait_idle.argtypes == [ctypes.c_size_t]
     assert library.shadowspill_pytorch_object_release_generation.argtypes == [
         ctypes.c_size_t,
         ctypes.c_uint64,

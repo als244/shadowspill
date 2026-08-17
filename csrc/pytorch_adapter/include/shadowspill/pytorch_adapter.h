@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 55U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 56U
 
 typedef enum ShadowSpillPytorchPoolBackendKind {
     SHADOWSPILL_PYTORCH_POOL_DEVICE = 0,
@@ -247,6 +247,8 @@ shadowspill_pytorch_plan_seal_fixed_layout(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_clear_tasks(uintptr_t plan_handle);
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_wait_idle(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_object_acquisition(

@@ -415,8 +415,16 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("optimizer mutation count differs from step count")
         uninterrupted = _clone_model_state(planned.state_dict())
         planned.load_state_dict(checkpoint)
-        for microbatches in steps[3:]:
-            replay_result = planned(microbatches, runtime_trace=True)
+        for replay_index, microbatches in enumerate(steps[3:]):
+            if replay_index == 0:
+                submitted = planned.submit(microbatches, runtime_trace=True)
+                if submitted.resolved:
+                    raise AssertionError(
+                        "submitted training step synchronized during dispatch"
+                    )
+                replay_result = submitted.result()
+            else:
+                replay_result = planned(microbatches, runtime_trace=True)
             if replay_result.diagnostics is None:
                 raise AssertionError("replay omitted trace diagnostics")
             replay_result.diagnostics.result()
@@ -493,6 +501,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         del actual
         del loss
         del replay_result
+        del submitted
         del warm_result
         gc.collect()
         torch.cuda.synchronize()

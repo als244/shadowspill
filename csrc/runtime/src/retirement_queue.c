@@ -154,10 +154,17 @@ static void destroy_retirement_record(
         return;
     }
     ShadowSpillMemoryLease *allocation = record->allocation;
+    ShadowSpillPlan *plan_owner = record->plan_owner;
     record->allocation = NULL;
+    record->plan_owner = NULL;
     release_retirement_requirements(runtime, record);
     release_retirement_record(&runtime->retirements, record);
     shadowspill_memory_lease_release(allocation);
+    if (plan_owner != NULL) {
+        (void)atomic_fetch_sub_explicit(
+            &plan_owner->pending_retirements, 1U, memory_order_release
+        );
+    }
 }
 
 int shadowspill_retirement_queue_initialize(
@@ -233,10 +240,17 @@ void shadowspill_retirement_queue_destroy(
     while (record != NULL) {
         ShadowSpillRetirementRecord *next = record->next;
         ShadowSpillMemoryLease *allocation = record->allocation;
+        ShadowSpillPlan *plan_owner = record->plan_owner;
         detach_borrowed_requirements_for_teardown(record);
         record->allocation = NULL;
+        record->plan_owner = NULL;
         release_retirement_requirements(runtime, record);
         shadowspill_memory_lease_release(allocation);
+        if (plan_owner != NULL) {
+            (void)atomic_fetch_sub_explicit(
+                &plan_owner->pending_retirements, 1U, memory_order_release
+            );
+        }
         if (!record->pool_owned) {
             free(record);
         }
@@ -277,12 +291,21 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     record->allocation = allocation;
+    record->plan_owner = shadowspill_current_plan(runtime);
     shadowspill_memory_lease_retain(allocation);
     record->pool = allocation->pool;
     record->allocation_id = allocation->allocation_id;
     record->allocation_generation = allocation->generation;
     record->requirements = allocation->retirement_requirements;
     record->task_completion_event = allocation->retirement_event;
+    allocation->retirement_enqueued_generation = allocation->generation;
+    if (record->plan_owner != NULL) {
+        (void)atomic_fetch_add_explicit(
+            &record->plan_owner->pending_retirements,
+            1U,
+            memory_order_release
+        );
+    }
 
     ShadowSpillRetirementQueue *queue = &runtime->retirements;
     pthread_mutex_lock(&queue->lock);
@@ -296,7 +319,6 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         &queue->count, 1U, memory_order_release
     );
     pthread_mutex_unlock(&queue->lock);
-    allocation->retirement_enqueued_generation = allocation->generation;
     return SHADOWSPILL_RUNTIME_OK;
 }
 

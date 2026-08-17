@@ -1100,6 +1100,14 @@ class RuntimeBridge:
         self._admitted_acquisitions.clear()
         self._fixed_layout_installed = False
 
+    def wait_plan_idle(self) -> None:
+        """Actively wait only for work owned by this admitted plan."""
+
+        self._require(
+            self.library.shadowspill_pytorch_plan_wait_idle(self.plan_handle),
+            "wait for plan idle",
+        )
+
     def transfer_outputs_to_caller(
         self,
         alias_ids: tuple[str, ...],
@@ -1262,6 +1270,8 @@ class RuntimeBridge:
         )
 
     def wait_idle(self) -> None:
+        """Wait for runtime-global quiescence at lifecycle boundaries."""
+
         self._require(
             self.library.shadowspill_pytorch_allocator_wait_idle(), "wait idle"
         )

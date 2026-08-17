@@ -10,11 +10,13 @@ while API pages define individual contracts.
 1. [Training loop](training-lifecycle.md) — end-to-end training and checkpoint.
 2. [Forward-only execution](forward-only.md) — plan and execute a fixed-shape
    inference graph.
-3. [Reusable planning and budget sweeps](reusable-planning.md) — separate
+3. [Concurrent planned callables](concurrent-callables.md) — dispatch several
+   admitted callables before synchronizing their results.
+4. [Reusable planning and budget sweeps](reusable-planning.md) — separate
    capture/profiling from PressureFit evaluation.
-4. [Diagnosing a plan and real step](diagnostics.md) — join PlanReport and
+5. [Diagnosing a plan and real step](diagnostics.md) — join PlanReport and
    StepResult evidence by execution ID.
-5. [Custom stage partitioning](custom-partitioning.md) — supply a validated
+6. [Custom stage partitioning](custom-partitioning.md) — supply a validated
    contiguous FX partition policy.
 
 ## Assumptions

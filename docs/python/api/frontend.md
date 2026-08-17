@@ -187,10 +187,10 @@ control inputs require an explicit CPU `profiling_value` on `SharedInput`.
 The `ObjectConsistency` enumeration contains these two policies.
 
 Several planned callables may remain admitted to one runtime and may bind the
-same `ObjectRef`. Public `PlannedForward` and `PlannedTrainStep` calls are
-currently synchronous dispatcher operations, however, and overlapping Python
-invocations are not yet part of the public contract. Async invocation-owned
-results and concurrent mutation arbitration are separate runtime work.
+same `ObjectRef`. Distinct callables may be submitted without synchronizing the
+dispatcher between them. Causal shared inputs consume the current published
+generation; unordered shared inputs deliberately omit value ordering while
+retaining lease safety.
 
 <!-- source-signature: src/shadowspill/pytorch/api.py:plan_step -->
 ```text
@@ -343,6 +343,15 @@ PlannedForward(inputs, *, profiler_annotations=False) -> object
 `PlannedForward` validates the fixed input signature and returns the model
 output.
 
+<!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.submit -->
+```text
+PlannedForward.submit(
+    inputs,
+    *,
+    profiler_annotations=False,
+) -> InvocationResult[object]
+```
+
 <!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__ -->
 ```text
 PlannedTrainStep(
@@ -353,8 +362,28 @@ PlannedTrainStep(
 ) -> StepResult
 ```
 
+<!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedTrainStep.submit -->
+```text
+PlannedTrainStep.submit(
+    inputs,
+    *,
+    runtime_trace=False,
+    profiler_annotations=False,
+) -> InvocationResult[StepResult]
+```
+
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
 `state_dict()`, `load_state_dict()`, `close()`, and context manager support.
+
+`submit()` performs the normal host dispatch and returns an
+`InvocationResult` backed by one cold-created, timing-disabled completion
+event. `InvocationResult.result()` and `wait()` synchronize exactly once and
+return the public payload; `resolved` reports whether that explicit boundary
+has been crossed. Different callables may have outstanding submissions at the
+same time. A single callable accepts one outstanding submission because it
+reuses one admitted physical layout and task-record set; resolve that result
+before submitting the callable again. Callable recurrence and close wait only
+for work owned by that plan, never for unrelated callables.
 
 `StepResult` contains one detached scalar objective and the reconstructed
 objective metrics for each accumulation round, the completed `step_number`,

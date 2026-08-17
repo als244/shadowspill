@@ -130,6 +130,9 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_admit_fixed_layout()` and
   `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
+- `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
+  task scopes, submitted actions, and task-owned retirements. Other plans on
+  the same runtime do not participate.
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 
@@ -144,7 +147,9 @@ array; the view remains valid through the matching `after_task()` or abort and
 requires no caller allocation or binding copy.
 One task handle is deliberately non-reentrant because its admitted action and
 validation records are reused in place; concurrent callables use distinct
-plan-owned handles and may remain active on the same runtime.
+plan-owned handles and may remain active on the same runtime. Plan-local idle
+waiting uses monotonic atomics and `cpu_relax`, not the runtime-global lifecycle
+condition variable.
 Initial placement and caller-output acquisition use their dedicated handles;
 they never impersonate execution tasks or allocate per-invocation identities.
 

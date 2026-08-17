@@ -11,6 +11,7 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.pytorch.contracts import PlanningError
+from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
@@ -433,6 +434,7 @@ class ForwardExecutor:
             self._caller_output_aliases
         )
         self._active_shared_outputs: dict[int, TensorRef] = {}
+        self._completion = ReusableCompletionEvent(state.device)
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
 
@@ -446,14 +448,14 @@ class ForwardExecutor:
 
         if not self._task_annotations.enabled:
             return
-        self._bridge.wait_idle()
+        self._bridge.wait_plan_idle()
         self.set_profiler_annotations(False)
 
     def __call__(self, arguments: Sequence[object]) -> object:
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
             # invocation reaches its declared terminal residency.
-            self._bridge.wait_idle()
+            self._bridge.wait_plan_idle()
             self._release_closed_shared_output_generations()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
@@ -489,6 +491,11 @@ class ForwardExecutor:
         self._invocations += 1
         self._active_shared_outputs = created
         return tree_unflatten(public_leaves, self._output_tree_spec)
+
+    def record_invocation_completion(self) -> Callable[[], None]:
+        """Record the explicit public-result completion boundary."""
+
+        return self._completion.record()
 
     def validate_invocation(self) -> None:
         """Reject a call that would overwrite a still-owned output slot."""

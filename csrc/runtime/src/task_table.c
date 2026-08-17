@@ -795,16 +795,18 @@ ShadowSpillRuntimeStatus shadowspill_plan_clear_tasks(
     if (plan == NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntime *runtime = plan->runtime;
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    ShadowSpillRuntimeStatus status = shadowspill_plan_wait_idle(plan);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
     if (atomic_load_explicit(
-            &runtime->actions.count, memory_order_acquire
+            &plan->active_task_scopes, memory_order_acquire
         ) != 0U ||
         atomic_load_explicit(
-            &runtime->pending_retirements, memory_order_acquire
+            &plan->pending_actions, memory_order_acquire
+        ) != 0U ||
+        atomic_load_explicit(
+            &plan->pending_retirements, memory_order_acquire
         ) != 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }

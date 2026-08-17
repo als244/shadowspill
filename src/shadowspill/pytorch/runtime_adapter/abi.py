@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 55
-RUNTIME_ABI_VERSION: Final = 45
+ADAPTER_ABI_VERSION: Final = 56
+RUNTIME_ABI_VERSION: Final = 46
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -872,6 +872,12 @@ def _configure_execution(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_plan_clear_tasks",
+        [ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_wait_idle",
         [ctypes.c_size_t],
         ctypes.c_uint32,
     )
