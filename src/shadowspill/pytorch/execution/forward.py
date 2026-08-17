@@ -13,6 +13,7 @@ from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSp
 from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
+from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.partition import PartitionedExport
 from shadowspill.pytorch.runtime_adapter.bridge import (
     PublishedStorage,
@@ -26,12 +27,24 @@ from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
 
+from .annotations import TaskBoundaryAnnotations
+
 
 @dataclass(slots=True)
 class _PreparedForwardTask:
     arguments: tuple[object, ...]
     input_aliases: tuple[str, ...]
     runtime_scope_open: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessedForwardOutputs:
+    raw: object
+    adopted: tuple[PublishedStorage, ...]
+    replacements: tuple[ReplacementStorageViews, ...]
+    replacement_aliases: frozenset[str]
+    bindings: tuple[tuple[str, torch.Tensor], ...]
+    dematerialized: tuple[tuple[str, torch.Tensor], ...]
 
 
 def _forward_publications(
@@ -70,6 +83,7 @@ class _ExecutingStage(nn.Module):
         identity: ExecutionTaskIdentity,
         task_handle: int,
         publications: tuple[TaskPublication, ...],
+        annotations: TaskBoundaryAnnotations,
     ) -> None:
         super().__init__()
         self._entrypoint = entrypoint
@@ -80,6 +94,10 @@ class _ExecutingStage(nn.Module):
         self._actions = actions
         self._identity = identity
         self._task_handle = task_handle
+        self._annotations = annotations
+        self._trace_label = (
+            f"{identity.execution_task_id}.{identity.semantic_name}"
+        )
         self._publication_ordinals = {
             item.alias_id: ordinal for ordinal, item in enumerate(publications)
         }
@@ -99,41 +117,62 @@ class _ExecutingStage(nn.Module):
             raise
 
     def _before_task(self, arguments: tuple[object, ...]) -> _PreparedForwardTask:
-        leaves, _ = tree_flatten(arguments)
         runtime_scope_open = False
         try:
-            input_tensors: list[torch.Tensor] = []
-            for slot in self._entrypoint.input_slots:
-                tensor = leaves[slot.leaf_index]
-                if not isinstance(tensor, torch.Tensor):
-                    raise RuntimeError("task tensor input became static")
-                input_tensors.append(tensor)
-            generations = self._bridge.before_task_and_acquire(
-                self._task_handle,
-                self._task_index,
-                self._device_ordinal,
-                input_tensors,
-                self._input_aliases,
-            )
-            runtime_scope_open = True
-            for tensor, alias_id, generation in zip(
-                input_tensors,
-                self._input_aliases,
-                generations,
-                strict=True,
+            with self._annotations.range(
+                f"shadowspill.before_task.{self._trace_label}"
             ):
-                self._state.object_store[alias_id] = tensor
-                self._state.generations[alias_id] = generation
-            return _PreparedForwardTask(tuple(input_tensors), self._input_aliases)
+                input_tensors = self._resolve_inputs(arguments)
+                generations = self._bridge.before_task_and_acquire(
+                    self._task_handle,
+                    self._task_index,
+                    self._device_ordinal,
+                    input_tensors,
+                    self._input_aliases,
+                )
+                runtime_scope_open = True
+                self._publish_input_generations(input_tensors, generations)
+                prepared = _PreparedForwardTask(
+                    input_tensors, self._input_aliases
+                )
+            return prepared
         except BaseException:
             if runtime_scope_open:
                 self._bridge.abort_task(self._task_handle, self._task_index)
             raise
 
+    def _resolve_inputs(
+        self, arguments: tuple[object, ...]
+    ) -> tuple[torch.Tensor, ...]:
+        leaves, _ = tree_flatten(arguments)
+        tensors: list[torch.Tensor] = []
+        for slot in self._entrypoint.input_slots:
+            tensor = leaves[slot.leaf_index]
+            if not isinstance(tensor, torch.Tensor):
+                raise RuntimeError("task tensor input became static")
+            tensors.append(tensor)
+        return tuple(tensors)
+
+    def _publish_input_generations(
+        self,
+        tensors: tuple[torch.Tensor, ...],
+        generations: tuple[int, ...],
+    ) -> None:
+        for tensor, alias_id, generation in zip(
+            tensors, self._input_aliases, generations, strict=True
+        ):
+            self._state.object_store[alias_id] = tensor
+            self._state.generations[alias_id] = generation
+
     def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
         # Forward-only execution has no captured backward. Avoid creating
         # hidden dispatcher-autograd contexts across planned task bounds.
-        with torch.no_grad():
+        with (
+            self._annotations.range(
+                f"shadowspill.compiled_call.{self._trace_label}"
+            ),
+            torch.no_grad(),
+        ):
             return self._function(*prepared.arguments)
 
     def _after_task(
@@ -141,10 +180,30 @@ class _ExecutingStage(nn.Module):
         prepared: _PreparedForwardTask,
         output: object,
     ) -> object:
+        with self._annotations.range(
+            f"shadowspill.after_task.{self._trace_label}"
+        ):
+            processed = self._process_outputs(output)
+            generations = self._bridge.after_task_and_update(
+                self._task_handle,
+                self._task_index,
+                self._device_ordinal,
+                processed.adopted,
+                tuple(tensor for _, tensor in processed.dematerialized),
+                replacements=processed.replacements,
+            )
+            prepared.runtime_scope_open = False
+            self._publish_output_generations(processed, generations)
+            self._forget_released_bindings(processed)
+            result = processed.raw
+        return result
+
+    def _process_outputs(self, output: object) -> _ProcessedForwardOutputs:
         output_leaves, _ = tree_flatten(output)
         produced: set[str] = set()
         adopted: list[PublishedStorage] = []
         replacement_aliases: set[str] = set()
+        bindings: list[tuple[str, torch.Tensor]] = []
         replacement_leaves = set(self._entrypoint.replacement_output_leaves)
         for slot in self._entrypoint.output_slots:
             tensor = output_leaves[slot.leaf_index]
@@ -162,7 +221,7 @@ class _ExecutingStage(nn.Module):
                 )
                 replacement_aliases.add(alias_id)
                 produced.add(alias_id)
-            elif alias_id not in prepared.input_aliases and alias_id not in produced:
+            elif alias_id not in self._input_aliases and alias_id not in produced:
                 adopted.append(
                     PublishedStorage(
                         tensor,
@@ -171,17 +230,23 @@ class _ExecutingStage(nn.Module):
                     )
                 )
                 produced.add(alias_id)
-                self._state.object_store[alias_id] = tensor
-            elif not replacement:
-                self._state.object_store[alias_id] = tensor
+            bindings.append((alias_id, tensor))
         replacements = tuple(
             self._state.replacement_storage_views(alias_id)
             for item in adopted
             for alias_id in (item.alias_id,)
             if alias_id in replacement_aliases
         )
-        replacement_by_alias = {item.alias_id: item for item in replacements}
-        dematerialized: list[torch.Tensor] = []
+        # Existing frontend views must win for an overwritten object. Native
+        # publication rebinds that stable view to the successor generation,
+        # then dematerializes it if the plan immediately releases or evicts
+        # the object. The compiled replacement tensor is only the temporary
+        # source lease; dematerializing it would leave the stable view naming
+        # a retired address on the next invocation.
+        available = dict(bindings)
+        available.update(self._state.object_store)
+        dematerialized: list[tuple[str, torch.Tensor]] = []
+        adopted_aliases = {item.alias_id for item in adopted}
         handoff_sources = {
             self._bridge.alias_for_object(item.source_object_id)
             for item in self._entrypoint.storage_handoffs
@@ -196,32 +261,54 @@ class _ExecutingStage(nn.Module):
             alias_id = action.alias_group_id
             if alias_id in handoff_sources:
                 continue
-            tensor = self._state.object_store.get(alias_id)
-            if tensor is None or alias_id not in self._state.generations:
+            tensor = available.get(alias_id)
+            if tensor is None or (
+                alias_id not in self._state.generations
+                and alias_id not in adopted_aliases
+            ):
                 raise RuntimeError(
                     f"action references unbound alias group {alias_id!r}"
                 )
-            dematerialized.append(tensor)
-        generations = self._bridge.after_task_and_update(
-            self._task_handle,
-            self._task_index,
-            self._device_ordinal,
-            adopted,
-            dematerialized,
+            dematerialized.append((alias_id, tensor))
+        return _ProcessedForwardOutputs(
+            raw=output,
+            adopted=tuple(adopted),
             replacements=replacements,
+            replacement_aliases=frozenset(replacement_aliases),
+            bindings=tuple(bindings),
+            dematerialized=tuple(dematerialized),
         )
-        prepared.runtime_scope_open = False
-        for item, generation in zip(adopted, generations, strict=True):
+
+    def _publish_output_generations(
+        self,
+        processed: _ProcessedForwardOutputs,
+        generations: tuple[int, ...],
+    ) -> None:
+        replacement_by_alias = {
+            item.alias_id: item for item in processed.replacements
+        }
+        for alias_id, tensor in processed.bindings:
+            self._state.object_store[alias_id] = tensor
+        for item, generation in zip(processed.adopted, generations, strict=True):
             tensor = item.tensor
             alias_id = item.alias_id
-            if alias_id in replacement_aliases:
+            if alias_id in processed.replacement_aliases:
                 self._state.publish_replacement_generation(
                     replacement_by_alias[alias_id], generation
                 )
             else:
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = generation
-        return output
+
+    def _forget_released_bindings(
+        self, processed: _ProcessedForwardOutputs
+    ) -> None:
+        adopted = {item.alias_id for item in processed.adopted}
+        for alias_id, _ in processed.dematerialized:
+            if alias_id in adopted:
+                continue
+            self._state.object_store.pop(alias_id, None)
+            self._state.generations.pop(alias_id, None)
 
     def _abort_task(
         self,
@@ -258,6 +345,7 @@ class ForwardExecutor:
         self._user_output_indices = user_output_indices
         self._output_tree_spec = output_tree_spec
         self._shared_outputs = tuple(shared_outputs)
+        self._task_annotations = TaskBoundaryAnnotations(bridge)
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
         self._initial_prefetches = tuple(
@@ -325,6 +413,7 @@ class ForwardExecutor:
                 ),
                 task_handle,
                 publications,
+                self._task_annotations,
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         bridge.seal_fixed_layout()
@@ -358,18 +447,16 @@ class ForwardExecutor:
         self._active_shared_outputs: dict[int, TensorRef] = {}
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
-        self._profiler_annotations_enabled = False
 
     def set_profiler_annotations(self, enabled: bool) -> None:
         """Toggle provider annotations for this forward callable."""
 
-        self._bridge.set_profiler_annotations(enabled)
-        self._profiler_annotations_enabled = enabled
+        self._task_annotations.set_enabled(enabled)
 
     def finish_profiler_annotations(self) -> None:
         """Drain annotated asynchronous work before disabling its provider."""
 
-        if not self._profiler_annotations_enabled:
+        if not self._task_annotations.enabled:
             return
         self._bridge.wait_idle()
         self.set_profiler_annotations(False)

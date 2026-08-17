@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import weakref
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
+from shadowspill.pytorch.execution.annotations import TaskBoundaryAnnotations
 from shadowspill.pytorch.execution.training import TrainingExecutor
 
 
@@ -59,7 +60,7 @@ class _AfterTaskHarness(TrainingExecutor):
         return None
 
     @staticmethod
-    def _abort_task(_prepared: object, _error: BaseException) -> None:
+    def _abort_task(_prepared: object) -> None:
         return None
 
     @staticmethod
@@ -74,6 +75,103 @@ def test_after_task_releases_unadopted_outputs_before_runtime_actions() -> None:
     # keep the result alive even if _after_task dropped its own parameter.
     TrainingExecutor._execute_task(harness, object(), record)  # type: ignore[arg-type]
     assert harness.publication_observed_release
+
+
+class _RecordingRange(AbstractContextManager[None]):
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def __enter__(self) -> None:
+        self._calls.append("range_enter")
+
+    def __exit__(self, *_error: object) -> None:
+        self._calls.append("range_exit")
+
+
+class _TimedAfterTaskHarness(_AfterTaskHarness):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def _profile_range(self, _label: str) -> AbstractContextManager[None]:
+        return _RecordingRange(self.calls)
+
+    def _prepare_task_publication(
+        self, _prepared: object, _raw_outputs: object
+    ) -> tuple[object, tuple[object, ...]]:
+        self.calls.append("process_outputs")
+        return SimpleNamespace(outputs=()), ()
+
+    def _publish_task_to_runtime(
+        self, _prepared: object, _processed: object, _dematerialized: object
+    ) -> tuple[int, ...]:
+        self.calls.append("runtime_after_task")
+        return ()
+
+    def _publish_output_generations(
+        self, _prepared: object, _processed: object, _generations: object
+    ) -> None:
+        self.calls.append("publish_frontend")
+
+    def _finish_task_cleanup(self, _prepared: object) -> None:
+        self.calls.append("cleanup")
+
+    def _finish_task_timing(self, _timing: object) -> None:
+        self.calls.append("finish_timing")
+
+
+def test_after_task_annotation_and_timing_cover_the_complete_boundary() -> None:
+    harness = _TimedAfterTaskHarness()
+    prepared = SimpleNamespace(
+        record=SimpleNamespace(trace_label="test"),
+        timing=object(),
+    )
+
+    TrainingExecutor._after_task(harness, prepared, object())  # type: ignore[arg-type]
+
+    assert harness.calls == [
+        "range_enter",
+        "process_outputs",
+        "runtime_after_task",
+        "publish_frontend",
+        "cleanup",
+        "range_exit",
+        "finish_timing",
+    ]
+
+
+class _AnnotationBridge:
+    def __init__(self) -> None:
+        self.calls: list[object] = []
+
+    def set_profiler_annotations(self, enabled: bool) -> None:
+        self.calls.append(("enabled", enabled))
+
+    def profile_range_begin(self, name: str) -> int:
+        self.calls.append(("begin", name))
+        return 17
+
+    def profile_range_end(self, range_id: int) -> None:
+        self.calls.append(("end", range_id))
+
+
+def test_task_boundary_annotations_are_shared_and_default_off() -> None:
+    bridge = _AnnotationBridge()
+    annotations = TaskBoundaryAnnotations(cast(Any, bridge))
+
+    with annotations.range("ignored"):
+        bridge.calls.append("disabled_body")
+    annotations.set_enabled(True)
+    with annotations.range("task"):
+        bridge.calls.append("enabled_body")
+
+    assert bridge.calls == [
+        "disabled_body",
+        ("enabled", True),
+        ("begin", "task"),
+        "enabled_body",
+        ("end", 17),
+    ]
 
 
 class _TraceBoundaryBridge:

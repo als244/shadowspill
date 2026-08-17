@@ -998,3 +998,37 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Added native coverage that creates leading/trailing fragments, coalesces
   them, repeats the identical pattern, and proves the node inventory does not
   grow on the second pass.
+
+## 2026-08-17 — Complete frontend task boundaries
+
+- Added one shared, default-off task-annotation owner used by both forward and
+  training execution. Every execution task now has one enclosing
+  `before_task`, one `compiled_call`, and one enclosing `after_task` range with
+  the semantic execution label. Forward execution no longer had a separate,
+  incomplete annotation policy.
+- Training's `before_task` host exit timestamp is now captured only after
+  runtime acquisition, readiness publication, storage rebinding, argument
+  assembly, compute-marker recording, and the enclosing annotation close.
+  Its `after_task` host exit timestamp is captured only after output handling,
+  native publication, generation publication, released-binding cleanup,
+  optimizer cleanup, and the enclosing annotation close.
+- Reorganized forward execution into the same short orchestration skeleton as
+  training. Frontend output bindings are committed only after the native
+  runtime has atomically published the task boundary, so an exception cannot
+  expose a partially published frontend state.
+- The first complete CUDA gate exposed a replacement/dematerialization defect
+  in that refactor. For an overwritten object immediately selected for release
+  or eviction, the new code preferred the compiled replacement tensor over the
+  existing stable frontend view. Native publication rebound the stable view to
+  the successor lease, but dematerialized only the temporary tensor; the next
+  invocation therefore found the stable view naming a retired address.
+- Existing frontend views now take precedence when choosing the storage to
+  dematerialize. The compiled replacement remains only the source lease; the
+  same stable frontend object is rebound to the successor generation and then
+  dematerialized when required. The three-invocation mutation canary reproduces
+  the formerly failing replacement/release sequence and now passes.
+- Validation passed: the complete Python suite with four expected skips; Ruff;
+  strict mypy over installed source; all 28 native/CUDA/PyTorch canaries; the
+  ASan runtime canary; and `git diff --check`. The host's ThreadSanitizer binary
+  still exits before `main` with its known `unexpected memory mapping` runtime
+  failure, so it supplied no program race result for this Python-only change.
