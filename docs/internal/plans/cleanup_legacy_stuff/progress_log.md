@@ -1277,3 +1277,26 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   canaries, the complete Python suite with four expected skips, Ruff, strict
   mypy over 178 installed source files, `git diff --check`, and focused ASan
   runtime-plan and telemetry canaries under the debugger.
+
+## 2026-08-17 — Handle-owned task identity and profiler labels
+
+- Found one remaining global adapter-mutex acquisition at the start of every
+  task. It existed only to index a mutable task-ID-to-NVTX-label table. The
+  table was also not a valid source of truth for concurrent plans because
+  distinct plans may reuse the same plan-local numeric task IDs.
+- Added the semantic trace label to the immutable task description. Admission
+  copies it into the direct task handle alongside the task's objects, actions,
+  and allocation state. The PyTorch before/after/abort C interfaces now accept
+  only the handle; they obtain both canonical ID and semantic label from it.
+- Deleted global label configuration, its copied string table, plan-switch
+  updates, and the numeric task-ID argument from both storage operators.
+  Allocator failures copy the active handle's label when the first failure is
+  latched, preserving semantic OOM and contract-mismatch diagnostics.
+- Published the active runtime pointer and device ordinal atomically after
+  successful bootstrap. Repeated task boundaries and allocator callbacks no
+  longer lock the adapter mutex merely to discover their bound runtime.
+- Validation passed the warnings-as-errors build; all 28 native/CUDA/PyTorch
+  canaries, including semantic typed OOM and allocation-contract failures;
+  the complete Python suite with four expected skips; Ruff; strict mypy over
+  178 installed source files; `git diff --check`; and ASan runtime-plan and
+  telemetry canaries under the debugger.

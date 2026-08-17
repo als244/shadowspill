@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import ctypes
 from dataclasses import replace
-from typing import Any
 
 import torch
 
@@ -20,10 +18,8 @@ from tests.shadowspill.ir._examples import representative_program
 
 
 class _AbortLibrary:
-    def shadowspill_pytorch_abort_task_handle(
-        self, task_handle: int, task_id: int
-    ) -> int:
-        self.aborted = (task_handle, task_id)
+    def shadowspill_pytorch_abort_task_handle(self, task_handle: int) -> int:
+        self.aborted = task_handle
         return 0
 
 
@@ -53,9 +49,9 @@ def test_abort_task_only_closes_the_native_scope() -> None:
     library = _AbortLibrary()
     bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
 
-    bridge.abort_task(37, 11)
+    bridge.abort_task(37)
 
-    assert library.aborted == (37, 11)
+    assert library.aborted == 37
 
 
 def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
@@ -74,6 +70,7 @@ def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
         (),
         (),
         TaskMemoryEnvelope(allocation_contract=allocation_contract),
+        "execution_000000.forward.stage_0000",
     )
 
     assert buffers.description.enforce_allocation_contract == 1
@@ -84,31 +81,20 @@ def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
     assert buffers.allocation_contract_steps[1].operation == 1
 
 
-class _LabelLibrary:
-    def __init__(self) -> None:
-        self.labels: tuple[str, ...] = ()
-
-    def shadowspill_pytorch_task_labels_configure(self, values: Any, count: int) -> int:
-        labels = ctypes.cast(values, ctypes.POINTER(ctypes.c_char_p))
-        self.labels = tuple(labels[index].decode() for index in range(count))
-        return 0
-
-
-def test_task_trace_labels_are_projected_by_plan_local_id() -> None:
-    library = _LabelLibrary()
-    bridge = RuntimeBridge(_Runtime(library), representative_program(), 1)  # type: ignore[arg-type]
-
-    bridge.configure_task_labels(
-        {
-            "task_000002": "execution_000001.backward.stage_0001",
-            "task_000000": "execution_000000.forward.stage_0000",
-        }
+def test_task_trace_label_is_owned_by_the_admitted_description() -> None:
+    bridge = RuntimeBridge(_Runtime(object()), representative_program(), 1)  # type: ignore[arg-type]
+    buffers = bridge._execution_buffers(
+        replace(representative_program().tasks[0], task_id="task_000000"),
+        (),
+        (),
+        (),
+        (),
+        TaskMemoryEnvelope(),
+        "execution_000000.forward.stage_0000",
     )
 
-    assert library.labels == (
-        "execution_000000.forward.stage_0000",
-        "",
-        "execution_000001.backward.stage_0001",
+    assert buffers.description.trace_label == (
+        b"execution_000000.forward.stage_0000"
     )
 
 

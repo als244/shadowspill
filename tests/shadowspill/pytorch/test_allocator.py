@@ -65,7 +65,6 @@ class _Library:
     shadowspill_pytorch_debug_task_timing_enable = _Function()
     shadowspill_pytorch_debug_task_timing_read = _Function()
     shadowspill_pytorch_debug_task_timing_disable = _Function()
-    shadowspill_pytorch_task_labels_configure = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
     shadowspill_pytorch_resize_spill_pool = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
@@ -178,10 +177,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(ctypes.c_uint32),
     ]
     assert library.shadowspill_pytorch_debug_task_timing_disable.argtypes == []
-    assert library.shadowspill_pytorch_task_labels_configure.argtypes == [
-        ctypes.POINTER(ctypes.c_char_p),
-        ctypes.c_uint32,
-    ]
     assert library.shadowspill_pytorch_resize_spill_pool.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
         ctypes.c_uint64
@@ -284,7 +279,6 @@ def test_adapter_signatures_are_configured_together() -> None:
     assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
     assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
         ctypes.c_size_t,
-        ctypes.c_uint64,
     ]
 
 

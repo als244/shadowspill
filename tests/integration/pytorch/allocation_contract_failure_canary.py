@@ -63,6 +63,7 @@ def main() -> int:
     )
     description = TaskDescription(
         task_id=TASK_ID,
+        trace_label=b"execution_000017.canary.stage_0000.forward",
         input_object_ids=None,
         input_count=0,
         updates=None,
@@ -78,11 +79,6 @@ def main() -> int:
         live_charged_allocation_limit_bytes=8192,
     )
     task_handle = _admit_task(library, description)
-    labels = (ctypes.c_char_p * (TASK_ID + 1))()
-    labels[TASK_ID] = b"execution_000017.canary.stage_0000.forward"
-    status = int(library.shadowspill_pytorch_task_labels_configure(labels, TASK_ID + 1))
-    if status != 0:
-        raise AssertionError(f"task label configuration failed with status {status}")
     stream = torch.cuda.current_stream()
     begin_task(
         library,
@@ -111,9 +107,7 @@ def main() -> int:
                     f"direct contract failure omitted {expected_text!r}: {message}"
                 ) from cause
         status = int(
-            library.shadowspill_pytorch_abort_task_handle(
-                task_handle, TASK_ID
-            )
+            library.shadowspill_pytorch_abort_task_handle(task_handle)
         )
         if status != 0:
             raise AssertionError(

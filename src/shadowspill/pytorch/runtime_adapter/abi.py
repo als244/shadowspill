@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 51
-RUNTIME_ABI_VERSION: Final = 42
+ADAPTER_ABI_VERSION: Final = 52
+RUNTIME_ABI_VERSION: Final = 43
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -364,6 +364,7 @@ class TaskAllocationContractStep(ctypes.Structure):
 class TaskDescription(ctypes.Structure):
     _fields_ = [
         ("task_id", ctypes.c_uint64),
+        ("trace_label", ctypes.c_char_p),
         ("input_object_ids", ctypes.POINTER(ctypes.c_uint64)),
         ("input_count", ctypes.c_uint32),
         ("updates", ctypes.POINTER(ObjectUpdate)),
@@ -598,12 +599,6 @@ def _configure_debug_timing(library: Any) -> None:
     _signature(
         library, "shadowspill_pytorch_debug_task_timing_disable", [], ctypes.c_uint32
     )
-    _signature(
-        library,
-        "shadowspill_pytorch_task_labels_configure",
-        [ctypes.POINTER(ctypes.c_char_p), ctypes.c_uint32],
-        ctypes.c_uint32,
-    )
 
 
 def _configure_telemetry(library: Any) -> None:
@@ -721,7 +716,7 @@ def _configure_task_boundaries(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_abort_task_handle",
-        [ctypes.c_size_t, ctypes.c_uint64],
+        [ctypes.c_size_t],
         ctypes.c_uint32,
     )
 
@@ -884,7 +879,6 @@ def _configure_execution(library: Any) -> None:
         "shadowspill_pytorch_before_task_handle",
         [
             ctypes.c_size_t,
-            ctypes.c_uint64,
             ctypes.c_size_t,
             ctypes.POINTER(ctypes.POINTER(ObjectBinding)),
             ctypes.POINTER(ctypes.c_uint32),
@@ -894,6 +888,6 @@ def _configure_execution(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_after_task_handle",
-        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t],
+        [ctypes.c_size_t, ctypes.c_size_t],
         ctypes.c_uint32,
     )

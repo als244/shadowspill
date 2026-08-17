@@ -512,6 +512,7 @@ typedef struct ShadowSpillTaskReleaseBinding {
 struct ShadowSpillTaskRecord {
     ShadowSpillPlan *plan_owner;
     uint64_t task_id;
+    char *trace_label;
     ShadowSpillObject **inputs;
     uint64_t *input_plan_object_ids;
     uint8_t *input_consistency;

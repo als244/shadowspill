@@ -84,7 +84,9 @@ Task calls mirror the neutral runtime:
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
   The before boundary exposes the task-owned borrowed binding array instead
   of copying bindings into caller storage. The storage operators consume that
-  view in place and return no per-task generation container to Python.
+  view in place and return no per-task generation container to Python. Both
+  boundaries derive task identity and the semantic profiler label from the
+  admitted handle; no parallel task ID or mutable label table exists.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission

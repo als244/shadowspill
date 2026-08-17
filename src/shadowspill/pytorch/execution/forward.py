@@ -101,7 +101,6 @@ class _ExecutingStage(nn.Module):
         self._publication_ordinals = {
             item.alias_id: ordinal for ordinal, item in enumerate(publications)
         }
-        self._task_index = int(task.task_id.removeprefix("task_"))
         self._device_ordinal = state.device.index or 0
         self._input_aliases = tuple(
             bridge.alias_for_object(slot.object_id) for slot in entrypoint.input_slots
@@ -125,7 +124,6 @@ class _ExecutingStage(nn.Module):
                 input_tensors = self._resolve_inputs(arguments)
                 self._bridge.before_task_and_acquire(
                     self._task_handle,
-                    self._task_index,
                     self._device_ordinal,
                     input_tensors,
                     self._input_aliases,
@@ -138,7 +136,7 @@ class _ExecutingStage(nn.Module):
             return prepared
         except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task(self._task_handle, self._task_index)
+                self._bridge.abort_task(self._task_handle)
             raise
 
     def _resolve_inputs(
@@ -182,7 +180,6 @@ class _ExecutingStage(nn.Module):
             processed = self._process_outputs(output)
             self._bridge.after_task_and_update(
                 self._task_handle,
-                self._task_index,
                 self._device_ordinal,
                 processed.adopted,
                 tuple(tensor for _, tensor in processed.dematerialized),
@@ -307,7 +304,7 @@ class _ExecutingStage(nn.Module):
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task(self._task_handle, self._task_index)
+            self._bridge.abort_task(self._task_handle)
 
 
 class ForwardExecutor:
@@ -368,7 +365,6 @@ class ForwardExecutor:
             )
             for execution_ordinal, entrypoint in enumerate(lowered.entrypoints)
         }
-        bridge.configure_task_labels(trace_labels)
         transfer_labels = TransferLabelIndex(plan.program, trace_labels)
         for execution_ordinal, entrypoint in enumerate(lowered.entrypoints):
             task = task_by_id[entrypoint.task_id]
@@ -384,6 +380,7 @@ class ForwardExecutor:
                 task_actions,
                 transfer_labels.labels_for(task_actions),
                 memory_envelopes.get(task.task_id, TaskMemoryEnvelope()),
+                trace_label=trace_labels[entrypoint.task_id],
                 publications=publications,
             )
             function = functions[entrypoint.artifact.compatibility_digest]

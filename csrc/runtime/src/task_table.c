@@ -103,6 +103,7 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     free(record->release_bindings);
     free(record->allocation_contract_steps);
     free(record->allocation_contract_states);
+    free(record->trace_label);
     free(record);
 }
 
@@ -233,7 +234,11 @@ static int same_description(
     const ShadowSpillTaskDescription *description,
     uint8_t boundary_kind
 ) {
-    if (record->boundary_kind != boundary_kind ||
+    const int same_trace_label =
+        (record->trace_label == NULL && description->trace_label == NULL) ||
+        (record->trace_label != NULL && description->trace_label != NULL &&
+         strcmp(record->trace_label, description->trace_label) == 0);
+    if (!same_trace_label || record->boundary_kind != boundary_kind ||
         record->input_count != description->input_count ||
         record->update_count != description->update_count ||
         record->publication_count != description->publication_count ||
@@ -320,6 +325,21 @@ static ShadowSpillTaskRecord *create_record(
     }
     record->plan_owner = plan;
     record->task_id = description->task_id;
+    if (description->trace_label != NULL) {
+        const size_t label_bytes = strnlen(
+            description->trace_label,
+            SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U
+        );
+        if (label_bytes > SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES) {
+            destroy_record(record);
+            return NULL;
+        }
+        record->trace_label = strdup(description->trace_label);
+        if (record->trace_label == NULL) {
+            destroy_record(record);
+            return NULL;
+        }
+    }
     record->boundary_kind = boundary_kind;
     atomic_init(&record->invocation_count, 0U);
     atomic_init(&record->submission_sequence, 0U);
@@ -631,6 +651,11 @@ static ShadowSpillRuntimeStatus admit_record(
     const ShadowSpillTaskRecord **result
 ) {
     if (plan == NULL || description == NULL ||
+        (description->trace_label != NULL &&
+         strnlen(
+             description->trace_label,
+             SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U
+         ) > SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES) ||
         (description->input_count != 0U &&
          description->input_object_ids == NULL) ||
         (description->update_count != 0U && description->updates == NULL) ||
@@ -723,6 +748,16 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_task(
         *handle = record;
     }
     return status;
+}
+
+uint64_t shadowspill_task_id(const ShadowSpillTaskHandle *handle) {
+    const ShadowSpillTaskRecord *record = handle;
+    return record == NULL ? SHADOWSPILL_RUNTIME_NO_ID : record->task_id;
+}
+
+const char *shadowspill_task_trace_label(const ShadowSpillTaskHandle *handle) {
+    const ShadowSpillTaskRecord *record = handle;
+    return record == NULL ? NULL : record->trace_label;
 }
 
 ShadowSpillRuntimeStatus shadowspill_plan_admit_action_batch(

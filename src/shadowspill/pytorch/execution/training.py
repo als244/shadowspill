@@ -182,8 +182,6 @@ class TrainingExecutor:
                 self._recurrent, self._recurrent_fixed_layout
             )
             self._active_run = self._recurrent
-        self._trace_label_run: _PlanRun | None = None
-        self._configure_task_trace_labels(self._active_run)
         self._gradients = {
             state.bridge.alias_for_object(item.gradient_object_id): model_parameter
             for item in recurrent[0].gradients
@@ -246,6 +244,7 @@ class TrainingExecutor:
                         record.actions,
                         labels.labels_for(record.actions),
                         record.memory_envelope,
+                        trace_label=record.trace_label,
                         publications=record.publications,
                     ),
                 )
@@ -367,8 +366,6 @@ class TrainingExecutor:
                 self._recurrent = self._admit_run(run, self._recurrent_fixed_layout)
                 run = self._recurrent
             self._active_run = run
-        if run is not self._trace_label_run:
-            self._configure_task_trace_labels(run)
         if timing is not None:
             self._begin_armed_runtime_trace(timing)
         self._state.refresh_inputs(inputs)
@@ -837,7 +834,7 @@ class TrainingExecutor:
             return prepared
         except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task(record.task_handle, record.task_index)
+                self._bridge.abort_task(record.task_handle)
             self._finish_task_timing(timing)
             raise
 
@@ -906,7 +903,6 @@ class TrainingExecutor:
             raise AssertionError("execution task has no admitted handle")
         self._bridge.before_task_and_acquire(
             record.task_handle,
-            record.task_index,
             self._state.device.index or 0,
             tensors,
             record.input_aliases,
@@ -1065,7 +1061,6 @@ class TrainingExecutor:
         try:
             self._bridge.after_task_and_update(
                 record.task_handle,
-                record.task_index,
                 self._state.device.index or 0,
                 processed.adopted,
                 dematerialized,
@@ -1197,7 +1192,6 @@ class TrainingExecutor:
             prepared.runtime_scope_open = False
             self._bridge.abort_task(
                 prepared.record.task_handle,
-                prepared.record.task_index,
             )
 
     def _bind_forward_outputs(
@@ -1422,14 +1416,6 @@ class TrainingExecutor:
             self._state.object_store.pop(alias_id, None)
             for object_id in object_ids:
                 self._state.object_tensors.pop(object_id, None)
-
-    def _configure_task_trace_labels(self, run: _PlanRun) -> dict[str, str]:
-        """Register labels for the one execution program selected next."""
-
-        result = {record.task.task_id: record.trace_label for record in run.execution}
-        self._bridge.configure_task_labels(result)
-        self._trace_label_run = run
-        return result
 
 
 def _same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:

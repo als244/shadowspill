@@ -346,7 +346,7 @@ def main() -> int:
     _require_ok(
         int(
             library.shadowspill_pytorch_after_task_handle(
-                consumer, 202, stream_address
+                consumer, stream_address
             )
         ),
         "consumer publication",

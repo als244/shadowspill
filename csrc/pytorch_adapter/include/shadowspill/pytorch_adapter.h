@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 51U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 52U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -259,7 +259,6 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
-    uint64_t task_id,
     uintptr_t compute_stream_address,
     const ShadowSpillObjectBinding **bindings,
     uint32_t *binding_count
@@ -268,7 +267,6 @@ shadowspill_pytorch_before_task_handle(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
-    uint64_t task_id,
     uintptr_t compute_stream_address
 );
 
@@ -461,18 +459,6 @@ shadowspill_pytorch_object_snapshot(
     ShadowSpillObjectSnapshot *snapshot
 );
 
-/*
- * Copies one optional human-readable label per canonical task index.
- * Configure labels only while no task is executing. Task NVTX ranges use the
- * label (normally execution_XXXXXX plus its semantic stage name) and retain
- * the canonical task ID only as fallback correlation metadata.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_task_labels_configure(
-    const char *const *task_labels,
-    uint32_t task_label_count
-);
-
 /* Allocate/reset pre-sized callback records before a measured invocation. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_debug_task_timing_enable(uint32_t task_capacity);
@@ -492,8 +478,7 @@ shadowspill_pytorch_debug_task_timing_disable(void);
 /* Closes a task NVTX range when frontend execution raises before after_task. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_abort_task_handle(
-    uintptr_t task_handle,
-    uint64_t task_id
+    uintptr_t task_handle
 );
 
 /*

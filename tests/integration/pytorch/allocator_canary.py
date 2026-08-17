@@ -336,7 +336,7 @@ def main() -> int:
     torch.cuda._sleep(100_000_000)
     status = int(
         library.shadowspill_pytorch_after_task_handle(
-            consumer, 102, compute_stream
+            consumer, compute_stream
         )
     )
     if status != 0:
@@ -409,7 +409,7 @@ def main() -> int:
     if (
         int(
             library.shadowspill_pytorch_after_task_handle(
-                host_consumer, 302, compute_stream
+                host_consumer, compute_stream
             )
         )
         != 0

@@ -35,8 +35,9 @@ typedef struct ShadowSpillPytorchAdapterState {
     ShadowSpillDebugTaskRecord *debug_task_records;
     uint32_t debug_task_capacity;
     _Atomic uint8_t debug_task_timing_enabled;
-    char **task_labels;
-    uint32_t task_label_count;
+    _Atomic(ShadowSpillRuntime *) published_runtime;
+    _Atomic int32_t published_device_ordinal;
+    char failure_task_label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U];
     ShadowSpillPytorchPhysicalAdmission admission;
     ShadowSpillPytorchAdapterFailure failure;
 } ShadowSpillPytorchAdapterState;
@@ -44,6 +45,7 @@ typedef struct ShadowSpillPytorchAdapterState {
 static ShadowSpillPytorchAdapterState adapter = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .device_ordinal = -1,
+    .published_device_ordinal = -1,
 };
 
 static uint8_t process_exit_registered;
@@ -58,6 +60,7 @@ struct ShadowSpillDebugTaskRecord {
 
 static _Thread_local int task_range_active;
 static _Thread_local ShadowSpillProfilerRange task_range_id;
+static _Thread_local const char *active_task_label;
 
 ShadowSpillProfilerRange shadowspill_pytorch_profile_range_begin(
     const char *name
@@ -95,48 +98,17 @@ static void end_task_range(void) {
         task_range_active = 0;
         task_range_id = 0;
     }
-}
-
-static void free_task_labels(char **labels, uint32_t count) {
-    if (labels == NULL) {
-        return;
-    }
-    for (uint32_t index = 0U; index < count; ++index) {
-        free(labels[index]);
-    }
-    free(labels);
+    active_task_label = NULL;
 }
 
 static void format_task_range_name(
     char *destination,
     size_t destination_bytes,
     const char *operation,
-    uint64_t task_id
+    const ShadowSpillTaskHandle *handle
 ) {
-    const uint64_t caller_handoff_base = UINT64_C(1) << 59U;
-    const uint64_t initial_actions_base = UINT64_C(1) << 60U;
-    if (task_id >= initial_actions_base) {
-        (void)snprintf(
-            destination,
-            destination_bytes,
-            "shadowspill.pytorch.initial_actions.invocation_%06llu",
-            (unsigned long long)(task_id - initial_actions_base)
-        );
-        return;
-    }
-    if (task_id >= caller_handoff_base) {
-        (void)snprintf(
-            destination,
-            destination_bytes,
-            "shadowspill.pytorch.caller_handoff.invocation_%06llu",
-            (unsigned long long)(task_id - caller_handoff_base)
-        );
-        return;
-    }
-    pthread_mutex_lock(&adapter.mutex);
-    const char *label = task_id < adapter.task_label_count
-        ? adapter.task_labels[task_id]
-        : NULL;
+    const uint64_t task_id = shadowspill_task_id(handle);
+    const char *label = shadowspill_task_trace_label(handle);
     if (label != NULL && label[0] != '\0') {
         (void)snprintf(
             destination,
@@ -154,7 +126,6 @@ static void format_task_range_name(
             (unsigned long long)task_id
         );
     }
-    pthread_mutex_unlock(&adapter.mutex);
 }
 
 static uint64_t monotonic_nanoseconds(void) {
@@ -194,6 +165,10 @@ static void latch_failure(
     const void *address,
     uint64_t requested_bytes
 ) {
+    char task_label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U] = {0};
+    if (active_task_label != NULL) {
+        (void)snprintf(task_label, sizeof(task_label), "%s", active_task_label);
+    }
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.callback_failures;
     if (adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
@@ -201,6 +176,12 @@ static void latch_failure(
         adapter.failure.device_ordinal = device_ordinal;
         adapter.failure.address = (uint64_t)(uintptr_t)address;
         adapter.failure.requested_bytes = requested_bytes;
+        (void)snprintf(
+            adapter.failure_task_label,
+            sizeof(adapter.failure_task_label),
+            "%s",
+            task_label
+        );
         if (adapter.runtime != NULL) {
             (void)shadowspill_runtime_failure(
                 adapter.runtime, &adapter.failure.runtime
@@ -211,25 +192,25 @@ static void latch_failure(
 }
 
 static ShadowSpillRuntime *bound_runtime(int32_t *device_ordinal) {
-    pthread_mutex_lock(&adapter.mutex);
-    ShadowSpillRuntime *runtime = adapter.runtime;
-    *device_ordinal = adapter.device_ordinal;
-    pthread_mutex_unlock(&adapter.mutex);
-    return runtime;
+    *device_ordinal = atomic_load_explicit(
+        &adapter.published_device_ordinal, memory_order_relaxed
+    );
+    return atomic_load_explicit(
+        &adapter.published_runtime, memory_order_acquire
+    );
 }
 
 static void shadowspill_pytorch_process_exit(void) {
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillRuntime *runtime = adapter.runtime;
     ShadowSpillCudaBackend *cuda = adapter.cuda;
-    char **task_labels = adapter.task_labels;
-    const uint32_t task_label_count = adapter.task_label_count;
     ShadowSpillDebugTaskRecord *debug_records = adapter.debug_task_records;
+    atomic_store_explicit(
+        &adapter.published_runtime, NULL, memory_order_release
+    );
     adapter.runtime = NULL;
     adapter.cuda = NULL;
     adapter.profiler = (ShadowSpillProfiler){0};
-    adapter.task_labels = NULL;
-    adapter.task_label_count = 0U;
     adapter.debug_task_records = NULL;
     adapter.debug_task_capacity = 0U;
     atomic_store_explicit(
@@ -244,7 +225,6 @@ static void shadowspill_pytorch_process_exit(void) {
      */
     shadowspill_runtime_destroy(runtime);
     shadowspill_cuda_backend_destroy(cuda);
-    free_task_labels(task_labels, task_label_count);
     free(debug_records);
 }
 
@@ -389,9 +369,18 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         : 0U;
     adapter.physical_budget_sealed = 0U;
     memset(&adapter.failure, 0, sizeof(adapter.failure));
+    adapter.failure_task_label[0] = '\0';
     adapter.failure.device_ordinal = config->device_ordinal;
     adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
     adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    atomic_store_explicit(
+        &adapter.published_device_ordinal,
+        config->device_ordinal,
+        memory_order_relaxed
+    );
+    atomic_store_explicit(
+        &adapter.published_runtime, runtime, memory_order_release
+    );
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_RUNTIME_OK;
 }
@@ -682,12 +671,11 @@ static void append_failure_task(
         );
         return;
     }
-    char label[1024] = {0};
+    char label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U] = {0};
     pthread_mutex_lock(&adapter.mutex);
-    if (task_id < adapter.task_label_count &&
-        adapter.task_labels[task_id] != NULL) {
+    if (adapter.failure_task_label[0] != '\0') {
         (void)snprintf(
-            label, sizeof(label), "%s", adapter.task_labels[task_id]
+            label, sizeof(label), "%s", adapter.failure_task_label
         );
     }
     pthread_mutex_unlock(&adapter.mutex);
@@ -875,6 +863,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_recover_no_progress(void) {
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.failure.status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
         memset(&adapter.failure, 0, sizeof(adapter.failure));
+        adapter.failure_task_label[0] = '\0';
         adapter.failure.device_ordinal = device_ordinal;
         adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
         adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
@@ -1536,20 +1525,24 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
-    uint64_t task_id,
     uintptr_t compute_stream_address,
     const ShadowSpillObjectBinding **bindings,
     uint32_t *binding_count
 ) {
+    const ShadowSpillTaskHandle *handle =
+        (const ShadowSpillTaskHandle *)task_handle;
+    const uint64_t task_id = shadowspill_task_id(handle);
     record_debug_host_boundary(task_id, 0U);
-    if (task_range_active || task_handle == 0U) {
+    if (task_range_active || task_handle == 0U ||
+        task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         record_debug_host_boundary(task_id, 1U);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     char range_name[384];
-    format_task_range_name(range_name, sizeof(range_name), "task", task_id);
+    format_task_range_name(range_name, sizeof(range_name), "task", handle);
     task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
     task_range_active = 1;
+    active_task_label = shadowspill_task_trace_label(handle);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
@@ -1557,7 +1550,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
         ? SHADOWSPILL_RUNTIME_CLOSED
         : shadowspill_before_task_handle(
             runtime,
-            (const ShadowSpillTaskHandle *)task_handle,
+            handle,
             shadowspill_cuda_wrap_stream(compute_stream_address),
             bindings,
             binding_count
@@ -1571,9 +1564,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
-    uint64_t task_id,
     uintptr_t compute_stream_address
 ) {
+    const ShadowSpillTaskHandle *handle =
+        (const ShadowSpillTaskHandle *)task_handle;
+    const uint64_t task_id = shadowspill_task_id(handle);
     record_debug_host_boundary(task_id, 2U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -1583,7 +1578,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
         ? SHADOWSPILL_RUNTIME_CLOSED
         : shadowspill_after_task_handle(
             runtime,
-            (const ShadowSpillTaskHandle *)task_handle,
+            handle,
             shadowspill_cuda_wrap_stream(compute_stream_address)
         );
     end_task_range();
@@ -1680,40 +1675,6 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_validate_spill_binding(
             snapshot.spill_pointer == (void *)(uintptr_t)address
         ? SHADOWSPILL_RUNTIME_OK
         : SHADOWSPILL_RUNTIME_INVALID_STATE;
-}
-
-ShadowSpillRuntimeStatus shadowspill_pytorch_task_labels_configure(
-    const char *const *task_labels,
-    uint32_t task_label_count
-) {
-    if ((task_labels == NULL) != (task_label_count == 0U)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
-    }
-    char **labels = NULL;
-    if (task_label_count != 0U) {
-        labels = calloc(task_label_count, sizeof(*labels));
-        if (labels == NULL) {
-            return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
-        }
-        for (uint32_t index = 0U; index < task_label_count; ++index) {
-            if (task_labels[index] == NULL) {
-                continue;
-            }
-            labels[index] = strdup(task_labels[index]);
-            if (labels[index] == NULL) {
-                free_task_labels(labels, task_label_count);
-                return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
-            }
-        }
-    }
-    pthread_mutex_lock(&adapter.mutex);
-    char **previous = adapter.task_labels;
-    uint32_t previous_count = adapter.task_label_count;
-    adapter.task_labels = labels;
-    adapter.task_label_count = task_label_count;
-    pthread_mutex_unlock(&adapter.mutex);
-    free_task_labels(previous, previous_count);
-    return SHADOWSPILL_RUNTIME_OK;
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
@@ -1824,9 +1785,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_disable(void) {
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_abort_task_handle(
-    uintptr_t task_handle,
-    uint64_t task_id
+    uintptr_t task_handle
 ) {
+    const ShadowSpillTaskHandle *handle =
+        (const ShadowSpillTaskHandle *)task_handle;
+    const uint64_t task_id = shadowspill_task_id(handle);
     record_debug_host_boundary(task_id, 3U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
@@ -1834,7 +1797,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_abort_task_handle(
     const ShadowSpillRuntimeStatus status = runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
         : shadowspill_abort_task_handle(
-              runtime, (const ShadowSpillTaskHandle *)task_handle
+              runtime, handle
           );
     end_task_range();
     return status;
