@@ -54,7 +54,7 @@ train_step = plan_step(
 for _ in range(10):
     result = train_step([batch(4), batch(7)])
     losses = result.objectives
-    print("completed optimizer step", result.step_number)
+    print("optimizer step", result.step_number, "losses", losses)
 
 torch.save(train_step.state_dict(), "checkpoint.pt")
 train_step.close()
