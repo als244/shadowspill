@@ -126,7 +126,7 @@ class TrainingMaterializedState:
                 item.tensor.data = view
                 representative = item.tensor
                 assigned.add(id(item.tensor))
-            binding = self.bridge.bind_registered_tensor(alias_id, owner)
+            binding = self.bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = representative
             for item in items:
                 self.object_tensors[item.binding.object_id] = item.tensor
@@ -174,7 +174,7 @@ class TrainingMaterializedState:
                 device=self.device,
             )
             tensor = self._cuda_view(owner, source)
-            binding = bridge.bind_registered_tensor(alias_id, owner)
+            binding = bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = tensor
             self.object_tensors[fixed.object_id] = tensor
             self.generations[alias_id] = binding.generation
@@ -241,7 +241,7 @@ class TrainingMaterializedState:
                     assigned.add(id(tensor))
                 self.object_tensors[object_id] = tensor
                 representative = tensor
-            binding = self.bridge.bind_registered_tensor(alias_id, owner)
+            binding = self.bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = representative
             self.generations[alias_id] = binding.generation
             self._release_placeholder(
@@ -480,7 +480,7 @@ class TrainingMaterializedState:
                 registrations,
             )
             representative = view
-        binding = self.bridge.bind_registered_tensor(alias_id, owner)
+        binding = self.bridge.publish_initial_tensor(alias_id, owner)
         self.object_store[alias_id] = representative
         self.generations[alias_id] = binding.generation
         self._release_placeholder(

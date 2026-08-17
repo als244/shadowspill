@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 33U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 34U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -242,6 +242,23 @@ typedef struct ShadowSpillTaskAllocationContractStep {
     uint8_t required;
 } ShadowSpillTaskAllocationContractStep;
 
+typedef enum ShadowSpillTaskPublicationKind {
+    /* Publish the first/current execution-pool lease for a logical object. */
+    SHADOWSPILL_TASK_PUBLICATION_BIND = 0,
+    /* Replace the logical object's prior lease without changing identity. */
+    SHADOWSPILL_TASK_PUBLICATION_REPLACE = 1,
+} ShadowSpillTaskPublicationKind;
+
+/*
+ * Cold-path description of one framework-visible task allocation. The
+ * plan-local object identity is resolved to a retained object pointer during
+ * task admission; repeated publication uses only the task handle and ordinal.
+ */
+typedef struct ShadowSpillTaskPublicationDescription {
+    uint64_t object_id;
+    uint8_t kind;
+} ShadowSpillTaskPublicationDescription;
+
 typedef enum ShadowSpillFixedPlacementKind {
     SHADOWSPILL_FIXED_INITIAL_OBJECT = 0,
     SHADOWSPILL_FIXED_TASK_ALLOCATION = 1,
@@ -296,6 +313,8 @@ typedef struct ShadowSpillTaskDescription {
     uint32_t input_count;
     const ShadowSpillObjectUpdate *updates;
     uint32_t update_count;
+    const ShadowSpillTaskPublicationDescription *publications;
+    uint32_t publication_count;
     const ShadowSpillRuntimeAction *actions;
     uint32_t action_count;
     const ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
@@ -743,6 +762,39 @@ shadowspill_plan_admit_task(
     ShadowSpillPlan *plan,
     const ShadowSpillTaskDescription *description,
     const ShadowSpillTaskHandle **handle
+);
+
+/* Cold-path initial publication through one plan-local object binding. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_plan_publish_initial_allocation(
+    ShadowSpillPlan *plan,
+    uint64_t plan_object_id,
+    const void *pointer,
+    ShadowSpillObjectBinding *binding
+);
+
+/*
+ * Publish one framework allocation through a predecoded task-owned record.
+ * The logical object is stable; REPLACE changes only its physical lease and
+ * generation. This call is valid only inside the matching active task scope.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_task_publish_allocation(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    uint32_t publication_ordinal,
+    const void *pointer,
+    ShadowSpillObjectBinding *binding
+);
+
+/* Validate a current or just-retired view through the same direct record. */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_task_validate_publication_binding(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    uint32_t publication_ordinal,
+    const void *pointer,
+    uint64_t generation
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus

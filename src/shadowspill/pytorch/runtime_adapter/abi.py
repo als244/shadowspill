@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 41
-RUNTIME_ABI_VERSION: Final = 33
+ADAPTER_ABI_VERSION: Final = 42
+RUNTIME_ABI_VERSION: Final = 34
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -327,6 +327,13 @@ class RuntimeAction(ctypes.Structure):
     ]
 
 
+class TaskPublicationDescription(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("kind", ctypes.c_uint8),
+    ]
+
+
 class TaskAllocationContractStep(ctypes.Structure):
     _fields_ = [
         ("allocation_ordinal", ctypes.c_uint64),
@@ -345,6 +352,8 @@ class TaskDescription(ctypes.Structure):
         ("input_count", ctypes.c_uint32),
         ("updates", ctypes.POINTER(ObjectUpdate)),
         ("update_count", ctypes.c_uint32),
+        ("publications", ctypes.POINTER(TaskPublicationDescription)),
+        ("publication_count", ctypes.c_uint32),
         ("actions", ctypes.POINTER(RuntimeAction)),
         ("action_count", ctypes.c_uint32),
         ("allocation_contract_steps", ctypes.POINTER(TaskAllocationContractStep)),
@@ -719,9 +728,7 @@ def _configure_task_boundaries(library: Any) -> None:
         [ctypes.c_uint64, ctypes.c_size_t],
         ctypes.c_uint32,
     )
-    _signature(
-        library, "shadowspill_pytorch_allocation_scope_abort", [], None
-    )
+    _signature(library, "shadowspill_pytorch_allocation_scope_abort", [], None)
     _signature(
         library,
         "shadowspill_pytorch_abort_task_handle",
@@ -781,6 +788,34 @@ def _configure_execution(library: Any) -> None:
             ctypes.POINTER(TaskDescription),
             ctypes.POINTER(ctypes.c_size_t),
         ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_plan_publish_initial_allocation",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_task_publish_allocation",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+        ],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_validate_task_publication_binding",
+        [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
     _signature(

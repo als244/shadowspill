@@ -732,3 +732,35 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   caller handoff, snapshots, and role-shaped aggregate statistics. The next
   milestone replaces publication with immutable task-owned records and then
   removes those runtime-global helpers.
+
+## 2026-08-17 — Task-owned object publication
+
+- Added immutable publication records to admitted tasks. Each record retains
+  a direct runtime object, its plan-local identity, and whether the task binds
+  an available logical object or replaces only its physical lease/generation.
+- Replaced repeated output publication by runtime object ID and integer mode
+  with `(task handle, publication ordinal, allocation address)`. Forward,
+  backward-gradient, and optimizer outputs carry their ordinals directly from
+  predecoded execution records through the C++ storage transaction.
+- Registered and plan-bound every possible output during cold admission. The
+  repeated path no longer creates objects, parses IDs, hashes object IDs, or
+  binds new plan objects after compiled execution.
+- Moved cold materialization onto
+  `shadowspill_plan_publish_initial_allocation()`, which resolves the
+  plan-local object once and publishes into that plan's selected execution
+  pool without impersonating an execution task.
+- Preserved the simple public invariant: publication overwrites the same
+  logical object. Replacement publication changes an internal physical lease
+  only when the prior generation must remain causally protected; it does not
+  copy the payload or replace public object identity.
+- Added a native two-plan canary proving that equal plan-local publication
+  ordinals resolve to different directly retained runtime objects. Real
+  device-backed public forward and training tests also passed through the new
+  bind and replacement paths.
+- Bumped the runtime ABI to 34 and PyTorch adapter ABI to 42 for the admitted
+  publication schema and new handle-based adapter functions.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite after documenting the new public
+  C functions (four expected skips); focused real public forward and training
+  execution; Ruff; strict mypy over 177 installed source files; documentation
+  tests; and `git diff --check`.

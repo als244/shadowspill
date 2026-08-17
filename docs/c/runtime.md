@@ -82,6 +82,14 @@ runtime's pool, route, event, and object owners:
   consistency. The plan owns an independent reference after the call returns.
 - `shadowspill_plan_admit_task()` copies one immutable task topology and
   returns its direct repeated-path handle in the same cold-path call.
+- `shadowspill_plan_publish_initial_allocation()` publishes cold
+  materialization through a plan-local object binding and the plan's selected
+  execution pool; it does not create a fake task boundary.
+- `shadowspill_task_publish_allocation()` updates one predecoded logical
+  object by task-owned publication ordinal. Bind and replacement publication
+  preserve the same logical object identity.
+- `shadowspill_task_validate_publication_binding()` validates a current or
+  just-retired generation through that same direct task record.
 - `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
   the sole production execution boundary.
 - `shadowspill_abort_task_handle()` closes that same handle-bound task scope

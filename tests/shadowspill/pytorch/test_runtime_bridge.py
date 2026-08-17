@@ -72,6 +72,7 @@ def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
         (),
         (),
         (),
+        (),
         TaskMemoryEnvelope(allocation_contract=allocation_contract),
     )
 
@@ -134,7 +135,7 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
     tensor = torch.empty(0)
 
     bridge.register_placeholder("alias_000099")
-    binding = bridge.bind_registered_tensor("alias_000099", tensor)
+    binding = bridge.publish_initial_tensor("alias_000099", tensor)
     bridge.rebind_many(((tensor, "alias_000099", binding),))
 
     assert not bridge.requires_storage("alias_000099")

@@ -15,8 +15,10 @@ from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntr
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.partition import PartitionedExport
 from shadowspill.pytorch.runtime_adapter.bridge import (
+    PublishedStorage,
     RuntimeBridge,
     TaskMemoryEnvelope,
+    TaskPublication,
     actions_by_task,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
@@ -32,6 +34,30 @@ class _PreparedForwardTask:
     runtime_scope_open: bool = True
 
 
+def _forward_publications(
+    entrypoint: TaskEntrypoint,
+    input_aliases: tuple[str, ...],
+    bridge: RuntimeBridge,
+) -> tuple[TaskPublication, ...]:
+    """Predecode the unique storage roots this task can publish."""
+
+    produced: set[str] = set()
+    result: list[TaskPublication] = []
+    replacement_leaves = set(entrypoint.replacement_output_leaves)
+    for slot in entrypoint.output_slots:
+        alias_id = bridge.alias_for_object(slot.object_id)
+        replace_lease = slot.leaf_index in replacement_leaves
+        adopt = (replace_lease or alias_id not in input_aliases) and (
+            alias_id not in produced
+        )
+        if not adopt:
+            continue
+        produced.add(alias_id)
+        if bridge.requires_storage(alias_id):
+            result.append(TaskPublication(alias_id, replace_lease))
+    return tuple(result)
+
+
 class _ExecutingStage(nn.Module):
     def __init__(
         self,
@@ -43,6 +69,7 @@ class _ExecutingStage(nn.Module):
         actions: tuple[MemoryAction, ...],
         identity: ExecutionTaskIdentity,
         task_handle: int,
+        publications: tuple[TaskPublication, ...],
     ) -> None:
         super().__init__()
         self._entrypoint = entrypoint
@@ -53,11 +80,13 @@ class _ExecutingStage(nn.Module):
         self._actions = actions
         self._identity = identity
         self._task_handle = task_handle
+        self._publication_ordinals = {
+            item.alias_id: ordinal for ordinal, item in enumerate(publications)
+        }
         self._task_index = int(task.task_id.removeprefix("task_"))
         self._device_ordinal = state.device.index or 0
         self._input_aliases = tuple(
-            bridge.alias_for_object(slot.object_id)
-            for slot in entrypoint.input_slots
+            bridge.alias_for_object(slot.object_id) for slot in entrypoint.input_slots
         )
 
     def forward(self, *arguments: object) -> object:
@@ -95,9 +124,7 @@ class _ExecutingStage(nn.Module):
             ):
                 self._state.object_store[alias_id] = tensor
                 self._state.generations[alias_id] = generation
-            return _PreparedForwardTask(
-                tuple(input_tensors), self._input_aliases
-            )
+            return _PreparedForwardTask(tuple(input_tensors), self._input_aliases)
         except BaseException:
             if runtime_scope_open:
                 self._bridge.abort_task(self._task_handle, self._task_index)
@@ -116,7 +143,7 @@ class _ExecutingStage(nn.Module):
     ) -> object:
         output_leaves, _ = tree_flatten(output)
         produced: set[str] = set()
-        adopted: list[tuple[torch.Tensor, str]] = []
+        adopted: list[PublishedStorage] = []
         replacement_aliases: set[str] = set()
         replacement_leaves = set(self._entrypoint.replacement_output_leaves)
         for slot in self._entrypoint.output_slots:
@@ -126,18 +153,31 @@ class _ExecutingStage(nn.Module):
             alias_id = self._bridge.alias_for_object(slot.object_id)
             replacement = slot.leaf_index in replacement_leaves
             if replacement and alias_id not in produced:
-                adopted.append((tensor, alias_id))
+                adopted.append(
+                    PublishedStorage(
+                        tensor,
+                        alias_id,
+                        self._publication_ordinals.get(alias_id, -1),
+                    )
+                )
                 replacement_aliases.add(alias_id)
                 produced.add(alias_id)
             elif alias_id not in prepared.input_aliases and alias_id not in produced:
-                adopted.append((tensor, alias_id))
+                adopted.append(
+                    PublishedStorage(
+                        tensor,
+                        alias_id,
+                        self._publication_ordinals.get(alias_id, -1),
+                    )
+                )
                 produced.add(alias_id)
                 self._state.object_store[alias_id] = tensor
             elif not replacement:
                 self._state.object_store[alias_id] = tensor
         replacements = tuple(
             self._state.replacement_storage_views(alias_id)
-            for _tensor, alias_id in adopted
+            for item in adopted
+            for alias_id in (item.alias_id,)
             if alias_id in replacement_aliases
         )
         replacement_by_alias = {item.alias_id: item for item in replacements}
@@ -171,9 +211,9 @@ class _ExecutingStage(nn.Module):
             replacements=replacements,
         )
         prepared.runtime_scope_open = False
-        for (tensor, alias_id), generation in zip(
-            adopted, generations, strict=True
-        ):
+        for item, generation in zip(adopted, generations, strict=True):
+            tensor = item.tensor
+            alias_id = item.alias_id
             if alias_id in replacement_aliases:
                 self._state.publish_replacement_generation(
                     replacement_by_alias[alias_id], generation
@@ -254,15 +294,18 @@ class ForwardExecutor:
         for execution_ordinal, entrypoint in enumerate(lowered.entrypoints):
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
+            input_aliases = tuple(
+                bridge.alias_for_object(slot.object_id)
+                for slot in entrypoint.input_slots
+            )
+            publications = _forward_publications(entrypoint, input_aliases, bridge)
             task_handle = bridge.admit_task(
                 task,
-                tuple(
-                    bridge.alias_for_object(slot.object_id)
-                    for slot in entrypoint.input_slots
-                ),
+                input_aliases,
                 task_actions,
                 transfer_labels.labels_for(task_actions),
                 memory_envelopes.get(task.task_id, TaskMemoryEnvelope()),
+                publications=publications,
             )
             function = functions[entrypoint.artifact.compatibility_digest]
             wrapper = _ExecutingStage(
@@ -281,16 +324,14 @@ class ForwardExecutor:
                     canonical_task_id=task.task_id,
                 ),
                 task_handle,
+                publications,
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         bridge.seal_fixed_layout()
         self._public_output_aliases = tuple(
-            bridge.alias_for_object(object_id)
-            for object_id in lowered.public_outputs
+            bridge.alias_for_object(object_id) for object_id in lowered.public_outputs
         )
-        shared_indices = {
-            item.public_leaf_index for item in self._shared_outputs
-        }
+        shared_indices = {item.public_leaf_index for item in self._shared_outputs}
         shared_aliases = {
             self._public_output_aliases[index] for index in shared_indices
         }
@@ -350,9 +391,7 @@ class ForwardExecutor:
         )
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)
-        public_leaves = [
-            output_leaves[index] for index in self._user_output_indices
-        ]
+        public_leaves = [output_leaves[index] for index in self._user_output_indices]
         caller_tensors = tuple(
             self._state.object_store[alias_id]
             for alias_id in self._caller_output_aliases
@@ -379,9 +418,7 @@ class ForwardExecutor:
 
         self._require_shared_output_slots_available()
 
-    def prepare_invocation(
-        self, arguments: Sequence[object]
-    ) -> Sequence[object]:
+    def prepare_invocation(self, arguments: Sequence[object]) -> Sequence[object]:
         """Resolve public shared references to the callable's tensor shells."""
 
         return self._state.prepare_invocation(arguments)

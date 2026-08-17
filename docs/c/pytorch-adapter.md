@@ -62,6 +62,9 @@ semantics:
 - `shadowspill_pytorch_plan_destroy()`
 - `shadowspill_pytorch_plan_bind_object()`
 - `shadowspill_pytorch_plan_admit_task()`
+- `shadowspill_pytorch_plan_publish_initial_allocation()`
+- `shadowspill_pytorch_task_publish_allocation()` and
+  `shadowspill_pytorch_validate_task_publication_binding()`
 - `shadowspill_pytorch_plan_admit_action_batch()` and
   `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_plan_admit_object_acquisition()` and

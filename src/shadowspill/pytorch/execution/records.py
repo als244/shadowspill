@@ -14,6 +14,7 @@ from shadowspill.pytorch.lowering.training import (
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
+    TaskPublication,
     actions_by_task,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
@@ -37,6 +38,7 @@ class ExecutionTaskRecord:
     forward_outputs: tuple[ForwardOutputRecord, ...]
     gradient_outputs: tuple[GradientOutputRecord, ...]
     optimizer_outputs: tuple[OptimizerOutputRecord, ...]
+    publications: tuple[TaskPublication, ...]
     optimizer_argument_object_ids: tuple[str | None, ...]
     handoff_source_aliases: frozenset[str]
     dematerialize_aliases: tuple[str, ...]
@@ -64,6 +66,7 @@ class ForwardOutputRecord:
     alias_id: str
     adopt: bool
     replace: bool
+    publication_ordinal: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +76,7 @@ class GradientOutputRecord:
     object_id: str
     alias_id: str
     leaf_indices: tuple[int, ...]
+    publication_ordinal: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +86,7 @@ class OptimizerOutputRecord:
     name: str
     object_id: str
     alias_id: str
+    publication_ordinal: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +193,8 @@ def _build_task_record(
         if entrypoint.phase == "optimizer"
         else _forward_outputs(entrypoint, input_aliases, bridge)
     )
+    gradient_outputs = _gradient_outputs(entrypoint, bridge)
+    optimizer_outputs = _optimizer_outputs_for_entrypoint(entrypoint, bridge)
     handoff_aliases = frozenset(
         bridge.alias_for_object(item.source_object_id)
         for item in entrypoint.storage_handoffs
@@ -206,8 +213,9 @@ def _build_task_record(
         function=function,
         argument_template=argument_template,
         forward_outputs=outputs,
-        gradient_outputs=_gradient_outputs(entrypoint, bridge),
-        optimizer_outputs=_optimizer_outputs_for_entrypoint(entrypoint, bridge),
+        gradient_outputs=gradient_outputs,
+        optimizer_outputs=optimizer_outputs,
+        publications=_task_publications(outputs, gradient_outputs, optimizer_outputs),
         optimizer_argument_object_ids=tuple(
             optimizer_objects.get(name) for name in entrypoint.optimizer_binding_names
         ),
@@ -235,13 +243,18 @@ def _forward_outputs(
 ) -> tuple[ForwardOutputRecord, ...]:
     result: list[ForwardOutputRecord] = []
     produced: set[str] = set()
+    next_publication = 0
     replacement_leaves = set(entrypoint.replacement_output_leaves)
     for slot in entrypoint.output_slots:
         alias_id = bridge.alias_for_object(slot.object_id)
         replace = slot.leaf_index in replacement_leaves
         adopt = (replace or alias_id not in input_aliases) and alias_id not in produced
+        publication_ordinal = None
         if adopt:
             produced.add(alias_id)
+            if bridge.requires_storage(alias_id):
+                publication_ordinal = next_publication
+                next_publication += 1
         result.append(
             ForwardOutputRecord(
                 slot.leaf_index,
@@ -249,6 +262,7 @@ def _forward_outputs(
                 alias_id,
                 adopt,
                 replace,
+                publication_ordinal,
             )
         )
     return tuple(result)
@@ -262,10 +276,19 @@ def _gradient_outputs(
     for slot in entrypoint.gradient_output_slots:
         alias_id = bridge.alias_for_object(slot.object_id)
         grouped.setdefault(alias_id, (slot.object_id, []))[1].append(slot.leaf_index)
-    return tuple(
-        GradientOutputRecord(object_id, alias_id, tuple(indices))
-        for alias_id, (object_id, indices) in grouped.items()
-    )
+    result: list[GradientOutputRecord] = []
+    next_publication = 0
+    for alias_id, (object_id, indices) in grouped.items():
+        publication_ordinal = None
+        if bridge.requires_storage(alias_id):
+            publication_ordinal = next_publication
+            next_publication += 1
+        result.append(
+            GradientOutputRecord(
+                object_id, alias_id, tuple(indices), publication_ordinal
+            )
+        )
+    return tuple(result)
 
 
 def _optimizer_outputs_for_entrypoint(
@@ -276,18 +299,62 @@ def _optimizer_outputs_for_entrypoint(
         return ()
     if len(entrypoint.optimizer_output_names) != len(entrypoint.output_slots):
         raise ValueError("optimizer output names and tensor slots must align")
-    return tuple(
-        OptimizerOutputRecord(
-            name,
-            slot.object_id,
-            bridge.alias_for_object(slot.object_id),
+    result: list[OptimizerOutputRecord] = []
+    next_publication = 0
+    seen: set[str] = set()
+    for name, slot in zip(
+        entrypoint.optimizer_output_names,
+        entrypoint.output_slots,
+        strict=True,
+    ):
+        alias_id = bridge.alias_for_object(slot.object_id)
+        publication_ordinal = None
+        if alias_id not in seen:
+            seen.add(alias_id)
+            if bridge.requires_storage(alias_id):
+                publication_ordinal = next_publication
+                next_publication += 1
+        result.append(
+            OptimizerOutputRecord(
+                name,
+                slot.object_id,
+                alias_id,
+                publication_ordinal,
+            )
         )
-        for name, slot in zip(
-            entrypoint.optimizer_output_names,
-            entrypoint.output_slots,
-            strict=True,
+    return tuple(result)
+
+
+def _task_publications(
+    forward: tuple[ForwardOutputRecord, ...],
+    gradients: tuple[GradientOutputRecord, ...],
+    optimizer: tuple[OptimizerOutputRecord, ...],
+) -> tuple[TaskPublication, ...]:
+    """Return the one ordered publication table for this task phase."""
+
+    indexed: list[tuple[int, TaskPublication]] = []
+    indexed.extend(
+        (
+            item.publication_ordinal,
+            TaskPublication(item.alias_id, replace_lease=item.replace),
         )
+        for item in forward
+        if item.adopt and item.publication_ordinal is not None
     )
+    indexed.extend(
+        (item.publication_ordinal, TaskPublication(item.alias_id))
+        for item in gradients
+        if item.publication_ordinal is not None
+    )
+    indexed.extend(
+        (item.publication_ordinal, TaskPublication(item.alias_id))
+        for item in optimizer
+        if item.publication_ordinal is not None
+    )
+    indexed.sort(key=lambda item: item[0])
+    if tuple(index for index, _item in indexed) != tuple(range(len(indexed))):
+        raise ValueError("task publication ordinals must be contiguous and ordered")
+    return tuple(item for _index, item in indexed)
 
 
 def _input_aliases(
