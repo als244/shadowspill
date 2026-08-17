@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 49
-RUNTIME_ABI_VERSION: Final = 40
+ADAPTER_ABI_VERSION: Final = 50
+RUNTIME_ABI_VERSION: Final = 41
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -886,8 +886,8 @@ def _configure_execution(library: Any) -> None:
             ctypes.c_size_t,
             ctypes.c_uint64,
             ctypes.c_size_t,
-            ctypes.POINTER(ObjectBinding),
-            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.POINTER(ObjectBinding)),
+            ctypes.POINTER(ctypes.c_uint32),
         ],
         ctypes.c_uint32,
     )

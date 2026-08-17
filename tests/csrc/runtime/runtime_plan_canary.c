@@ -8,6 +8,37 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+static ShadowSpillRuntimeStatus canary_before_task(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+) {
+    const ShadowSpillObjectBinding *borrowed = NULL;
+    uint32_t count = 0U;
+    ShadowSpillRuntimeStatus status = shadowspill_before_task_handle(
+        runtime, handle, stream, &borrowed, &count
+    );
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    if (count > binding_capacity) {
+        (void)shadowspill_abort_task_handle(runtime, handle);
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (count != 0U) {
+        if (bindings == NULL || borrowed == NULL) {
+            (void)shadowspill_abort_task_handle(runtime, handle);
+            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        }
+        for (uint32_t index = 0U; index < count; ++index) {
+            bindings[index] = borrowed[index];
+        }
+    }
+    return SHADOWSPILL_RUNTIME_OK;
+}
+
 typedef struct ConcurrentTaskInvocation {
     ShadowSpillRuntime *runtime;
     const ShadowSpillTaskHandle *handle;
@@ -20,7 +51,7 @@ typedef struct ConcurrentTaskInvocation {
 
 static void *run_concurrent_task(void *context) {
     ConcurrentTaskInvocation *invocation = context;
-    invocation->before_status = shadowspill_before_task_handle(
+    invocation->before_status = canary_before_task(
         invocation->runtime,
         invocation->handle,
         invocation->stream,
@@ -119,7 +150,7 @@ static int same_task_handle_rejects_overlap(
     }
     await_ready(&ready, 1U);
     int failed = invocation.before_status != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_before_task_handle(
+        canary_before_task(
             runtime, handle, competing_stream, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
     atomic_store_explicit(&release, 1U, memory_order_release);
@@ -415,7 +446,7 @@ static int plan_selects_nondefault_pool_pair(void) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, initial_actions, compute
             ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_before_task_handle(
+            canary_before_task(
                 runtime, task_handle, compute, &binding, 1U
             ) != SHADOWSPILL_RUNTIME_OK ||
             binding.pointer == NULL ||
@@ -611,7 +642,7 @@ static int task_publications_resolve_plan_local_objects_once(void) {
         first_task == NULL || second_task == NULL || first_task == second_task ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
-        failed = shadowspill_before_task_handle(
+        failed = canary_before_task(
                 runtime, first_task, compute, NULL, 0U
             ) != SHADOWSPILL_RUNTIME_OK ||
             shadowspill_memory_pool_allocate(
@@ -634,7 +665,7 @@ static int task_publications_resolve_plan_local_objects_once(void) {
             ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
             shadowspill_after_task_handle(runtime, first_task, compute) !=
                 SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_before_task_handle(
+            canary_before_task(
                 runtime, second_task, compute, NULL, 0U
             ) != SHADOWSPILL_RUNTIME_OK ||
             shadowspill_memory_pool_allocate(
@@ -841,7 +872,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
             bindings[0].pointer == NULL ||
             bindings[0].pointer != bindings[1].pointer ||
             bindings[0].generation != bindings[1].generation ||
-            shadowspill_before_task_handle(
+            canary_before_task(
                 runtime,
                 (const ShadowSpillTaskHandle *)batch,
                 compute,

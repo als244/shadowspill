@@ -520,6 +520,7 @@ struct ShadowSpillTaskRecord {
     uint32_t unique_input_count;
     uint32_t *input_unique_indices;
     uint32_t *unique_first_positions;
+    ShadowSpillObjectBinding *input_bindings;
     ShadowSpillTaskUpdate *updates;
     uint32_t update_count;
     ShadowSpillTaskPublication *publications;
@@ -1160,6 +1161,16 @@ int shadowspill_enter_allocation_scope(
 );
 int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskRecord *record
+);
+int shadowspill_claim_task_invocation(
+    const ShadowSpillTaskRecord *record
+);
+int shadowspill_enter_claimed_task_scope(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskRecord *record
+);
+void shadowspill_release_task_invocation(
     const ShadowSpillTaskRecord *record
 );
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(

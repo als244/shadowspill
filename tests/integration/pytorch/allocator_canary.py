@@ -23,6 +23,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     install_allocator,
     resize_spill_pool,
 )
+from tests.integration.pytorch.runtime_helpers import begin_task
 
 
 def _create_plan(library: object) -> int:
@@ -312,20 +313,13 @@ def main() -> int:
         (binding.object_id,),
         tuple(release),
     )
-    rebound = (ObjectBinding * 1)()
-    status = int(
-        library.shadowspill_pytorch_before_task_handle(
-            consumer,
-            102,
-            compute_stream,
-            rebound,
-            1,
-        )
+    rebound = begin_task(
+        library,
+        consumer,
+        102,
+        compute_stream,
+        expected_bindings=1,
     )
-    if status != 0:
-        raise AssertionError(
-            f"prefetched input acquisition failed with status {status}"
-        )
     if rebound[0].pointer in (None, 0, address, blocker.data_ptr()):
         raise AssertionError("prefetch did not lease a different slab range")
     if rebound[0].generation == binding.generation:
@@ -401,16 +395,13 @@ def main() -> int:
     host_consumer = _admit_task(
         library, plan, 302, (3001,), tuple(host_release)
     )
-    host_rebound = (ObjectBinding * 1)()
-    if (
-        int(
-            library.shadowspill_pytorch_before_task_handle(
-                host_consumer, 302, compute_stream, host_rebound, 1
-            )
-        )
-        != 0
-    ):
-        raise AssertionError("direct host object acquisition failed")
+    host_rebound = begin_task(
+        library,
+        host_consumer,
+        302,
+        compute_stream,
+        expected_bindings=1,
+    )
     torch.ops.shadowspill._acquire_storages(
         [host_tensor], [host_rebound[0].pointer]
     )

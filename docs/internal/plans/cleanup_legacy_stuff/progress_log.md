@@ -1228,3 +1228,27 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   standalone ASan signal-handler failure again emitted recursive
   `DEADLYSIGNAL` output before producing a report; both debugger-run binaries
   exited normally without a program memory error.
+
+## 2026-08-17 — Borrowed admitted input bindings
+
+- Found that the PyTorch storage adapter still constructed one
+  `std::vector<ShadowSpillObjectBinding>` on every `before_task()` even though
+  the exact expanded input count is immutable at task admission.
+- Added one task-owned binding array sized during cold admission. The neutral
+  boundary now claims the non-reentrant handle before writing this reusable
+  state, snapshots and expands inputs directly into it, and returns a borrowed
+  pointer/count view. Failed acquisition releases the claim without opening an
+  allocation scope.
+- Simplified the PyTorch storage transaction to consume that borrowed view.
+  Removed the repeated current-address vector in `before_task()`, the address
+  and binding vectors used during output adoption, and both address vectors
+  used for replacement-view rebinding. Validation remains a complete first
+  pass before any frontend storage is changed.
+- Runtime ABI 41 and PyTorch adapter ABI 50 describe the borrowed-view task
+  boundary. Native and ctypes canaries now validate exact returned counts
+  rather than supply capacity buffers.
+- Validation passed the warnings-as-errors build, all 28 native/CUDA/PyTorch
+  canaries, 100 fresh-process task-handle concurrency runs, the complete
+  Python suite with four expected skips, Ruff, strict mypy over 178 installed
+  source files, `git diff --check`, and focused ASan runtime-plan and telemetry
+  canaries under the debugger.
