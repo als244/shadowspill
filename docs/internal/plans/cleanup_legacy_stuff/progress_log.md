@@ -950,3 +950,18 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   growth, plus native coverage for cold growth and reuse across 320 retirement
   fences. Runtime ABI 37 and PyTorch adapter ABI 46 describe the extended
   statistics and reserve function.
+
+## 2026-08-17 — Intrusive completion-frontier records
+
+- Removed the heap-allocated completion node created for every task, transfer,
+  and retirement fence. A neutral event lease can belong to exactly one FIFO
+  completion frontier during one lease generation, so it now owns its queue
+  link and diagnostic object/allocation identities directly.
+- Submission retains the pooled event lease, links it under the completion
+  tracker lock, and fails closed if the same lease is submitted twice.
+  Completion atomically unlinks the lease before releasing the tracker and
+  polling references. No completion record is allocated or freed on the hot
+  path.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.

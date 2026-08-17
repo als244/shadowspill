@@ -50,6 +50,8 @@ typedef struct ShadowSpillEventPool ShadowSpillEventPool;
 struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
     uint64_t generation;
+    uint64_t completion_object_id;
+    uint64_t completion_allocation_id;
     _Atomic uint32_t references;
     /*
      * The backend has reported that the event completed. This is deliberately
@@ -57,8 +59,10 @@ struct ShadowSpillEventLease {
      * owning MemoryPool commits the matching lease transition under pool.lock.
      */
     _Atomic uint8_t backend_complete;
+    struct ShadowSpillEventLease *completion_next;
     struct ShadowSpillEventLease *free_next;
     uint8_t pool_owned;
+    uint8_t completion_linked;
 };
 
 typedef struct ShadowSpillEventPoolBlock {
@@ -91,17 +95,10 @@ typedef struct ShadowSpillEventRecord {
     struct ShadowSpillEventRecord *next;
 } ShadowSpillEventRecord;
 
-typedef struct ShadowSpillCompletionRecord {
-    ShadowSpillEventLease *event;
-    uint64_t object_id;
-    uint64_t allocation_id;
-    struct ShadowSpillCompletionRecord *next;
-} ShadowSpillCompletionRecord;
-
 typedef struct ShadowSpillCompletionStream {
     ShadowSpillBackendStream stream;
-    ShadowSpillCompletionRecord *head;
-    ShadowSpillCompletionRecord *tail;
+    ShadowSpillEventLease *head;
+    ShadowSpillEventLease *tail;
     uint64_t next_poll_timestamp_ns;
     struct ShadowSpillCompletionStream *next;
 } ShadowSpillCompletionStream;

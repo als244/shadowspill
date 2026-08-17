@@ -154,6 +154,10 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
             &runtime->next_event_generation, 1U, memory_order_relaxed
         );
     }
+    lease->completion_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    lease->completion_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    lease->completion_next = NULL;
+    lease->completion_linked = 0U;
     atomic_init(&lease->references, 1U);
     atomic_init(&lease->backend_complete, 0U);
     *output = lease;
@@ -191,6 +195,10 @@ int shadowspill_event_lease_release(
         return status;
     }
     lease->event = (ShadowSpillBackendEvent){0};
+    lease->completion_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    lease->completion_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    lease->completion_next = NULL;
+    lease->completion_linked = 0U;
     atomic_store_explicit(&lease->backend_complete, 0U, memory_order_relaxed);
     release_event_record(runtime, lease);
     return status;
