@@ -78,9 +78,13 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_bind_object()` maps a Program-local object identity to a
   retained `ShadowSpillObjectHandle` with causal or explicitly unordered
   consistency. The plan owns an independent reference after the call returns.
+- `shadowspill_plan_admit_task()` copies one immutable task topology and
+  returns its direct repeated-path handle in the same cold-path call.
+- `shadowspill_before_task_handle()` and `shadowspill_after_task_handle()` are
+  the sole production execution boundary.
 - `shadowspill_plan_admit_execution()` and
-  `shadowspill_plan_resolve_execution()` publish and resolve immutable task
-  handles.
+  `shadowspill_plan_resolve_execution()` remain exported only while native
+  canaries are migrated to the direct admission API.
 - `shadowspill_plan_admit_action_batch()` creates an action-only trigger
   handle; `shadowspill_submit_action_batch_handle()` publishes it without
   opening a task boundary.
@@ -106,8 +110,8 @@ Resolved execution plans use:
 - `shadowspill_after_execution()` and
   `shadowspill_after_execution_handle()`
 
-Handle variants bypass repeated task-ID lookup. Admission retains direct
-object references and predecoded actions for the complete plan lifetime.
+Task handles bypass repeated task-ID lookup. Admission retains direct object
+references and predecoded actions for the complete plan lifetime.
 Initial placement and caller-output acquisition use their dedicated handles;
 they never impersonate execution tasks or allocate per-invocation identities.
 

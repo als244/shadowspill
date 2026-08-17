@@ -194,6 +194,13 @@ shadowspill_pytorch_plan_admit_execution(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_plan_admit_task(
+    uintptr_t plan_handle,
+    const ShadowSpillExecutionDescription *description,
+    uintptr_t *task_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
@@ -295,8 +302,24 @@ shadowspill_pytorch_before_execution_handle(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_before_task_handle(
+    uintptr_t task_handle,
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_after_execution_handle(
     uintptr_t execution_handle,
+    uint64_t task_id,
+    uintptr_t compute_stream_address
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_after_task_handle(
+    uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address
 );

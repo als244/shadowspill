@@ -1503,6 +1503,25 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_execution(
           );
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_task(
+    uintptr_t plan_handle,
+    const ShadowSpillExecutionDescription *description,
+    uintptr_t *task_handle
+) {
+    if (plan_handle == 0U || task_handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *task_handle = 0U;
+    const ShadowSpillTaskHandle *handle = NULL;
+    const ShadowSpillRuntimeStatus status = shadowspill_plan_admit_task(
+        (ShadowSpillPlan *)plan_handle, description, &handle
+    );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        *task_handle = (uintptr_t)handle;
+    }
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
@@ -1762,15 +1781,15 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_execution(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution_handle(
-    uintptr_t execution_handle,
+ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
+    uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
     record_debug_host_boundary(task_id, 0U);
-    if (task_range_active || execution_handle == 0U) {
+    if (task_range_active || task_handle == 0U) {
         record_debug_host_boundary(task_id, 1U);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
@@ -1783,9 +1802,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution_handle(
     (void)device_ordinal;
     ShadowSpillRuntimeStatus status = runtime == NULL
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_before_execution_handle(
+        : shadowspill_before_task_handle(
             runtime,
-            (const ShadowSpillExecutionHandle *)execution_handle,
+            (const ShadowSpillTaskHandle *)task_handle,
             shadowspill_cuda_wrap_stream(compute_stream_address),
             bindings,
             binding_capacity
@@ -1797,8 +1816,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution_handle(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_after_execution_handle(
+ShadowSpillRuntimeStatus shadowspill_pytorch_before_execution_handle(
     uintptr_t execution_handle,
+    uint64_t task_id,
+    uintptr_t compute_stream_address,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+) {
+    return shadowspill_pytorch_before_task_handle(
+        execution_handle,
+        task_id,
+        compute_stream_address,
+        bindings,
+        binding_capacity
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
+    uintptr_t task_handle,
     uint64_t task_id,
     uintptr_t compute_stream_address
 ) {
@@ -1807,16 +1842,26 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_execution_handle(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     ShadowSpillRuntimeStatus status =
-        runtime == NULL || execution_handle == 0U
+        runtime == NULL || task_handle == 0U
         ? SHADOWSPILL_RUNTIME_CLOSED
-        : shadowspill_after_execution_handle(
+        : shadowspill_after_task_handle(
             runtime,
-            (const ShadowSpillExecutionHandle *)execution_handle,
+            (const ShadowSpillTaskHandle *)task_handle,
             shadowspill_cuda_wrap_stream(compute_stream_address)
         );
     end_task_range();
     record_debug_host_boundary(task_id, 3U);
     return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_after_execution_handle(
+    uintptr_t execution_handle,
+    uint64_t task_id,
+    uintptr_t compute_stream_address
+) {
+    return shadowspill_pytorch_after_task_handle(
+        execution_handle, task_id, compute_stream_address
+    );
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_after_task(

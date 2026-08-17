@@ -566,3 +566,22 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   PyTorch canaries; the complete Python suite with four expected skips; focused
   execution tests; documentation tests; Ruff; strict mypy over 177 source
   files; and `git diff --check`.
+
+## 2026-08-17 — Single-call task admission
+
+- Added the canonical task API: one cold `plan_admit_task()` operation copies
+  the immutable topology and returns its direct handle. Production no longer
+  admits and then performs a second task-table lookup.
+- Renamed the repeated neutral and adapter boundaries to
+  `before_task_handle()` and `after_task_handle()`. The fused PyTorch storage
+  operators call these names directly, matching the frontend orchestration.
+- Kept the execution record internal: public code sees a task handle, while
+  action batches and object acquisitions remain distinct handle types and are
+  rejected by task operations.
+- The old exported names remain only for canary migration and are not called
+  by installed Python production code. Their deletion is the next compatibility
+  cleanup milestone.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; forward, mutation, and training handle-path gates; focused
+  Python boundary tests; Ruff; strict mypy over 177 source files; and
+  `git diff --check`.

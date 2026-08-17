@@ -571,12 +571,30 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_execution(
     ShadowSpillPlan *plan,
     const ShadowSpillExecutionDescription *description
 ) {
-    return admit_record(
+    const ShadowSpillTaskHandle *handle = NULL;
+    return shadowspill_plan_admit_task(plan, description, &handle);
+}
+
+ShadowSpillRuntimeStatus shadowspill_plan_admit_task(
+    ShadowSpillPlan *plan,
+    const ShadowSpillExecutionDescription *description,
+    const ShadowSpillTaskHandle **handle
+) {
+    if (handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *handle = NULL;
+    const ShadowSpillExecutionRecord *record = NULL;
+    const ShadowSpillRuntimeStatus status = admit_record(
         plan,
         description,
         SHADOWSPILL_BOUNDARY_EXECUTION_TASK,
-        NULL
+        &record
     );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        *handle = record;
+    }
+    return status;
 }
 
 ShadowSpillRuntimeStatus shadowspill_plan_admit_action_batch(
@@ -756,9 +774,9 @@ ShadowSpillRuntimeStatus shadowspill_plan_resolve_execution(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
+ShadowSpillRuntimeStatus shadowspill_before_task_handle(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionHandle *handle,
+    const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream compute_stream,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
@@ -803,6 +821,18 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
     return status;
 }
 
+ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionHandle *handle,
+    ShadowSpillBackendStream compute_stream,
+    ShadowSpillObjectBinding *bindings,
+    uint32_t binding_capacity
+) {
+    return shadowspill_before_task_handle(
+        runtime, handle, compute_stream, bindings, binding_capacity
+    );
+}
+
 ShadowSpillRuntimeStatus shadowspill_after_execution(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
@@ -820,9 +850,9 @@ ShadowSpillRuntimeStatus shadowspill_after_execution(
     return shadowspill_after_execution_handle(runtime, record, compute_stream);
 }
 
-ShadowSpillRuntimeStatus shadowspill_after_execution_handle(
+ShadowSpillRuntimeStatus shadowspill_after_task_handle(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionHandle *handle,
+    const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream compute_stream
 ) {
     const ShadowSpillExecutionRecord *record = handle;
@@ -832,6 +862,14 @@ ShadowSpillRuntimeStatus shadowspill_after_execution_handle(
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     return shadowspill_after_execution_record(runtime, record, compute_stream);
+}
+
+ShadowSpillRuntimeStatus shadowspill_after_execution_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillExecutionHandle *handle,
+    ShadowSpillBackendStream compute_stream
+) {
+    return shadowspill_after_task_handle(runtime, handle, compute_stream);
 }
 
 ShadowSpillRuntimeStatus shadowspill_submit_action_batch_handle(
