@@ -3,14 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void release_event_requirements(
+static int release_event_requirements(
     ShadowSpillRuntime *runtime,
-    ShadowSpillEventRecord *events,
+    ShadowSpillLeaseUseRecord *requirements,
     uint64_t allocation_id
 ) {
-    while (events != NULL) {
-        ShadowSpillEventRecord *next = events->next;
-        if (shadowspill_event_lease_release(runtime, events->event) != 0) {
+    int status = 0;
+    for (ShadowSpillLeaseUseRecord *requirement = requirements;
+         requirement != NULL; requirement = requirement->next) {
+        if (requirement->event == NULL) {
+            continue;
+        }
+        if (shadowspill_event_lease_release(
+                runtime, requirement->event
+            ) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
@@ -18,10 +24,12 @@ static void release_event_requirements(
                 allocation_id,
                 0U
             );
+            status = -1;
+            continue;
         }
-        free(events);
-        events = next;
+        requirement->event = NULL;
     }
+    return status;
 }
 
 static void release_retirement_requirements(
@@ -31,11 +39,31 @@ static void release_retirement_requirements(
     if (record == NULL) {
         return;
     }
-    release_event_requirements(
+    (void)release_event_requirements(
         runtime,
-        record->events,
+        record->requirements,
         record->allocation_id
     );
+    if (record->requirements != NULL) {
+        shadowspill_memory_pool_lock_foreground(record->pool);
+        const int release_status =
+            shadowspill_memory_pool_release_use_records_locked(
+                record->pool, record->requirements
+            );
+        shadowspill_memory_pool_unlock_foreground(record->pool);
+        if (release_status != 0) {
+            shadowspill_latch_pool_failure_locked(
+                runtime,
+                record->pool,
+                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_RUNTIME_NO_ID,
+                record->allocation_id,
+                0U
+            );
+        } else {
+            record->requirements = NULL;
+        }
+    }
     if (shadowspill_event_lease_release(
             runtime, record->task_completion_event
         ) != 0) {
@@ -47,7 +75,6 @@ static void release_retirement_requirements(
             0U
         );
     }
-    record->events = NULL;
     record->task_completion_event = NULL;
 }
 
@@ -62,8 +89,11 @@ static void detach_borrowed_requirements_for_teardown(
     shadowspill_memory_pool_lock_foreground(record->pool);
     if (allocation->pool == record->pool &&
         allocation->generation == record->allocation_generation) {
-        if (allocation->retirement_events == record->events) {
-            allocation->retirement_events = NULL;
+        if (allocation->retirement_requirements == record->requirements) {
+            allocation->retirement_requirements = NULL;
+        }
+        if (allocation->uses == record->requirements) {
+            allocation->uses = NULL;
         }
         if (allocation->retirement_event == record->task_completion_event) {
             allocation->retirement_event = NULL;
@@ -232,7 +262,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
 ) {
     if (runtime == NULL || allocation == NULL ||
         !allocation->logical_freed || allocation->pointer == NULL ||
-        (allocation->retirement_events == NULL &&
+        (allocation->retirement_requirements == NULL &&
          allocation->retirement_event == NULL)) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
@@ -251,7 +281,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
     record->pool = allocation->pool;
     record->allocation_id = allocation->allocation_id;
     record->allocation_generation = allocation->generation;
-    record->events = allocation->retirement_events;
+    record->requirements = allocation->retirement_requirements;
     record->task_completion_event = allocation->retirement_event;
 
     ShadowSpillRetirementQueue *queue = &runtime->retirements;
@@ -275,10 +305,10 @@ static int retirement_complete(const ShadowSpillRetirementRecord *record) {
         !shadowspill_event_lease_is_complete(record->task_completion_event)) {
         return 0;
     }
-    for (const ShadowSpillEventRecord *event = record->events;
-         event != NULL; event = event->next) {
-        if (atomic_load_explicit(
-                &event->event->backend_complete,
+    for (const ShadowSpillLeaseUseRecord *requirement = record->requirements;
+         requirement != NULL; requirement = requirement->next) {
+        if (requirement->event != NULL && atomic_load_explicit(
+                &requirement->event->backend_complete,
                 memory_order_acquire
             ) == 0U) {
             return 0;
@@ -326,6 +356,18 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             continue;
         }
 
+        /* Retired event handles are backend resources, so release them before
+         * entering the pool. The immutable requirement records stay owned by
+         * this queue entry until the same reclamation critical section that
+         * frees the physical range. */
+        if (release_event_requirements(
+                runtime, record->requirements, record->allocation_id
+            ) != 0) {
+            append_retry(&retry_head, &retry_tail, record);
+            record = next;
+            continue;
+        }
+
         /*
          * Completion discovery never owns the memory pool.  Background
          * reclamation enters only through the pool's generic priority-aware
@@ -351,7 +393,10 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             allocation->logical_freed && allocation->pointer != NULL &&
             allocation->retirement_enqueued_generation ==
                 record->allocation_generation) {
-            allocation->retirement_events = NULL;
+            if (allocation->uses == record->requirements) {
+                allocation->uses = NULL;
+            }
+            allocation->retirement_requirements = NULL;
             allocation->retirement_event = NULL;
             shadowspill_append_trace_event_locked(
                 runtime,
@@ -368,12 +413,32 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
         }
         if (allocation->pool == pool &&
             allocation->generation == record->allocation_generation) {
-            if (allocation->retirement_events == record->events) {
-                allocation->retirement_events = NULL;
+            if (allocation->retirement_requirements ==
+                record->requirements) {
+                allocation->retirement_requirements = NULL;
+            }
+            if (allocation->uses == record->requirements) {
+                allocation->uses = NULL;
             }
             if (allocation->retirement_event ==
                 record->task_completion_event) {
                 allocation->retirement_event = NULL;
+            }
+        }
+        if (record->requirements != NULL) {
+            if (shadowspill_memory_pool_release_use_records_locked(
+                    pool, record->requirements
+                ) != 0) {
+                shadowspill_latch_pool_failure_locked(
+                    runtime,
+                    pool,
+                    SHADOWSPILL_RUNTIME_INVALID_STATE,
+                    SHADOWSPILL_RUNTIME_NO_ID,
+                    record->allocation_id,
+                    0U
+                );
+            } else {
+                record->requirements = NULL;
             }
         }
         shadowspill_memory_pool_unlock_reclamation(pool);

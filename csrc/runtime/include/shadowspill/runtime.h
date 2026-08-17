@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 39U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 40U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -487,6 +487,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t memory_lease_record_in_use;
     uint64_t memory_lease_record_peak_in_use;
     uint64_t memory_lease_record_growth_rejections;
+    uint64_t lease_use_record_capacity;
+    uint64_t lease_use_record_in_use;
+    uint64_t lease_use_record_peak_in_use;
+    uint64_t lease_use_record_growth_rejections;
 } ShadowSpillRuntimeStatistics;
 
 typedef struct ShadowSpillRuntimeFailure {

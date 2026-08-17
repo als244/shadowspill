@@ -114,13 +114,13 @@ class _Library:
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 40
     assert ctypes.sizeof(AdapterCapabilities) == 20
-    assert ctypes.sizeof(RuntimeStatistics) == 41 * 8
+    assert ctypes.sizeof(RuntimeStatistics) == 45 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
     assert ctypes.sizeof(Allocation) == 48
     assert ctypes.sizeof(CudaStatistics) == 22 * 8
     assert ctypes.sizeof(RuntimeFailure) == 184
     assert ctypes.sizeof(AdapterFailure) == 208
-    assert ctypes.sizeof(AdapterStatistics) == 584
+    assert ctypes.sizeof(AdapterStatistics) == 616
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24

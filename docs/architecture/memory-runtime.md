@@ -123,11 +123,16 @@ cadence is one microsecond; an already-complete head is followed immediately
 without an artificial delay.
 
 Cold plan adoption reserves reusable neutral event records and backend event
-handles. A later callable sharing the runtime may grow both inventories only
-at that same cold boundary. Generation-tagged leases return records and handles
-to their respective pools; the worker queries only FIFO heads and calls the
-backend outside data-structure locks. Steady-state execution performs no host
-allocation and creates or destroys no backend-native event.
+handles, retirement queue entries, `MemoryLease` records, and lease-use
+records. A lease-use record names one distinct stream while its lease is live;
+an asynchronous free records the completion event directly into that same
+record and gives the immutable list to the retirement queue. There is no
+stream snapshot or copied event-wrapper list. A later callable sharing the
+runtime may grow these inventories only at the same cold boundary.
+Generation-tagged leases return records and handles to their respective
+owners; the worker queries only FIFO heads and calls the backend outside
+data-structure locks. Steady-state execution performs no host allocation and
+creates or destroys no backend-native event.
 
 ## Dispatcher, streams, and worker timeline
 

@@ -1145,3 +1145,37 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   detachment now happens inside the worker's existing reclamation critical
   section. Normal execution performs no second pool acquisition; only cold
   teardown uses the standalone guarded detach helper.
+
+## 2026-08-17 — In-place lease-use retirement records
+
+- Found three remaining heap operations in ordinary lease release: one stream
+  record per distinct use, a copied stream snapshot array at free, and one
+  separate event wrapper per retirement requirement. The abort path also
+  created and recorded backend events while holding the memory-pool lock.
+- Replaced the separate stream and event wrappers with one pool-owned reusable
+  `LeaseUseRecord`. While a lease is live it records one distinct stream and
+  has no event. An ordinary asynchronous free freezes that list, records each
+  completion event into the same nodes outside the pool lock, and transfers
+  ownership of the immutable list to the retirement queue. No snapshot or
+  wrapper list is constructed.
+- The worker releases completed backend event handles before entering the
+  pool, then returns requirement records while already holding its one
+  reclamation lock. A busy foreground allocator causes the queue entry to be
+  retried without another event query or another pool acquisition. Task-local
+  same-stream retirement continues to share one task-completion fence.
+- Aborted tasks now use the same prepare-outside-lock path. Allocation
+  metadata remains generation checked, and a same-stream successor detaches
+  only the lease's borrowed pointer while the stale queue entry retains sole
+  ownership of its original requirements.
+- Cold physical sealing reserves and seals lease-use records alongside
+  `MemoryLease` records. Runtime/qualification diagnostics expose capacity,
+  current and peak use, and rejected hot growth. Runtime ABI 40 and PyTorch
+  adapter ABI 49 describe the extended statistics.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; 30 consecutive fresh-process transition canaries; the
+  complete Python suite with four expected skips; Ruff; strict mypy over 178
+  installed source files; focused ASan completion, telemetry, and transition
+  canaries under the debugger; and `git diff --check`. The host's standalone
+  ASan signal handler still fails before `main` intermittently and emits its
+  known repeated `DEADLYSIGNAL` output; the debugger-run binaries reported no
+  program memory error.

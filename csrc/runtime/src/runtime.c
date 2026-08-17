@@ -41,19 +41,18 @@ static void destroy_allocations(ShadowSpillRuntime *runtime) {
         ShadowSpillMemoryLease *allocation = pool->owned_leases;
         while (allocation != NULL) {
             ShadowSpillMemoryLease *next = allocation->ownership_next;
-            ShadowSpillStreamRecord *stream = allocation->streams;
-            while (stream != NULL) {
-                ShadowSpillStreamRecord *stream_next = stream->next;
-                free(stream);
-                stream = stream_next;
+            ShadowSpillLeaseUseRecord *use = allocation->uses;
+            while (use != NULL) {
+                if (use->event != NULL) {
+                    (void)shadowspill_event_lease_release(
+                        runtime, use->event
+                    );
+                    use->event = NULL;
+                }
+                use = use->next;
             }
-            ShadowSpillEventRecord *event = allocation->retirement_events;
-            while (event != NULL) {
-                ShadowSpillEventRecord *event_next = event->next;
-                (void)shadowspill_event_lease_release(runtime, event->event);
-                free(event);
-                event = event_next;
-            }
+            allocation->uses = NULL;
+            allocation->retirement_requirements = NULL;
             if (allocation->retirement_event != NULL) {
                 (void)shadowspill_event_lease_release(
                     runtime, allocation->retirement_event
@@ -700,7 +699,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         }
         if (allocation->retirement_event != NULL) {
             ++retirement_records_fenced;
-        } else if (allocation->retirement_events != NULL) {
+        } else if (allocation->retirement_requirements != NULL) {
             ++retirement_records_evented;
         } else if (allocation->retirement_preparing) {
             ++retirement_records_preparing;
@@ -781,6 +780,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .memory_lease_record_growth_rejections =
             execution_pool->lease_record_growth_rejections +
             spill_pool->lease_record_growth_rejections,
+        .lease_use_record_capacity =
+            execution_pool->use_record_capacity +
+            spill_pool->use_record_capacity,
+        .lease_use_record_in_use =
+            execution_pool->use_record_in_use +
+            spill_pool->use_record_in_use,
+        .lease_use_record_peak_in_use =
+            execution_pool->use_record_peak_in_use +
+            spill_pool->use_record_peak_in_use,
+        .lease_use_record_growth_rejections =
+            execution_pool->use_record_growth_rejections +
+            spill_pool->use_record_growth_rejections,
     };
     pthread_mutex_unlock(&runtime->retirements.lock);
     pthread_mutex_unlock(&runtime->events.lock);

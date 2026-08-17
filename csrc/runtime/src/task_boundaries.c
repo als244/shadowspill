@@ -306,7 +306,7 @@ static uint64_t count_task_retirements_locked(
          allocation = allocation->task_retirement_next) {
         if (allocation->logical_freed && allocation->pointer != NULL &&
             allocation->release_task_id == task_id &&
-            allocation->retirement_events == NULL &&
+            allocation->retirement_requirements == NULL &&
             allocation->retirement_event == NULL) {
             ++count;
         }
@@ -541,7 +541,7 @@ static ShadowSpillRuntimeStatus attach_task_retirements_locked(
          allocation = allocation->task_retirement_next) {
         if (!allocation->logical_freed || allocation->pointer == NULL ||
             allocation->release_task_id != task_id ||
-            allocation->retirement_events != NULL ||
+            allocation->retirement_requirements != NULL ||
             allocation->retirement_event != NULL) {
             continue;
         }
