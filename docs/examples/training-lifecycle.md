@@ -1,7 +1,7 @@
 # Training loop
 
-This complete example creates a runtime, relocates model state, plans one
-accumulation round, trains, and writes a checkpoint.
+This complete example creates a runtime, relocates model state, trains, and
+writes a checkpoint.
 
 ```python
 from functools import partial
@@ -48,7 +48,6 @@ train_step = plan_step(
     runtime=runtime,
     execution="execution",
     spill="spill",
-    planning_cachedir="artifacts/planning-cache",
 )
 
 for _ in range(10):
@@ -60,21 +59,19 @@ torch.save(train_step.state_dict(), "checkpoint.pt")
 train_step.close()
 ```
 
-The one-element outer sequence passed to `plan_step()` and `train_step()` is
-the accumulation-round dimension. Each call runs one objective and backward
-pass followed by exactly one optimizer update. Shapes, strides, dtypes, static
-values, and outer structure must match the examples used during planning.
+Each call runs the objective and backward pass followed by one optimizer
+update. Runtime inputs must match the shapes, strides, dtypes, static values,
+and structure supplied to `plan_step()`.
 
 The scalar loss is `result.objectives[0]`. ShadowSpill validates and records
 this explicit objective return during capture; it does not guess which model
-output is a loss. Optional accumulation and nondifferentiated objective metrics
-are documented in the [frontend API](../python/api/frontend.md#inputs-objectives-and-partitioning).
+output is a loss.
 
 An ordinary `train_step()` returns `StepResult` without collecting or resolving
 a runtime trace. `DiagnosticsHandle.result()`, checkpoint operations, and
 lifecycle close are explicit synchronous boundaries.
 
-Use fast local storage for the reusable planning cache. `state_dict()` creates
-an ordinary CPU checkpoint before `torch.save()` begins. The example closes
-the callable and then exits; long-lived embedding processes should follow the
-complete ownership order in [Errors, failures, and cleanup](../python/failures.md).
+`state_dict()` creates an ordinary CPU checkpoint before `torch.save()` begins.
+The example closes the callable and then exits; long-lived embedding processes
+should follow the complete ownership order in [Errors, failures, and
+cleanup](../python/failures.md).
