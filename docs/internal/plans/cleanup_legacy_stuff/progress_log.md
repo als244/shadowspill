@@ -1104,3 +1104,19 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   evict/fetch/handoff lifecycle 64 times. One hundred focused transition runs,
   thirty complete transition-canary runs, and the full 28-test native/CUDA
   canary suite passed after the correction.
+
+## 2026-08-17 — Object snapshot synchronization correction
+
+- A 100-run recurrent handoff stress gate exposed an independent object
+  snapshot race. `shadowspill_object_snapshot()` held the execution-pool lock
+  but not the object lock while reading the object's location slots. The
+  worker could clear and recycle a spill lease between the non-null test and
+  its pointer dereference.
+- Snapshots now acquire a retained object directly from the central object
+  table, capture the complete residency/location tuple once under
+  `object->lock`, and release the retained object afterward. The obsolete
+  global runtime lock, execution-pool lookup, and repeated location lookups
+  have been removed from this diagnostic path.
+- The exact 64-generation evict/fetch/caller-handoff sequence that exposed the
+  race completed successfully in 100 consecutive fresh processes after the
+  correction.
