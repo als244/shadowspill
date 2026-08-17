@@ -1,5 +1,10 @@
 # The Anonymous-Temporary Retirement Storm
 
+> **Historical, non-normative investigation.** This report preserves evidence
+> from the implementation under investigation. Current behavior is defined by
+> the [memory runtime architecture](../architecture/memory-runtime.md) and
+> [C runtime API](../c/runtime.md).
+
 ## Purpose
 
 This document describes a real performance failure in which numerically

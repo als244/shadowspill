@@ -51,7 +51,8 @@ allocation behavior, profiling metadata, cache artifacts, and phase wall time.
 
 ## Step result and handle
 
-`StepResult.diagnostics` is `None` for an ordinary step and a
+`StepResult` contains objectives, metrics, the completed step number, and an
+optional diagnostics handle. `StepResult.diagnostics` is `None` for an ordinary step and a
 `DiagnosticsHandle` for a traced step. Resolving the handle returns
 `StepDiagnostics`.
 

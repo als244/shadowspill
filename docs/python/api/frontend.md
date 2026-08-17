@@ -18,7 +18,8 @@ the derived suballocatable capacity after initialization.
 
 ## Runtime
 
-```python
+<!-- source-signature: src/shadowspill/pytorch/runtime_adapter/runtime.py:Runtime.__init__ -->
+```text
 Runtime(
     *,
     pools: Mapping[str, MemoryPoolConfig],
@@ -55,10 +56,23 @@ Configuration and execution failures use `RuntimeConfigurationError` and
 
 ## Persistent state
 
-```python
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:relocate_model_state -->
+```text
 relocate_model_state(model, *, runtime, pool, release_source=True)
+```
+
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:externalize_model_state -->
+```text
 externalize_model_state(model, *, runtime, release_runtime=False)
+```
+
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:relocate_optimizer_state -->
+```text
 relocate_optimizer_state(optimizer, *, runtime, pool, release_source=True)
+```
+
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:externalize_optimizer_state -->
+```text
 externalize_optimizer_state(optimizer, *, runtime, release_runtime=False)
 ```
 
@@ -75,7 +89,8 @@ optimizer relocation is an advanced lifecycle operation.
 
 ## Planning entrypoints
 
-```python
+<!-- source-signature: src/shadowspill/pytorch/api.py:plan_forward -->
+```text
 plan_forward(
     model,
     *,
@@ -103,7 +118,8 @@ plan_forward(
 `plan_forward()` accepts one fixed example-input sequence and returns
 `PlannedForward`.
 
-```python
+<!-- source-signature: src/shadowspill/pytorch/api.py:plan_step -->
+```text
 plan_step(
     model,
     *,
@@ -156,7 +172,8 @@ lowering but does not run PressureFit or leave an active callable.
 `pressurefit_program()` independently selects and physically admits a saved
 `PressureFitProgram` under requested budgets and `TransferBandwidths`.
 
-```python
+<!-- source-signature: src/shadowspill/pytorch/api.py:make_step_program -->
+```text
 make_step_program(
     model,
     *,
@@ -166,9 +183,26 @@ make_step_program(
     runtime,
     execution,
     spill,
-    **planning_options,
+    execution_budget=None,
+    spill_budget=None,
+    dynamic_scratch_reserve_bytes=None,
+    execution_device=None,
+    partition="auto",
+    optimizer_ordering="stage_interleaved",
+    verbose=True,
+    planning_cachedir=None,
+    profiling_metadata=None,
+    allocation_probe_seeds=1,
+    allocation_probe_repetitions=2,
+    save_plan=True,
+    force_fresh=False,
+    overwrite_plan=False,
+    implementation_revision=None,
 ) -> StepProgram
+```
 
+<!-- source-signature: src/shadowspill/pytorch/api.py:pressurefit_program -->
+```text
 pressurefit_program(
     program,
     *,
@@ -207,13 +241,26 @@ labels. It must not mutate the graph.
 
 ## Planned callables
 
-`PlannedForward(inputs, *, profiler_annotations=False)` validates the fixed
-input signature and returns the model output.
+<!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.__call__ -->
+```text
+PlannedForward(inputs, *, profiler_annotations=False) -> object
+```
 
-`PlannedTrainStep(inputs, *, runtime_trace=False,
-profiler_annotations=False)` returns `StepResult`. Both callables expose
-`plan_report`, `state_dict()`, `load_state_dict()`, `close()`, and context
-manager support.
+`PlannedForward` validates the fixed input signature and returns the model
+output.
+
+<!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__ -->
+```text
+PlannedTrainStep(
+    inputs,
+    *,
+    runtime_trace=False,
+    profiler_annotations=False,
+) -> StepResult
+```
+
+`PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
+`state_dict()`, `load_state_dict()`, `close()`, and context manager support.
 
 `StepResult` contains `objectives`, `metrics`, `step_number`, and an optional
 `DiagnosticsHandle`. `DiagnosticsHandle.result()` and

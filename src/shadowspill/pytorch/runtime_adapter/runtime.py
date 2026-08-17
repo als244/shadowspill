@@ -162,10 +162,9 @@ class Runtime:
     before any accelerator tensor allocation, then pass it to every
     ``plan_step`` or ``plan_forward`` call.
 
-    The initial release supports one device pool and one pinned-host pool. The
-    public registry and route matrix are already N-pool representations; later
-    backends can add peer, remote, or storage pools without changing planning
-    call signatures.
+    The supported configuration contains one device pool and one pinned-host
+    pool. The public pool registry and transfer matrix retain explicit pool
+    identities even though this topology has exactly two members.
     """
 
     def __init__(
@@ -694,7 +693,7 @@ def _validate_pool_configs(
         or sum(isinstance(value, PinnedHostPool) for value in normalized.values()) != 1
     ):
         raise RuntimeConfigurationError(
-            "the initial release requires one device pool and one pinned-host pool"
+            "the runtime requires one device pool and one pinned-host pool"
         )
     return normalized
 

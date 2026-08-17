@@ -103,6 +103,32 @@ Events are precreated and reused through generation-tagged leases. The worker
 queries only FIFO heads and calls the backend outside data-structure locks.
 Steady-state execution creates or destroys no events.
 
+## Dispatcher, streams, and worker timeline
+
+```text
+Python dispatcher       compute stream         C worker          transfer lane
+       |                      |                     |                    |
+       | before_task()        |                     |                    |
+       | acquire generation   |                     |                    |
+       |--------------------->| wait(readiness)     |                    |
+       | launch callable      | queued kernels      |                    |
+       | after_task()         |                     |                    |
+       |--------------------->| record task fence   |                    |
+       | reserve destination  |                     |                    |
+       | queue action ---------------------------->|                    |
+       | return / next task   |                     |------------------->| submit copy
+       |                      |                     | query FIFO heads   | record event
+       |                      |                     | publish generation | completion
+       | next before_task()   |                     |                    |
+       |--------------------->| wait(copy event)    |                    |
+```
+
+`before_task()` inserts a device-stream dependency; it does not synchronize
+the Python thread on ordinary readiness. `after_task()` reserves transfer
+capacity before returning, while copy submission and completion publication
+belong to the worker. A dispatcher allocation may wait only when a known
+pending transition can satisfy it; otherwise it fails with no progress.
+
 ## Task boundaries
 
 The Python `_before_task()` boundary resolves the immutable execution record,
@@ -138,3 +164,6 @@ timely ownership validation and error reporting.
 profiler. When runtime tracing is enabled, bounded preallocated buffers record
 task, allocator, transfer, and failure events and are converted to Python only
 when diagnostics are resolved.
+
+Previous: [Simulation](simulation.md). Continue with the [Python allocator
+guide](../python/allocator.md) or [Runtime C API](../c/runtime.md).

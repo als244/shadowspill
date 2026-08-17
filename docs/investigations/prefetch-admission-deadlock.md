@@ -1,5 +1,10 @@
 # A Timing-Dependent Prefetch Admission Failure
 
+> **Historical, non-normative investigation.** This report preserves evidence
+> from the implementation under investigation. Current behavior is defined by
+> [planning and physical admission](../architecture/planning.md) and the
+> [memory runtime](../architecture/memory-runtime.md).
+
 ## Purpose
 
 This document describes a real ShadowSpill failure in which the planner and

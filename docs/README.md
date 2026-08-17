@@ -6,22 +6,28 @@ statement applies to Python, C, or the framework-neutral design.
 
 ## Start here
 
-- [Architecture overview](architecture/overview.md) — component ownership,
-  data flow, and supported scope.
-- [Python guide](python/README.md) — installation, planning, execution,
-  artifacts, diagnostics, and public APIs.
-- [C guide](c/README.md) — compiled runtime, planner, simulator, PyTorch
-  adapter, and backend contracts.
-- [Development guide](development/README.md) — repository structure, testing,
-  naming, and documentation rules.
+- To use ShadowSpill from PyTorch, read the [Python quickstart](python/quickstart.md)
+  and then the [Python API](python/README.md).
+- To understand the system, follow the ordered path in the [architecture
+  overview](architecture/overview.md).
+- To integrate a compiled component or backend, start with the [C API
+  guide](c/README.md).
+- To modify the repository, use the [development guide](development/README.md).
 
 ## Architecture
 
-- [Intermediate representation](architecture/ir.md)
-- [PyTorch capture and lowering](architecture/lowering.md)
-- [Memory runtime](architecture/memory-runtime.md)
-- [Planning and physical admission](architecture/planning.md)
-- [Simulation](architecture/simulation.md)
+1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
+   ownership, invariants, and supported scope.
+2. [Intermediate representation](architecture/ir.md) — logical Programs,
+   recomputation, schedules, and execution plans.
+3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
+   executable storage, profiling, and canonical objects.
+4. [Planning and physical admission](architecture/planning.md) — PressureFit,
+   fixed layout, transfer inputs, and PlanReport.
+5. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
+   causal-dependency replay.
+6. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+   task boundaries, failure, and tracing.
 
 ## Historical evidence
 
@@ -34,6 +40,7 @@ current contract.
 ## Documentation policy
 
 Public behavior is documented here and tested against exported Python names,
-public C headers, and local links. Source files and installed headers remain
-authoritative for exact signatures, ABI constants, and cache schema labels so
-the public prose has no duplicate authority.
+public C headers, local links and heading anchors, and the Python signatures
+mirrored in API examples. Installed headers remain authoritative for C layouts,
+ABI constants, and exact C signatures. Source remains authoritative for cache
+schema labels and internal implementation details.

@@ -54,9 +54,10 @@ typedef struct ShadowSpillPytorchAdapterCapabilities {
 
 /*
  * Optional task-boundary host timestamps. The four host fields use
- * CLOCK_MONOTONIC. The six legacy compute-stream fields are reserved and zero;
- * the PyTorch frontend records non-invasive preallocated CUDA events for those
- * boundaries instead of executing host callbacks on the compute stream.
+ * CLOCK_MONOTONIC. The six compute-stream compatibility fields are reserved
+ * and zero; the PyTorch frontend records non-invasive preallocated CUDA events
+ * for those boundaries instead of executing host callbacks on the compute
+ * stream.
  */
 typedef struct ShadowSpillPytorchTaskHostTiming {
     uint64_t task_id;

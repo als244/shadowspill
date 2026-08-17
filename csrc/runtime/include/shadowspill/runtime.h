@@ -224,9 +224,9 @@ typedef struct ShadowSpillExecutionDescription {
     uint32_t allocation_abi_step_count;
     uint8_t enforce_allocation_abi;
     /*
-     * Conservative task-local allocator envelope. Zero selects an unbounded
-     * field for legacy/non-profiled callers. These bounds constrain behavior,
-     * never addresses or allocation order.
+     * Conservative task-local allocator envelope. Zero leaves a field
+     * unbounded for a caller without a task profile. These bounds constrain
+     * behavior, never addresses or allocation order.
      */
     uint64_t maximum_requested_allocation_bytes;
     uint64_t maximum_charged_allocation_bytes;

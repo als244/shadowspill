@@ -2,7 +2,9 @@
 
 The ShadowSpill IR is framework-neutral. Its public Python values live in
 `shadowspill.ir`; the same concepts are flattened into C inputs at planner,
-simulator, and runtime boundaries.
+simulator, and runtime boundaries. It is produced by [PyTorch lowering](lowering.md)
+and consumed by [planning](planning.md), [simulation](simulation.md), and
+[runtime materialization](memory-runtime.md).
 
 ## Program
 
@@ -70,3 +72,6 @@ IR constructors validate references, unique identities, action ordering, and
 selection consistency. Invalid input raises `ValidationError` before a C
 component is invoked. Planner and simulator infeasibility is distinct from IR
 validation failure.
+
+Previous: [Architecture overview](overview.md). Next: [PyTorch capture and
+lowering](lowering.md).

@@ -2,7 +2,8 @@
 
 Planning is a sequence of reusable artifact transformations. The public
 orchestrators are intentionally small; each artifact can also be constructed
-or consumed independently.
+or consumed independently. These transformations select and physically admit
+the [logical Program](ir.md); they do not recapture or execute the model.
 
 ```text
 capture/export and graph lowering
@@ -90,3 +91,6 @@ graph-pair variants, storage contracts, physical layouts, allocation events,
 profile measurements, cache artifacts, transfer calibration, and phase times.
 Verbose console output is only presentation; disabling it does not remove the
 report.
+
+Previous: [PyTorch capture and lowering](lowering.md). Next:
+[Simulation](simulation.md).

@@ -2,7 +2,8 @@
 
 ShadowSpill separates semantic identity from compiled allocation geometry.
 This prevents incidental FakeTensor storage or allocator callback identity
-from merging or splitting logical objects.
+from merging or splitting logical objects. The output is the canonical
+[framework-neutral Program](ir.md), not a PyTorch execution trace.
 
 ```text
 Export/AOT FX semantics
@@ -95,3 +96,6 @@ Lowering performs no model-family or operator-specific policy. Custom
 operations work when their fake/meta behavior and alias/mutation schemas are
 correct. Opaque external workspace may still require measurement because it
 is not fully represented in FX or Inductor's visible buffer graph.
+
+Previous: [Intermediate representation](ir.md). Next: [Planning and physical
+admission](planning.md).

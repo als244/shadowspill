@@ -1,39 +1,116 @@
 # Architecture overview
 
 ShadowSpill turns a fixed-shape PyTorch forward or accumulated training step
-into an explicit program, chooses recomputation and memory actions, admits a
-physical layout, and returns an ordinary Python callable. PyTorch and the
-compiled provider still execute the numerical work; ShadowSpill owns memory
-residency, movement, readiness, and the schedule around that work.
+into an explicit program, chooses recomputation and memory actions, proves that
+the selected schedule fits its physical memory pools, and returns an ordinary
+Python callable. PyTorch and the compiled provider execute the numerical work;
+ShadowSpill owns memory residency, movement, readiness, and the schedule around
+that work.
+
+## Reading order
+
+Read the architecture in execution order:
+
+1. This overview defines the vocabulary, artifacts, ownership boundaries, and
+   correctness invariants.
+2. [Intermediate representation](ir.md) defines the framework-neutral logical
+   program and schedule.
+3. [PyTorch capture and lowering](lowering.md) explains how PyTorch semantics
+   and compiled storage behavior become that program.
+4. [Planning and physical admission](planning.md) selects recomputation and
+   residency, then produces a physically admitted plan.
+5. [Simulation](simulation.md) predicts the selected compute, transfer, and
+   memory timeline.
+6. [Memory runtime](memory-runtime.md) executes the admitted plan through
+   pools, leases, task boundaries, transfer lanes, and the worker.
+
+The [Python guide](../python/README.md) and [C guide](../c/README.md) document
+the corresponding public interfaces.
+
+## End-to-end pipeline
 
 ```text
-PyTorch model and examples
-          |
-          v
-capture -> partition -> graph-pair construction -> lowering
-          |                                      |
-          |                                      v
-          |                                  StepProgram
-          |                                      |
-          |                                      v
-          +-----------------------------> PressureFit
-                                                 |
-                                                 v
-                                      physical admission
-                                                 |
-                                                 v
-                                      AnnotatedProgramPlan
-                                                 |
-                                                 v
-                                  materialized runtime callable
+PyTorch model, objective, optimizer, and fixed examples
+                         |
+                         v
+               Export/AOT capture
+                         |
+                         v
+                  stage partition
+                         |
+                         v
+              graph-pair construction
+                         |
+                         v
+             structural task compilation
+                         |
+                         v
+        timing, storage, and allocation profiling
+                         |
+                         v
+          canonical Program lowering and residency
+                         |
+                         v
+                    StepProgram
+                         |
+                         v
+                PressureFitProgram
+                         |
+                         v
+        recomputation and memory-policy selection
+                         |
+                         v
+               physical admission
+                         |
+                         v
+              AnnotatedProgramPlan
+                         |
+                         v
+        callable compilation and materialization
+                         |
+                         v
+          PlannedForward / PlannedTrainStep
 ```
+
+Capture and graph lowering determine semantics. Compilation and profiling
+determine executable geometry and cost. PressureFit chooses logical policy.
+Physical admission proves that the complete selected step has a valid layout.
+Materialization publishes that admitted plan to the runtime.
+
+## Artifact ladder
+
+| Artifact | Meaning | Reusable without |
+|---|---|---|
+| `Program` | Logical objects, tasks, profiles, resources, and recomputation alternatives for one schedule role | PyTorch |
+| `PressureFitProgram` | A `Program` plus residency, capacity, admission, and simulation inputs | Capture, compilation, or profiling |
+| `StepProgram` | Recurrent and optional initialization `PressureFitProgram` values plus training-step provenance | PressureFit or callable materialization |
+| `AnnotatedProgramPlan` | One selected schedule, physical layout, simulation result, and complete planning diagnostics | The model or runtime |
+| `PlanReport` | The published callable's Program, plan, execution mapping, profiles, cache lineage, and diagnostics | Console logging |
+
+`make_step_program()` stops at `StepProgram`. `pressurefit_program()` consumes
+one of its `PressureFitProgram` values under new budgets or transfer
+bandwidths. `plan_step()` and `plan_forward()` run the complete pipeline and
+return materialized callables.
+
+## Working vocabulary
+
+| Term | Meaning |
+|---|---|
+| Stage | One ordered partition of the captured model graph. |
+| Structural ABI | The shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
+| Graph pair | Compatible forward/backward alternatives for one differentiated structural task, commonly save and recompute. |
+| Storage root | One semantic allocation identity shared by all of its views. |
+| Program object | One logical alias bundle with size, role, persistence, and task dependencies. |
+| Action trigger | The task boundary at which a fetch, evict, or release becomes ordered and destination capacity is reserved. |
+| Physical admission | The proof that task allocations, object generations, transfers, and causal reuse fit the selected pools. |
+| Memory lease | Ownership of one pool range for one residency generation. |
 
 ## Component boundaries
 
 | Component | Owns | Does not own |
 |---|---|---|
 | PyTorch frontend | Export/AOT capture, stage partitioning, compiled task callables, tensor rebinding, objective and optimizer integration | Memory-policy search or transfer progress |
-| IR | Objects, tasks, resources, recomputation options, schedules, and resolved execution records | PyTorch tensors or CUDA handles |
+| IR | Objects, tasks, resources, recomputation options, schedules, and resolved execution records | PyTorch tensors or provider handles |
 | Planner | Recomputation portfolio, residency strategies, memory actions, and candidate selection | Numerical execution |
 | Physical admission | Allocation lifetimes, task-allocation ABI, fixed placements, dynamic scratch allowance, and causal reuse dependencies | PressureFit policy |
 | Simulator | Deterministic compute, transfer, memory, and dependency replay | Candidate generation |
@@ -41,15 +118,63 @@ capture -> partition -> graph-pair construction -> lowering
 | Backend | Provider allocation, copy, stream, event, and profiler operations | Object or schedule policy |
 
 Dependencies point inward through these contracts. The framework-neutral IR,
-planner, simulator, and runtime do not import PyTorch. Provider-specific CUDA
-code is confined to the CUDA backend and the PyTorch adapter.
+planner, simulator, and runtime do not import PyTorch. Raw CUDA driver calls
+and NVTX implementation live in the CUDA backend or PyTorch allocator adapter.
+The Python frontend uses PyTorch's device and stream APIs at its framework
+boundary but does not expose those details to the neutral components.
+
+## Following one object
+
+One logical value crosses the system without making its current pointer its
+identity:
+
+1. Export/AOT identifies the producing node, views, aliases, and mutations.
+2. A `TaskStorageContract` assigns the value a semantic storage root.
+3. Compilation and profiling attach executable extents, allocation behavior,
+   workspace, and timing without changing that root.
+4. `ObjectCatalog` maps the root to one canonical Program object across tasks.
+5. PressureFit selects whether the value is saved, recomputed, fetched,
+   evicted, retained, or released.
+6. Physical admission assigns compatible pool ranges and any required causal
+   reuse dependencies.
+7. Materialization registers the object and direct execution records with the
+   runtime.
+8. `before_task()` resolves the object's current lease generation, inserts an
+   unfinished readiness-event wait on the compute stream, and rebinds PyTorch
+   storage.
+9. `after_task()` publishes output or mutation generations, records task
+   completion, and triggers ordered memory actions.
+10. The worker submits transfers and publishes completion; generation checks
+    prevent stale work from modifying a successor.
+
+The [lowering contract](lowering.md) owns steps 1–4, [planning and
+admission](planning.md) own steps 5–6, and the [memory
+runtime](memory-runtime.md) owns steps 7–10.
+
+## Correctness invariants
+
+- Semantic object identity never depends on a transient pointer, allocator
+  callback identity, or incidental FakeTensor storage.
+- A callable is published only after both logical scheduling and physical
+  admission succeed for the same selected Program.
+- A pool range is reused only after stream order or an explicit completion
+  dependency makes the predecessor inaccessible.
+- Fetch and evict destinations consume capacity at their action trigger, even
+  when the copy reaches its lane later.
+- Every lease, event, transfer, and object publication is generation-checked;
+  stale completion cannot mutate a successor.
+- Execution and spill accounting never exceed their configured physical caps.
+- Allocation behavior outside the admitted strict core is bounded by dynamic
+  scratch; a mismatch fails before an invalid address reaches a kernel.
+- Planner, simulator, admission, and runtime identities are retained in
+  diagnostics so the executed plan can be reconciled mechanically.
 
 ## Runtime topology
 
 The supported runtime topology has one execution-device pool and one
 pinned-host spill pool. One C worker services independent fetch and evict
 lanes, completion frontiers, and deferred releases. The PyTorch dispatcher
-does not perform runtime progress and never waits for transfer completion on
+does not perform runtime progress and does not wait for transfer completion on
 the host when a stream dependency can express the same ordering.
 
 The runtime uses central owners with narrow synchronization:
@@ -89,13 +214,23 @@ lease transitions only; it never manipulates PyTorch storage objects.
 
 ## Supported scope
 
-The supported claim is deliberately narrow: fixed-shape graphs accepted by
-ShadowSpill's strict Export/AOTAutograd/Inductor capture, with correct fake/meta
-and alias/mutation contracts, can be lowered without model-specific policy.
-Graph breaks, unbounded data-dependent output geometry, or custom operations
-with incomplete semantic contracts fail during planning.
+| Capability | Current contract |
+|---|---|
+| Graph geometry | Fixed shape and stride under the captured guards |
+| Capture | Strict Export/AOTAutograd/Inductor with no graph breaks |
+| Custom operations | Supported when fake/meta and alias/mutation schemas are complete |
+| Data-dependent outputs | Unbounded output geometry is rejected during planning |
+| Execution backend | PyTorch on one CUDA execution device |
+| Spill backend | One registered pinned-host pool |
+| Runtime ownership | One process runtime and one active planned callable |
+| Transfer topology | One worker with independent fetch and evict lanes |
+| Allocation variability | Admitted strict core plus bounded optional dynamic scratch |
+| Cross-step residency | Not represented; startup fetches and final cooldown remain visible |
 
-Cross-step cyclic residency is outside the supported schedule model. Startup
-fetches and final cooldown therefore remain visible in real one-step
-measurements, while the steady-state simulator focuses on the selected step
-schedule.
+The supported claim is therefore precise: fixed-shape graphs accepted by the
+strict capture boundary, with correct fake/meta and alias/mutation contracts,
+can be lowered without model-specific policy. Unsupported behavior fails
+during capture, compilation, profiling, or admission rather than selecting a
+heuristic semantic fallback.
+
+Next: [Intermediate representation](ir.md).

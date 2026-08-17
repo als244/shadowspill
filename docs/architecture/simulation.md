@@ -2,7 +2,9 @@
 
 The simulator deterministically replays an explicit `Program`,
 `MemorySchedule`, recomputation selection, device configuration, and optional
-physical admission. It never invokes the planner.
+physical admission. It never invokes the planner. [PressureFit](planning.md)
+calls it while evaluating candidates, and the same public API can evaluate a
+supplied schedule independently.
 
 ## Resources and intervals
 
@@ -54,3 +56,6 @@ can compare, execution by execution and transfer by transfer:
 Simulator fidelity is evaluated on warmed execution. Startup fetches and final
 cooldown are reported separately because cross-step cyclic residency is not
 yet part of the schedule model.
+
+Previous: [Planning and physical admission](planning.md). Next: [Memory
+runtime](memory-runtime.md).

@@ -1,11 +1,16 @@
 # Qwen Runtime-Overhead Investigation
 
+> **Historical, non-normative investigation.** This report preserves evidence
+> from the implementation under investigation. Current behavior is defined by
+> the [memory runtime architecture](../architecture/memory-runtime.md) and
+> [diagnostics API](../python/api/diagnostics.md).
+
 ## Purpose
 
 This note explains why one recurrent Qwen 3.5 training step took materially
 longer under ShadowSpill than an equivalent whole-objective compiled PyTorch
-step. It is a live Phase-1 investigation record: established causes are
-separated from residual time that still requires controlled measurement.
+step. It preserves the Phase-1 investigation record: established causes are
+separated from residual time that required controlled measurement.
 
 The workload is the pure-PyTorch Qwen 3.5 numerical configuration, two
 microbatches, one optimizer update, and a 30 GiB physical device cap. At this
