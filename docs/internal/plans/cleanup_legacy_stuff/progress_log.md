@@ -1727,3 +1727,16 @@ the following work from the merged commit in this order:
   setup verifier consume that same inventory. Setup therefore checks the exact
   handle-oriented storage surface used by production instead of duplicating
   historical names.
+
+## 2026-08-17 — Shared-input write classification
+
+- Completed the lowering-side distinction between shared residency and shared
+  mutation. A causal or unordered input declaration describes cross-callable
+  consistency; it no longer makes a value writable merely because it is shared.
+- Forward lowering now derives the final shared-residency policy from the
+  emitted task graph. Aliases absent from every output replacement and mutation
+  are published as `SHARED_READ_ONLY`; aliases with a real write retain their
+  requested causal or unordered writable policy.
+- The classification is alias-root based, so views cannot disagree about write
+  ownership. The focused lowering, callable-lifecycle, and invocation suites
+  passed, as did Ruff, strict mypy, and the diff-integrity check.

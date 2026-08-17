@@ -79,4 +79,20 @@ def derive_forward_residency(
     )
 
 
-__all__ = ["derive_forward_residency"]
+def finalize_forward_shared_residency(
+    objects: ForwardObjects,
+    graph: ForwardTaskGraph,
+) -> None:
+    """Classify shared inputs from the writes in the emitted task graph."""
+
+    objects.catalog.finalize_shared_writes(
+        object_id
+        for task in graph.tasks
+        for object_id in (
+            *task.outputs,
+            *(mutation.object_id for mutation in task.mutations),
+        )
+    )
+
+
+__all__ = ["derive_forward_residency", "finalize_forward_shared_residency"]
