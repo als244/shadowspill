@@ -358,20 +358,9 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
         free(runtime);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
-    if (pthread_cond_init(&runtime->condition, NULL) != 0) {
-        pthread_mutex_destroy(&runtime->mutex);
-        pthread_mutex_destroy(&runtime->failure_lock);
-        pthread_mutex_destroy(&runtime->actions.lock);
-        runtime->actions.lock_initialized = 0U;
-        release_resources(runtime);
-        pthread_mutex_destroy(&runtime->plans_lock);
-        free(runtime);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-    }
     if (shadowspill_idle_wakeup_initialize(
             &runtime->idle_wakeup
         ) != 0) {
-        pthread_cond_destroy(&runtime->condition);
         pthread_mutex_destroy(&runtime->mutex);
         pthread_mutex_destroy(&runtime->failure_lock);
         pthread_mutex_destroy(&runtime->actions.lock);
@@ -427,7 +416,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_create(
 fail:
     release_resources(runtime);
     shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
-    pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);
     pthread_mutex_destroy(&runtime->actions.lock);
@@ -641,7 +629,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_close(
         );
     }
     atomic_store_explicit(&runtime->worker_stop, 1U, memory_order_release);
-    pthread_cond_broadcast(&runtime->condition);
     pthread_mutex_unlock(&runtime->mutex);
     shadowspill_idle_notify(runtime);
     if (runtime->worker_started) {
@@ -669,7 +656,6 @@ void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
     shadowspill_abort_current_task(runtime);
     (void)shadowspill_runtime_close(runtime);
     shadowspill_idle_wakeup_destroy(&runtime->idle_wakeup);
-    pthread_cond_destroy(&runtime->condition);
     pthread_mutex_destroy(&runtime->mutex);
     pthread_mutex_destroy(&runtime->failure_lock);
     pthread_mutex_destroy(&runtime->actions.lock);

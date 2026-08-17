@@ -904,39 +904,26 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     uint64_t expected_generation = 0U;
 
     /*
-     * An admitted task record retains direct object pointers. Caller
-     * handoff therefore drains this generation's actions but preserves the
-     * object record itself for the next recurrent invocation.
+     * Acquisition has already inserted a readiness-event wait into the
+     * consumer stream.  Snapshot the exact generation without waiting for a
+     * final fetch to complete on the host.
      */
-    pthread_mutex_lock(&runtime->mutex);
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        pthread_mutex_unlock(&runtime->mutex);
-        return status;
-    }
-    for (;;) {
-        pthread_mutex_lock(&object->lock);
-        const int settled = object->action_head == NULL &&
-            object->residency != SHADOWSPILL_OBJECT_PREFETCHING &&
-            object->residency != SHADOWSPILL_OBJECT_OFFLOADING;
-        if (settled || status != SHADOWSPILL_RUNTIME_OK) {
-            break;
-        }
-        pthread_mutex_unlock(&object->lock);
-        pthread_cond_wait(&runtime->condition, &runtime->mutex);
-        status = shadowspill_current_status_locked(runtime);
-    }
-    if (status == SHADOWSPILL_RUNTIME_OK &&
-        (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
-         object->allocation_id == SHADOWSPILL_RUNTIME_NO_ID ||
-         object->has_readiness_event)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
+    pthread_mutex_lock(&object->lock);
     const ShadowSpillObjectLocation *initial_execution =
         shadowspill_object_location(object, execution_pool->pool_id);
+    const int execution_available =
+        object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY ||
+        (object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
+         object->has_readiness_event);
+    if (status == SHADOWSPILL_RUNTIME_OK &&
+        (!execution_available || initial_execution == NULL ||
+         initial_execution->lease == NULL ||
+         object->allocation_id == SHADOWSPILL_RUNTIME_NO_ID)) {
+        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
     if (status == SHADOWSPILL_RUNTIME_OK && validate_expected &&
-        (initial_execution == NULL || initial_execution->lease == NULL ||
-         initial_execution->lease->pointer != required_pointer ||
+        (initial_execution->lease->pointer != required_pointer ||
          object->generation != required_generation ||
          object->allocation_id != required_allocation_id)) {
         status = SHADOWSPILL_RUNTIME_INVALID_STATE;
@@ -946,7 +933,6 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
         expected_generation = object->generation;
     }
     pthread_mutex_unlock(&object->lock);
-    pthread_mutex_unlock(&runtime->mutex);
     if (status != SHADOWSPILL_RUNTIME_OK) {
         return status;
     }
@@ -962,15 +948,32 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     }
 
     /* Commit ownership only if the snapshotted generation is still current. */
-    pthread_mutex_lock(&runtime->mutex);
     status = shadowspill_current_status_locked(runtime);
     pthread_mutex_lock(&object->lock);
+    ShadowSpillObjectLocation *execution = shadowspill_object_location(
+        object, execution_pool->pool_id
+    );
+    ShadowSpillQueuedAction *settling_fetch = NULL;
+    if (object->action_head != NULL &&
+        object->action_head == object->action_tail &&
+        object->action_head->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+        object->action_head->state == SHADOWSPILL_ACTION_IN_FLIGHT &&
+        ((object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
+          object->has_readiness_event &&
+          object->action_head->completion_event == object->readiness_event) ||
+         (object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY &&
+          !object->has_readiness_event))) {
+        settling_fetch = object->action_head;
+    }
+    const int ready_without_actions =
+        object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY &&
+        object->action_head == NULL && !object->has_readiness_event;
     if (status != SHADOWSPILL_RUNTIME_OK ||
         atomic_load_explicit(&object->detached, memory_order_acquire) != 0U ||
         object->allocation_id != expected_allocation_id ||
         object->generation != expected_generation ||
-        object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
-        object->action_head != NULL || object->has_readiness_event) {
+        execution == NULL || execution->lease == NULL ||
+        (!ready_without_actions && settling_fetch == NULL)) {
         status = status == SHADOWSPILL_RUNTIME_OK
             ? SHADOWSPILL_RUNTIME_INVALID_STATE
             : status;
@@ -1009,15 +1012,23 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
         spill->owns_lease = 0U;
         spill->current = 0U;
     }
+    if (settling_fetch != NULL) {
+        if (settling_fetch->caller_handoff_lease != NULL) {
+            status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+            goto done_allocation;
+        }
+    }
     record->framework_free_seen = 0;
     record->plan_owned = 0;
     record->bound_object = NULL;
+    if (settling_fetch != NULL) {
+        shadowspill_memory_lease_retain(record);
+        settling_fetch->caller_handoff_lease = record;
+        settling_fetch->caller_handoff_generation = record->generation;
+    }
     object->retired_generation = object->generation;
     object->retired_execution_pointer = record->pointer;
     object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-    ShadowSpillObjectLocation *execution = shadowspill_object_location(
-        object, execution_pool->pool_id
-    );
     execution->lease = NULL;
     execution->current = 0U;
     object->residency = SHADOWSPILL_OBJECT_RELEASED;
@@ -1040,7 +1051,6 @@ done_allocation:
     shadowspill_memory_pool_unlock_foreground(execution_pool);
 done_object:
     pthread_mutex_unlock(&object->lock);
-    pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
 

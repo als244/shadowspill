@@ -83,7 +83,6 @@ static void latch_failure(
         (uint64_t)status,
         runtime->failure.free_bytes
     );
-    pthread_cond_broadcast(&runtime->condition);
     shadowspill_idle_notify(runtime);
 }
 
@@ -317,7 +316,6 @@ ShadowSpillRuntimeStatus shadowspill_runtime_recover_no_progress(
     pthread_mutex_unlock(&runtime->failure_lock);
     shadowspill_memory_pool_unlock_foreground(pool);
     if (status == SHADOWSPILL_RUNTIME_OK) {
-        pthread_cond_broadcast(&runtime->condition);
         shadowspill_idle_notify(runtime);
         shadowspill_notify_worker(runtime);
     }
