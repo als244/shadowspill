@@ -585,3 +585,15 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   PyTorch canaries; forward, mutation, and training handle-path gates; focused
   Python boundary tests; Ruff; strict mypy over 177 source files; and
   `git diff --check`.
+
+## 2026-08-17 — Canonical runtime lifecycle
+
+- Removed the lifecycle forwarding translation unit and its private
+  `_legacy` declarations. Runtime creation, idle waiting, spill-pool resizing,
+  close, and destroy now each have exactly one implementation in `runtime.c`.
+- This is a structural deletion only: pool-role validation, default-plan
+  compatibility, teardown ordering, and backend behavior are unchanged so they
+  can be migrated and qualified independently.
+- Validation passed: warnings-as-errors build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.
