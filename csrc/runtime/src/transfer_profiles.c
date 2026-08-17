@@ -33,13 +33,12 @@ ShadowSpillTransferRoute *shadowspill_transfer_route(
     if (runtime == NULL) {
         return NULL;
     }
-    if (runtime->fetch_route.source_pool_id == source_pool_id &&
-        runtime->fetch_route.destination_pool_id == destination_pool_id) {
-        return &runtime->fetch_route;
-    }
-    if (runtime->evict_route.source_pool_id == source_pool_id &&
-        runtime->evict_route.destination_pool_id == destination_pool_id) {
-        return &runtime->evict_route;
+    for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
+        ShadowSpillTransferRoute *route = &runtime->routes[route_id].route;
+        if (route->source_pool_id == source_pool_id &&
+            route->destination_pool_id == destination_pool_id) {
+            return route;
+        }
     }
     return NULL;
 }
@@ -51,13 +50,21 @@ ShadowSpillBackendStream *shadowspill_transfer_route_lane(
     if (runtime == NULL || route == NULL) {
         return NULL;
     }
-    if (route == &runtime->fetch_route) {
-        return &runtime->fetch_stream;
-    }
-    if (route == &runtime->evict_route) {
-        return &runtime->evict_stream;
+    for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
+        if (route == &runtime->routes[route_id].route) {
+            return &runtime->routes[route_id].lane;
+        }
     }
     return NULL;
+}
+
+ShadowSpillRouteState *shadowspill_runtime_route(
+    ShadowSpillRuntime *runtime,
+    uint32_t route_id
+) {
+    return runtime == NULL || route_id >= runtime->route_count
+        ? NULL
+        : &runtime->routes[route_id];
 }
 
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime) {

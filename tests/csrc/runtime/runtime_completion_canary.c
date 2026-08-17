@@ -21,7 +21,7 @@ enum {
 int main(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 2000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -29,15 +29,17 @@ int main(void) {
     }
 
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = COMPLETION_COUNT * ALLOCATION_BYTES,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 10000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(
+        mock,
+        COMPLETION_COUNT * ALLOCATION_BYTES,
+        0U,
+        1U,
+        10000U,
+        &topology
+    );
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         return EXIT_FAILURE;

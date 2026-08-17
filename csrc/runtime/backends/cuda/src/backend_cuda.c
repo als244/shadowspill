@@ -198,10 +198,8 @@ static int free_spill(void *context, void *pointer) {
 
 static int create_stream(
     void *context,
-    ShadowSpillTransferKind kind,
     ShadowSpillBackendStream *stream
 ) {
-    (void)kind;
     ShadowSpillCudaBackend *backend = context;
     if (stream == NULL || activate_context(backend) != 0) {
         return -1;
@@ -367,7 +365,7 @@ static int copy_async(
     void *destination,
     const void *source,
     uint64_t bytes,
-    ShadowSpillTransferKind kind,
+    uint8_t fetch,
     ShadowSpillBackendStream stream
 ) {
     ShadowSpillCudaBackend *backend = context;
@@ -376,7 +374,7 @@ static int copy_async(
         return -1;
     }
     CUresult result;
-    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
+    if (fetch) {
         result = cuMemcpyHtoDAsync(
             (CUdeviceptr)(uintptr_t)destination,
             source,
@@ -395,7 +393,7 @@ static int copy_async(
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
+    if (fetch) {
         ++backend->statistics.fetch_copies;
         backend->statistics.bytes_fetched += bytes;
     } else {
@@ -404,6 +402,26 @@ static int copy_async(
     }
     pthread_mutex_unlock(&backend->mutex);
     return 0;
+}
+
+static int fetch_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    return copy_async(context, destination, source, bytes, 1U, stream);
+}
+
+static int evict_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    return copy_async(context, destination, source, bytes, 0U, stream);
 }
 
 static int synchronize_stream(
@@ -581,25 +599,79 @@ void shadowspill_cuda_backend_destroy(ShadowSpillCudaBackend *backend) {
     free(backend);
 }
 
-ShadowSpillBackend shadowspill_cuda_backend_vtable(
+ShadowSpillMemoryPoolBackend shadowspill_cuda_device_pool_backend(
     ShadowSpillCudaBackend *backend
 ) {
-    return (ShadowSpillBackend){
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    return (ShadowSpillMemoryPoolBackend){
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
         .context = backend,
-        .allocate_execution = allocate_execution,
-        .free_execution = free_execution,
-        .allocate_spill = allocate_spill,
-        .free_spill = free_spill,
-        .create_stream = create_stream,
-        .destroy_stream = destroy_stream,
+        .allocate_arena = allocate_execution,
+        .close = free_execution,
+    };
+}
+
+ShadowSpillMemoryPoolBackend shadowspill_cuda_pinned_pool_backend(
+    ShadowSpillCudaBackend *backend
+) {
+    return (ShadowSpillMemoryPoolBackend){
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
+        .context = backend,
+        .allocate_arena = allocate_spill,
+        .close = free_spill,
+    };
+}
+
+static ShadowSpillTransferRoute cuda_route(
+    ShadowSpillCudaBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id,
+    int (*copy)(
+        void *, void *, const void *, uint64_t, ShadowSpillBackendStream
+    )
+) {
+    return (ShadowSpillTransferRoute){
+        .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
+        .source_pool_id = source_pool_id,
+        .destination_pool_id = destination_pool_id,
+        .context = backend,
+        .create_lane = create_stream,
+        .destroy_lane = destroy_stream,
+        .copy_async = copy,
+        .synchronize_lane = synchronize_stream,
+    };
+}
+
+ShadowSpillTransferRoute shadowspill_cuda_fetch_route(
+    ShadowSpillCudaBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+) {
+    return cuda_route(
+        backend, source_pool_id, destination_pool_id, fetch_async
+    );
+}
+
+ShadowSpillTransferRoute shadowspill_cuda_evict_route(
+    ShadowSpillCudaBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+) {
+    return cuda_route(
+        backend, source_pool_id, destination_pool_id, evict_async
+    );
+}
+
+ShadowSpillSynchronizationBackend shadowspill_cuda_synchronization_backend(
+    ShadowSpillCudaBackend *backend
+) {
+    return (ShadowSpillSynchronizationBackend){
+        .abi_version = SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION,
+        .context = backend,
         .create_event = create_event,
         .destroy_event = destroy_event,
         .record_event = record_event,
         .query_event = query_event,
         .wait_event = wait_event,
-        .copy_async = copy_async,
-        .synchronize_stream = synchronize_stream,
     };
 }
 

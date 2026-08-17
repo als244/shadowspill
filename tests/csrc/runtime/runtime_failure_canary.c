@@ -10,6 +10,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 typedef struct WaitingAllocation {
     ShadowSpillRuntime *runtime;
     ShadowSpillBackendStream stream;
@@ -44,24 +46,19 @@ static void *acquire_unpublished_fetch(void *pointer) {
 static int impossible_oom(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 1U,
-        .minimum_alignment = 1U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     ShadowSpillAllocation full = {0};
     ShadowSpillAllocation impossible = {0};
     int result = 0;
-    if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 1U, 1U, 0U, &runtime
+        ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_allocate(runtime, 128U, 1U, stream, &full) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -98,25 +95,19 @@ static int impossible_oom(void) {
 static int worker_failure(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 1000000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 1U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 10000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     ShadowSpillBackendStream other_stream = {{0U, 0U}};
     ShadowSpillAllocation allocation = {0};
-    if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 1U, 1U, 10000U, &runtime
+        ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_mock_create_compute_stream(mock, &other_stream) != 0 ||
         shadowspill_allocate(runtime, 128U, 1U, stream, &allocation) !=
@@ -179,21 +170,13 @@ static int worker_failure(void) {
 static int worker_failure_wakes_readiness_waiter(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 1000000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     const ShadowSpillObjectDescription object = {
         .object_id = 19U,
@@ -216,7 +199,9 @@ static int worker_failure_wakes_readiness_waiter(void) {
         .input_count = 1U,
     };
     int result = 0;
-    if (shadowspill_runtime_create(&config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_register_object(runtime, &object) !=
@@ -275,24 +260,18 @@ done:
 static int fragmented_oom(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 1U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 10000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     ShadowSpillAllocation blocks[4] = {{0}};
     int result = 0;
-    if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 1U, 1U, 10000U, &runtime
+        ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0) {
         result = -1;
         goto done;
@@ -344,26 +323,20 @@ done:
 static int failed_task_retirement_recovery(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 1U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation impossible = {0};
     ShadowSpillAllocation recovered = {0};
     int result = 0;
-    if (shadowspill_runtime_create(&config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 1U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_before_task(
@@ -420,20 +393,12 @@ done:
 static int failed_prefetch_reports_trigger_reservation_oom(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillBackendStream stream = {{0U, 0U}};
     ShadowSpillAllocation temporary = {0};
     const ShadowSpillObjectDescription object = {
@@ -455,7 +420,9 @@ static int failed_prefetch_reports_trigger_reservation_oom(void) {
         .live_charged_allocation_limit_bytes = 128U,
     };
     int result = 0;
-    if (shadowspill_runtime_create(&config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
         shadowspill_register_object(runtime, &object) !=

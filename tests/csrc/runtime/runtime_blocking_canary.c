@@ -29,22 +29,19 @@ static void *allocate_from_thread(void *pointer) {
 int main(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 2000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return EXIT_FAILURE;
     }
     ShadowSpillRuntime *runtime = NULL;
-    const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 1U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 10000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
-    if (shadowspill_runtime_create(&config, &runtime) != SHADOWSPILL_RUNTIME_OK) {
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(
+        mock, 128U, 1U, 1U, 10000U, &topology
+    );
+    if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
+        SHADOWSPILL_RUNTIME_OK) {
         return EXIT_FAILURE;
     }
     ShadowSpillBackendStream first_stream = {{0U, 0U}};

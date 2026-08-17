@@ -95,9 +95,29 @@ SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_destroy(
     ShadowSpillCudaBackend *backend
 );
 
-/* Returns a copied neutral vtable borrowing backend as its context. */
-SHADOWSPILL_BACKEND_CUDA_API ShadowSpillBackend
-shadowspill_cuda_backend_vtable(ShadowSpillCudaBackend *backend);
+/* Component vtables borrow backend as their context. */
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillMemoryPoolBackend
+shadowspill_cuda_device_pool_backend(ShadowSpillCudaBackend *backend);
+
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillMemoryPoolBackend
+shadowspill_cuda_pinned_pool_backend(ShadowSpillCudaBackend *backend);
+
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillTransferRoute
+shadowspill_cuda_fetch_route(
+    ShadowSpillCudaBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+);
+
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillTransferRoute
+shadowspill_cuda_evict_route(
+    ShadowSpillCudaBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+);
+
+SHADOWSPILL_BACKEND_CUDA_API ShadowSpillSynchronizationBackend
+shadowspill_cuda_synchronization_backend(ShadowSpillCudaBackend *backend);
 
 /* Returns the NVIDIA profiler implementation as a neutral profiler vtable. */
 SHADOWSPILL_BACKEND_CUDA_API ShadowSpillProfiler

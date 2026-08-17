@@ -296,13 +296,40 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
     }
+    const ShadowSpillMemoryPoolDescription pools[] = {
+        {
+            .pool_id = 0U,
+            .capacity_bytes = execution_pool_bytes,
+            .minimum_alignment = capabilities.recommended_minimum_alignment,
+            .backend = shadowspill_cuda_device_pool_backend(cuda),
+        },
+        {
+            .pool_id = 1U,
+            .capacity_bytes = config->spill_pool_bytes,
+            .minimum_alignment = 1U,
+            .backend = shadowspill_cuda_pinned_pool_backend(cuda),
+        },
+    };
+    const ShadowSpillTransferRouteDescription routes[] = {
+        {
+            .route_id = 0U,
+            .name = "shadowspill_fetch",
+            .route = shadowspill_cuda_fetch_route(cuda, 1U, 0U),
+        },
+        {
+            .route_id = 1U,
+            .name = "shadowspill_evict",
+            .route = shadowspill_cuda_evict_route(cuda, 0U, 1U),
+        },
+    };
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = execution_pool_bytes,
-        .spill_pool_bytes = config->spill_pool_bytes,
-        .minimum_alignment = capabilities.recommended_minimum_alignment,
+        .pools = pools,
+        .pool_count = (uint32_t)(sizeof(pools) / sizeof(pools[0])),
+        .routes = routes,
+        .route_count = (uint32_t)(sizeof(routes) / sizeof(routes[0])),
         .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
-        .backend = shadowspill_cuda_backend_vtable(cuda),
+        .synchronization = shadowspill_cuda_synchronization_backend(cuda),
         .profiler = shadowspill_cuda_backend_profiler(cuda),
     };
     ShadowSpillRuntime *runtime = NULL;

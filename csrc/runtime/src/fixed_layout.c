@@ -362,8 +362,8 @@ static int visit_successor_dependencies(
             return ready;
         }
         if (event != NULL && stream != NULL) {
-            const int wait_status = runtime->backend.wait_event(
-                runtime->backend.context, *stream, event->event
+            const int wait_status = runtime->synchronization.wait_event(
+                runtime->synchronization.context, *stream, event->event
             );
             (void)shadowspill_event_lease_release(runtime, event);
             if (wait_status != 0) {

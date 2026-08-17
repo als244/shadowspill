@@ -8,9 +8,9 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_BACKEND_ABI_VERSION 1U
 #define SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION 1U
+#define SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION 1U
 
 typedef struct ShadowSpillBackendStream {
     uintptr_t words[2];
@@ -59,45 +59,16 @@ typedef struct ShadowSpillTransferRoute {
     int (*synchronize_lane)(void *context, ShadowSpillBackendStream lane);
 } ShadowSpillTransferRoute;
 
-typedef enum ShadowSpillTransferKind {
-    SHADOWSPILL_TRANSFER_FETCH = 0,
-    SHADOWSPILL_TRANSFER_EVICT = 1,
-} ShadowSpillTransferKind;
-
 /*
- * Framework-neutral backend operations. Every operation returns zero on
- * success and nonzero on failure. Stream and event values are opaque tokens
- * created and interpreted solely by the selected backend.
- *
- * The runtime copies this table but borrows context, which must outlive it.
- * Execution and spill arenas are owned by the runtime after a successful
- * allocate call and are returned exactly once through the matching free call.
- * Created streams and events follow the same ownership rule.
- *
- * copy_async, record_event, and wait_event enqueue work without synchronizing
- * the host. Memory passed to copy_async must remain valid through the recorded
- * completion event. query_event is a nonblocking poll. synchronize_stream is
- * used only at explicit lifecycle boundaries.
- *
- * A backend must tolerate calls from the frontend thread and the runtime
- * worker thread. ShadowSpill serializes state transitions, but the backend
- * remains responsible for the thread-safety of its own context.
+ * Event operations shared by execution streams and transfer-route lanes.
+ * Streams and events are opaque backend tokens. The runtime borrows context,
+ * which must outlive it, and owns every event successfully created here.
+ * record_event and wait_event enqueue without synchronizing the host;
+ * query_event is a nonblocking poll.
  */
-typedef struct ShadowSpillBackend {
+typedef struct ShadowSpillSynchronizationBackend {
     uint32_t abi_version;
     void *context;
-
-    int (*allocate_execution)(void *context, uint64_t bytes, void **pointer);
-    int (*free_execution)(void *context, void *pointer);
-    int (*allocate_spill)(void *context, uint64_t bytes, void **pointer);
-    int (*free_spill)(void *context, void *pointer);
-
-    int (*create_stream)(
-        void *context,
-        ShadowSpillTransferKind kind,
-        ShadowSpillBackendStream *stream
-    );
-    int (*destroy_stream)(void *context, ShadowSpillBackendStream stream);
     int (*create_event)(void *context, ShadowSpillBackendEvent *event);
     int (*destroy_event)(void *context, ShadowSpillBackendEvent event);
     int (*record_event)(
@@ -115,19 +86,7 @@ typedef struct ShadowSpillBackend {
         ShadowSpillBackendStream stream,
         ShadowSpillBackendEvent event
     );
-    int (*copy_async)(
-        void *context,
-        void *destination,
-        const void *source,
-        uint64_t bytes,
-        ShadowSpillTransferKind kind,
-        ShadowSpillBackendStream stream
-    );
-    int (*synchronize_stream)(
-        void *context,
-        ShadowSpillBackendStream stream
-    );
-} ShadowSpillBackend;
+} ShadowSpillSynchronizationBackend;
 
 #ifdef __cplusplus
 }

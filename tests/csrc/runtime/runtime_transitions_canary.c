@@ -10,6 +10,7 @@
 #include <shadowspill/runtime.h>
 
 #include "internal.h"
+#include "runtime_test.h"
 
 typedef struct Fixture {
     ShadowSpillMockBackend *mock;
@@ -19,7 +20,7 @@ typedef struct Fixture {
 
 static int fixture_create(Fixture *fixture) {
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000U,
         .evict_delay_nanoseconds = 1000U,
     };
@@ -28,16 +29,8 @@ static int fixture_create(Fixture *fixture) {
         ) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 256U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(fixture->mock),
-    };
-    if (shadowspill_runtime_create(
-            &runtime_config, &fixture->runtime
+    if (shadowspill_test_create_runtime(
+            fixture->mock, 128U, 256U, 1U, 1000U, &fixture->runtime
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(
             fixture->mock, &fixture->compute
@@ -137,23 +130,16 @@ static int prefetch_window_is_enqueued_without_host_blocking(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
-    };
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 100000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig configured = runtime_config;
-    configured.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&configured, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 100000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -229,22 +215,16 @@ static int inflight_prefetch_transfers_to_caller(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 100000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 100000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -302,22 +282,16 @@ static int offload_window_is_enqueued_without_host_serialization(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .evict_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
-    };
-    ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 100000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    runtime_config.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 100000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -585,23 +559,17 @@ static int chained_output_allocation_handoff(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         /* Keep the first release pending while the dispatcher submits the
          * second zero-copy handoff on the same ordered compute stream. */
         .event_delay_nanoseconds = 50000000U,
     };
-    ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-    };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    runtime_config.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -1723,22 +1691,16 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 96U,
-        .spill_pool_bytes = 96U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 96U, 96U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK || shadowspill_mock_create_compute_stream(
             mock, &compute
         ) != 0) {
@@ -1829,22 +1791,16 @@ static int queued_release_causally_precedes_fetch(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -1943,24 +1899,17 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .evict_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 10000000U,
     };
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-    };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig configured = runtime_config;
-    configured.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&configured, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -2057,23 +2006,16 @@ static int completed_offload_preserves_later_queued_fetch(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .evict_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 10000000U,
-    };
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig configured = runtime_config;
-    configured.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&configured, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
@@ -2164,23 +2106,16 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 50000000U,
         .event_delay_nanoseconds = 1000000U,
-    };
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig configured = runtime_config;
-    configured.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&configured, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);

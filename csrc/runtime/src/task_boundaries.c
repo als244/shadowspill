@@ -354,8 +354,9 @@ static ShadowSpillRuntimeStatus record_task_completion_event(
     ShadowSpillRuntimeStatus status = shadowspill_event_lease_create_locked(
         runtime, &event
     );
-    if (status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
-            runtime->backend.context, event->event, compute_stream
+    if (status != SHADOWSPILL_RUNTIME_OK ||
+        runtime->synchronization.record_event(
+            runtime->synchronization.context, event->event, compute_stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             compute_stream,

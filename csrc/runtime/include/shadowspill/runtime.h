@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 28U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 29U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -89,13 +89,27 @@ typedef enum ShadowSpillTraceEventKind {
     SHADOWSPILL_TRACE_FAILURE_LATCHED = 12,
 } ShadowSpillTraceEventKind;
 
+typedef struct ShadowSpillMemoryPoolDescription {
+    uint32_t pool_id;
+    uint64_t capacity_bytes;
+    uint64_t minimum_alignment;
+    ShadowSpillMemoryPoolBackend backend;
+} ShadowSpillMemoryPoolDescription;
+
+typedef struct ShadowSpillTransferRouteDescription {
+    uint32_t route_id;
+    const char *name;
+    ShadowSpillTransferRoute route;
+} ShadowSpillTransferRouteDescription;
+
 typedef struct ShadowSpillRuntimeConfig {
     uint32_t abi_version;
-    uint64_t execution_pool_bytes;
-    uint64_t spill_pool_bytes;
-    uint64_t minimum_alignment;
+    const ShadowSpillMemoryPoolDescription *pools;
+    uint32_t pool_count;
+    const ShadowSpillTransferRouteDescription *routes;
+    uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
-    ShadowSpillBackend backend;
+    ShadowSpillSynchronizationBackend synchronization;
     ShadowSpillProfiler profiler;
 } ShadowSpillRuntimeConfig;
 
@@ -424,10 +438,11 @@ typedef struct ShadowSpillObjectSnapshot {
 } ShadowSpillObjectSnapshot;
 
 /*
- * Creates one runtime, execution and spill pools, directed transfer lanes,
- * and worker thread. The configuration and backend table are copied; the
- * backend context is borrowed and must outlive the runtime. On failure, output
- * is set to NULL and all successfully created resources are reclaimed.
+ * Creates one runtime from explicit pool and directed-route registries, a
+ * synchronization backend, profiler, and worker. Registry entries are copied;
+ * backend contexts are borrowed and must outlive the runtime. Pool and route
+ * IDs must equal their dense registry positions. On failure, output is set to
+ * NULL and successfully created resources are reclaimed in reverse order.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,

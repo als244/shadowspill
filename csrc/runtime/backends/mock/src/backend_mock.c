@@ -94,10 +94,8 @@ static int free_spill(void *context, void *pointer) {
 
 static int create_stream(
     void *context,
-    ShadowSpillTransferKind kind,
     ShadowSpillBackendStream *stream
 ) {
-    (void)kind;
     ShadowSpillMockBackend *backend = context;
     if (stream == NULL || operation_fails(backend)) {
         return -1;
@@ -230,7 +228,7 @@ static int copy_async(
     void *destination,
     const void *source,
     uint64_t bytes,
-    ShadowSpillTransferKind kind,
+    uint8_t fetch,
     ShadowSpillBackendStream stream
 ) {
     ShadowSpillMockBackend *backend = context;
@@ -250,16 +248,36 @@ static int copy_async(
     if (target->ready_nanoseconds < now) {
         target->ready_nanoseconds = now;
     }
-    target->ready_nanoseconds += kind == SHADOWSPILL_TRANSFER_FETCH
+    target->ready_nanoseconds += fetch
         ? backend->config.fetch_delay_nanoseconds
         : backend->config.evict_delay_nanoseconds;
-    if (kind == SHADOWSPILL_TRANSFER_FETCH) {
+    if (fetch) {
         ++backend->statistics.fetch_copies;
     } else {
         ++backend->statistics.evict_copies;
     }
     pthread_mutex_unlock(&backend->mutex);
     return 0;
+}
+
+static int fetch_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    return copy_async(context, destination, source, bytes, 1U, stream);
+}
+
+static int evict_async(
+    void *context,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    return copy_async(context, destination, source, bytes, 0U, stream);
 }
 
 static int synchronize_stream(
@@ -295,7 +313,7 @@ int shadowspill_mock_backend_create(
     ShadowSpillMockBackend **output
 ) {
     if (config == NULL || output == NULL ||
-        config->abi_version != SHADOWSPILL_BACKEND_ABI_VERSION) {
+        config->abi_version != SHADOWSPILL_MOCK_BACKEND_ABI_VERSION) {
         return -1;
     }
     *output = calloc(1U, sizeof(**output));
@@ -319,25 +337,124 @@ void shadowspill_mock_backend_destroy(ShadowSpillMockBackend *backend) {
     free(backend);
 }
 
-ShadowSpillBackend shadowspill_mock_backend_vtable(
+ShadowSpillMemoryPoolBackend shadowspill_mock_execution_pool_backend(
     ShadowSpillMockBackend *backend
 ) {
-    return (ShadowSpillBackend){
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+    return (ShadowSpillMemoryPoolBackend){
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
         .context = backend,
-        .allocate_execution = allocate_execution,
-        .free_execution = free_execution,
-        .allocate_spill = allocate_spill,
-        .free_spill = free_spill,
-        .create_stream = create_stream,
-        .destroy_stream = destroy_stream,
+        .allocate_arena = allocate_execution,
+        .close = free_execution,
+    };
+}
+
+ShadowSpillMemoryPoolBackend shadowspill_mock_spill_pool_backend(
+    ShadowSpillMockBackend *backend
+) {
+    return (ShadowSpillMemoryPoolBackend){
+        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
+        .context = backend,
+        .allocate_arena = allocate_spill,
+        .close = free_spill,
+    };
+}
+
+static ShadowSpillTransferRoute mock_route(
+    ShadowSpillMockBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id,
+    int (*copy)(
+        void *, void *, const void *, uint64_t, ShadowSpillBackendStream
+    )
+) {
+    return (ShadowSpillTransferRoute){
+        .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
+        .source_pool_id = source_pool_id,
+        .destination_pool_id = destination_pool_id,
+        .context = backend,
+        .create_lane = create_stream,
+        .destroy_lane = destroy_stream,
+        .copy_async = copy,
+        .synchronize_lane = synchronize_stream,
+    };
+}
+
+ShadowSpillTransferRoute shadowspill_mock_fetch_route(
+    ShadowSpillMockBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+) {
+    return mock_route(
+        backend, source_pool_id, destination_pool_id, fetch_async
+    );
+}
+
+ShadowSpillTransferRoute shadowspill_mock_evict_route(
+    ShadowSpillMockBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+) {
+    return mock_route(
+        backend, source_pool_id, destination_pool_id, evict_async
+    );
+}
+
+ShadowSpillSynchronizationBackend shadowspill_mock_synchronization_backend(
+    ShadowSpillMockBackend *backend
+) {
+    return (ShadowSpillSynchronizationBackend){
+        .abi_version = SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION,
+        .context = backend,
         .create_event = create_event,
         .destroy_event = destroy_event,
         .record_event = record_event,
         .query_event = query_event,
         .wait_event = wait_event,
-        .copy_async = copy_async,
-        .synchronize_stream = synchronize_stream,
+    };
+}
+
+void shadowspill_mock_runtime_topology(
+    ShadowSpillMockBackend *backend,
+    uint64_t execution_pool_bytes,
+    uint64_t spill_pool_bytes,
+    uint64_t minimum_alignment,
+    uint64_t worker_poll_nanoseconds,
+    ShadowSpillMockRuntimeTopology *topology
+) {
+    if (topology == NULL) {
+        return;
+    }
+    memset(topology, 0, sizeof(*topology));
+    topology->pools[0] = (ShadowSpillMemoryPoolDescription){
+        .pool_id = 0U,
+        .capacity_bytes = execution_pool_bytes,
+        .minimum_alignment = minimum_alignment,
+        .backend = shadowspill_mock_execution_pool_backend(backend),
+    };
+    topology->pools[1] = (ShadowSpillMemoryPoolDescription){
+        .pool_id = 1U,
+        .capacity_bytes = spill_pool_bytes,
+        .minimum_alignment = 1U,
+        .backend = shadowspill_mock_spill_pool_backend(backend),
+    };
+    topology->routes[0] = (ShadowSpillTransferRouteDescription){
+        .route_id = 0U,
+        .name = "shadowspill_fetch",
+        .route = shadowspill_mock_fetch_route(backend, 1U, 0U),
+    };
+    topology->routes[1] = (ShadowSpillTransferRouteDescription){
+        .route_id = 1U,
+        .name = "shadowspill_evict",
+        .route = shadowspill_mock_evict_route(backend, 0U, 1U),
+    };
+    topology->runtime = (ShadowSpillRuntimeConfig){
+        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .pools = topology->pools,
+        .pool_count = 2U,
+        .routes = topology->routes,
+        .route_count = 2U,
+        .worker_poll_nanoseconds = worker_poll_nanoseconds,
+        .synchronization = shadowspill_mock_synchronization_backend(backend),
     };
 }
 
@@ -345,7 +462,7 @@ int shadowspill_mock_create_compute_stream(
     ShadowSpillMockBackend *backend,
     ShadowSpillBackendStream *stream
 ) {
-    return create_stream(backend, SHADOWSPILL_TRANSFER_FETCH, stream);
+    return create_stream(backend, stream);
 }
 
 int shadowspill_mock_destroy_compute_stream(

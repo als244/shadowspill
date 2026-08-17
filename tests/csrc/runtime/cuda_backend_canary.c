@@ -23,7 +23,6 @@ int main(void) {
         FAIL("backend creation");
     }
     ShadowSpillCudaBackendCapabilities capabilities = {0};
-    ShadowSpillBackend backend = shadowspill_cuda_backend_vtable(cuda);
     if (shadowspill_cuda_backend_capabilities(cuda, &capabilities) != 0 ||
         capabilities.abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
         capabilities.total_device_bytes == 0U ||
@@ -39,28 +38,54 @@ int main(void) {
         context_memory.device_total_bytes < capabilities.total_device_bytes) {
         FAIL("initial physical-memory accounting");
     }
+    const uint64_t execution_pool_bytes = 8U << 20U;
+    const ShadowSpillMemoryPoolDescription pools[] = {
+        {
+            .pool_id = 0U,
+            .capacity_bytes = execution_pool_bytes,
+            .minimum_alignment = capabilities.recommended_minimum_alignment,
+            .backend = shadowspill_cuda_device_pool_backend(cuda),
+        },
+        {
+            .pool_id = 1U,
+            .capacity_bytes = 8U << 20U,
+            .minimum_alignment = 1U,
+            .backend = shadowspill_cuda_pinned_pool_backend(cuda),
+        },
+    };
+    const ShadowSpillTransferRouteDescription routes[] = {
+        {
+            .route_id = 0U,
+            .name = "shadowspill_fetch",
+            .route = shadowspill_cuda_fetch_route(cuda, 1U, 0U),
+        },
+        {
+            .route_id = 1U,
+            .name = "shadowspill_evict",
+            .route = shadowspill_cuda_evict_route(cuda, 0U, 1U),
+        },
+    };
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 8U << 20U,
-        .spill_pool_bytes = 8U << 20U,
-        .minimum_alignment = capabilities.recommended_minimum_alignment,
+        .pools = pools,
+        .pool_count = 2U,
+        .routes = routes,
+        .route_count = 2U,
         .worker_poll_nanoseconds = 10000U,
-        .backend = backend,
+        .synchronization = shadowspill_cuda_synchronization_backend(cuda),
     };
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (shadowspill_runtime_create(&runtime_config, &runtime) !=
             SHADOWSPILL_RUNTIME_OK ||
-        backend.create_stream(
-            backend.context, SHADOWSPILL_TRANSFER_FETCH, &compute
-        ) != 0 ||
+        routes[0].route.create_lane(routes[0].route.context, &compute) != 0 ||
         shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0) {
         FAIL("runtime or stream initialization");
     }
     ShadowSpillCudaPhysicalMemory admitted_memory = {0};
     if (shadowspill_cuda_physical_memory(cuda, &admitted_memory) != 0 ||
         admitted_memory.process_bytes <
-            context_memory.process_bytes + runtime_config.execution_pool_bytes) {
+            context_memory.process_bytes + execution_pool_bytes) {
         FAIL("admitted physical-memory accounting");
     }
     unsigned char *original = malloc(PAYLOAD_BYTES);
@@ -169,7 +194,7 @@ int main(void) {
         FAIL("backend transfer statistics");
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
-        backend.destroy_stream(backend.context, compute) != 0) {
+        routes[0].route.destroy_lane(routes[0].route.context, compute) != 0) {
         FAIL("runtime close");
     }
     shadowspill_cuda_backend_statistics(cuda, &cuda_statistics);

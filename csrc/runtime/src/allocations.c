@@ -244,8 +244,11 @@ ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event_locked(
     ShadowSpillEventLease *task_completion_event = NULL;
     const ShadowSpillRuntimeStatus event_status =
         shadowspill_event_lease_create_locked(runtime, &task_completion_event);
-    if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
-            runtime->backend.context, task_completion_event->event, stream
+    if (event_status != SHADOWSPILL_RUNTIME_OK ||
+        runtime->synchronization.record_event(
+            runtime->synchronization.context,
+            task_completion_event->event,
+            stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             stream,
@@ -1159,8 +1162,8 @@ static ShadowSpillRuntimeStatus record_retirement_events(
             ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
             : shadowspill_event_lease_create_locked(runtime, &event->event);
         if (event_status != SHADOWSPILL_RUNTIME_OK ||
-            runtime->backend.record_event(
-                runtime->backend.context,
+            runtime->synchronization.record_event(
+                runtime->synchronization.context,
                 event->event->event,
                 snapshot->streams[index]
             ) != 0 || shadowspill_completion_submit(
@@ -1375,8 +1378,10 @@ void shadowspill_finalize_aborted_task_retirements(
                 ? SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE
                 : shadowspill_event_lease_create_locked(runtime, &event->event);
             if (event_status != SHADOWSPILL_RUNTIME_OK ||
-                runtime->backend.record_event(
-                    runtime->backend.context, event->event->event, item->stream
+                runtime->synchronization.record_event(
+                    runtime->synchronization.context,
+                    event->event->event,
+                    item->stream
                 ) != 0 || shadowspill_completion_submit(
                     runtime,
                     item->stream,

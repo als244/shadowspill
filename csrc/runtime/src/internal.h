@@ -90,7 +90,10 @@ typedef enum ShadowSpillMemoryPlacement {
 enum {
     SHADOWSPILL_EXECUTION_POOL_ID = 0U,
     SHADOWSPILL_SPILL_POOL_ID = 1U,
-    SHADOWSPILL_INITIAL_POOL_COUNT = 2U,
+    SHADOWSPILL_FETCH_ROUTE_ID = 0U,
+    SHADOWSPILL_EVICT_ROUTE_ID = 1U,
+    SHADOWSPILL_TRANSFER_FETCH = 0U,
+    SHADOWSPILL_TRANSFER_EVICT = 1U,
 };
 
 /*
@@ -337,6 +340,12 @@ typedef struct ShadowSpillTransferLane {
     uint8_t lock_initialized;
 } ShadowSpillTransferLane;
 
+typedef struct ShadowSpillRouteState {
+    ShadowSpillTransferRoute route;
+    ShadowSpillBackendStream lane;
+    uint8_t lane_created;
+} ShadowSpillRouteState;
+
 /*
  * Owns only the quiescence notification consumed by runtime_wait_idle. The
  * final action and retirement transitions advance this epoch after their
@@ -412,14 +421,12 @@ struct ShadowSpillRuntime {
     _Atomic uint32_t failure_status;
     uint64_t worker_poll_nanoseconds;
 
-    ShadowSpillBackend backend;
+    ShadowSpillSynchronizationBackend synchronization;
     ShadowSpillProfiler profiler;
-    ShadowSpillTransferRoute fetch_route;
-    ShadowSpillTransferRoute evict_route;
-    ShadowSpillBackendStream fetch_stream;
-    ShadowSpillBackendStream evict_stream;
-    int fetch_stream_created;
-    int evict_stream_created;
+    ShadowSpillRouteState *routes;
+    uint32_t route_count;
+    uint32_t fetch_route_id;
+    uint32_t evict_route_id;
 
     pthread_rwlock_t transfer_profiles_lock;
     ShadowSpillTransferProfile *transfer_profiles;
@@ -934,12 +941,14 @@ void shadowspill_trace_append_enabled(
             );                                                                 \
         }                                                                      \
     } while (0)
-int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 int shadowspill_memory_pool_backend_is_valid(
     const ShadowSpillMemoryPoolBackend *backend
 );
 int shadowspill_transfer_route_is_valid(
     const ShadowSpillTransferRoute *route
+);
+int shadowspill_synchronization_backend_is_valid(
+    const ShadowSpillSynchronizationBackend *backend
 );
 ShadowSpillTransferRoute *shadowspill_transfer_route(
     ShadowSpillRuntime *runtime,
@@ -949,6 +958,10 @@ ShadowSpillTransferRoute *shadowspill_transfer_route(
 ShadowSpillBackendStream *shadowspill_transfer_route_lane(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTransferRoute *route
+);
+ShadowSpillRouteState *shadowspill_runtime_route(
+    ShadowSpillRuntime *runtime,
+    uint32_t route_id
 );
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);
 void shadowspill_transfer_profiles_destroy(ShadowSpillRuntime *runtime);

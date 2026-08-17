@@ -5,26 +5,22 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 static int create_runtime(
     ShadowSpillMockBackend **mock,
     ShadowSpillRuntime **runtime,
     ShadowSpillBackendStream *compute
 ) {
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, mock) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 256U,
-        .spill_pool_bytes = 0U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(*mock),
-    };
-    if (shadowspill_runtime_create(&runtime_config, runtime) !=
+    if (shadowspill_test_create_runtime(
+            *mock, 256U, 0U, 1U, 1000U, runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(*mock, compute) != 0) {
         shadowspill_runtime_destroy(*runtime);
@@ -217,23 +213,17 @@ static int same_stream_retirement_is_task_batched(void) {
 static int queued_transfers_survive_retirement_only_task(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 256U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+    int failed = shadowspill_test_create_runtime(
+            mock, 256U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     const ShadowSpillObjectDescription objects[] = {
@@ -290,23 +280,17 @@ static int queued_transfers_survive_retirement_only_task(void) {
 static int all_completed_retirements_precede_action_admission(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 128U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    int failed = shadowspill_runtime_create(&runtime_config, &runtime) !=
+    int failed = shadowspill_test_create_runtime(
+            mock, 128U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     const ShadowSpillObjectDescription object = {
@@ -387,21 +371,14 @@ static int bounded_runtime_trace_is_opt_in(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-    };
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 256U,
-        .spill_pool_bytes = 128U,
-        .minimum_alignment = 1U,
-        .worker_poll_nanoseconds = 1000U,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeConfig configured_runtime = runtime_config;
-    configured_runtime.backend = shadowspill_mock_backend_vtable(mock);
-    if (shadowspill_runtime_create(&configured_runtime, &runtime) !=
+    if (shadowspill_test_create_runtime(
+            mock, 256U, 128U, 1U, 1000U, &runtime
+        ) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
         destroy_runtime(mock, runtime, compute);

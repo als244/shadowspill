@@ -6,7 +6,7 @@
 
 int main(void) {
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000U,
         .evict_delay_nanoseconds = 2000U,
     };
@@ -14,16 +14,12 @@ int main(void) {
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return 1;
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
-        .execution_pool_bytes = 4096U,
-        .spill_pool_bytes = 4096U,
-        .minimum_alignment = 8U,
-        .worker_poll_nanoseconds = 1000U,
-        .backend = shadowspill_mock_backend_vtable(mock),
-    };
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(
+        mock, 4096U, 4096U, 8U, 1000U, &topology
+    );
     ShadowSpillRuntime *runtime = NULL;
-    if (shadowspill_runtime_create(&runtime_config, &runtime) !=
+    if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
         SHADOWSPILL_RUNTIME_OK) {
         shadowspill_mock_backend_destroy(mock);
         return 2;

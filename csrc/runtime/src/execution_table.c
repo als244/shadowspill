@@ -714,8 +714,8 @@ ShadowSpillRuntimeStatus shadowspill_before_execution_handle(
         bindings[record->unique_first_positions[index]] = snapshot;
         pthread_mutex_unlock(&object->lock);
         if (readiness_event != NULL) {
-            if (runtime->backend.wait_event(
-                    runtime->backend.context,
+            if (runtime->synchronization.wait_event(
+                    runtime->synchronization.context,
                     compute_stream,
                     readiness_event->event
                 ) != 0) {

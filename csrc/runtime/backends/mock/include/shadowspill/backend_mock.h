@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include <shadowspill/backend.h>
+#include <shadowspill/runtime.h>
 
 #if defined(_WIN32)
 #define SHADOWSPILL_BACKEND_MOCK_API __declspec(dllexport)
@@ -16,6 +16,8 @@ extern "C" {
 #endif
 
 typedef struct ShadowSpillMockBackend ShadowSpillMockBackend;
+
+#define SHADOWSPILL_MOCK_BACKEND_ABI_VERSION 1U
 
 /*
  * Deterministic qualification backend. Delay values extend opaque stream
@@ -44,6 +46,13 @@ typedef struct ShadowSpillMockBackendStatistics {
     uint64_t event_queries;
 } ShadowSpillMockBackendStatistics;
 
+/* Convenient owned storage for one two-pool mock runtime configuration. */
+typedef struct ShadowSpillMockRuntimeTopology {
+    ShadowSpillMemoryPoolDescription pools[2];
+    ShadowSpillTransferRouteDescription routes[2];
+    ShadowSpillRuntimeConfig runtime;
+} ShadowSpillMockRuntimeTopology;
+
 SHADOWSPILL_BACKEND_MOCK_API int shadowspill_mock_backend_create(
     const ShadowSpillMockBackendConfig *config,
     ShadowSpillMockBackend **backend
@@ -53,8 +62,38 @@ SHADOWSPILL_BACKEND_MOCK_API void shadowspill_mock_backend_destroy(
     ShadowSpillMockBackend *backend
 );
 
-SHADOWSPILL_BACKEND_MOCK_API ShadowSpillBackend shadowspill_mock_backend_vtable(
+SHADOWSPILL_BACKEND_MOCK_API ShadowSpillMemoryPoolBackend
+shadowspill_mock_execution_pool_backend(
     ShadowSpillMockBackend *backend
+);
+
+SHADOWSPILL_BACKEND_MOCK_API ShadowSpillMemoryPoolBackend
+shadowspill_mock_spill_pool_backend(ShadowSpillMockBackend *backend);
+
+SHADOWSPILL_BACKEND_MOCK_API ShadowSpillTransferRoute
+shadowspill_mock_fetch_route(
+    ShadowSpillMockBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+);
+
+SHADOWSPILL_BACKEND_MOCK_API ShadowSpillTransferRoute
+shadowspill_mock_evict_route(
+    ShadowSpillMockBackend *backend,
+    uint32_t source_pool_id,
+    uint32_t destination_pool_id
+);
+
+SHADOWSPILL_BACKEND_MOCK_API ShadowSpillSynchronizationBackend
+shadowspill_mock_synchronization_backend(ShadowSpillMockBackend *backend);
+
+SHADOWSPILL_BACKEND_MOCK_API void shadowspill_mock_runtime_topology(
+    ShadowSpillMockBackend *backend,
+    uint64_t execution_pool_bytes,
+    uint64_t spill_pool_bytes,
+    uint64_t minimum_alignment,
+    uint64_t worker_poll_nanoseconds,
+    ShadowSpillMockRuntimeTopology *topology
 );
 
 SHADOWSPILL_BACKEND_MOCK_API int shadowspill_mock_create_compute_stream(

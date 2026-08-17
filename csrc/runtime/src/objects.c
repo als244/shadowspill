@@ -791,8 +791,9 @@ ShadowSpillRuntimeStatus shadowspill_before_task_legacy(
             }
         }
         if (!duplicate && object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
-            if (!object->has_readiness_event || runtime->backend.wait_event(
-                    runtime->backend.context,
+            if (!object->has_readiness_event ||
+                runtime->synchronization.wait_event(
+                    runtime->synchronization.context,
                     compute_stream,
                     object->readiness_event->event
                 ) != 0) {
@@ -987,8 +988,11 @@ ShadowSpillRuntimeStatus shadowspill_after_task_legacy(
     }
     const ShadowSpillRuntimeStatus event_status =
         shadowspill_event_lease_create_locked(runtime, &task_completion_event);
-    if (event_status != SHADOWSPILL_RUNTIME_OK || runtime->backend.record_event(
-            runtime->backend.context, task_completion_event->event, compute_stream
+    if (event_status != SHADOWSPILL_RUNTIME_OK ||
+        runtime->synchronization.record_event(
+            runtime->synchronization.context,
+            task_completion_event->event,
+            compute_stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             compute_stream,

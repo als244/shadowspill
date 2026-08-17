@@ -30,6 +30,18 @@ static int submit_transfer_copy(
     return status;
 }
 
+static ShadowSpillRouteState *route_for_action(
+    ShadowSpillRuntime *runtime,
+    uint8_t action_kind
+) {
+    return shadowspill_runtime_route(
+        runtime,
+        action_kind == SHADOWSPILL_RUNTIME_PREFETCH
+            ? runtime->fetch_route_id
+            : runtime->evict_route_id
+    );
+}
+
 void shadowspill_notify_worker(ShadowSpillRuntime *runtime) {
     pthread_mutex_lock(&runtime->mutex);
     pthread_cond_broadcast(&runtime->condition);
@@ -282,13 +294,10 @@ static int acquire_reserved_destination(
         return status;
     }
     if (dependency_event != NULL) {
-        const ShadowSpillBackendStream lane =
-            action->kind == SHADOWSPILL_RUNTIME_PREFETCH
-            ? runtime->fetch_stream
-            : runtime->evict_stream;
-        if (runtime->backend.wait_event(
-                runtime->backend.context,
-                lane,
+        ShadowSpillRouteState *route = route_for_action(runtime, action->kind);
+        if (route == NULL || runtime->synchronization.wait_event(
+                runtime->synchronization.context,
+                route->lane,
                 dependency_event->event
             ) != 0) {
             (void)shadowspill_event_lease_release(runtime, dependency_event);
@@ -378,13 +387,16 @@ static int dispatch_offload_locked(
     pthread_mutex_unlock(&object->lock);
 
     ShadowSpillEventLease *completion_event = NULL;
+    ShadowSpillRouteState *route = shadowspill_runtime_route(
+        runtime, runtime->evict_route_id
+    );
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
-    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK;
-    if (!backend_failed && runtime->backend.wait_event(
-            runtime->backend.context,
-            runtime->evict_stream,
+    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK || route == NULL;
+    if (!backend_failed && runtime->synchronization.wait_event(
+            runtime->synchronization.context,
+            route->lane,
             trigger_event->event
         ) != 0) {
         backend_failed = 1;
@@ -392,18 +404,18 @@ static int dispatch_offload_locked(
     if (!backend_failed && (submit_transfer_copy(
             runtime,
             action,
-            &runtime->evict_route,
+            &route->route,
             spill_lease->pointer,
             execution_pointer,
             bytes,
-            runtime->evict_stream
-        ) != 0 || runtime->backend.record_event(
-                runtime->backend.context,
+            route->lane
+        ) != 0 || runtime->synchronization.record_event(
+                runtime->synchronization.context,
                 completion_event->event,
-                runtime->evict_stream
+                route->lane
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                runtime->evict_stream,
+                route->lane,
                 completion_event,
                 object_id,
                 allocation_id
@@ -526,13 +538,16 @@ static int dispatch_prefetch_locked(
     shadowspill_event_lease_retain(trigger_event);
     pthread_mutex_unlock(&object->lock);
     ShadowSpillEventLease *completion_event = NULL;
+    ShadowSpillRouteState *route = shadowspill_runtime_route(
+        runtime, runtime->fetch_route_id
+    );
     ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
-    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK;
-    if (!backend_failed && runtime->backend.wait_event(
-            runtime->backend.context,
-            runtime->fetch_stream,
+    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK || route == NULL;
+    if (!backend_failed && runtime->synchronization.wait_event(
+            runtime->synchronization.context,
+            route->lane,
             trigger_event->event
         ) != 0) {
         backend_failed = 1;
@@ -540,18 +555,18 @@ static int dispatch_prefetch_locked(
     if (!backend_failed && (submit_transfer_copy(
             runtime,
             action,
-            &runtime->fetch_route,
+            &route->route,
             allocation->pointer,
             spill->lease->pointer,
             bytes,
-            runtime->fetch_stream
-        ) != 0 || runtime->backend.record_event(
-                runtime->backend.context,
+            route->lane
+        ) != 0 || runtime->synchronization.record_event(
+                runtime->synchronization.context,
                 completion_event->event,
-                runtime->fetch_stream
+                route->lane
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                runtime->fetch_stream,
+                route->lane,
                 completion_event,
                 object_id,
                 allocation->allocation_id
@@ -835,7 +850,9 @@ static int handle_action(
                           action->task_id,
                           action->action_ordinal,
                           action->activation_generation,
-                          runtime->fetch_stream
+                          shadowspill_runtime_route(
+                              runtime, runtime->fetch_route_id
+                          )->lane
                       )
                     : SHADOWSPILL_RUNTIME_OK;
                 pthread_mutex_lock(&object->lock);

@@ -14,8 +14,8 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
     if (lease == NULL) {
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
-    if (runtime->backend.create_event(
-            runtime->backend.context, &lease->event
+    if (runtime->synchronization.create_event(
+            runtime->synchronization.context, &lease->event
         ) != 0) {
         free(lease);
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
@@ -57,8 +57,8 @@ int shadowspill_event_lease_release(
         ) != 1U) {
         return 0;
     }
-    const int status = runtime->backend.destroy_event(
-        runtime->backend.context, lease->event
+    const int status = runtime->synchronization.destroy_event(
+        runtime->synchronization.context, lease->event
     );
     free(lease);
     return status;
@@ -78,8 +78,8 @@ int shadowspill_event_lease_query(
         *complete = 1;
         return 0;
     }
-    if (runtime->backend.query_event(
-            runtime->backend.context, lease->event, complete
+    if (runtime->synchronization.query_event(
+            runtime->synchronization.context, lease->event, complete
         ) != 0) {
         return -1;
     }
