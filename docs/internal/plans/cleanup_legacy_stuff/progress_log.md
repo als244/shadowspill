@@ -806,3 +806,21 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
 - Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
   PyTorch canaries; the complete Python suite with four expected skips; Ruff;
   strict mypy over 177 installed source files; and `git diff --check`.
+
+## 2026-08-17 — Plan-only PyTorch object publication
+
+- Deleted the raw PyTorch adapter entry points for bind, replacement,
+  promotion, and caller transfer by runtime object ID. Initial materialization
+  now publishes only through an immutable plan/object binding; repeated
+  publication uses an admitted task ordinal; caller transfer uses an admitted
+  acquisition ordinal.
+- Converted the low-level allocator and overlap canaries to construct the same
+  plan-owned records as public forward/training execution. Test-only callers
+  no longer keep a second production API alive.
+- The remaining caller-allocation release function is intentionally physical:
+  it is the DataPtr deleter for an allocation that has already left logical
+  runtime object ownership.
+- The PyTorch adapter ABI is now 45.
+- Validation passed: warnings-as-errors native build; all 28 native, CUDA, and
+  PyTorch canaries; the complete Python suite with four expected skips; Ruff;
+  strict mypy over 177 installed source files; and `git diff --check`.

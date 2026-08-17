@@ -27,18 +27,29 @@ def _require_ok(status: int, operation: str) -> None:
         raise AssertionError(f"{operation} failed with status {status}")
 
 
-def _promote(library: object, tensor: torch.Tensor, object_id: int) -> ObjectBinding:
+def _publish_initial(
+    library: object, plan: int, tensor: torch.Tensor, object_id: int
+) -> ObjectBinding:
+    _require_ok(
+        int(
+            library.shadowspill_pytorch_register_placeholder_object(
+                object_id, tensor.untyped_storage().nbytes(), 0
+            )
+        ),
+        "placeholder registration",
+    )
+    _bind_plan_object(library, plan, object_id)
     binding = ObjectBinding()
     _require_ok(
         int(
-            library.shadowspill_pytorch_promote_allocation(
+            library.shadowspill_pytorch_plan_publish_initial_allocation(
+                plan,
                 object_id,
                 tensor.data_ptr(),
-                tensor.untyped_storage().nbytes(),
                 ctypes.byref(binding),
             )
         ),
-        "allocation promotion",
+        "initial publication",
     )
     return binding
 
@@ -190,9 +201,9 @@ def main() -> int:
     first = torch.full((ELEMENTS,), 1.0, device="cuda")
     second = torch.full((ELEMENTS,), 2.0, device="cuda")
     third = torch.full((ELEMENTS,), 3.0, device="cuda")
-    first_binding = _promote(library, first, 2001)
-    second_binding = _promote(library, second, 2002)
-    third_binding = _promote(library, third, 2003)
+    first_binding = _publish_initial(library, plan, first, 2001)
+    second_binding = _publish_initial(library, plan, second, 2002)
+    third_binding = _publish_initial(library, plan, third, 2003)
     compute = torch.cuda.current_stream()
     stream_address = compute.cuda_stream
     torch.cuda._sleep(1_000)
