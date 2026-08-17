@@ -101,5 +101,7 @@ handling.
 | Graph-pair construction | [Graph-pair construction](docs/architecture/graph-pair-construction.md) |
 | Recomputation selection | [Recomputation selection](docs/architecture/recomputation-selection.md) |
 | Physical admission | [Physical admission and offset handling](docs/architecture/physical-admission.md) |
+| Plan and step diagnostics | [Diagnostics guides](docs/python/plan-report.md) |
+| Serialized planning artifacts | [Program and annotated-plan JSON](docs/python/planning-json.md) |
 | Repository development | [Development guide](docs/development/README.md) |
 | Root-cause records | [Engineering investigations](docs/investigations/README.md) |

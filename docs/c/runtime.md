@@ -19,6 +19,14 @@ worker, trace buffers, and first-failure state.
 - `shadowspill_runtime_resize_spill_pool()` changes the configured spill arena
   only when the header's idle-state preconditions hold.
 
+Calibration first measures each available directed route alone. When reverse
+routes exist, it then measures both directions simultaneously on independent
+lanes and publishes the concurrent per-direction rates as the effective
+`bandwidth_bytes_per_second`. Each `ShadowSpillTransferProfile` retains solo
+and concurrent bandwidth, measurement duration, latency, copy geometry,
+generation, mode, timestamp, and provenance. Planning consumes the immutable
+matrix; it does not benchmark routes itself.
+
 ## Allocation API
 
 - `shadowspill_allocate()` leases a compatible range for the active task.

@@ -2,6 +2,8 @@
 
 Planning artifacts are immutable, content-addressed, JSON-serializable values.
 Their stable digests exclude cache paths and measured orchestration wall time.
+See [Program and annotated-plan JSON](../planning-json.md) for the complete
+schema hierarchy and key-by-key interpretation.
 
 ## `StepProgram`
 

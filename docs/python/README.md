@@ -9,6 +9,9 @@ execution.
 - [Quickstart](quickstart.md)
 - [Planning cache](planning-cache.md)
 - [PyTorch allocator integration](allocator.md)
+- [Interpreting a PlanReport](plan-report.md)
+- [Interpreting StepResult diagnostics](step-diagnostics.md)
+- [Program and annotated-plan JSON](planning-json.md)
 
 ## API reference
 

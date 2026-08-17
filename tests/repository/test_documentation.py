@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -15,6 +16,7 @@ PYTHON_API = DOCS / "python" / "api"
 _MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 _MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
+_JSON_FENCE = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
 _SIGNATURE = re.compile(
     r"<!-- source-signature: ([^:]+):([A-Za-z0-9_.]+) -->\s*"
     r"```text\n(.*?)\n```",
@@ -328,6 +330,9 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "architecture/simulation.md",
         "architecture/memory-runtime.md",
         "python/README.md",
+        "python/plan-report.md",
+        "python/step-diagnostics.md",
+        "python/planning-json.md",
         "c/README.md",
         "development/README.md",
         "investigations/README.md",
@@ -517,6 +522,50 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "AdmissionTopology",
     ):
         assert required in admission
+
+
+def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
+    plan_report = (DOCS / "python" / "plan-report.md").read_text()
+    for required in (
+        "## Tasks are keyed by execution ID",
+        "## Unique stages and graph pairs",
+        "## Interpreting a graph profile",
+        "## PressureFit diagnostics",
+        "## Physical-layout diagnostics",
+        "shadowspill.plan_diagnostics/v1",
+        "chosen_graph_pair_variant",
+    ):
+        assert required in plan_report
+
+    step_diagnostics = (DOCS / "python" / "step-diagnostics.md").read_text()
+    for required in (
+        "## Start with the summary",
+        "## The seven task-boundary timestamps",
+        "## Host boundary breakdown",
+        "## Task-by-task simulator comparison",
+        "## Transfer diagnostics",
+        "## Allocator diagnostics",
+        "## Runtime counters and trace integrity",
+        "shadowspill.step_diagnostics/v1",
+    ):
+        assert required in step_diagnostics
+
+    serialization = (DOCS / "python" / "planning-json.md").read_text()
+    for required in (
+        "## Program format",
+        "## PressureFitProgram format",
+        "## StepProgram format",
+        "## AnnotatedProgramPlan format",
+        "## Loading and validation",
+        "shadowspill.program/v1",
+        "shadowspill.pressurefit_program/v1",
+        "shadowspill.step_program/v1",
+        "shadowspill.annotated_program_plan/v2",
+        "shadowspill.fixed_physical_layout/v3",
+    ):
+        assert required in serialization
+    for block in _JSON_FENCE.findall(serialization):
+        assert isinstance(json.loads(block), dict)
 
 
 def test_current_contract_docs_avoid_historical_version_language() -> None:

@@ -170,5 +170,9 @@ profiler. When runtime tracing is enabled, bounded preallocated buffers record
 task, allocator, transfer, and failure events and are converted to Python only
 when diagnostics are resolved.
 
+See [Interpreting StepResult diagnostics](../python/step-diagnostics.md) for
+allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
+timing, and overflow handling.
+
 Previous: [Simulation](simulation.md). Continue with the [Python allocator
 guide](../python/allocator.md) or [Runtime C API](../c/runtime.md).

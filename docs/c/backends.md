@@ -24,6 +24,13 @@ pair. It creates and destroys ordered lanes, submits `copy_async()`, and
 synchronizes only at explicit lifecycle boundaries. Direction is a property of
 the route, not a runtime switch interpreted by the copy implementation.
 
+Calibration may call a route concurrently with its reverse route. Route
+implementations must therefore provide independent ordered lanes and preserve
+asynchronous completion semantics under simultaneous traffic. The runtime
+derives route latency from small-copy measurements and bandwidth from repeated
+large copies; provider backends supply the copy and event mechanics rather
+than planner policy.
+
 `ShadowSpillBackendStream` and `ShadowSpillBackendEvent` are opaque tokens.
 The runtime stores and returns them without interpreting provider fields.
 

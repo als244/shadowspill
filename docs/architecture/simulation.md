@@ -57,5 +57,9 @@ Simulator fidelity is evaluated on warmed execution. Startup fetches and final
 cooldown are reported separately because cross-step cyclic residency is not
 yet part of the schedule model.
 
+The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
+real-versus-simulated task and transfer fields, clock domains, selected-span
+summary, trace-integrity checks, and investigation workflow.
+
 Previous: [Planning orchestration](planning.md). Next:
 [Memory runtime](memory-runtime.md).

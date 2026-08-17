@@ -117,6 +117,10 @@ Resolve a traced step's diagnostics before launching another traced step.
 Resolving may wait for the recorded events; an ordinary `runtime_trace=False`
 call does not perform this diagnostic synchronization.
 
+Use [Interpreting a PlanReport](plan-report.md) to inspect the selected plan and
+[Interpreting StepResult diagnostics](step-diagnostics.md) to reconcile one
+real call with its profiles and simulator prediction.
+
 ## Checkpoint and restore
 
 ```python

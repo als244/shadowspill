@@ -8,6 +8,10 @@ statement applies to Python, C, or the framework-neutral design.
 
 - To use ShadowSpill from PyTorch, read the [Python quickstart](python/quickstart.md)
   and then the [Python API](python/README.md).
+- To inspect a plan or real step, use the [PlanReport](python/plan-report.md)
+  and [StepResult diagnostics](python/step-diagnostics.md) guides.
+- To consume saved planning data, use the [Program and annotated-plan JSON
+  guide](python/planning-json.md).
 - To understand the system, follow the ordered path in the [architecture
   overview](architecture/overview.md).
 - To integrate a compiled component or backend, start with the [C API
@@ -37,6 +41,16 @@ statement applies to Python, C, or the framework-neutral design.
    causal-dependency replay.
 10. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
    task boundaries, failure, and tracing.
+
+## Diagnostics and artifacts
+
+- [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
+  graph-pair selection, profiles, PressureFit, caches, and physical admission.
+- [Interpreting StepResult diagnostics](python/step-diagnostics.md) — seven task
+  timestamps, host boundaries, allocator/transfer evidence, and simulator
+  reconciliation.
+- [Program and annotated-plan JSON](python/planning-json.md) — canonical Program,
+  PressureFitProgram, StepProgram, and AnnotatedProgramPlan schemas.
 
 ## Historical evidence
 

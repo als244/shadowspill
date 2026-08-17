@@ -66,5 +66,11 @@ profile measurements, cache artifacts, transfer calibration, and phase times.
 Verbose console output is only presentation; disabling it does not remove the
 report.
 
+The [PlanReport interpretation guide](../python/plan-report.md) gives the
+inspection order, field tables, task/stage lookup workflow, PressureFit search
+hierarchy, and common investigations. The [JSON artifact
+guide](../python/planning-json.md) documents the portable Program and admitted
+plan schemas separately from the callable's in-memory report.
+
 Previous: [Physical admission and offset handling](physical-admission.md). Next:
 [Simulation](simulation.md).

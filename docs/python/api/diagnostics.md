@@ -1,7 +1,9 @@
 # Diagnostics API
 
 Planning diagnostics are always produced. Step diagnostics are opt-in through
-`runtime_trace=True`.
+`runtime_trace=True`. This page inventories the public values; use
+[Interpreting a PlanReport](../plan-report.md) and [Interpreting StepResult
+diagnostics](../step-diagnostics.md) for field-by-field workflows.
 
 ## Plan report
 
@@ -49,12 +51,17 @@ chosen variant per execution, semantic storage roots and views, compiled
 physical layout, input/output/mutation/workspace sizes, task timings,
 allocation behavior, profiling metadata, cache artifacts, and phase wall time.
 
+Additional nested report records describe allocation-ABI operations,
+representative inputs, task memory envelopes, physical layouts, and admission
+attempts. They are intentionally reached through the report rather than added
+to the top-level `shadowspill.pytorch` import surface.
+
 ## Step result and handle
 
 `StepResult` contains objectives, metrics, the completed step number, and an
-optional diagnostics handle. `StepResult.diagnostics` is `None` for an ordinary step and a
-`DiagnosticsHandle` for a traced step. Resolving the handle returns
-`StepDiagnostics`.
+optional diagnostics handle. `StepResult.diagnostics` is `None` for an
+ordinary step and a `DiagnosticsHandle` for a traced step. Resolving the handle
+returns `StepDiagnostics`.
 
 Each execution has `ExecutionTiming` and exactly seven boundary timestamps:
 
@@ -81,6 +88,11 @@ direction, bytes, queue/wire timestamps, and completion.
 All public diagnostic records are immutable. `PlanDiagnostics.as_dict()` and
 `StepDiagnostics.as_dict()` return JSON-friendly nested dictionaries for
 artifact storage or analysis.
+
+The public summary/comparison values are `ExecutionTiming`,
+`StepTimingSummary`, `PhaseTimingComparison`, and
+`SimulatorTransferComparison`. Detailed task, allocator, runtime, and transfer
+records are reached through `StepDiagnostics`.
 
 ## Defaults and overhead
 
