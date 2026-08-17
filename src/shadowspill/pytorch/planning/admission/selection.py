@@ -5,23 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from shadowspill.planner import AdmissionTopology, PressureFitResult
+from shadowspill.planner import PressureFitResult
 from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import TaskMemoryEnvelope
 from shadowspill.runtime import AdmissionReplayResult
-from shadowspill.simulator import SimulationAdmission, SimulationResult, simulate
+from shadowspill.simulator import SimulationAdmission, SimulationResult
 
-from .admission_replay import AdmissionReplay, replay_admission
+from .admission_replay import AdmissionReplay
 from .bindings import TaskOutputBinding, output_bindings_for_entrypoints
 from .layout import (
     DynamicTaskAllocationPolicy,
     FixedLayoutAdmission,
     FixedPhysicalLayout,
 )
-from .simulation import simulation_admission_from_replay
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,59 +94,6 @@ class SelectedAdmission:
                 self.simulation.makespan_ns
             ),
         )
-
-
-def admit_selected_schedule(
-    selected: PressureFitResult,
-    *,
-    topology: AdmissionTopology,
-) -> AdmissionReplay:
-    """Run timing-free cross-task admission for one selected schedule."""
-
-    return replay_admission(
-        selected.program,
-        selected.schedule,
-        selections=selected.selections,
-        topology=topology,
-    )
-
-
-def build_selected_admission(
-    selected: PressureFitResult,
-    measurements: Mapping[str, TaskMeasurement],
-    *,
-    topology: AdmissionTopology,
-    output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,
-) -> SelectedAdmission:
-    """Combine cross-task admission with fail-closed task envelopes."""
-
-    admission = admit_selected_schedule(
-        selected,
-        topology=topology,
-    )
-    simulation_admission = simulation_admission_from_replay(
-        admission,
-        selected.program,
-        selected.schedule,
-        selections=selected.selections,
-        device_capacity_bytes=topology.pool_capacity_bytes,
-    )
-    return SelectedAdmission(
-        task_envelopes=_selected_task_envelopes(
-            selected,
-            measurements,
-            output_bindings=output_bindings,
-        ),
-        simulation_admission=simulation_admission,
-        simulation=simulate(
-            selected.program,
-            selected.schedule,
-            selections=selected.selections,
-            config=selected.simulation_config,
-            admission=simulation_admission,
-        ),
-        admission=admission,
-    )
 
 
 def build_fixed_selected_admission(
@@ -313,9 +259,7 @@ def dynamic_scratch_reserve_bytes(
 __all__ = [
     "SelectedAdmission",
     "TaskOutputBinding",
-    "admit_selected_schedule",
     "build_fixed_selected_admission",
-    "build_selected_admission",
     "dynamic_scratch_reserve_bytes",
     "output_bindings_for_entrypoints",
 ]

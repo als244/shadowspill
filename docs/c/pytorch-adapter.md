@@ -20,7 +20,6 @@ neutral runtime and translates Python/ATen-facing values into runtime handles.
   a later callable may explicitly grow both inventories during plan adoption.
 - `shadowspill_pytorch_calibrate_transfer_capabilities()` and
   `shadowspill_pytorch_transfer_profiles()` manage transfer calibration.
-- `shadowspill_pytorch_resize_spill_pool()` performs the supported idle resize.
 
 ## Allocator callbacks
 

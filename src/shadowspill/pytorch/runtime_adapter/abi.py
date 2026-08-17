@@ -512,12 +512,6 @@ def _configure_physical_memory(library: Any) -> None:
         ctypes.c_uint32,
     )
     _signature(
-        library,
-        "shadowspill_pytorch_resize_spill_pool",
-        [ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
         library, "shadowspill_pytorch_check_physical_budget", [], ctypes.c_uint32
     )
 

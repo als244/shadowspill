@@ -338,14 +338,6 @@ shadowspill_pytorch_transfer_profiles(
     uint64_t *generation
 );
 
-/*
- * Planning-only pinned-host growth before physical sealing. Existing payloads
- * and object offsets are preserved. The caller must admit the brief overlap of
- * old and replacement arenas within its public host budget.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_resize_spill_pool(uint64_t spill_pool_bytes);
-
 /* Bounded task-scoped allocation telemetry used by structural profiling. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_allocation_telemetry_start(uint64_t capacity);

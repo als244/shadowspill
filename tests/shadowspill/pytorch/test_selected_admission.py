@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from shadowspill.ir import (
     AliasGroupSpec,
     MutationSpec,
@@ -20,11 +18,10 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
     pressurefit,
 )
+from shadowspill.pytorch.planning.admission.admission_replay import replay_admission
 from shadowspill.pytorch.planning.admission.bindings import build_admission_topology
 from shadowspill.pytorch.planning.admission.selection import (
     _task_memory_envelope,
-    admit_selected_schedule,
-    build_selected_admission,
 )
 from shadowspill.pytorch.profiling import (
     TaskAllocationContract,
@@ -106,8 +103,11 @@ def _workspace_trace(extents: tuple[int, ...]) -> tuple[TaskAllocationEvent, ...
 
 
 def test_selected_schedule_replays_only_task_boundary_state() -> None:
-    replay = admit_selected_schedule(
-        _selected(),
+    selected = _selected()
+    replay = replay_admission(
+        selected.program,
+        selected.schedule,
+        selections=selected.selections,
         topology=_selected_topology(),
     )
 
@@ -181,40 +181,6 @@ def test_admission_topology_derives_gradient_contribution_extents_from_trace() -
     )
 
     assert topology.tasks[0].workspace_extents == (16, 32, 64)
-
-
-def test_selected_admission_requires_every_task_envelope_measurement() -> None:
-    with pytest.raises(ValueError, match="task-envelope admission lacks measurement"):
-        build_selected_admission(
-            _selected(),
-            {},
-            topology=_selected_topology(),
-        )
-
-
-def test_selected_admission_replaces_prediction_without_changing_schedule() -> None:
-    selected = _selected()
-    measurement = TaskMeasurement(
-        1_000,
-        0,
-        0,
-        (),
-        (1_000,),
-        "unit-test",
-    )
-    admitted = build_selected_admission(
-        selected,
-        {"task_abi": measurement},
-        topology=_selected_topology(),
-    )
-
-    adjusted = admitted.apply_prediction(selected)
-
-    assert adjusted.program is selected.program
-    assert adjusted.schedule is selected.schedule
-    assert adjusted.selections == selected.selections
-    assert adjusted.simulation == admitted.simulation
-    assert adjusted.diagnostics.selected_makespan_ns == admitted.simulation.makespan_ns
 
 
 def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:

@@ -50,38 +50,6 @@ def installed_allocator() -> InstalledAllocator | None:
     return _installed
 
 
-def resize_spill_pool(
-    installed: InstalledAllocator, *, spill_pool_bytes: int, spill_budget_bytes: int
-) -> None:
-    """Grow the pinned spill pool during planning without exceeding its cap."""
-
-    current = int(installed.admission.spill_pool_bytes)
-    if spill_pool_bytes < current:
-        raise AllocatorInstallError("spill pool cannot shrink")
-    if spill_pool_bytes == current:
-        return
-    if spill_pool_bytes > spill_budget_bytes or current + spill_pool_bytes > (
-        spill_budget_bytes
-    ):
-        raise AllocatorInstallError(
-            "planning-time spill pool replacement exceeds spill_budget"
-        )
-    status = int(
-        installed.library.shadowspill_pytorch_resize_spill_pool(spill_pool_bytes)
-    )
-    if status != 0:
-        raise AllocatorInstallError(f"spill pool growth failed with status {status}")
-    admission = PhysicalAdmission()
-    status = int(
-        installed.library.shadowspill_pytorch_physical_admission(
-            ctypes.byref(admission)
-        )
-    )
-    if status != 0 or int(admission.spill_pool_bytes) != spill_pool_bytes:
-        raise AllocatorInstallError("spill pool admission was not updated")
-    installed.admission.spill_pool_bytes = admission.spill_pool_bytes
-
-
 def _function_pointer(library: Any, name: str) -> int:
     try:
         symbol = getattr(library, name)

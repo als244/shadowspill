@@ -1039,29 +1039,6 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_profiles(
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_resize_spill_pool(
-    uint64_t spill_pool_bytes
-) {
-    pthread_mutex_lock(&adapter.mutex);
-    if (adapter.runtime == NULL) {
-        pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_CLOSED;
-    }
-    if (adapter.physical_budget_sealed ||
-        spill_pool_bytes < adapter.admission.spill_pool_bytes) {
-        pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
-    }
-    ShadowSpillRuntimeStatus status = shadowspill_memory_pool_grow(
-        adapter.runtime, 1U, spill_pool_bytes
-    );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        adapter.admission.spill_pool_bytes = spill_pool_bytes;
-    }
-    pthread_mutex_unlock(&adapter.mutex);
-    return status;
-}
-
 ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_start(
     uint64_t capacity
 ) {

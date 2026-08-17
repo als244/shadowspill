@@ -1360,3 +1360,28 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   strict mypy over 178 installed source files, `git diff --check`, the
   warnings-as-errors build, all 29 native/CUDA/PyTorch canaries, and focused
   ASan plan, completion, and telemetry canaries.
+
+## 2026-08-17 — Dead production compatibility surfaces removed
+
+- Removed the role-specific PyTorch `resize_spill_pool()` API from Python,
+  ctypes, the adapter header, and the C implementation. Runtime pool growth,
+  where it is needed, remains one neutral `shadowspill_memory_pool_grow()`
+  operation addressed by pool identity; the frontend no longer exposes a
+  second implementation tied to the spill role.
+- Removed two unused dynamic-admission assembly wrappers. Production already
+  publishes only fixed-layout-selected admission, while the timing-free
+  `replay_admission()` operation remains available directly for focused
+  validation. Keeping the wrappers only preserved a second, uncallable route
+  from a selected logical schedule to runtime admission.
+- Simplified the allocator canary to construct its intended final spill
+  capacity directly. Deleted tests that existed solely to exercise the
+  removed compatibility APIs.
+- Added a repository source audit that rejects old raw task boundaries,
+  superseded state-movement names, worker/progress terminology, reference
+  implementation imports, and sleeping primitives in the worker hot-loop
+  translation unit. It also fixes the installed package boundary to the one
+  production `shadowspill` tree.
+- Validation passed Ruff, strict mypy over 178 installed source files, focused
+  repository/admission/allocator tests, the warnings-as-errors isolated build,
+  all 29 native/CUDA/PyTorch canaries, and `git diff --check`. The complete
+  Python suite was also run before publication of this milestone.
