@@ -54,7 +54,7 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.profile_measurements.parts[-3:] == (
         "profiling",
         "measurements",
-        "v15",
+        "v16",
     )
     assert cache.pressurefit_selections.parts[-3:] == (
         "pressurefit",

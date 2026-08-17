@@ -18,10 +18,32 @@ from shadowspill.pytorch.profiling.inputs import (
     RepresentativeInputSummary,
 )
 
-# The opaque-optimizer artifact versions its own representative-gradient
-# construction contract.  That targeted identity change avoids invalidating
-# unrelated compiled-graph measurements.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v24"
+# Profile artifacts are strict snapshots of the current measurement contract.
+# Bump this identity whenever serialized measurement fields or their semantics
+# change; historical profile artifacts are not migrated.
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v25"
+
+_TASK_MEASUREMENT_FIELDS = frozenset(
+    {
+        "runtime_ns",
+        "workspace_requested_bytes",
+        "workspace_charged_bytes",
+        "workspace_extent_bytes",
+        "samples_ns",
+        "provenance",
+        "allocation_trace",
+        "output_input_bindings",
+        "persistent_extent_bytes",
+        "profiling_wall_time_ns",
+        "representative_inputs",
+        "phase_timings_ns",
+        "timing_relative_mad",
+        "timing_half_drift",
+        "timing_unstable",
+        "allocation_contract",
+        "allocation_path_observations",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +336,8 @@ class TaskMeasurement:
     def from_dict(cls, value: object) -> TaskMeasurement:
         if not isinstance(value, dict):
             raise ValueError("cached task measurement must be an object")
+        if frozenset(value) != _TASK_MEASUREMENT_FIELDS:
+            raise ValueError("cached task measurement has an invalid schema")
         try:
             return cls(
                 runtime_ns=int(value["runtime_ns"]),
@@ -348,7 +372,7 @@ class TaskMeasurement:
                 timing_unstable=bool(value["timing_unstable"]),
                 allocation_contract=(
                     None
-                    if value.get("allocation_contract") is None
+                    if value["allocation_contract"] is None
                     else TaskAllocationContract.from_dict(value["allocation_contract"])
                 ),
                 allocation_path_observations=tuple(
