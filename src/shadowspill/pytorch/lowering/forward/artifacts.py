@@ -39,6 +39,7 @@ class LoweredForwardProgram:
     entrypoints: tuple[TaskEntrypoint, ...]
     registrations: tuple[RegistrationBinding, ...]
     root_input_slots: tuple[TensorSlot, ...]
+    public_outputs: tuple[str, ...]
     output_tree_spec: TreeSpec
     output_leaf_count: int
 

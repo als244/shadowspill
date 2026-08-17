@@ -1,0 +1,404 @@
+# Canonical Runtime and Legacy-Path Removal — Progress Log
+
+This is an append-only implementation record. Findings, design corrections,
+tests, measurements, regressions, fixes, and commits are added chronologically.
+
+## 2026-08-17 — Accepted baseline
+
+- Accepted plan copied to `implementation_plan.md`.
+- Base revision: `519b6555584309209abd5f30f7a0eb75f31e70bc`.
+- Isolated branch: `cleanup/canonical-runtime`.
+- Isolated worktree: `/home/shein/Documents/grad_school/research/shadowspill-cleanup`.
+- The active 2,520-point sweep remains in the original worktree on `main` and
+  continues to use the `shadowspill` conda environment.
+- The cleanup implementation will use the separate `shadowspill-cleanup`
+  environment and separate build/cache/result directories.
+- No production changes have been made yet.
+
+## 2026-08-17 — Isolation and baseline gate
+
+- Created worktree `/home/shein/Documents/grad_school/research/shadowspill-cleanup`
+  on branch `cleanup/canonical-runtime` at the accepted base revision.
+- Cloned the active environment to `/home/shein/miniconda3/envs/shadowspill-cleanup`
+  and installed the cleanup worktree editable only into that clone.
+- Verified environment isolation:
+  - `shadowspill` imports from the original `shadowspill` worktree.
+  - `shadowspill-cleanup` imports from the cleanup worktree.
+- Verified the active planning sweep remained alive in the original worktree and
+  continued to use the original `shadowspill` environment.
+- Baseline Ruff: passed.
+- Baseline mypy: passed for 175 source files.
+- Baseline Python suite: 674 passed, 4 skipped in 33.34 seconds.
+- Baseline C/CUDA CTest suite: 27/27 passed in 21.99 seconds.
+- Baseline `git diff --check`: passed.
+- Production worktree status remained clean; the accepted internal plan and
+  progress log are intentionally ignored implementation records.
+
+## 2026-08-17 — Compiled-only planner and simulator milestone
+
+- Removed the installed Python simulator implementation and made public
+  `simulate()` require the compiled simulator unconditionally.
+- Moved the readable simulator to `reference/python/simulator`; production
+  configuration can no longer select it and `record_timeline` is no longer a
+  production argument.
+- Replaced the mixed Python/C PressureFit orchestration with one compiled
+  program-context path. Candidate outcomes, physical admission, schedule
+  selection, and makespan now always originate in C.
+- Found that the compiled program-context validator incorrectly rejected
+  zero-alias Programs. Updated the C context, residency, and portfolio scratch
+  allocations to represent zero aliases safely while retaining non-null ABI
+  storage. Workspace-only Programs now use the same compiled path.
+- Added `shadowspill_validate_pressurefit_program_context()` and planner ABI
+  version 12. The C preflight reports workspace overflow, required object
+  capacity, and missing initial residency with device, alias, boundary, and byte
+  evidence. Python only maps this structured result into public exceptions.
+- During implementation, found and corrected a diagnostic-initialization bug:
+  `prepare_context()` cleared caller-initialized error sentinels. Sentinel
+  initialization now occurs immediately after the function's own reset.
+- Moved the readable Python PressureFit facts, residency reducer, action emitter,
+  dense residency adapter, and candidate selector under
+  `reference/python/pressurefit`. The wheel continues to package only
+  `src/shadowspill`.
+- Added a compiled-versus-readable PressureFit differential test. The retained
+  three-layer training chain produced identical schedule digest
+  `911b75db998e38218a6db1775879434b9bb7d2705195c1ede212f7e13d071ed6`
+  and 148,000-ns makespan.
+- Updated architecture, C API, and Python API documentation to state the
+  fail-closed compiled production contract and explicit reference location.
+- Milestone validation:
+  - focused planner/simulator suite: 283 passed;
+  - full Python suite: 672 passed, 4 skipped in 27.94 seconds (three obsolete
+    production-timeline/fallback tests removed and one differential test added);
+  - C/CUDA suite: 27/27 passed;
+  - Ruff, strict mypy (169 installed source files), and `git diff --check` passed.
+- Passing milestone commit: `e31c587` (`Make planner and simulator production
+  paths compiled-only`).
+
+## 2026-08-17 — Generic topology ownership clarification
+
+- The runtime-owned pool and route registries will be shared by any number of
+  independently admitted callables.
+- Each callable will own an immutable plan handle containing its pool/route
+  role binding, task handles, physical-layout slice, and retained object
+  references. There will be no runtime-global active-plan role binding.
+- Releasing one callable will release only its plan records and pool leases; it
+  will not clear another callable or close shared runtime pools and routes.
+- Logical objects may be retained by multiple plans. Direct object references
+  and residency generations, rather than duplicate IDs or global plan state,
+  govern safe cross-callable binding.
+- Calls will own plan-scoped invocation handles and terminal completion events.
+  Dispatch returns without waiting for device completion, allowing one Python
+  thread to enqueue multiple independent callables before synchronizing an
+  individual result.
+- Immutable task handles will contain no mutable per-invocation retirement or
+  submission state. Such state belongs to the invocation, so overlapping plans
+  cannot overwrite one another's worker batches or completion ownership.
+- Shared-object plan bindings will default to causal consistency. An explicit
+  per-binding unordered policy may capture and consume the currently visible
+  generation without a cross-plan freshness wait. It still retains the exact
+  lease through consumer completion and preserves generation-checked state
+  commits, preventing use-after-free and stale-completion publication even
+  though the observed value may intentionally be stale or concurrently raced.
+
+## 2026-08-17 — Backend component split
+
+- Replaced the monolithic backend vtable with independent generic
+  `MemoryPool`, directed transfer-route, synchronization, and profiler
+  contracts. Runtime construction now copies explicit pool and route
+  registries and unwinds partially created components in reverse order.
+- Converted the CUDA backend, mock backend, PyTorch adapter bootstrap, and all
+  native canaries to the component topology. Pool storage semantics remain in
+  concrete backends; neutral runtime code sees only pool IDs and routes.
+- Bumped the neutral runtime ABI to 29 and aligned the Python adapter ABI
+  expectation.
+- Evidence: warnings-as-errors build completed; all 27 CTest canaries passed,
+  including 12 PyTorch/CUDA integration canaries (62.71 seconds total).
+- This commit intentionally establishes component boundaries before moving
+  execution/spill role selection from runtime-global temporary defaults into
+  immutable per-plan bindings.
+
+## 2026-08-17 — ABI terminology audit
+
+- Reserve “ABI” for true independently compiled binary boundaries: the C
+  runtime shared library, PyTorch adapter, and backend vtables.
+- Rename task allocator evidence and its diagnostics from
+  `TaskAllocationABI` to `TaskAllocationContract`; it describes observable
+  execution behavior, not a binary calling convention. User-facing Python
+  surfaces use “API,” while binary compatibility versions remain explicitly
+  labeled “ABI.”
+
+## 2026-08-17 — Plan-owned topology and execution records
+
+- Added an explicit runtime-owned plan registry. Each `ShadowSpillPlan` now
+  retains direct execution/spill pool pointers, fetch/evict route pointers, an
+  independent execution table, and its own fixed-layout certificate.
+- Moved transfer-lane FIFOs into each directed route. Admitted actions retain
+  their plan and resolved route directly; the worker no longer selects a
+  runtime-global fetch or evict lane when dispatching an admitted action.
+- Moved immutable execution records and physical-layout metadata out of the
+  runtime and into their owning plans. Allocation callbacks resolve fixed
+  placement from the active execution handle's plan.
+- Added a focused native canary proving that two plans may share one runtime,
+  admit the same dense task ID, resolve distinct handles, and execute without
+  table collision. The same canary constructs three pools and four routes and
+  validates a plan selecting the non-default spill pool and route pair.
+- The legacy runtime-global entry points temporarily delegate to one internal
+  default plan so existing PyTorch qualification remains runnable during the
+  conversion. These wrappers and the default plan are explicitly scheduled
+  for deletion after the adapter adopts explicit plan handles.
+- Validation: warnings-as-errors build passed; all 28 native/CUDA/PyTorch
+  canaries passed; `git diff --check` passed.
+- Passing structural commit: `09a0394` (`Add plan-owned runtime topology
+  bindings`).
+
+## 2026-08-17 — Plan-local and shared-runtime object ownership
+
+- Added an explicit per-plan object-binding table. A binding maps one
+  Program-local object key to a retained runtime object and records either the
+  default causal policy or the explicitly unordered policy.
+- Execution admission now resolves inputs, mutations, and actions exclusively
+  through that plan-local table. It retains direct object pointers in immutable
+  execution records; repeated execution performs no runtime object-table lookup.
+- Preserved both identities where their responsibilities differ: fixed-layout
+  placements and action certificates retain `plan_object_id`, while object
+  leases, generations, readiness, and failure diagnostics use the runtime
+  object's identity.
+- Updated fixed-layout validation and dependency resolution to compare
+  plan-local identities rather than accidentally comparing runtime-global IDs.
+- Added explicit PyTorch-adapter entry points for plan lifecycle, object
+  binding, execution admission, fixed-layout admission/sealing, clearing, and
+  handle resolution. The adapter ABI is now 37.
+- Added a native canary proving that equal plan-local IDs in two plans can bind
+  different runtime objects, and that rebinding one local ID inconsistently is
+  rejected.
+- Found a transitional lifecycle defect during the warm training canary: the
+  default plan cleared execution records but retained its binding table, so a
+  later planning call found a detached object under a reused local key. Plan
+  clearing now releases execution records first and bindings second.
+- Validation: warnings-as-errors build passed; all 28 C/CUDA/PyTorch canaries
+  passed; the full Python suite passed after adding the new adapter symbols to
+  its declarative signature fixture and API references; `git diff --check`
+  passed.
+- Passing structural commit: `a6af4d7` (`Bind plan objects to shared runtime
+  ownership`).
+
+## 2026-08-17 — Explicit PyTorch plan ownership and initial actions
+
+- Converted Python planning and callable ownership from one implicit runtime
+  plan to explicit native plan handles. Multiple completed callables may now
+  remain attached to one runtime without clearing each other's execution
+  records.
+- Runtime bridges now preserve shared runtime-object identities separately
+  from Program-local aliases. Output promotion allocates a runtime-global
+  identity without incorrectly invoking the idle-only persistent-state import
+  guard.
+- Corrected action fixed-layout lookup to use the action's plan-local object
+  key while native trace and failure records continue to expose the shared
+  runtime-object identity.
+- Updated transfer diagnostics to reconcile simulated plan-local aliases with
+  native runtime-object IDs through the bridge binding, rather than assuming
+  both identity domains were numerically equal.
+- Root-caused a warm-replan failure: model materialization still submitted
+  release actions through a legacy fake-task/default-plan path. Closing the
+  first callable removed that accidental default plan, so the second planning
+  call returned `INVALID_STATE`. Materialization now admits reusable,
+  plan-owned action-only records before submitting each release; no fallback
+  path is used.
+- Validation: warnings-as-errors build passed; all 28 C/CUDA/PyTorch canaries
+  passed serially; Ruff, mypy, and `git diff --check` passed; the full Python
+  suite passed with four expected skips.
+
+## 2026-08-17 — State terminology and pinned shared objects
+
+- Accepted `import_*` for moving PyTorch state into runtime ownership and
+  `export_*` for moving it back out. Relocate/externalize terminology and
+  compatibility aliases will be removed exhaustively.
+- Accepted reference-counted `SHARED` object residency. `SHARED` means
+  guaranteed resident and read-only while shared. The runtime charges its
+  lease once, while each PressureFit plan excludes that object from its
+  movable set and reports the external shared footprint and remaining
+  capacity. Mutating a `SHARED` object fails admission.
+
+## 2026-08-17 — Shared-residency policy refinement
+
+- Replaced the provisional single `SHARED` policy with two explicit policies;
+  there is no `SHARED` or `PINNED_READ_ONLY` compatibility alias.
+- `SHARED_READ_ONLY` retains one guaranteed-resident lease and rejects any
+  declared mutation at admission.
+- `SHARED_WRITABLE_UNORDERED` retains one guaranteed-resident lease, accepts
+  only stable-address in-place mutation, and adds no inter-callable value
+  dependency. This deliberately permits stale or concurrently changing reads
+  without weakening lease lifetime, generation validation, or allocator
+  safety.
+- Replacement mutations are rejected for the unordered policy because
+  changing the lease would invalidate another callable's stable binding and
+  obscure ownership. Shared bytes remain charged once to the physical pool
+  while excluded from each plan's movable-object decisions.
+
+## 2026-08-17 — Persistent-state import/export rename
+
+- Replaced every public, internal, native-operator, test, qualification, and
+  documentation state-ownership name based on relocate/externalize with the
+  canonical `import_*` and `export_*` APIs. No compatibility alias remains.
+- Renamed the persistent-state canary and native PyTorch operators to
+  `_import_cpu_storages` and `_export_cpu_storages` and clarified the internal
+  flag that distinguishes a separate frontend storage copy from a direct
+  runtime-backed storage view.
+- Validation passed: warnings-as-errors build, 28/28 C/CUDA/PyTorch canaries,
+  full Python suite, documentation tests, Ruff, strict mypy over 169 installed
+  source files, `git diff --check`, and an old-symbol source audit.
+- Passing commit: `4e293f7` (`Rename persistent state APIs to import and
+  export`).
+
+## 2026-08-17 — Task-allocation contract terminology
+
+- Renamed `TaskAllocationABI` and every associated Python file, C type,
+  ctypes field, runtime status, diagnostic key, test, canary, and document to
+  `TaskAllocationContract`. The serialized contract begins at schema v1 and
+  old allocation-ABI artifacts are intentionally unsupported.
+- Retained “ABI” only for actual independently compiled boundaries such as the
+  runtime shared library, adapter, and backend vtables.
+- Validation passed: warnings-as-errors build, 28/28 native/CUDA/PyTorch
+  canaries, full Python suite, Ruff, strict mypy over 169 installed source
+  files, `git diff --check`, and an allocation-ABI old-symbol audit.
+- Passing commit: `45cd5d8` (`Rename task allocation evidence to contracts`).
+
+## 2026-08-17 — Indexed compiled representations
+
+- Replaced ambiguous “dense” representation and identity terminology with
+  explicit indexed types and operations: `IndexedProgram`,
+  `IndexedMemorySchedule`, `IndexedExecutionPlan`, `index_program()`,
+  `index_memory_schedule()`, and `index_execution_plan()`.
+- Applied the same rename to C planner schedule types and helpers, compiled
+  admission bindings, ctypes projections, reference implementations,
+  diagnostics, tests, and documentation. Task and object numeric values are
+  now described as plan-local indices rather than dense IDs.
+- The only remaining production occurrence is the literal upstream PyTorch
+  operator name `_local_scalar_dense`, which ShadowSpill must recognize
+  verbatim.
+- Validation passed: warnings-as-errors build, 28/28 native/CUDA/PyTorch
+  canaries, full Python suite, planner/simulator/IR focused suites, Ruff,
+  strict mypy over 169 installed source files, and `git diff --check`.
+- Passing commit: `b7c5752` (`Rename compact planner representations to
+  indexed`).
+
+## 2026-08-17 — Structural-contract terminology
+
+- Replaced non-binary uses of “ABI” with explicit contract or signature
+  terminology across capture, graph-pair construction, compilation,
+  profiling, execution entrypoints, diagnostics, cache manifests, tests, and
+  documentation.
+- Renamed public diagnostic fields such as `structural_abi_key` and
+  `aot_unique_stage_abis` to `structural_contract_key` and
+  `aot_unique_stage_contracts`. Compilation and profiling errors now expose
+  `structural_contract`.
+- Renamed execution entrypoint `abi_digest` to `contract_digest`, advanced the
+  strict execution-plan wire schema to `shadowspill.execution_plan/v2`, and
+  advanced graph-pair cache identity to `shadowspill.aot_graph_pair/v7`.
+  Historical field names and cache formats are intentionally unsupported.
+- Retained “ABI” only at real independently compiled boundaries: the runtime,
+  planner, simulator, PyTorch adapter, profiler, and backend vtables.
+- Validation passed: full Python suite with four expected skips, focused IR
+  and PyTorch suites, Ruff, strict mypy over 169 installed source files, and
+  `git diff --check`.
+- Passing commit: `1c29fd0` (`Rename structural identities to contracts`).
+
+## 2026-08-17 — Shared-residency IR contract
+
+- Added the explicit alias-group policies `SHARED_READ_ONLY` and
+  `SHARED_WRITABLE_UNORDERED`; no generic `SHARED` or legacy compatibility
+  spelling exists.
+- Distinguished residency sharing from object consistency. The read-only
+  policy rejects mutations. The unordered writable policy accepts only the
+  IR's stable-address mutation relation; replacement outputs are rejected for
+  both policies.
+- Made runtime ownership fail closed: shared aliases cannot appear in
+  recomputation-retained sets, initial/final schedule residency, or memory
+  actions. Schedule validation treats them as runtime-resident inputs.
+- Advanced the strict Program schema to `shadowspill.program/v2`, added a
+  lossless indexed policy code, refreshed the frozen canonical digest, and
+  updated the IR, runtime, JSON, and public API documentation.
+- Validation passed: full Python suite with four expected skips, focused IR,
+  planner, simulator, and documentation suites, Ruff, strict IR mypy, and
+  `git diff --check`.
+- Passing commit: `5daa652` (`Define shared residency policies in program
+  IR`).
+
+## 2026-08-17 — Shared-residency physical accounting and callable composition
+
+- Added `SHARED_WRITABLE_CAUSAL` as the only shared binding policy allowed to
+  publish task outputs. `SHARED_READ_ONLY` accepts existing inputs only;
+  `SHARED_WRITABLE_UNORDERED` permits stable-address in-place mutation only.
+  The same runtime object may therefore be a causal producer binding in one
+  Program and a read-only consumer binding in another.
+- Kept the neutral ownership model tensor-free: a runtime object identity has
+  generation, readiness, and per-pool leases. The planned PyTorch convenience
+  layer will expose `TensorRef`, `StateRef`, `SharedOutput`, and `SharedInput`
+  while C continues to expose only objects and object handles.
+- Established the prefill/decode contract. Users select a declared output
+  pytree path; lowering resolves its semantic storage roots without guessing
+  model semantics. A follow-up plan binds the same object references through
+  explicit `SharedInput` declarations.
+- Projected shared aliases out of the compiled simulator's movable alias set,
+  subtracted their physical execution/spill footprints before simulation and
+  PressureFit, and restored those baselines in decoded peak diagnostics.
+  Physical admission receives only callable-attributable capacity and cannot
+  assign a duplicate placement or transfer action to a shared alias.
+- Added `PlanReport` views for shared aliases, shared execution/spill bytes,
+  and residual callable budgets. Advanced the strict Program and frozen IR
+  schemas to v3; no old-schema reader was retained.
+- Deliberately rejected a separate activation-snapshot subsystem. Users may
+  expose diagnostic intermediates as ordinary callable outputs; this keeps
+  the runtime and PressureFit contracts small.
+- Validation: the complete Python suite passed with four expected skips;
+  focused IR, planner, simulator, admission, fixed-layout, artifact, and
+  documentation suites passed; Ruff, targeted strict mypy, and
+  `git diff --check` passed.
+- Passing commit: `776074c` (`Account for shared runtime residency`).
+
+## 2026-08-17 — Imported-state identity is the sharing boundary
+
+- Rejected an additional `exclusive`/`shared` scope option on
+  `import_model_state()`. It would duplicate an ownership concept already
+  represented exactly by the returned Python object's runtime-storage
+  identity.
+- One import call creates one independent runtime-state identity. Passing that
+  same returned model to several plans explicitly requests shared storage;
+  performing separate import calls creates independent runtime objects and
+  bytes.
+- No plan silently clones a model merely to obtain exclusive ownership, and no
+  equal-valued model is treated as shared by inference. Concurrent frontend
+  execution may create separate lightweight tensor views while retaining the
+  same neutral runtime-object handles.
+
+## 2026-08-17 — Runtime-global object ownership and retained forward outputs
+
+- Added opaque, reference-counted runtime object handles. Registration, every
+  plan binding, and every public reference are independent owners; removing a
+  registration or closing a callable no longer destroys an object still used
+  by another plan or public reference.
+- Added framework-neutral `ObjectRef` and PyTorch `TensorRef`. `TensorRef`
+  contains view geometry and one exact residency generation while the neutral
+  handle remains tensor- and backend-independent.
+- Added path-based `SharedOutput` declarations to `plan_forward()`. Lowering
+  resolves public pytree paths to semantic storage roots, rejects partially
+  shared alias bundles, and retains declared outputs without a caller copy.
+- Established a bounded recurrent-slot contract. A live reference prevents a
+  later invocation from overwriting that slot. After the reference closes,
+  the executor releases only its exact prior generation and the next compiled
+  output is published into the same logical runtime object.
+- Root-caused an initial recurrence failure: invocation validation removed the
+  closed-reference record before generation cleanup, so the old execution
+  lease remained bound and the next promotion failed. Validation now only
+  checks ownership; generation release owns the sole state-clearing step.
+- Kept output-slot ownership conflicts outside fatal execution cleanup. A
+  rejected invocation leaves the callable reusable after the outstanding
+  reference closes.
+- The public surface exports only the working output declaration and reference
+  types. Symmetric shared-input declarations remain internal until plan-time
+  binding and execution have end-to-end coverage.
+- Focused native coverage proves generation-mismatch rejection, exact
+  generation release, and final-owner reclamation. The CUDA forward canary
+  proves a live-reference guard, stable logical identity across recurrence,
+  generation replacement, callable-independent public lifetime, and final
+  reclamation.

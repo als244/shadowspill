@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import ctypes
+import threading
+from types import SimpleNamespace
+
 import pytest
 
 from shadowspill.pytorch import AdmissionError
 from shadowspill.pytorch.runtime_adapter.runtime import (
     MemoryPool,
+    Runtime,
     _resolve_dynamic_scratch_reserve,
     _resolve_execution_budget,
 )
@@ -36,3 +41,38 @@ def test_dynamic_scratch_reserve_is_an_optional_bounded_minimum() -> None:
         _resolve_dynamic_scratch_reserve(-1, execution_budget=budget)
     with pytest.raises(AdmissionError, match="exceeds"):
         _resolve_dynamic_scratch_reserve(budget + 1, execution_budget=budget)
+
+
+def test_runtime_object_reference_owns_and_releases_one_native_handle() -> None:
+    class _Library:
+        def __init__(self) -> None:
+            self.released: list[int] = []
+
+        def shadowspill_pytorch_object_handle_acquire(
+            self, object_id: int, output: object
+        ) -> int:
+            assert object_id == 41
+            ctypes.cast(output, ctypes.POINTER(ctypes.c_size_t))[0] = 73
+            return 0
+
+        def shadowspill_pytorch_object_handle_release(self, handle: int) -> int:
+            self.released.append(handle)
+            return 0
+
+    library = _Library()
+    runtime = Runtime.__new__(Runtime)
+    runtime._lock = threading.RLock()
+    runtime._closed = False
+    runtime._unusable_reason = None
+    runtime._installed = SimpleNamespace(library=library)
+    runtime._active_object_references = 0
+
+    reference = runtime._acquire_object_reference(object_id=41, size_bytes=2048)
+
+    assert reference.object_id == 41
+    assert reference.size_bytes == 2048
+    assert runtime._active_object_references == 1
+    reference.close()
+    reference.close()
+    assert library.released == [73]
+    assert runtime._active_object_references == 0

@@ -91,6 +91,9 @@ class _Library:
     shadowspill_pytorch_plan_create = _Function()
     shadowspill_pytorch_plan_close = _Function()
     shadowspill_pytorch_plan_destroy = _Function()
+    shadowspill_pytorch_object_handle_acquire = _Function()
+    shadowspill_pytorch_object_handle_release = _Function()
+    shadowspill_pytorch_object_release_generation = _Function()
     shadowspill_pytorch_plan_bind_object = _Function()
     shadowspill_pytorch_plan_admit_execution = _Function()
     shadowspill_pytorch_plan_admit_fixed_layout = _Function()
@@ -170,6 +173,10 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
+    assert library.shadowspill_pytorch_object_release_generation.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+    ]
     assert library.shadowspill_pytorch_debug_task_timing_enable.argtypes == [
         ctypes.c_uint32
     ]
@@ -234,6 +241,19 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
+    ]
+    assert library.shadowspill_pytorch_object_handle_acquire.argtypes == [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    assert library.shadowspill_pytorch_object_handle_release.argtypes == [
+        ctypes.c_size_t
+    ]
+    assert library.shadowspill_pytorch_plan_bind_object.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.c_uint8,
     ]
     assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
         ctypes.c_uint64,

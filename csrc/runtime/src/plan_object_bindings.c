@@ -47,7 +47,7 @@ void shadowspill_plan_object_table_clear(ShadowSpillPlanObjectTable *table) {
     pthread_rwlock_unlock(&table->lock);
     while (binding != NULL) {
         ShadowSpillPlanObjectBinding *next = binding->ownership_next;
-        shadowspill_object_release(binding->object);
+        (void)shadowspill_object_owner_release(binding->object);
         free(binding);
         binding = next;
     }
@@ -69,24 +69,27 @@ void shadowspill_plan_object_table_destroy(ShadowSpillPlanObjectTable *table) {
 ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
-    uint64_t runtime_object_id,
+    const ShadowSpillObjectHandle *object_handle,
     uint8_t consistency
 ) {
     if (plan == NULL || plan_object_id == SHADOWSPILL_RUNTIME_NO_ID ||
-        runtime_object_id == SHADOWSPILL_RUNTIME_NO_ID ||
+        object_handle == NULL || object_handle->runtime != plan->runtime ||
+        object_handle->object == NULL ||
         consistency > SHADOWSPILL_OBJECT_UNORDERED ||
         atomic_load_explicit(&plan->closing, memory_order_acquire) != 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    ShadowSpillObject *object = shadowspill_object_table_acquire(
-        &plan->runtime->objects, runtime_object_id
-    );
-    if (object == NULL) {
+    ShadowSpillObject *object = object_handle->object;
+    if (atomic_load_explicit(&object->detached, memory_order_acquire) != 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_object_owner_retain(object);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
     }
     ShadowSpillPlanObjectBinding *created = calloc(1U, sizeof(*created));
     if (created == NULL) {
-        shadowspill_object_release(object);
+        (void)shadowspill_object_owner_release(object);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     created->plan_object_id = plan_object_id;
@@ -103,7 +106,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
         const int matches = binding->object == object &&
             binding->consistency == consistency;
         pthread_rwlock_unlock(&table->lock);
-        shadowspill_object_release(object);
+        (void)shadowspill_object_owner_release(object);
         free(created);
         return matches
             ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_INVALID_STATE;

@@ -14,11 +14,13 @@ from shadowspill.memory import device, pinned_host
 from shadowspill.pytorch import (
     InputGuardError,
     Runtime,
+    TensorRef,
     export_model_state,
     import_model_state,
     plan_forward,
+    shared_output,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, ObjectSnapshot
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
 
 
@@ -45,6 +47,15 @@ def _statistics() -> AdapterStatistics:
     if status != 0:
         raise AssertionError(f"statistics failed with status {status}")
     return result
+
+
+def _object_exists(runtime: Runtime, object_id: int) -> bool:
+    snapshot = ObjectSnapshot()
+    return int(
+        runtime._installed.library.shadowspill_pytorch_object_snapshot(
+            object_id, ctypes.byref(snapshot)
+        )
+    ) == 0
 
 
 def main() -> int:
@@ -174,6 +185,46 @@ def main() -> int:
 
         planned.close()
         planned.close()
+
+        shared = plan_forward(
+            model,
+            example_inputs=[inputs, 16],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            planning_cachedir=cache,
+            profiling_metadata={"batch_size": 4, "width": 16},
+            shared_outputs=(shared_output("mean", retain_in="execution"),),
+        )
+        first = shared([inputs, 16])
+        first_reference = first["mean"]
+        if not isinstance(first_reference, TensorRef):
+            raise AssertionError("declared shared output did not return TensorRef")
+        shared_object_id = first_reference.object.object_id
+        first_generation = first_reference.generation
+        try:
+            shared([inputs, 16])
+        except RuntimeError as error:
+            if "shared output slots remain owned" not in str(error):
+                raise
+        else:
+            raise AssertionError("live shared output did not guard slot reuse")
+        first_reference.close()
+        second = shared([inputs, 16])
+        second_reference = second["mean"]
+        if not isinstance(second_reference, TensorRef):
+            raise AssertionError("reused shared output slot lost its reference")
+        if second_reference.object.object_id != shared_object_id:
+            raise AssertionError("shared output recurrence changed logical identity")
+        if second_reference.generation == first_generation:
+            raise AssertionError("shared output recurrence did not replace generation")
+        shared.close()
+        if not _object_exists(runtime, shared_object_id):
+            raise AssertionError("callable close destroyed a public shared output")
+        second_reference.close()
+        if _object_exists(runtime, shared_object_id):
+            raise AssertionError("final shared-output owner did not reclaim object")
+
         export_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()
         if tuple(id(value) for value in model.parameters()) != parameter_ids:

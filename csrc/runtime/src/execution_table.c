@@ -592,6 +592,28 @@ ShadowSpillRuntimeStatus shadowspill_plan_clear_execution(
     return SHADOWSPILL_RUNTIME_OK;
 }
 
+static ShadowSpillRuntimeStatus bind_default_plan_object(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillPlan *plan,
+    uint64_t object_id
+) {
+    ShadowSpillObjectHandle *handle = NULL;
+    ShadowSpillRuntimeStatus status = shadowspill_object_handle_acquire(
+        runtime, object_id, &handle
+    );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = shadowspill_plan_bind_object(
+            plan, object_id, handle, SHADOWSPILL_OBJECT_CAUSAL
+        );
+    }
+    const ShadowSpillRuntimeStatus release_status =
+        shadowspill_object_handle_release(handle);
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        status = release_status;
+    }
+    return status;
+}
+
 ShadowSpillRuntimeStatus shadowspill_admit_execution(
     ShadowSpillRuntime *runtime,
     const ShadowSpillExecutionDescription *description
@@ -602,33 +624,24 @@ ShadowSpillRuntimeStatus shadowspill_admit_execution(
     }
     ShadowSpillPlan *plan = runtime->default_plan;
     for (uint32_t index = 0U; index < description->input_count; ++index) {
-        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
-            plan,
-            description->input_object_ids[index],
-            description->input_object_ids[index],
-            SHADOWSPILL_OBJECT_CAUSAL
+        ShadowSpillRuntimeStatus status = bind_default_plan_object(
+            runtime, plan, description->input_object_ids[index]
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {
             return status;
         }
     }
     for (uint32_t index = 0U; index < description->update_count; ++index) {
-        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
-            plan,
-            description->updates[index].object_id,
-            description->updates[index].object_id,
-            SHADOWSPILL_OBJECT_CAUSAL
+        ShadowSpillRuntimeStatus status = bind_default_plan_object(
+            runtime, plan, description->updates[index].object_id
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {
             return status;
         }
     }
     for (uint32_t index = 0U; index < description->action_count; ++index) {
-        ShadowSpillRuntimeStatus status = shadowspill_plan_bind_object(
-            plan,
-            description->actions[index].object_id,
-            description->actions[index].object_id,
-            SHADOWSPILL_OBJECT_CAUSAL
+        ShadowSpillRuntimeStatus status = bind_default_plan_object(
+            runtime, plan, description->actions[index].object_id
         );
         if (status != SHADOWSPILL_RUNTIME_OK) {
             return status;

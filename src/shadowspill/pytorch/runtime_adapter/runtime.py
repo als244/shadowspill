@@ -34,6 +34,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     RuntimeFailureDiagnostics,
     read_allocator_failure,
 )
+from shadowspill.runtime import ObjectRef
 
 _INITIALIZATION_PROVENANCE = 0
 _RECALIBRATION_PROVENANCE = 1
@@ -209,6 +210,7 @@ class Runtime:
             self._last_failure: RuntimeFailureDiagnostics | None = None
             self._active_plan_handles: set[int] = set()
             self._planning_plan_handle: int | None = None
+            self._active_object_references = 0
             self._persistent_state_count = 0
             self._next_persistent_object_id = 1 << 62
             execution_pool = MemoryPool(
@@ -300,6 +302,11 @@ class Runtime:
                     "cannot close Runtime while persistent PyTorch state remains; "
                     "export it with release_runtime=True first"
                 )
+            if self._active_object_references != 0:
+                raise RuntimeConfigurationError(
+                    "cannot close Runtime while public object references remain; "
+                    "close every TensorRef or StateRef first"
+                )
             status = int(
                 self._installed.library.shadowspill_pytorch_allocator_wait_idle()
             )
@@ -340,6 +347,110 @@ class Runtime:
                 )
             self._next_persistent_object_id = limit
             return tuple(range(first, limit))
+
+    def _acquire_object_reference(
+        self,
+        *,
+        object_id: int,
+        size_bytes: int,
+    ) -> ObjectRef:
+        """Create one public owner for an existing runtime object."""
+
+        with self._lock:
+            self._require_open()
+            native = ctypes.c_size_t()
+            status = int(
+                self._installed.library.shadowspill_pytorch_object_handle_acquire(
+                    object_id, ctypes.byref(native)
+                )
+            )
+            if status != 0 or native.value == 0:
+                raise RuntimeExecutionError(
+                    "failed to retain runtime object "
+                    f"{object_id}: status={status}"
+                )
+            try:
+                reference = ObjectRef(
+                    self,
+                    object_id=object_id,
+                    size_bytes=size_bytes,
+                    native_handle=int(native.value),
+                )
+            except BaseException:
+                self._installed.library.shadowspill_pytorch_object_handle_release(
+                    native.value
+                )
+                raise
+            self._active_object_references += 1
+            return reference
+
+    def _release_object_reference(self, reference: ObjectRef) -> None:
+        """Release exactly one public runtime-object owner."""
+
+        with self._lock:
+            if not reference._belongs_to(self):
+                raise RuntimeError(
+                    "runtime object reference belongs to another Runtime"
+                )
+            if self._active_object_references <= 0:
+                raise RuntimeError("runtime object reference ownership underflow")
+            status = int(
+                self._installed.library.shadowspill_pytorch_object_handle_release(
+                    reference._handle()
+                )
+            )
+            if status != 0:
+                raise RuntimeExecutionError(
+                    "failed to release runtime object "
+                    f"{reference.object_id}: status={status}"
+                )
+            self._active_object_references -= 1
+
+    def _release_object_generation(
+        self,
+        *,
+        object_id: int,
+        expected_generation: int,
+    ) -> None:
+        """Release a completed value while retaining its logical identity."""
+
+        with self._lock:
+            self._require_open()
+            native = ctypes.c_size_t()
+            status = int(
+                self._installed.library.shadowspill_pytorch_object_handle_acquire(
+                    object_id, ctypes.byref(native)
+                )
+            )
+            if status != 0 or native.value == 0:
+                raise RuntimeExecutionError(
+                    "failed to resolve runtime object generation "
+                    f"{object_id}: status={status}"
+                )
+            operation_status = 0
+            try:
+                operation_status = int(
+                    self._installed.library.
+                    shadowspill_pytorch_object_release_generation(
+                        native.value, expected_generation
+                    )
+                )
+            finally:
+                release_status = int(
+                    self._installed.library.
+                    shadowspill_pytorch_object_handle_release(native.value)
+                )
+            if operation_status != 0:
+                raise RuntimeExecutionError(
+                    "failed to release runtime object generation "
+                    f"{object_id}/{expected_generation}: "
+                    f"status={operation_status}"
+                )
+            if release_status != 0:
+                raise RuntimeExecutionError(
+                    "failed to release temporary runtime object handle "
+                    f"{object_id}: status={release_status}"
+                )
 
     def _retain_persistent_state(self, *, allow_in_progress_plan: bool = False) -> None:
         with self._lock:

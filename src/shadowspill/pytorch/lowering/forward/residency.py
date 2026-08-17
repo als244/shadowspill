@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from shadowspill.ir import MemoryLocation, ObjectRole, Persistence, ResidencySpec
 
 from .artifacts import ForwardObjects, ForwardTaskGraph
@@ -10,7 +12,15 @@ from .artifacts import ForwardObjects, ForwardTaskGraph
 def derive_forward_residency(
     objects: ForwardObjects,
     graph: ForwardTaskGraph,
+    *,
+    public_output_locations: Mapping[int, MemoryLocation] | None = None,
 ) -> tuple[tuple[ResidencySpec, ...], tuple[ResidencySpec, ...]]:
+    locations = dict(public_output_locations or {})
+    invalid = sorted(set(locations) - set(range(len(graph.public_outputs))))
+    if invalid:
+        raise ValueError(f"public output residency indices are invalid: {invalid}")
+    if any(not isinstance(value, MemoryLocation) for value in locations.values()):
+        raise TypeError("public output residency must use MemoryLocation")
     aliases = objects.catalog.alias_groups()
     logical_objects = objects.catalog.objects()
     initial_aliases = {
@@ -32,8 +42,15 @@ def derive_forward_residency(
         or item.role in {ObjectRole.INPUT, ObjectRole.CONTROL}
     }
     final_device = {
-        objects.catalog.alias_id(object_id) for object_id in graph.public_outputs
+        objects.catalog.alias_id(object_id)
+        for index, object_id in enumerate(graph.public_outputs)
+        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.DEVICE
     }
+    final_host.update(
+        objects.catalog.alias_id(object_id)
+        for index, object_id in enumerate(graph.public_outputs)
+        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.HOST
+    )
     final_host -= final_device
     return (
         tuple(

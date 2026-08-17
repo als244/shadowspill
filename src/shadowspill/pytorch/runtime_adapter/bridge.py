@@ -41,6 +41,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 )
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.runtime import ObjectRef
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.profiling.allocation_contract import TaskAllocationContract
@@ -195,6 +196,42 @@ class RuntimeBridge:
 
         return self._runtime_object_id(alias_id)
 
+    def acquire_object_reference(self, alias_id: str) -> ObjectRef:
+        """Retain one registered alias independently of this plan's lifetime."""
+
+        if alias_id not in self._registered:
+            raise RuntimeExecutionError(
+                f"cannot retain unregistered plan object {alias_id!r}"
+            )
+        if not self.requires_storage(alias_id):
+            raise RuntimeExecutionError(
+                "zero-byte shared objects are not supported by the public "
+                "reference API"
+            )
+        return self.runtime._acquire_object_reference(
+            object_id=self._runtime_object_id(alias_id),
+            size_bytes=self._size(alias_id),
+        )
+
+    def release_object_generation(
+        self,
+        alias_id: str,
+        *,
+        expected_generation: int,
+    ) -> None:
+        """Release a closed public slot's residency, preserving identity."""
+
+        if alias_id not in self._registered:
+            raise RuntimeExecutionError(
+                f"cannot release unregistered plan object {alias_id!r}"
+            )
+        if not self.requires_storage(alias_id):
+            return
+        self.runtime._release_object_generation(
+            object_id=self._runtime_object_id(alias_id),
+            expected_generation=expected_generation,
+        )
+
     def _record_runtime_object(self, alias_id: str, runtime_object_id: int) -> None:
         existing = self._runtime_object_ids.get(alias_id)
         if existing is not None and existing != runtime_object_id:
@@ -215,15 +252,32 @@ class RuntimeBridge:
     def _bind_plan_object(self, alias_id: str, *, consistency: int = 0) -> None:
         if not self.requires_storage(alias_id):
             return
+        handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_bind_object(
-                self.plan_handle,
-                _plan_local_id(alias_id, "alias_"),
-                self._runtime_object_id(alias_id),
-                consistency,
+            self.library.shadowspill_pytorch_object_handle_acquire(
+                self._runtime_object_id(alias_id), ctypes.byref(handle)
             ),
-            f"bind plan object {alias_id}",
+            f"acquire runtime object {alias_id}",
         )
+        if handle.value == 0:
+            raise RuntimeExecutionError(
+                f"runtime returned an empty object handle for {alias_id!r}"
+            )
+        try:
+            self._require(
+                self.library.shadowspill_pytorch_plan_bind_object(
+                    self.plan_handle,
+                    _plan_local_id(alias_id, "alias_"),
+                    handle.value,
+                    consistency,
+                ),
+                f"bind plan object {alias_id}",
+            )
+        finally:
+            self._require(
+                self.library.shadowspill_pytorch_object_handle_release(handle.value),
+                f"release runtime object handle {alias_id}",
+            )
 
     def _bind_plan_objects(self, alias_ids: Iterable[str]) -> None:
         for alias_id in dict.fromkeys(alias_ids):

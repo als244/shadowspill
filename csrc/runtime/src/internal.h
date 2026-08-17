@@ -246,9 +246,12 @@ typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
 typedef struct ShadowSpillObject {
+    ShadowSpillRuntime *runtime;
     uint64_t object_id;
     uint64_t size_bytes;
     _Atomic uint32_t references;
+    _Atomic uint32_t owners;
+    _Atomic uint8_t registration_owned;
     _Atomic uint8_t detached;
     pthread_mutex_t lock;
     pthread_cond_t state_changed;
@@ -279,6 +282,11 @@ typedef struct ShadowSpillObject {
     struct ShadowSpillObject **ownership_previous_link;
     struct ShadowSpillObject *id_index_next;
 } ShadowSpillObject;
+
+struct ShadowSpillObjectHandle {
+    ShadowSpillRuntime *runtime;
+    ShadowSpillObject *object;
+};
 
 typedef struct ShadowSpillObjectTable {
     pthread_rwlock_t lock;
@@ -842,6 +850,12 @@ int shadowspill_object_table_rekey(
 );
 void shadowspill_object_retain(ShadowSpillObject *object);
 void shadowspill_object_release(ShadowSpillObject *object);
+ShadowSpillRuntimeStatus shadowspill_object_owner_retain(
+    ShadowSpillObject *object
+);
+ShadowSpillRuntimeStatus shadowspill_object_owner_release(
+    ShadowSpillObject *object
+);
 ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillObject *object,

@@ -176,6 +176,8 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
+    ShadowSpillObjectHandle *first_object_handle = NULL;
+    ShadowSpillObjectHandle *second_object_handle = NULL;
     const ShadowSpillPlanDescription roles = {
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
@@ -208,19 +210,127 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_plan_bind_object(
-            first, 7U, 1001U, SHADOWSPILL_OBJECT_CAUSAL
+        shadowspill_object_handle_acquire(
+            runtime, 1001U, &first_object_handle
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, 2002U, &second_object_handle
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_bind_object(
-            second, 7U, 2002U, SHADOWSPILL_OBJECT_CAUSAL
+            first, 7U, first_object_handle, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            second, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_admit_execution(first, &task) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_admit_execution(second, &task) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_plan_bind_object(
-            first, 7U, 2002U, SHADOWSPILL_OBJECT_CAUSAL
+            first, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
+    shadowspill_object_handle_release(first_object_handle);
+    shadowspill_object_handle_release(second_object_handle);
+    shadowspill_plan_destroy(first);
+    shadowspill_plan_destroy(second);
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_mock_backend_destroy(mock);
+    return failed ? -1 : 0;
+}
+
+static int runtime_objects_survive_until_their_final_owner_closes(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *first = NULL;
+    ShadowSpillPlan *second = NULL;
+    ShadowSpillObjectHandle *public_reference = NULL;
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    const ShadowSpillObjectDescription object = {
+        .object_id = 9001U,
+        .size_bytes = 64U,
+        .initially_spill_resident = 1U,
+    };
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_register_object(runtime, &object) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_handle_acquire(
+            runtime, object.object_id, &public_reference
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &first) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_create(runtime, &roles, &second) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            first, 1U, public_reference, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_plan_bind_object(
+            second, 2U, public_reference, SHADOWSPILL_OBJECT_CAUSAL
+        ) != SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_unregister_object(runtime, object.object_id) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        shadowspill_object_snapshot(
+            runtime, object.object_id, &snapshot
+        ) != SHADOWSPILL_RUNTIME_OK;
+    if (!failed) {
+        failed = shadowspill_object_release_generation(
+                public_reference, snapshot.generation + 1U
+            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            shadowspill_object_release_generation(
+                public_reference, snapshot.generation
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_object_snapshot(
+                runtime, object.object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            statistics.spill_allocated_bytes != 0U;
+    }
+    if (!failed) {
+        shadowspill_plan_destroy(first);
+        first = NULL;
+        failed = shadowspill_object_snapshot(
+                runtime, object.object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_OK;
+    }
+    if (!failed) {
+        shadowspill_plan_destroy(second);
+        second = NULL;
+        failed = shadowspill_object_snapshot(
+                runtime, object.object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_object_handle_release(public_reference) !=
+                SHADOWSPILL_RUNTIME_OK;
+        public_reference = NULL;
+    }
+    if (!failed) {
+        failed = shadowspill_object_snapshot(
+                runtime, object.object_id, &snapshot
+            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_RUNTIME_OK ||
+            statistics.registered_objects != 0U ||
+            statistics.spill_allocated_bytes != 0U;
+    }
+    if (public_reference != NULL) {
+        (void)shadowspill_object_handle_release(public_reference);
+    }
     shadowspill_plan_destroy(first);
     shadowspill_plan_destroy(second);
     shadowspill_runtime_destroy(runtime);
@@ -239,6 +349,10 @@ int main(void) {
     }
     if (plans_bind_local_ids_to_explicit_runtime_objects() != 0) {
         fprintf(stderr, "runtime plan canary failed: object bindings\n");
+        return EXIT_FAILURE;
+    }
+    if (runtime_objects_survive_until_their_final_owner_closes() != 0) {
+        fprintf(stderr, "runtime plan canary failed: object ownership\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

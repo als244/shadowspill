@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
+from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.partition import PartitionedExport
@@ -22,6 +23,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
+from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
 
 
 @dataclass(slots=True)
@@ -191,6 +193,7 @@ class ForwardExecutor:
         user_output_indices: tuple[int, ...],
         output_tree_spec: TreeSpec,
         *,
+        shared_outputs: tuple[ResolvedSharedOutput, ...] = (),
         fixed_layout: RuntimeFixedLayout,
         memory_envelopes: Mapping[str, TaskMemoryEnvelope],
     ) -> None:
@@ -201,6 +204,7 @@ class ForwardExecutor:
         self._state = state
         self._user_output_indices = user_output_indices
         self._output_tree_spec = output_tree_spec
+        self._shared_outputs = tuple(shared_outputs)
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
         self._initial_prefetches = tuple(
@@ -266,19 +270,34 @@ class ForwardExecutor:
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
         bridge.seal_fixed_layout()
-        output_objects = {
-            item.object_id
-            for item in plan.program.objects
-            if item.role.value == "output"
+        self._public_output_aliases = tuple(
+            bridge.alias_for_object(object_id)
+            for object_id in lowered.public_outputs
+        )
+        shared_indices = {
+            item.public_leaf_index for item in self._shared_outputs
         }
+        shared_aliases = {
+            self._public_output_aliases[index] for index in shared_indices
+        }
+        partially_shared = {
+            alias_id
+            for index, alias_id in enumerate(self._public_output_aliases)
+            if alias_id in shared_aliases and index not in shared_indices
+        }
+        if partially_shared:
+            raise PlanningError(
+                "all public views of one shared storage root must be declared "
+                f"together: aliases={sorted(partially_shared)}"
+            )
         self._caller_output_aliases = tuple(
             dict.fromkeys(
-                bridge.alias_for_object(slot.object_id)
-                for entrypoint in lowered.entrypoints
-                for slot in entrypoint.output_slots
-                if slot.object_id in output_objects
+                alias_id
+                for index, alias_id in enumerate(self._public_output_aliases)
+                if index not in shared_indices
             )
         )
+        self._active_shared_outputs: dict[int, TensorRef] = {}
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
         self._profiler_annotations_enabled = False
@@ -302,6 +321,7 @@ class ForwardExecutor:
             # Forward v1 is also non-cyclic: begin only after the preceding
             # invocation reaches its declared terminal residency.
             self._bridge.wait_idle()
+            self._release_closed_shared_output_generations()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
             self._initial_prefetch_action(alias_id)
@@ -313,27 +333,99 @@ class ForwardExecutor:
         )
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)
-        output = tree_unflatten(
-            [output_leaves[index] for index in self._user_output_indices],
-            self._output_tree_spec,
-        )
+        public_leaves = [
+            output_leaves[index] for index in self._user_output_indices
+        ]
         caller_tensors = tuple(
             self._state.object_store[alias_id]
             for alias_id in self._caller_output_aliases
         )
-        bindings = self._bridge.acquire_for_caller(
-            self._caller_output_aliases,
-            caller_tensors,
-            task_number=(1 << 59) + self._invocations,
-        )
-        self._bridge.transfer_outputs_to_caller(
-            self._caller_output_aliases, caller_tensors, bindings
-        )
-        for alias_id in self._caller_output_aliases:
+        if self._caller_output_aliases:
+            bindings = self._bridge.acquire_for_caller(
+                self._caller_output_aliases,
+                caller_tensors,
+                task_number=(1 << 59) + self._invocations,
+            )
+            self._bridge.transfer_outputs_to_caller(
+                self._caller_output_aliases, caller_tensors, bindings
+            )
+        created = self._retain_shared_outputs(public_leaves)
+        for alias_id in dict.fromkeys(self._public_output_aliases):
             self._state.object_store.pop(alias_id, None)
             self._state.generations.pop(alias_id, None)
         self._invocations += 1
-        return output
+        self._active_shared_outputs = created
+        return tree_unflatten(public_leaves, self._output_tree_spec)
+
+    def validate_invocation(self) -> None:
+        """Reject a call that would overwrite a still-owned output slot."""
+
+        self._require_shared_output_slots_available()
+
+    def _require_shared_output_slots_available(self) -> None:
+        busy = []
+        for item in self._shared_outputs:
+            reference = self._active_shared_outputs.get(item.public_leaf_index)
+            if reference is not None and not reference.closed:
+                busy.append(item)
+        if busy:
+            paths = ", ".join(format_path(item.path) for item in busy)
+            raise RuntimeError(
+                "shared output slots remain owned by the preceding invocation; "
+                f"close these references before calling again: {paths}"
+            )
+
+    def _retain_shared_outputs(
+        self,
+        public_leaves: list[object],
+    ) -> dict[int, TensorRef]:
+        created: dict[int, TensorRef] = {}
+        try:
+            for output in self._shared_outputs:
+                tensor = public_leaves[output.public_leaf_index]
+                if not isinstance(tensor, torch.Tensor):
+                    raise RuntimeError(
+                        f"shared output {format_path(output.path)} became non-tensor"
+                    )
+                alias_id = self._public_output_aliases[output.public_leaf_index]
+                object_reference = self._bridge.acquire_object_reference(alias_id)
+                try:
+                    generation = self._state.generations[alias_id]
+                    reference = TensorRef.from_tensor(
+                        object_reference,
+                        tensor,
+                        generation=generation,
+                    )
+                except BaseException:
+                    object_reference.close()
+                    raise
+                created[output.public_leaf_index] = reference
+                public_leaves[output.public_leaf_index] = reference
+            return created
+        except BaseException:
+            for reference in created.values():
+                reference.close()
+            raise
+
+    def _release_closed_shared_output_generations(self) -> None:
+        released: dict[str, int] = {}
+        for index, reference in self._active_shared_outputs.items():
+            if not reference.closed:
+                raise RuntimeError("shared output ownership changed after validation")
+            alias_id = self._public_output_aliases[index]
+            previous = released.get(alias_id)
+            if previous is not None:
+                if previous != reference.generation:
+                    raise RuntimeError(
+                        "shared views of one object reference different generations"
+                    )
+                continue
+            self._bridge.release_object_generation(
+                alias_id,
+                expected_generation=reference.generation,
+            )
+            released[alias_id] = reference.generation
+        self._active_shared_outputs.clear()
 
     @staticmethod
     def _initial_prefetch_action(alias_id: str) -> MemoryAction:

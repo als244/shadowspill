@@ -1432,18 +1432,62 @@ void shadowspill_pytorch_plan_destroy(uintptr_t plan_handle) {
     shadowspill_plan_destroy((ShadowSpillPlan *)plan_handle);
 }
 
+ShadowSpillRuntimeStatus shadowspill_pytorch_object_handle_acquire(
+    uint64_t runtime_object_id,
+    uintptr_t *object_handle
+) {
+    if (object_handle == NULL) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    *object_handle = 0U;
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillObjectHandle *handle = NULL;
+    const ShadowSpillRuntimeStatus status = shadowspill_object_handle_acquire(
+        runtime, runtime_object_id, &handle
+    );
+    if (status == SHADOWSPILL_RUNTIME_OK) {
+        *object_handle = (uintptr_t)handle;
+    }
+    return status;
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_object_handle_release(
+    uintptr_t object_handle
+) {
+    return shadowspill_object_handle_release(
+        (ShadowSpillObjectHandle *)object_handle
+    );
+}
+
+ShadowSpillRuntimeStatus shadowspill_pytorch_object_release_generation(
+    uintptr_t object_handle,
+    uint64_t expected_generation
+) {
+    return object_handle == 0U
+        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        : shadowspill_object_release_generation(
+              (const ShadowSpillObjectHandle *)object_handle,
+              expected_generation
+          );
+}
+
 ShadowSpillRuntimeStatus shadowspill_pytorch_plan_bind_object(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
-    uint64_t runtime_object_id,
+    uintptr_t object_handle,
     uint8_t consistency
 ) {
-    return plan_handle == 0U
+    return plan_handle == 0U || object_handle == 0U
         ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
         : shadowspill_plan_bind_object(
               (ShadowSpillPlan *)plan_handle,
               plan_object_id,
-              runtime_object_id,
+              (const ShadowSpillObjectHandle *)object_handle,
               consistency
           );
 }

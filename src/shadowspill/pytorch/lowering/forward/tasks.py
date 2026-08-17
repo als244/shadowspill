@@ -63,7 +63,7 @@ class _ForwardTaskEmitter:
         self.tasks: list[TaskSpec] = []
         self.entrypoints: list[TaskEntrypoint] = []
         self.produced_aliases: set[str] = set()
-        self.public_outputs: list[str] = []
+        self.public_outputs: dict[int, str] = {}
         self.stage_outputs: list[dict[int, str]] = []
 
     def build(self) -> ForwardTaskGraph:
@@ -73,7 +73,10 @@ class _ForwardTaskEmitter:
             tuple(self.tasks),
             tuple(self.entrypoints),
             frozenset(self.produced_aliases),
-            tuple(self.public_outputs),
+            tuple(
+                self.public_outputs[index]
+                for index in range(len(self.public_outputs))
+            ),
         )
 
     def _stages(
@@ -181,7 +184,7 @@ def _bind_forward_outputs(
     catalog: ObjectCatalog,
     input_objects: tuple[str, ...],
     produced_aliases: set[str],
-    public_outputs: list[str],
+    public_outputs: dict[int, str],
 ) -> tuple[tuple[TensorSlot, ...], tuple[str, ...]]:
     input_aliases = {catalog.alias_id(value) for value in input_objects}
     output_slots: list[TensorSlot] = []
@@ -208,9 +211,24 @@ def _bind_forward_outputs(
         ):
             outputs.append(object_id)
             produced_aliases.add(alias_id)
-        if position in stage.stage.user_output_indices:
+        public_indices = tuple(
+            public
+            for public, local in stage.stage.public_output_bindings
+            if local == position
+        )
+        if not stage.stage.public_output_bindings and (
+            position in stage.stage.user_output_indices
+        ):
+            # Hand-authored Stage fixtures predate explicit root-output ordinals.
+            public_indices = (len(public_outputs),)
+        if public_indices:
             catalog.mark_output(object_id)
-            public_outputs.append(object_id)
+            for public_index in public_indices:
+                existing = public_outputs.setdefault(public_index, object_id)
+                if existing != object_id:
+                    raise RuntimeError(
+                        "one public output leaf resolved to multiple objects"
+                    )
     return tuple(output_slots), tuple(outputs)
 
 

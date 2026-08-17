@@ -105,7 +105,10 @@ def build_stage_examples(
                     input_sources=record.input_sources,
                     input_provenance=tuple(provenance),
                     mutations=mutations.get(index, ()),
-                    user_output_indices=user_outputs.get(index, ()),
+                    user_output_indices=tuple(
+                        local for _public, local in user_outputs.get(index, ())
+                    ),
+                    public_output_bindings=user_outputs.get(index, ()),
                 ),
                 inputs=record.inputs,
                 output=record.output,
@@ -142,10 +145,10 @@ def _representative_root_tensor(
 def _partition_user_outputs(
     capture: ExportCapture,
     split: SplitExportGraph,
-) -> dict[int, tuple[int, ...]]:
+) -> dict[int, tuple[tuple[int, int], ...]]:
     output_leaves = _root_output_leaves(split.root)
-    result: dict[int, list[int]] = {}
-    for output_index in capture.user_output_indices:
+    result: dict[int, list[tuple[int, int]]] = {}
+    for public_index, output_index in enumerate(capture.user_output_indices):
         try:
             root_output = output_leaves[output_index]
         except IndexError as exc:
@@ -158,7 +161,7 @@ def _partition_user_outputs(
         if source.producer_stage_index is None or source.producer_output_index is None:
             raise CaptureError("Export user output is not stage-produced")
         result.setdefault(source.producer_stage_index, []).append(
-            source.producer_output_index
+            (public_index, source.producer_output_index)
         )
     return {index: tuple(values) for index, values in result.items()}
 

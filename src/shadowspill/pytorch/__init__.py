@@ -59,6 +59,7 @@ from .runtime_adapter import (
     TransferCapabilities,
     TransferProfile,
 )
+from .sharing import SharedOutput, TensorRef, shared_output
 from .state import (
     export_model_state,
     export_optimizer_state,
@@ -110,11 +111,13 @@ __all__ = [
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
     "RuntimeFailureDiagnostics",
+    "SharedOutput",
     "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepProgram",
     "StepResult",
     "StepTimingSummary",
+    "TensorRef",
     "TensorSpec",
     "TransferBandwidths",
     "TransferCapabilities",
@@ -127,4 +130,5 @@ __all__ = [
     "plan_forward",
     "plan_step",
     "pressurefit_program",
+    "shared_output",
 ]

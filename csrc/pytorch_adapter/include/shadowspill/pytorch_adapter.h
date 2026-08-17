@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 37U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 39U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -163,10 +163,27 @@ SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_plan_destroy(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_object_handle_acquire(
+    uint64_t runtime_object_id,
+    uintptr_t *object_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_object_handle_release(
+    uintptr_t object_handle
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+shadowspill_pytorch_object_release_generation(
+    uintptr_t object_handle,
+    uint64_t expected_generation
+);
+
+SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_bind_object(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
-    uint64_t runtime_object_id,
+    uintptr_t object_handle,
     uint8_t consistency
 );
 

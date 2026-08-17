@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.ir import MemoryLocation
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
@@ -34,6 +35,7 @@ def lower_partitioned_forward_program(
     | None = None,
     device_ordinal: int = 0,
     profile_compatibility_digests: tuple[str, ...] | None = None,
+    public_output_locations: Mapping[int, MemoryLocation] | None = None,
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
 
@@ -54,7 +56,11 @@ def lower_partitioned_forward_program(
         physical,
         device_id=device_id,
     )
-    initial_residency, final_residency = derive_forward_residency(objects, graph)
+    initial_residency, final_residency = derive_forward_residency(
+        objects,
+        graph,
+        public_output_locations=public_output_locations,
+    )
     output_leaves, output_tree_spec = tree_flatten(partitioned.stages[-1].output)
     return LoweredForwardProgram(
         publish_program(
@@ -68,6 +74,7 @@ def lower_partitioned_forward_program(
         graph.entrypoints,
         objects.registrations,
         objects.root_input_slots,
+        graph.public_outputs,
         output_tree_spec,
         len(output_leaves),
     )

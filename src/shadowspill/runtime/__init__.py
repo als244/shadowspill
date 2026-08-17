@@ -22,6 +22,7 @@ from .admission_replay import (
     AdmissionReuseDependency,
     run_admission_replay,
 )
+from .objects import ObjectRef
 
 __all__ = [
     "AdmissionError",
@@ -34,6 +35,7 @@ __all__ = [
     "AdmissionReuseDependency",
     "AllocationEvent",
     "AllocationOperation",
+    "ObjectRef",
     "SlabLayout",
     "SlabPlacement",
     "SlabReplay",
