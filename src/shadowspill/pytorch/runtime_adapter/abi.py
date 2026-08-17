@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 47
-RUNTIME_ABI_VERSION: Final = 38
+ADAPTER_ABI_VERSION: Final = 48
+RUNTIME_ABI_VERSION: Final = 39
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -115,6 +115,10 @@ class RuntimeStatistics(ctypes.Structure):
         ("retirement_record_in_use", ctypes.c_uint64),
         ("retirement_record_peak_in_use", ctypes.c_uint64),
         ("retirement_record_growth_rejections", ctypes.c_uint64),
+        ("memory_lease_record_capacity", ctypes.c_uint64),
+        ("memory_lease_record_in_use", ctypes.c_uint64),
+        ("memory_lease_record_peak_in_use", ctypes.c_uint64),
+        ("memory_lease_record_growth_rejections", ctypes.c_uint64),
     ]
 
 

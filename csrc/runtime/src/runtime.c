@@ -117,7 +117,9 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                     (void)shadowspill_memory_pool_cancel_reservation_locked(
                         lease
                     );
-                    free(lease);
+                    shadowspill_memory_pool_try_recycle_lease_record_locked(
+                        lease
+                    );
                 }
                 pthread_mutex_unlock(&pool->lock);
                 action->destination_lease = NULL;
@@ -474,6 +476,27 @@ ShadowSpillRuntimeStatus shadowspill_runtime_reserve_retirement_records(
     );
 }
 
+ShadowSpillRuntimeStatus shadowspill_runtime_reserve_memory_lease_records(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    uint64_t minimum_free_records
+) {
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL || minimum_free_records == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U) {
+        return SHADOWSPILL_RUNTIME_CLOSED;
+    }
+    ShadowSpillRuntimeStatus status = shadowspill_runtime_wait_idle(runtime);
+    if (status != SHADOWSPILL_RUNTIME_OK) {
+        return status;
+    }
+    return shadowspill_memory_pool_reserve_lease_records(
+        pool, minimum_free_records
+    );
+}
+
 ShadowSpillRuntimeStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 ) {
@@ -760,6 +783,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_statistics(
         .retirement_record_peak_in_use = runtime->retirements.peak_in_use,
         .retirement_record_growth_rejections =
             runtime->retirements.growth_rejections,
+        .memory_lease_record_capacity =
+            execution_pool->lease_record_capacity +
+            spill_pool->lease_record_capacity,
+        .memory_lease_record_in_use =
+            execution_pool->lease_record_in_use +
+            spill_pool->lease_record_in_use,
+        .memory_lease_record_peak_in_use =
+            execution_pool->lease_record_peak_in_use +
+            spill_pool->lease_record_peak_in_use,
+        .memory_lease_record_growth_rejections =
+            execution_pool->lease_record_growth_rejections +
+            spill_pool->lease_record_growth_rejections,
     };
     pthread_mutex_unlock(&runtime->retirements.lock);
     pthread_mutex_unlock(&runtime->events.lock);

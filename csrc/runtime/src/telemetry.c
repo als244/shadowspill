@@ -559,8 +559,16 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         while (retirement != NULL) {
             ShadowSpillMemoryLease *next =
                 retirement->task_retirement_next;
+            ShadowSpillMemoryPool *owner = retirement->metadata_owner;
+            if (owner != NULL) {
+                pthread_mutex_lock(&owner->lock);
+            }
             retirement->task_retirement_next = NULL;
             retirement->task_retirement_linked = 0U;
+            shadowspill_memory_pool_try_recycle_lease_record_locked(retirement);
+            if (owner != NULL) {
+                pthread_mutex_unlock(&owner->lock);
+            }
             retirement = next;
         }
         task_scope.runtime = NULL;

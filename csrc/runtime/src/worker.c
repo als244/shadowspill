@@ -1016,6 +1016,11 @@ static int handle_action(
                         ShadowSpillMemoryLease *lease = spill->lease;
                         const int range_status =
                             shadowspill_memory_pool_release_lease_locked(lease);
+                        if (range_status == 0) {
+                            shadowspill_memory_pool_try_recycle_lease_record_locked(
+                                lease
+                            );
+                        }
                         shadowspill_memory_pool_unlock_reclamation(
                             action->plan_owner->spill_pool
                         );
@@ -1031,7 +1036,6 @@ static int handle_action(
                             pthread_mutex_unlock(&object->lock);
                             return -1;
                         }
-                        free(lease);
                         spill->lease = NULL;
                         spill->owns_lease = 0U;
                         spill->current = 0U;

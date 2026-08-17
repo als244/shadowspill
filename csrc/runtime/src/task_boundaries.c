@@ -32,9 +32,9 @@ static void release_reserved_destination(
     }
     shadowspill_memory_pool_lock_reservation(plan->spill_pool);
     (void)shadowspill_memory_pool_cancel_reservation_locked(lease);
+    shadowspill_memory_pool_try_recycle_lease_record_locked(lease);
     shadowspill_memory_pool_unlock_reservation(plan->spill_pool);
     shadowspill_memory_pool_relinquish_reservation(plan->spill_pool);
-    free(lease);
 }
 
 static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
@@ -97,9 +97,10 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
             );
         }
     } else {
-        action->destination_lease = calloc(
-            1U, sizeof(*action->destination_lease)
-        );
+        action->destination_lease =
+            shadowspill_memory_pool_acquire_lease_record_locked(
+                runtime, pool, action->task_id
+            );
         const int reserve_status = action->destination_lease == NULL
             ? -1
             : shadowspill_memory_pool_reserve_lease_locked(
@@ -119,7 +120,9 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
                     pool->minimum_alignment
                 );
             if (successor_status != 0) {
-                free(action->destination_lease);
+                shadowspill_memory_pool_try_recycle_lease_record_locked(
+                    action->destination_lease
+                );
                 action->destination_lease = NULL;
                 status = successor_status > 0
                     ? SHADOWSPILL_RUNTIME_OUT_OF_MEMORY

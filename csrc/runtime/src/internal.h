@@ -139,6 +139,8 @@ typedef struct ShadowSpillMemoryPool {
     struct ShadowSpillMemoryLease *range_leases;
     /* Complete lease metadata owned by this pool until runtime teardown. */
     struct ShadowSpillMemoryLease *owned_leases;
+    /* Reusable metadata records; these own no physical range while linked. */
+    struct ShadowSpillMemoryLease *free_lease_records;
     struct ShadowSpillMemoryLease *active_leases;
     struct ShadowSpillMemoryLease **leases_by_id;
     struct ShadowSpillMemoryLease **leases_by_pointer;
@@ -156,11 +158,17 @@ typedef struct ShadowSpillMemoryPool {
     uint64_t peak_requested_allocated_bytes;
     uint64_t live_allocations;
     uint64_t blocked_allocators;
+    uint64_t lease_record_capacity;
+    uint64_t lease_record_available;
+    uint64_t lease_record_in_use;
+    uint64_t lease_record_peak_in_use;
+    uint64_t lease_record_growth_rejections;
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
     _Atomic uint64_t free_bytes_snapshot;
     _Atomic uint64_t largest_free_bytes_snapshot;
     uint8_t initialized;
+    uint8_t lease_records_sealed;
 } ShadowSpillMemoryPool;
 
 typedef enum ShadowSpillMemoryLeaseState {
@@ -173,6 +181,8 @@ typedef enum ShadowSpillMemoryLeaseState {
 } ShadowSpillMemoryLeaseState;
 
 typedef struct ShadowSpillMemoryLease {
+    /* Stable metadata owner; unlike ``pool``, this survives physical release. */
+    ShadowSpillMemoryPool *metadata_owner;
     ShadowSpillMemoryPool *pool;
     ShadowSpillMemoryLeaseState state;
     uint64_t allocation_id;
@@ -214,6 +224,7 @@ typedef struct ShadowSpillMemoryLease {
     ShadowSpillEventLease *causal_event;
     uint8_t causal_dependency_expected;
     struct ShadowSpillMemoryLease *ownership_next;
+    struct ShadowSpillMemoryLease *free_record_next;
     struct ShadowSpillMemoryLease *id_index_next;
     struct ShadowSpillMemoryLease *pointer_index_next;
     struct ShadowSpillMemoryLease *reusable_index_next;
@@ -230,6 +241,9 @@ typedef struct ShadowSpillMemoryLease {
     struct ShadowSpillMemoryLease *pool_next;
     struct ShadowSpillMemoryLease **pool_previous_link;
     uint8_t in_reusable_index;
+    uint8_t in_id_index;
+    uint8_t in_pointer_index;
+    uint8_t metadata_in_use;
     /*
      * The pool range allocator owns ordinary leases.  A borrowed lease names
      * bytes inside a separately owned parent range (for example, one admitted
@@ -738,6 +752,10 @@ int shadowspill_memory_pool_initialize(
     uint64_t minimum_alignment
 );
 void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
+ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
+    ShadowSpillMemoryPool *pool,
+    uint64_t minimum_free_records
+);
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_unlock_foreground(ShadowSpillMemoryPool *pool);
 void shadowspill_memory_pool_declare_reservation(ShadowSpillMemoryPool *pool);
@@ -1027,6 +1045,16 @@ void shadowspill_cancel_execution_reservation_locked(
 void shadowspill_release_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
+);
+ShadowSpillMemoryLease *shadowspill_memory_pool_acquire_lease_record_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillMemoryPool *pool,
+    uint64_t origin_task_id
+);
+void shadowspill_memory_lease_retain(ShadowSpillMemoryLease *lease);
+void shadowspill_memory_lease_release(ShadowSpillMemoryLease *lease);
+void shadowspill_memory_pool_try_recycle_lease_record_locked(
+    ShadowSpillMemoryLease *lease
 );
 ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event(
     ShadowSpillRuntime *runtime,
