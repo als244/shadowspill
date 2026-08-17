@@ -168,7 +168,7 @@ void shadowspill_latch_task_envelope_failure(
     (void)charged_bytes;
 }
 
-void shadowspill_latch_task_allocation_abi_failure(
+void shadowspill_latch_task_allocation_contract_failure(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskAllocationMismatch *mismatch
 ) {
@@ -177,7 +177,7 @@ void shadowspill_latch_task_allocation_abi_failure(
     }
     latch_failure(
         runtime,
-        SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH,
+        SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH,
         shadowspill_current_task_id(runtime),
         SHADOWSPILL_RUNTIME_NO_ID,
         SHADOWSPILL_RUNTIME_NO_ID,

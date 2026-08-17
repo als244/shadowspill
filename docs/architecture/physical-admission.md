@@ -29,7 +29,7 @@ Physical admission consumes:
 |---|---|
 | `PressureFitResult` | Selected tasks, residency, ordered actions, and logical simulation. |
 | `AdmissionTopology` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
-| `TaskAllocationABI` values | Stable task-local core allocation/free identities and geometry. |
+| `TaskAllocationContract` values | Stable task-local core allocation/free identities and geometry. |
 | Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the strict core. |
 | Terminal caller-owned aliases | Final execution leases that may outlive a later callable invocation. |
 
@@ -238,7 +238,7 @@ borrowed fixed lease does not independently own or free the parent range.
 
 Each fixed task allocation is addressed by `(execution_task_id,
 allocation_ordinal)`. Runtime allocation callbacks reconcile the observed
-operation stream against `TaskAllocationABI`, then validate requested bytes
+operation stream against `TaskAllocationContract`, then validate requested bytes
 and alignment before returning the planned subrange. Required output and
 mutation allocations cannot be silently omitted or replaced by scratch.
 
@@ -287,7 +287,7 @@ Sealing verifies:
 
 - placement identities are unique;
 - every fixed range fits the slice and satisfies alignment;
-- every strict ABI allocation and fetch action has exactly one fixed or
+- every strict-contract allocation and fetch action has exactly one fixed or
   dynamic policy;
 - task allocation bytes/alignment match the execution record;
 - action destinations name the expected object and size;
@@ -387,7 +387,7 @@ AdmitSelectedSchedule(selected, topology, scratch):
 - placement counts and bytes by semantic purpose;
 - complete placements and their relative offsets;
 - causal reuse dependencies;
-- task memory envelopes and allocation-ABI digests;
+- task memory envelopes and allocation-contract digests;
 - layout, Program, schedule, and topology digests;
 - logical versus physically admitted simulation results;
 - PressureFit and physical-admission wall times separately.
@@ -405,7 +405,7 @@ Physical admission guarantees for the admitted fixed-shape contract:
 - no overlapping fixed ranges without causal ordering and a completion proof;
 - fixed task/action identities validated before execution;
 - trigger-time fetch destination capacity;
-- runtime failure before unsafe use when allocation behavior exceeds its ABI
+- runtime failure before unsafe use when allocation behavior exceeds its contract
   or envelope.
 
 It does not prove an unseen, data-dependent allocator path that was absent

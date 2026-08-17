@@ -324,7 +324,7 @@ class RuntimeAction(ctypes.Structure):
     ]
 
 
-class TaskAllocationABIStep(ctypes.Structure):
+class TaskAllocationContractStep(ctypes.Structure):
     _fields_ = [
         ("allocation_ordinal", ctypes.c_uint64),
         ("requested_bytes", ctypes.c_uint64),
@@ -344,9 +344,9 @@ class ExecutionDescription(ctypes.Structure):
         ("update_count", ctypes.c_uint32),
         ("actions", ctypes.POINTER(RuntimeAction)),
         ("action_count", ctypes.c_uint32),
-        ("allocation_abi_steps", ctypes.POINTER(TaskAllocationABIStep)),
-        ("allocation_abi_step_count", ctypes.c_uint32),
-        ("enforce_allocation_abi", ctypes.c_uint8),
+        ("allocation_contract_steps", ctypes.POINTER(TaskAllocationContractStep)),
+        ("allocation_contract_step_count", ctypes.c_uint32),
+        ("enforce_allocation_contract", ctypes.c_uint8),
         ("maximum_requested_allocation_bytes", ctypes.c_uint64),
         ("maximum_charged_allocation_bytes", ctypes.c_uint64),
         ("live_requested_allocation_limit_bytes", ctypes.c_uint64),

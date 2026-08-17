@@ -20,7 +20,7 @@ from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
     ProfileKey,
     ProfileRepository,
-    TaskAllocationABI,
+    TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
@@ -216,7 +216,7 @@ def test_profile_identity_includes_control_contents(
             (calls,),
             "context-test",
             allocation_trace=trace,
-            allocation_abi=TaskAllocationABI.capture(trace),
+            allocation_contract=TaskAllocationContract.capture(trace),
         )
 
     result = profile_unique_artifacts(

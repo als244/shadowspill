@@ -10,8 +10,8 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
 )
 from shadowspill.pytorch.profiling import (
-    TaskAllocationABI,
-    TaskAllocationABIStep,
+    TaskAllocationContract,
+    TaskAllocationContractStep,
     TaskAllocationEvent,
     TaskAllocationOperation,
     compare_allocation_path,
@@ -56,7 +56,7 @@ def _mutation_contract() -> TaskStorageContract:
     )
 
 
-def test_task_allocation_abi_is_pointer_free_and_deterministic() -> None:
+def test_task_allocation_contract_is_pointer_free_and_deterministic() -> None:
     trace = (
         TaskAllocationEvent(
             0,
@@ -83,11 +83,11 @@ def test_task_allocation_abi_is_pointer_free_and_deterministic() -> None:
             alignment_bytes=512,
         ),
     )
-    abi = TaskAllocationABI.capture(trace, _mutation_contract())
-    assert abi.steps[-1].mutation_input_positions == (3,)
-    assert abi.steps[-1].persistent_after_task
-    assert "offset" not in str(abi.to_dict())
-    assert TaskAllocationABI.from_dict(abi.to_dict()) == abi
+    contract = TaskAllocationContract.capture(trace, _mutation_contract())
+    assert contract.steps[-1].mutation_input_positions == (3,)
+    assert contract.steps[-1].persistent_after_task
+    assert "offset" not in str(contract.to_dict())
+    assert TaskAllocationContract.from_dict(contract.to_dict()) == contract
 
     changed_physical_placement = (
         *trace[:-1],
@@ -103,14 +103,14 @@ def test_task_allocation_abi_is_pointer_free_and_deterministic() -> None:
         ),
     )
     assert (
-        TaskAllocationABI.capture(changed_physical_placement, _mutation_contract())
-        == abi
+        TaskAllocationContract.capture(changed_physical_placement, _mutation_contract())
+        == contract
     )
 
 
-def test_task_allocation_abi_rejects_geometry_changes_on_free() -> None:
+def test_task_allocation_contract_rejects_geometry_changes_on_free() -> None:
     steps = (
-        TaskAllocationABIStep(
+        TaskAllocationContractStep(
             0,
             0,
             TaskAllocationOperation.ALLOCATE,
@@ -118,7 +118,7 @@ def test_task_allocation_abi_rejects_geometry_changes_on_free() -> None:
             64,
             256,
         ),
-        TaskAllocationABIStep(
+        TaskAllocationContractStep(
             1,
             0,
             TaskAllocationOperation.FREE,
@@ -128,12 +128,12 @@ def test_task_allocation_abi_rejects_geometry_changes_on_free() -> None:
         ),
     )
     with pytest.raises(ValueError, match="geometry on free"):
-        TaskAllocationABI(steps, "0" * 64)
+        TaskAllocationContract(steps, "0" * 64)
 
 
-def test_task_allocation_abi_rejects_sparse_allocation_ordinals() -> None:
+def test_task_allocation_contract_rejects_sparse_allocation_ordinals() -> None:
     steps = (
-        TaskAllocationABIStep(
+        TaskAllocationContractStep(
             0,
             1,
             TaskAllocationOperation.ALLOCATE,
@@ -146,11 +146,11 @@ def test_task_allocation_abi_rejects_sparse_allocation_ordinals() -> None:
     )
 
     with pytest.raises(ValueError, match="dense allocation ordinals"):
-        TaskAllocationABI(steps, "0" * 64)
+        TaskAllocationContract(steps, "0" * 64)
 
 
-def test_task_allocation_abi_retains_bounded_provider_allocation() -> None:
-    abi = TaskAllocationABI.capture(
+def test_task_allocation_contract_retains_bounded_provider_allocation() -> None:
+    contract = TaskAllocationContract.capture(
         (
             TaskAllocationEvent(
                 0,
@@ -161,13 +161,13 @@ def test_task_allocation_abi_retains_bounded_provider_allocation() -> None:
         )
     )
 
-    assert abi.steps[0].persistent_after_task
-    assert not abi.steps[0].output_leaf_indices
-    assert abi.for_retained_output_leaves(()).steps[0].persistent_after_task
+    assert contract.steps[0].persistent_after_task
+    assert not contract.steps[0].output_leaf_indices
+    assert contract.for_retained_output_leaves(()).steps[0].persistent_after_task
 
 
-def test_task_allocation_abi_specializes_returned_output_ownership() -> None:
-    profiled = TaskAllocationABI.capture(
+def test_task_allocation_contract_specializes_returned_output_ownership() -> None:
+    profiled = TaskAllocationContract.capture(
         (
             TaskAllocationEvent(
                 0,
@@ -192,7 +192,7 @@ def test_task_allocation_abi_specializes_returned_output_ownership() -> None:
 
 
 def test_allocation_path_reconciles_multiple_insertions_and_omissions() -> None:
-    reference = TaskAllocationABI.capture(
+    reference = TaskAllocationContract.capture(
         (
             TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 16, 16),
             TaskAllocationEvent(0, TaskAllocationOperation.FREE, 16, 16),
@@ -210,7 +210,7 @@ def test_allocation_path_reconciles_multiple_insertions_and_omissions() -> None:
             ),
         )
     )
-    observed = TaskAllocationABI.capture(
+    observed = TaskAllocationContract.capture(
         (
             TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 8, 8),
             TaskAllocationEvent(0, TaskAllocationOperation.FREE, 8, 8),
@@ -243,8 +243,8 @@ def test_allocation_path_reconciles_multiple_insertions_and_omissions() -> None:
 
 
 def test_allocation_path_rejects_unknown_framework_output() -> None:
-    reference = TaskAllocationABI.capture(())
-    observed = TaskAllocationABI.capture(
+    reference = TaskAllocationContract.capture(())
+    observed = TaskAllocationContract.capture(
         (
             TaskAllocationEvent(
                 0,

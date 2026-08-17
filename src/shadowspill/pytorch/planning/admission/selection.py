@@ -68,8 +68,8 @@ class SelectedAdmission:
 
         result: list[DynamicTaskAllocationPolicy] = []
         for task_id, envelope in self.task_envelopes:
-            abi = envelope.allocation_abi
-            if abi is None:
+            contract = envelope.allocation_contract
+            if contract is None:
                 continue
             result.extend(
                 DynamicTaskAllocationPolicy(
@@ -78,7 +78,7 @@ class SelectedAdmission:
                     step.charged_bytes,
                     step.alignment_bytes,
                 )
-                for step in abi.steps
+                for step in contract.steps
                 if step.operation is TaskAllocationOperation.ALLOCATE
                 and step.persistent_after_task
                 and not step.output_leaf_indices
@@ -251,9 +251,9 @@ def _task_memory_envelope(
             prior = live.pop(event.allocation_ordinal)
             live_requested -= prior[0]
             live_charged -= prior[1]
-    allocation_abi = measurement.allocation_abi
-    if allocation_abi is not None:
-        allocation_abi = allocation_abi.for_retained_output_leaves(
+    allocation_contract = measurement.allocation_contract
+    if allocation_contract is not None:
+        allocation_contract = allocation_contract.for_retained_output_leaves(
             retained_output_leaves
         )
     scratch_peak_requested = max(
@@ -290,7 +290,7 @@ def _task_memory_envelope(
             item.compatibility_digest
             for item in measurement.allocation_path_observations
         ),
-        allocation_abi=allocation_abi,
+        allocation_contract=allocation_contract,
     )
 
 

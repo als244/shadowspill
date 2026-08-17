@@ -213,7 +213,7 @@ levels:
 |---|---|
 | `PlanUniqueStage` | Structural key, semantic module targets, occurrence count, and every legal `PlanGraphPair`. |
 | `PlanGraphPair` | Variant name, min-cut memory budget, recomputation flag, saved-value counts/classes/bytes, and paired forward/backward profiles. |
-| `PlanGraphProfile` | Profiled runtime; input, mutation, output, replacement-transition, workspace, and persistent extents; storage/layout identities; allocation ABI and timeline. |
+| `PlanGraphProfile` | Profiled runtime; input, mutation, output, replacement-transition, workspace, and persistent extents; storage/layout identities; allocation contract and timeline. |
 | Task-to-stage map | Chronological execution ID, semantic task, structural stage, occurrence, and selected graph-pair variant. |
 
 This makes the selected variant a direct task lookup while retaining every

@@ -48,7 +48,7 @@ typedef struct ShadowSpillTaskAllocationMismatch {
     uint8_t actual_operation;
 } ShadowSpillTaskAllocationMismatch;
 
-void shadowspill_latch_task_allocation_abi_failure(
+void shadowspill_latch_task_allocation_contract_failure(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskAllocationMismatch *mismatch
 );

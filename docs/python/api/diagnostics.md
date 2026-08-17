@@ -51,7 +51,7 @@ chosen variant per execution, semantic storage roots and views, compiled
 physical layout, input/output/mutation/workspace sizes, task timings,
 allocation behavior, profiling metadata, cache artifacts, and phase wall time.
 
-Additional nested report records describe allocation-ABI operations,
+Additional nested report records describe allocation-contract operations,
 representative inputs, task memory envelopes, physical layouts, and admission
 attempts. They are intentionally reached through the report rather than added
 to the top-level `shadowspill.pytorch` import surface.

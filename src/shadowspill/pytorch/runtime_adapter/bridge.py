@@ -31,7 +31,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskHostTiming,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
-    TaskAllocationABIStep as CTaskAllocationABIStep,
+    TaskAllocationContractStep as CTaskAllocationContractStep,
 )
 from shadowspill.pytorch.runtime_adapter.failures import (
     RuntimeExecutionError,
@@ -43,7 +43,7 @@ from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
 if TYPE_CHECKING:
-    from shadowspill.pytorch.profiling.allocation_abi import TaskAllocationABI
+    from shadowspill.pytorch.profiling.allocation_contract import TaskAllocationContract
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
     begin_runtime_trace,
@@ -70,7 +70,7 @@ class TaskMemoryEnvelope:
     dynamic_scratch_maximum_allocation_bytes: int = 0
     dynamic_scratch_live_limit_bytes: int = 0
     allocation_path_digests: tuple[str, ...] = ()
-    allocation_abi: TaskAllocationABI | None = None
+    allocation_contract: TaskAllocationContract | None = None
 
     def __post_init__(self) -> None:
         values = (
@@ -119,7 +119,7 @@ class _ExecutionBuffers:
     input_ids: Any
     updates: Any
     actions: Any
-    allocation_abi_steps: Any
+    allocation_contract_steps: Any
     encoded_labels: tuple[bytes | None, ...]
 
 
@@ -130,9 +130,7 @@ def _plan_local_id(value: str, prefix: str) -> int:
         )
     suffix = value.removeprefix(prefix)
     if not suffix.isdigit():
-        raise PlanningError(
-            f"plan-local identity {value!r} has a nonnumeric suffix"
-        )
+        raise PlanningError(f"plan-local identity {value!r} has a nonnumeric suffix")
     return int(suffix)
 
 
@@ -423,9 +421,7 @@ class RuntimeBridge:
         if not self._fixed_layout_installed:
             raise RuntimeExecutionError("no fixed physical layout was admitted")
         self._require(
-            self.library.shadowspill_pytorch_plan_seal_fixed_layout(
-                self.plan_handle
-            ),
+            self.library.shadowspill_pytorch_plan_seal_fixed_layout(self.plan_handle),
             "seal fixed physical layout",
         )
 
@@ -502,11 +498,13 @@ class RuntimeBridge:
                 for (action, _text), label in zip(actions, labels, strict=True)
             )
         )
-        allocation_abi = memory_envelope.allocation_abi
-        abi_steps = () if allocation_abi is None else allocation_abi.steps
-        abi_values = (CTaskAllocationABIStep * len(abi_steps))(
+        allocation_contract = memory_envelope.allocation_contract
+        contract_steps = (
+            () if allocation_contract is None else allocation_contract.steps
+        )
+        contract_values = (CTaskAllocationContractStep * len(contract_steps))(
             *(
-                CTaskAllocationABIStep(
+                CTaskAllocationContractStep(
                     allocation_ordinal=step.allocation_ordinal,
                     requested_bytes=step.requested_bytes,
                     charged_bytes=step.charged_bytes,
@@ -514,7 +512,7 @@ class RuntimeBridge:
                     operation=0 if step.operation.value == "allocate" else 1,
                     required=step.required,
                 )
-                for step in abi_steps
+                for step in contract_steps
             )
         )
         description = ExecutionDescription(
@@ -525,9 +523,9 @@ class RuntimeBridge:
             update_count=len(mutations),
             actions=action_values if actions else None,
             action_count=len(actions),
-            allocation_abi_steps=abi_values if abi_steps else None,
-            allocation_abi_step_count=len(abi_steps),
-            enforce_allocation_abi=allocation_abi is not None,
+            allocation_contract_steps=contract_values if contract_steps else None,
+            allocation_contract_step_count=len(contract_steps),
+            enforce_allocation_contract=allocation_contract is not None,
             maximum_requested_allocation_bytes=(
                 memory_envelope.maximum_requested_allocation_bytes
             ),
@@ -552,14 +550,12 @@ class RuntimeBridge:
             input_ids,
             updates,
             action_values,
-            abi_values,
+            contract_values,
             labels,
         )
 
     def _resolve_execution_handle(self, task_id: str) -> int:
-        return self._resolve_execution_handle_number(
-            _plan_local_id(task_id, "task_")
-        )
+        return self._resolve_execution_handle_number(_plan_local_id(task_id, "task_"))
 
     def _resolve_execution_handle_number(self, task_number: int) -> int:
         handle = ctypes.c_size_t()
@@ -613,9 +609,7 @@ class RuntimeBridge:
     def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
         """Enable optional compute-stream host callbacks for selected tasks."""
 
-        task_ordinals = tuple(
-            _plan_local_id(task_id, "task_") for task_id in task_ids
-        )
+        task_ordinals = tuple(_plan_local_id(task_id, "task_") for task_id in task_ids)
         capacity = max(task_ordinals, default=-1) + 1
         if capacity <= 0:
             raise RuntimeExecutionError("debug task timing requires a task")
@@ -936,10 +930,7 @@ class RuntimeBridge:
         generations = (
             torch.ops.shadowspill._adopt_storages(
                 [tensor for _, tensor, _ in materialized],
-                [
-                    self._runtime_object_id(alias_id)
-                    for _, _, alias_id in materialized
-                ],
+                [self._runtime_object_id(alias_id) for _, _, alias_id in materialized],
                 [self._size(alias_id) for _, _, alias_id in materialized],
                 [
                     2
@@ -1095,9 +1086,7 @@ class RuntimeBridge:
         updates = (ObjectUpdate * len(mutation_values))(
             *(
                 ObjectUpdate(
-                    self._runtime_object_id(
-                        self.alias_for_object(item.object_id)
-                    ),
+                    self._runtime_object_id(self.alias_for_object(item.object_id)),
                     item.version_delta,
                 )
                 for item in mutation_values
@@ -1193,9 +1182,7 @@ class RuntimeBridge:
         """Discard immutable execution records and their fixed layout."""
 
         self._require(
-            self.library.shadowspill_pytorch_plan_clear_execution(
-                self.plan_handle
-            ),
+            self.library.shadowspill_pytorch_plan_clear_execution(self.plan_handle),
             "clear execution plan",
         )
         self._admitted_tasks.clear()
@@ -1335,10 +1322,7 @@ class RuntimeBridge:
             self._allocate_runtime_object_id(alias_id)
         generations = torch.ops.shadowspill._after_execution_storages(
             [tensor for _, tensor, _ in materialized],
-            [
-                self._runtime_object_id(alias_id)
-                for _, _, alias_id in materialized
-            ],
+            [self._runtime_object_id(alias_id) for _, _, alias_id in materialized],
             [self._size(alias_id) for _, _, alias_id in materialized],
             [
                 2

@@ -37,8 +37,8 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
     summarize_task_workspace,
 )
 
-from .allocation_abi import (
-    TaskAllocationABI,
+from .allocation_contract import (
+    TaskAllocationContract,
     TaskAllocationPathObservation,
 )
 from .allocation_core import AllocationPathProbe, derive_core_allocation_path
@@ -84,7 +84,7 @@ class _TimingObservation:
 class _AllocationPathProbe:
     probe_index: int
     repetition: int
-    allocation_abi: TaskAllocationABI
+    allocation_contract: TaskAllocationContract
     output_input_bindings: tuple[TaskOutputInputBinding, ...]
     workspace: TaskWorkspaceProfile
 
@@ -390,7 +390,7 @@ class CudaTaskProfiler:
             (
                 workspace,
                 persistent_high_water,
-                allocation_abi,
+                allocation_contract,
                 path_observations,
             ) = self._profile_workspace(
                 executable,
@@ -407,7 +407,7 @@ class CudaTaskProfiler:
                 timing,
                 fixed_extents,
                 phase_timings,
-                allocation_abi,
+                allocation_contract,
                 path_observations,
             )
         finally:
@@ -440,8 +440,8 @@ class CudaTaskProfiler:
                         _AllocationPathProbe(
                             probe_index,
                             repetition,
-                            TaskAllocationABI.capture(
-                                measured.allocation_abi_trace,
+                            TaskAllocationContract.capture(
+                                measured.allocation_contract_trace,
                                 contract,
                             ),
                             measured.output_input_bindings,
@@ -544,7 +544,7 @@ class CudaTaskProfiler:
     ) -> tuple[
         TaskWorkspaceProfile,
         int,
-        TaskAllocationABI,
+        TaskAllocationContract,
         tuple[TaskAllocationPathObservation, ...],
     ]:
         started = time.perf_counter_ns()
@@ -560,18 +560,20 @@ class CudaTaskProfiler:
             ("retention_audit", max(0, time.perf_counter_ns() - started - accounted))
         )
         abi_started = time.perf_counter_ns()
-        workspace, allocation_abi, path_observations = self._validate_allocation_abi(
-            executable,
-            stream,
-            workspace,
-            path_probes=path_probes,
+        workspace, allocation_contract, path_observations = (
+            self._validate_allocation_contract(
+                executable,
+                stream,
+                workspace,
+                path_probes=path_probes,
+            )
         )
         phase_timings.append(
-            ("allocation_abi_validation", time.perf_counter_ns() - abi_started)
+            ("allocation_contract_validation", time.perf_counter_ns() - abi_started)
         )
-        return workspace, high_water, allocation_abi, path_observations
+        return workspace, high_water, allocation_contract, path_observations
 
-    def _validate_allocation_abi(
+    def _validate_allocation_contract(
         self,
         executable: Callable[[], object],
         stream: torch.cuda.Stream,
@@ -580,7 +582,7 @@ class CudaTaskProfiler:
         path_probes: tuple[_AllocationPathProbe, ...],
     ) -> tuple[
         TaskWorkspaceProfile,
-        TaskAllocationABI,
+        TaskAllocationContract,
         tuple[TaskAllocationPathObservation, ...],
     ]:
         """Derive one core from stable warm traces and the probe matrix."""
@@ -590,17 +592,19 @@ class CudaTaskProfiler:
             if isinstance(executable, ProfileExecutable)
             else None
         )
-        expected = TaskAllocationABI.capture(baseline.allocation_abi_trace, contract)
+        expected = TaskAllocationContract.capture(
+            baseline.allocation_contract_trace, contract
+        )
         warm_workspaces = [baseline]
         for repetition in range(2):
             observed = self._measure_workspace(executable, stream)
             warm_workspaces.append(observed)
-            candidate = TaskAllocationABI.capture(
-                observed.allocation_abi_trace, contract
+            candidate = TaskAllocationContract.capture(
+                observed.allocation_contract_trace, contract
             )
             if candidate.compatibility_digest != expected.compatibility_digest:
                 raise AllocationTelemetryError(
-                    "compiled task allocation ABI changed across independent "
+                    "compiled task allocation contract changed across independent "
                     f"profiling traces (repetition={repetition + 2}, "
                     f"expected={expected.compatibility_digest}, "
                     f"observed={candidate.compatibility_digest})"
@@ -624,7 +628,7 @@ class CudaTaskProfiler:
                     AllocationPathProbe(
                         probe.probe_index,
                         probe.repetition,
-                        probe.allocation_abi,
+                        probe.allocation_contract,
                     )
                     for probe in path_probes
                 ),
@@ -639,8 +643,8 @@ class CudaTaskProfiler:
             (
                 item
                 for item in candidates
-                if TaskAllocationABI.capture(
-                    item.allocation_abi_trace,
+                if TaskAllocationContract.capture(
+                    item.allocation_contract_trace,
                     contract,
                 ).compatibility_digest
                 == derived.source_digest
@@ -651,7 +655,7 @@ class CudaTaskProfiler:
             raise AssertionError("derived allocation core has no source workspace")
         return (
             _conservative_core_workspace(core_workspace, candidates),
-            derived.allocation_abi,
+            derived.allocation_contract,
             derived.observations,
         )
 
@@ -963,19 +967,26 @@ class CudaTaskProfiler:
         )
 
         abi_started = time.perf_counter_ns()
-        allocation_abi = TaskAllocationABI.capture(workspace.allocation_abi_trace)
+        allocation_contract = TaskAllocationContract.capture(
+            workspace.allocation_contract_trace
+        )
         for repetition in range(2):
             observed = self._with_initial_opaque_callable(
                 artifact,
                 stream,
                 lambda executable: self._measure_workspace(executable, stream),
             )
-            candidate = TaskAllocationABI.capture(observed.allocation_abi_trace)
-            if candidate.compatibility_digest != allocation_abi.compatibility_digest:
+            candidate = TaskAllocationContract.capture(
+                observed.allocation_contract_trace
+            )
+            if (
+                candidate.compatibility_digest
+                != allocation_contract.compatibility_digest
+            ):
                 raise AllocationTelemetryError(
-                    "opaque optimizer first-step allocation ABI changed across "
+                    "opaque optimizer first-step allocation contract changed across "
                     f"independent profiles (repetition={repetition + 2}, "
-                    f"expected={allocation_abi.compatibility_digest}, "
+                    f"expected={allocation_contract.compatibility_digest}, "
                     f"observed={candidate.compatibility_digest})"
                 )
             if observed.output_input_bindings != workspace.output_input_bindings:
@@ -984,7 +995,7 @@ class CudaTaskProfiler:
                     f"independent profiles (repetition={repetition + 2})"
                 )
         phase_timings.append(
-            ("allocation_abi_validation", time.perf_counter_ns() - abi_started)
+            ("allocation_contract_validation", time.perf_counter_ns() - abi_started)
         )
         persistent_high_water = max(
             persistent_high_water,
@@ -1002,7 +1013,7 @@ class CudaTaskProfiler:
             timing,
             fixed_extents,
             phase_timings,
-            allocation_abi,
+            allocation_contract,
         )
 
     def _with_initial_opaque_callable(
@@ -1308,7 +1319,7 @@ def _conservative_core_workspace(
         key=lambda item: (
             item.peak_charged_bytes,
             item.peak_requested_bytes,
-            len(item.allocation_abi_trace),
+            len(item.allocation_contract_trace),
         ),
     )
     peak_requested = max(item.peak_requested_bytes for item in observations)
@@ -1333,7 +1344,7 @@ def _task_measurement(
     timing: _TimingObservation,
     fixed_extents: tuple[int, ...],
     phase_timings: list[tuple[str, int]],
-    allocation_abi: TaskAllocationABI,
+    allocation_contract: TaskAllocationContract,
     allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = (),
 ) -> TaskMeasurement:
     variability = max(timing.relative_mad, timing.half_drift)
@@ -1359,6 +1370,6 @@ def _task_measurement(
         timing_relative_mad=timing.relative_mad,
         timing_half_drift=timing.half_drift,
         timing_unstable=variability > 0.03,
-        allocation_abi=allocation_abi,
+        allocation_contract=allocation_contract,
         allocation_path_observations=allocation_path_observations,
     )

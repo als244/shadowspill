@@ -32,14 +32,15 @@ def main() -> int:
     )
     task_id = 17
     labels = (ctypes.c_char_p * (task_id + 1))()
-    labels[task_id] = (
-        b"execution_000017.dummy_model.stage_0003.forward"
-    )
-    if int(
-        installed.library.shadowspill_pytorch_task_labels_configure(
-            labels, task_id + 1
+    labels[task_id] = b"execution_000017.dummy_model.stage_0003.forward"
+    if (
+        int(
+            installed.library.shadowspill_pytorch_task_labels_configure(
+                labels, task_id + 1
+            )
         )
-    ) != 0:
+        != 0
+    ):
         raise AssertionError("failed to configure task labels")
     description = ExecutionDescription(
         task_id=task_id,
@@ -49,26 +50,32 @@ def main() -> int:
         update_count=0,
         actions=None,
         action_count=0,
-        allocation_abi_steps=None,
-        allocation_abi_step_count=0,
-        enforce_allocation_abi=0,
+        allocation_contract_steps=None,
+        allocation_contract_step_count=0,
+        enforce_allocation_contract=0,
         maximum_requested_allocation_bytes=0,
         maximum_charged_allocation_bytes=0,
         live_requested_allocation_limit_bytes=0,
         live_charged_allocation_limit_bytes=0,
     )
-    if int(
-        installed.library.shadowspill_pytorch_admit_execution(
-            ctypes.byref(description)
+    if (
+        int(
+            installed.library.shadowspill_pytorch_admit_execution(
+                ctypes.byref(description)
+            )
         )
-    ) != 0:
+        != 0
+    ):
         raise AssertionError("failed to admit OOM canary task")
     stream = torch.cuda.current_stream()
-    if int(
-        installed.library.shadowspill_pytorch_before_execution(
-            task_id, stream.cuda_stream, None, 0
+    if (
+        int(
+            installed.library.shadowspill_pytorch_before_execution(
+                task_id, stream.cuda_stream, None, 0
+            )
         )
-    ) != 0:
+        != 0
+    ):
         raise AssertionError("failed to enter OOM canary task")
     try:
         torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
@@ -134,11 +141,14 @@ def main() -> int:
     torch.cuda.synchronize()
     if int(installed.library.shadowspill_pytorch_recover_no_progress()) != 0:
         raise AssertionError("failed to recover no-progress for teardown")
-    if int(
-        installed.library.shadowspill_pytorch_allocator_failure(
-            ctypes.byref(failure)
+    if (
+        int(
+            installed.library.shadowspill_pytorch_allocator_failure(
+                ctypes.byref(failure)
+            )
         )
-    ) != 0:
+        != 0
+    ):
         raise AssertionError("adapter failure remained latched after recovery")
     probe = torch.empty((1024,), dtype=torch.uint8, device="cuda")
     if probe.data_ptr() == 0:

@@ -81,7 +81,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         .dependencies = &dependency,
         .dependency_count = 1U,
     };
-    const ShadowSpillTaskAllocationABIStep allocation_steps[2] = {
+    const ShadowSpillTaskAllocationContractStep allocation_steps[2] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 64U,
@@ -99,11 +99,11 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 7U,
-        .allocation_abi_steps = allocation_steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = allocation_steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
     };
-    const ShadowSpillTaskAllocationABIStep dynamic_steps[2] = {
+    const ShadowSpillTaskAllocationContractStep dynamic_steps[2] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 32U,
@@ -121,9 +121,9 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
     };
     const ShadowSpillExecutionDescription dynamic_execution = {
         .task_id = 10U,
-        .allocation_abi_steps = dynamic_steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = dynamic_steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
     };
     const ShadowSpillRuntimeAction eviction = {
         .object_id = object.object_id,
@@ -287,7 +287,7 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
         .placements = &placement,
         .placement_count = 1U,
     };
-    const ShadowSpillTaskAllocationABIStep steps[2] = {
+    const ShadowSpillTaskAllocationContractStep steps[2] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 32U,
@@ -305,9 +305,9 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 15U,
-        .allocation_abi_steps = steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
     };
     failed = failed || shadowspill_admit_fixed_layout(runtime, &layout) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -505,7 +505,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         .actions = &fetch,
         .action_count = 1U,
     };
-    const ShadowSpillTaskAllocationABIStep allocation_steps[2] = {
+    const ShadowSpillTaskAllocationContractStep allocation_steps[2] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 64U,
@@ -523,9 +523,9 @@ static int eviction_completion_orders_fixed_reuse(void) {
     };
     const ShadowSpillExecutionDescription allocation_task = {
         .task_id = 7U,
-        .allocation_abi_steps = allocation_steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = allocation_steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
     };
     const ShadowSpillRuntimeAction eviction = {
         .object_id = object.object_id,

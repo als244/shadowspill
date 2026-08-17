@@ -799,12 +799,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             (unsigned long long)
                 runtime->task_maximum_charged_allocation_bytes
         );
-    } else if (status == SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH) {
+    } else if (status == SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH) {
         append_failure_message(
             destination,
             destination_bytes,
             &offset,
-            "reason: TASK_ALLOCATION_ABI_MISMATCH\n"
+            "reason: TASK_ALLOCATION_CONTRACT_MISMATCH\n"
             "task_allocation_operation_index: %llu\n"
             "expected_operation: %s\nactual_operation: %s\n"
             "expected_ordinal: %llu\nactual_ordinal: %llu\n"

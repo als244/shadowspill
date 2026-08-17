@@ -39,7 +39,7 @@ src/shadowspill/
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural ABI
     ├── compilation/       Inductor adapter and executable storage manifests
-    ├── profiling/         representative inputs, timing, allocation ABI, workspace
+    ├── profiling/         representative inputs, timing, allocation contract, workspace
     ├── lowering/          ObjectCatalog and task binding into Program
     ├── optimizer/         optimizer graph capture and ordering
     ├── planning/          forward/training orchestration and physical admission

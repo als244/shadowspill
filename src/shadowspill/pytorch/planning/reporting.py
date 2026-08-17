@@ -226,9 +226,7 @@ def _forward_report(
         spill_pool=memory.spill.name,
         execution_budget_bytes=memory.execution_budget,
         spill_budget_bytes=memory.spill_budget,
-        requested_dynamic_scratch_reserve_bytes=(
-            memory.dynamic_scratch_reserve_bytes
-        ),
+        requested_dynamic_scratch_reserve_bytes=(memory.dynamic_scratch_reserve_bytes),
         execution_device=memory.execution_device,
         transfer_capabilities=memory.transfers,
     )
@@ -464,13 +462,13 @@ def fixed_layout_diagnostic(
             envelope.dynamic_scratch_live_limit_bytes,
             (
                 None
-                if envelope.allocation_abi is None
-                else envelope.allocation_abi.compatibility_digest
+                if envelope.allocation_contract is None
+                else envelope.allocation_contract.compatibility_digest
             ),
             (
                 0
-                if envelope.allocation_abi is None
-                else len(envelope.allocation_abi.steps)
+                if envelope.allocation_contract is None
+                else len(envelope.allocation_contract.steps)
             ),
             envelope.allocation_path_digests,
         )

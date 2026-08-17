@@ -108,8 +108,8 @@ def main() -> int:
             profile = stage.graph_pairs[0].forward
             if not profile.semantic_roots or not profile.compiled_roots:
                 raise AssertionError("forward ABI omitted semantic/physical layout")
-            if not profile.allocation_abi_digest:
-                raise AssertionError("forward ABI omitted its allocation ABI")
+            if not profile.allocation_contract_digest:
+                raise AssertionError("forward ABI omitted its allocation contract")
             if profile.semantic_contract_capture_ns <= 0:
                 raise AssertionError("forward ABI omitted contract extraction time")
             if profile.physical_profile_wall_time_ns <= 0:

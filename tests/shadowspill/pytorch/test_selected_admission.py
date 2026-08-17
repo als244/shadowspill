@@ -20,7 +20,7 @@ from shadowspill.pytorch.planning.admission.selection import (
     build_selected_admission,
 )
 from shadowspill.pytorch.profiling import (
-    TaskAllocationABI,
+    TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
@@ -158,10 +158,7 @@ def test_selected_admission_replaces_prediction_without_changing_schedule() -> N
     assert adjusted.schedule is selected.schedule
     assert adjusted.selections == selected.selections
     assert adjusted.simulation == admitted.simulation
-    assert (
-        adjusted.diagnostics.selected_makespan_ns
-        == admitted.simulation.makespan_ns
-    )
+    assert adjusted.diagnostics.selected_makespan_ns == admitted.simulation.makespan_ns
 
 
 def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
@@ -238,7 +235,7 @@ def test_task_envelope_specializes_persistent_output_ownership() -> None:
         (10,),
         "unit-test",
         allocation_trace=(output,),
-        allocation_abi=TaskAllocationABI.capture((output, terminal_free)),
+        allocation_contract=TaskAllocationContract.capture((output, terminal_free)),
     )
 
     discarded = _task_memory_envelope(measurement)
@@ -247,8 +244,8 @@ def test_task_envelope_specializes_persistent_output_ownership() -> None:
         retained_output_leaves=(3,),
     )
 
-    assert discarded.allocation_abi is not None
-    assert retained.allocation_abi is not None
-    assert len(discarded.allocation_abi.steps) == 2
-    assert len(retained.allocation_abi.steps) == 1
-    assert retained.allocation_abi.steps[0].persistent_after_task
+    assert discarded.allocation_contract is not None
+    assert retained.allocation_contract is not None
+    assert len(discarded.allocation_contract.steps) == 2
+    assert len(retained.allocation_contract.steps) == 1
+    assert retained.allocation_contract.steps[0].persistent_after_task

@@ -186,8 +186,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         raise AssertionError(
                             "graph pair omitted semantic/physical layout"
                         )
-                    if not profile.allocation_abi_digest:
-                        raise AssertionError("graph pair omitted its allocation ABI")
+                    if not profile.allocation_contract_digest:
+                        raise AssertionError(
+                            "graph pair omitted its allocation contract"
+                        )
                     if profile.semantic_contract_capture_ns <= 0:
                         raise AssertionError("graph pair omitted contract timing")
                     if profile.physical_profile_wall_time_ns <= 0:
@@ -296,9 +298,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     or diagnostics.summary.real_selected_span_seconds <= 0.0
                 ):
                     raise AssertionError("step timing reconciliation is incomplete")
-                if set(diagnostics.simulator_comparison) != set(
-                    execution_timing.tasks
-                ):
+                if set(diagnostics.simulator_comparison) != set(execution_timing.tasks):
                     raise AssertionError("task simulator comparison is incomplete")
                 expected_transfers = (
                     planned.plan_report.pressurefit_result.simulation.transfer_intervals
@@ -306,9 +306,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 if len(diagnostics.transfers.simulator_comparison) != len(
                     expected_transfers
                 ):
-                    raise AssertionError(
-                        "transfer simulator comparison is incomplete"
-                    )
+                    raise AssertionError("transfer simulator comparison is incomplete")
                 for transfer in diagnostics.transfers.simulator_comparison.values():
                     if (
                         transfer.real_completion_timestamp_ns
@@ -345,10 +343,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     comparison = diagnostics.simulator_comparison[execution_task_id]
                     if (
                         comparison.task_id != task_timing.task_id
-                        or comparison.simulated_end_ns
-                        < comparison.simulated_start_ns
-                        or comparison.real_end_seconds
-                        < comparison.real_start_seconds
+                        or comparison.simulated_end_ns < comparison.simulated_start_ns
+                        or comparison.real_end_seconds < comparison.real_start_seconds
                     ):
                         raise AssertionError("task simulator timing is invalid")
                     if any(

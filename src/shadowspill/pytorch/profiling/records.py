@@ -7,8 +7,8 @@ import json
 import math
 from dataclasses import dataclass
 
-from shadowspill.pytorch.profiling.allocation_abi import (
-    TaskAllocationABI,
+from shadowspill.pytorch.profiling.allocation_contract import (
+    TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskAllocationPathObservation,
@@ -116,7 +116,7 @@ class TaskMeasurement:
     timing_relative_mad: float = 0.0
     timing_half_drift: float = 0.0
     timing_unstable: bool = False
-    allocation_abi: TaskAllocationABI | None = None
+    allocation_contract: TaskAllocationContract | None = None
     allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = ()
 
     @property
@@ -183,7 +183,7 @@ class TaskMeasurement:
         if not math.isfinite(self.timing_half_drift) or self.timing_half_drift < 0:
             raise ValueError("profile half drift must be finite and non-negative")
         self._validate_allocation_trace()
-        if self.allocation_abi is not None:
+        if self.allocation_contract is not None:
             trace_geometry = tuple(
                 (
                     event.allocation_ordinal,
@@ -205,13 +205,13 @@ class TaskMeasurement:
                     step.alignment_bytes,
                     step.output_leaf_indices,
                 )
-                for step in self.allocation_abi.steps
+                for step in self.allocation_contract.steps
                 if step.operation is TaskAllocationOperation.ALLOCATE
                 and not (step.persistent_after_task and not step.output_leaf_indices)
             )
             if trace_geometry != abi_geometry:
                 raise ValueError(
-                    "task allocation ABI allocations disagree with its trace"
+                    "task allocation contract allocations disagree with its trace"
                 )
             output_ordinals = {
                 event.allocation_ordinal
@@ -226,13 +226,13 @@ class TaskMeasurement:
             )
             abi_frees = tuple(
                 step.allocation_ordinal
-                for step in self.allocation_abi.steps
+                for step in self.allocation_contract.steps
                 if step.operation is TaskAllocationOperation.FREE
                 and step.allocation_ordinal not in output_ordinals
             )
             if trace_frees != abi_frees:
                 raise ValueError(
-                    "task allocation ABI temporary frees disagree with its trace"
+                    "task allocation contract temporary frees disagree with its trace"
                 )
 
     def _validate_allocation_trace(self) -> None:
@@ -300,8 +300,10 @@ class TaskMeasurement:
             "timing_relative_mad": self.timing_relative_mad,
             "timing_half_drift": self.timing_half_drift,
             "timing_unstable": self.timing_unstable,
-            "allocation_abi": (
-                None if self.allocation_abi is None else self.allocation_abi.to_dict()
+            "allocation_contract": (
+                None
+                if self.allocation_contract is None
+                else self.allocation_contract.to_dict()
             ),
             "allocation_path_observations": [
                 item.to_dict() for item in self.allocation_path_observations
@@ -344,10 +346,10 @@ class TaskMeasurement:
                 timing_relative_mad=float(value["timing_relative_mad"]),
                 timing_half_drift=float(value["timing_half_drift"]),
                 timing_unstable=bool(value["timing_unstable"]),
-                allocation_abi=(
+                allocation_contract=(
                     None
-                    if value.get("allocation_abi") is None
-                    else TaskAllocationABI.from_dict(value["allocation_abi"])
+                    if value.get("allocation_contract") is None
+                    else TaskAllocationContract.from_dict(value["allocation_contract"])
                 ),
                 allocation_path_observations=tuple(
                     TaskAllocationPathObservation.from_dict(item)
@@ -410,7 +412,7 @@ __all__ = [
     "ProfileEnvironment",
     "ProfileKey",
     "ProfilingResult",
-    "TaskAllocationABI",
+    "TaskAllocationContract",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
     "TaskMeasurement",

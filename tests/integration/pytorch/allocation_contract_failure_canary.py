@@ -1,4 +1,4 @@
-"""Fresh-process fail-fast allocation-ABI mismatch canary."""
+"""Fresh-process fail-fast allocation-contract mismatch canary."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     ExecutionDescription,
-    TaskAllocationABIStep,
+    TaskAllocationContractStep,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
@@ -19,7 +19,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 )
 
 TASK_ID = 17
-ABI_MISMATCH = 11
+CONTRACT_MISMATCH = 11
 
 
 def main() -> int:
@@ -32,8 +32,8 @@ def main() -> int:
         worker_poll_nanoseconds=1_000,
     )
     library = installed.library
-    expected = (TaskAllocationABIStep * 1)(
-        TaskAllocationABIStep(
+    expected = (TaskAllocationContractStep * 1)(
+        TaskAllocationContractStep(
             allocation_ordinal=0,
             requested_bytes=4096,
             charged_bytes=4096,
@@ -50,26 +50,20 @@ def main() -> int:
         update_count=0,
         actions=None,
         action_count=0,
-        allocation_abi_steps=expected,
-        allocation_abi_step_count=1,
-        enforce_allocation_abi=1,
+        allocation_contract_steps=expected,
+        allocation_contract_step_count=1,
+        enforce_allocation_contract=1,
         maximum_requested_allocation_bytes=8192,
         maximum_charged_allocation_bytes=8192,
         live_requested_allocation_limit_bytes=8192,
         live_charged_allocation_limit_bytes=8192,
     )
-    status = int(
-        library.shadowspill_pytorch_admit_execution(ctypes.byref(description))
-    )
+    status = int(library.shadowspill_pytorch_admit_execution(ctypes.byref(description)))
     if status != 0:
         raise AssertionError(f"execution admission failed with status {status}")
     labels = (ctypes.c_char_p * (TASK_ID + 1))()
     labels[TASK_ID] = b"execution_000017.canary.stage_0000.forward"
-    status = int(
-        library.shadowspill_pytorch_task_labels_configure(
-            labels, TASK_ID + 1
-        )
-    )
+    status = int(library.shadowspill_pytorch_task_labels_configure(labels, TASK_ID + 1))
     if status != 0:
         raise AssertionError(f"task label configuration failed with status {status}")
     stream = torch.cuda.current_stream()
@@ -87,8 +81,8 @@ def main() -> int:
         message = str(cause)
         for expected_text in (
             "ShadowSpill allocator callback failed",
-            "status: 11 (task allocation ABI mismatch)",
-            "reason: TASK_ALLOCATION_ABI_MISMATCH",
+            "status: 11 (task allocation contract mismatch)",
+            "reason: TASK_ALLOCATION_CONTRACT_MISMATCH",
             "execution_task: execution_000017",
             "semantic_task: canary.stage_0000.forward",
             "canonical_task: task_000017",
@@ -97,7 +91,7 @@ def main() -> int:
         ):
             if expected_text not in message:
                 raise AssertionError(
-                    f"direct ABI failure omitted {expected_text!r}: {message}"
+                    f"direct contract failure omitted {expected_text!r}: {message}"
                 ) from cause
         library.shadowspill_pytorch_abort_task_range()
         diagnostics = read_allocator_failure(
@@ -109,12 +103,14 @@ def main() -> int:
                 "task_000017",
             ),
         )
-        if diagnostics is None or diagnostics.status != ABI_MISMATCH:
+        if diagnostics is None or diagnostics.status != CONTRACT_MISMATCH:
             raise AssertionError(
-                "allocation ABI mismatch was not preserved"
+                "allocation contract mismatch was not preserved"
             ) from cause
     else:
-        raise AssertionError("ABI mismatch returned invalid storage to its caller")
+        raise AssertionError(
+            "allocation contract mismatch returned invalid storage to its caller"
+        )
 
     # No kernel consumed a null pointer, so the CUDA context remains healthy
     # and ordinary teardown cannot turn the structured error into SIGABRT.

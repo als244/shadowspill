@@ -117,7 +117,7 @@ int shadowspill_enter_task_scope(
 static int prepare_allocation_matcher(
     const ShadowSpillExecutionRecord *record
 ) {
-    const uint32_t count = record->allocation_abi_allocation_count;
+    const uint32_t count = record->allocation_contract_allocation_count;
     if (count > task_scope.allocation_state_capacity) {
         uint8_t *states = realloc(task_scope.allocation_states, count);
         if (states == NULL) {
@@ -133,19 +133,19 @@ static int prepare_allocation_matcher(
     return 0;
 }
 
-static const ShadowSpillTaskAllocationABIStep *expected_allocation_step(void) {
+static const ShadowSpillTaskAllocationContractStep *expected_allocation_step(void) {
     if (task_scope.execution == NULL ||
-        !task_scope.execution->enforce_allocation_abi ||
+        !task_scope.execution->enforce_allocation_contract ||
         task_scope.operation_index >=
-            task_scope.execution->allocation_abi_step_count) {
+            task_scope.execution->allocation_contract_step_count) {
         return NULL;
     }
-    return &task_scope.execution->allocation_abi_steps[
+    return &task_scope.execution->allocation_contract_steps[
         task_scope.operation_index
     ];
 }
 
-static ShadowSpillRuntimeStatus latch_allocation_abi_mismatch(
+static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
     ShadowSpillRuntime *runtime,
     uint8_t actual_operation,
     uint64_t actual_ordinal,
@@ -153,7 +153,7 @@ static ShadowSpillRuntimeStatus latch_allocation_abi_mismatch(
     uint64_t charged_bytes,
     uint64_t alignment_bytes
 ) {
-    const ShadowSpillTaskAllocationABIStep *expected =
+    const ShadowSpillTaskAllocationContractStep *expected =
         expected_allocation_step();
     const ShadowSpillTaskAllocationMismatch mismatch = {
         .operation_index = task_scope.operation_index,
@@ -173,8 +173,8 @@ static ShadowSpillRuntimeStatus latch_allocation_abi_mismatch(
             ? UINT8_MAX : expected->operation,
         .actual_operation = actual_operation,
     };
-    shadowspill_latch_task_allocation_abi_failure(runtime, &mismatch);
-    return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH;
+    shadowspill_latch_task_allocation_contract_failure(runtime, &mismatch);
+    return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH;
 }
 
 int shadowspill_enter_execution_scope(
@@ -200,7 +200,7 @@ int shadowspill_enter_execution_scope(
 }
 
 static int allocation_geometry_matches(
-    const ShadowSpillTaskAllocationABIStep *step,
+    const ShadowSpillTaskAllocationContractStep *step,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
     uint64_t alignment_bytes
@@ -214,7 +214,7 @@ static int allocation_geometry_matches(
 
 static void skip_omitted_free_operations(void) {
     for (;;) {
-        const ShadowSpillTaskAllocationABIStep *step =
+        const ShadowSpillTaskAllocationContractStep *step =
             expected_allocation_step();
         if (step == NULL ||
             step->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
@@ -238,16 +238,16 @@ static void classify_task_allocation(
     skip_omitted_free_operations();
     const uint64_t start = task_scope.operation_index;
     uint64_t scan = start;
-    while (scan < task_scope.execution->allocation_abi_step_count) {
-        const ShadowSpillTaskAllocationABIStep *step =
-            &task_scope.execution->allocation_abi_steps[scan];
+    while (scan < task_scope.execution->allocation_contract_step_count) {
+        const ShadowSpillTaskAllocationContractStep *step =
+            &task_scope.execution->allocation_contract_steps[scan];
         if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
             if (allocation_geometry_matches(
                     step, requested_bytes, charged_bytes, alignment_bytes
                 )) {
                 for (uint64_t index = start; index < scan; ++index) {
-                    const ShadowSpillTaskAllocationABIStep *skipped =
-                        &task_scope.execution->allocation_abi_steps[index];
+                    const ShadowSpillTaskAllocationContractStep *skipped =
+                        &task_scope.execution->allocation_contract_steps[index];
                     if (skipped->operation ==
                             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
                         skipped->allocation_ordinal <
@@ -285,8 +285,8 @@ static void classify_task_allocation(
         ++scan;
     }
     for (uint64_t index = start; index < scan; ++index) {
-        const ShadowSpillTaskAllocationABIStep *candidate =
-            &task_scope.execution->allocation_abi_steps[index];
+        const ShadowSpillTaskAllocationContractStep *candidate =
+            &task_scope.execution->allocation_contract_steps[index];
         if (candidate->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
             candidate->allocation_ordinal < task_scope.allocation_state_count &&
             task_scope.allocation_states[candidate->allocation_ordinal] ==
@@ -339,7 +339,7 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
         );
         return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED;
     }
-    if (!record->enforce_allocation_abi) {
+    if (!record->enforce_allocation_contract) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     if (task_scope.pending_allocation) {
@@ -354,7 +354,7 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
          task_scope.scratch_live_charged_bytes + charged_bytes >
              record->dynamic_scratch_live_limit_bytes)) {
         task_scope.pending_allocation = 0U;
-        return latch_allocation_abi_mismatch(
+        return latch_allocation_contract_mismatch(
             runtime,
             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
             task_scope.allocation_sequence,
@@ -422,10 +422,10 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
         task_scope.invocation != origin_task_invocation) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    if (task_scope.execution->enforce_allocation_abi &&
+    if (task_scope.execution->enforce_allocation_contract &&
         !allocation_is_scratch) {
         skip_omitted_free_operations();
-        const ShadowSpillTaskAllocationABIStep *expected =
+        const ShadowSpillTaskAllocationContractStep *expected =
             expected_allocation_step();
         if (expected == NULL ||
             expected->operation != SHADOWSPILL_TASK_ALLOCATION_FREE ||
@@ -433,7 +433,7 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
             expected->requested_bytes != requested_bytes ||
             expected->charged_bytes != charged_bytes ||
             expected->alignment_bytes != alignment_bytes) {
-            return latch_allocation_abi_mismatch(
+            return latch_allocation_contract_mismatch(
                 runtime,
                 SHADOWSPILL_TASK_ALLOCATION_FREE,
                 allocation_ordinal,
@@ -474,12 +474,12 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
     ShadowSpillRuntime *runtime
 ) {
     if (task_scope.runtime != runtime || task_scope.execution == NULL ||
-        !task_scope.execution->enforce_allocation_abi) {
+        !task_scope.execution->enforce_allocation_contract) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     for (;;) {
         skip_omitted_free_operations();
-        const ShadowSpillTaskAllocationABIStep *expected =
+        const ShadowSpillTaskAllocationContractStep *expected =
             expected_allocation_step();
         if (expected == NULL) {
             return SHADOWSPILL_RUNTIME_OK;
@@ -495,10 +495,10 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
         ++task_scope.operation_index;
     }
     if (task_scope.operation_index ==
-        task_scope.execution->allocation_abi_step_count) {
+        task_scope.execution->allocation_contract_step_count) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    return latch_allocation_abi_mismatch(
+    return latch_allocation_contract_mismatch(
         runtime,
         UINT8_MAX,
         SHADOWSPILL_RUNTIME_NO_ID,

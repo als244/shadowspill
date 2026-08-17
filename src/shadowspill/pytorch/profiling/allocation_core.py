@@ -6,9 +6,9 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .allocation_abi import (
-    TaskAllocationABI,
-    TaskAllocationABIStep,
+from .allocation_contract import (
+    TaskAllocationContract,
+    TaskAllocationContractStep,
     TaskAllocationOperation,
     TaskAllocationPathObservation,
     compare_allocation_path,
@@ -21,7 +21,7 @@ class AllocationPathProbe:
 
     probe_index: int
     repetition: int
-    allocation_abi: TaskAllocationABI
+    allocation_contract: TaskAllocationContract
 
     def __post_init__(self) -> None:
         if self.probe_index < 0 or self.repetition < 0:
@@ -32,7 +32,7 @@ class AllocationPathProbe:
 class DerivedAllocationCore:
     """Deterministic medoid path and every probe's reconciliation evidence."""
 
-    allocation_abi: TaskAllocationABI
+    allocation_contract: TaskAllocationContract
     source_digest: str
     weighted_edit_distance: int
     reference_edit_distance: int
@@ -44,7 +44,7 @@ class AmbiguousAllocationPathError(ValueError):
 
 
 def derive_core_allocation_path(
-    warmed_reference: TaskAllocationABI,
+    warmed_reference: TaskAllocationContract,
     probes: Sequence[AllocationPathProbe],
     *,
     warmed_reference_repetitions: int = 3,
@@ -63,30 +63,20 @@ def derive_core_allocation_path(
 
     if warmed_reference_repetitions < 1:
         raise ValueError("warmed reference repetition count must be positive")
-    samples = (warmed_reference, *(probe.allocation_abi for probe in probes))
+    samples = (warmed_reference, *(probe.allocation_contract for probe in probes))
     weights = Counter(item.compatibility_digest for item in samples)
-    weights[warmed_reference.compatibility_digest] += (
-        warmed_reference_repetitions - 1
-    )
-    candidates = {
-        item.compatibility_digest: item
-        for item in samples
-    }
-    tokenized = {
-        digest: _operation_tokens(item)
-        for digest, item in candidates.items()
-    }
+    weights[warmed_reference.compatibility_digest] += warmed_reference_repetitions - 1
+    candidates = {item.compatibility_digest: item for item in samples}
+    tokenized = {digest: _operation_tokens(item) for digest, item in candidates.items()}
     distances: dict[tuple[str, str], int] = {}
 
     def distance(left: str, right: str) -> int:
         key = (left, right) if left <= right else (right, left)
         if key not in distances:
-            distances[key] = _myers_edit_distance(
-                tokenized[key[0]], tokenized[key[1]]
-            )
+            distances[key] = _myers_edit_distance(tokenized[key[0]], tokenized[key[1]])
         return distances[key]
 
-    ranked: list[tuple[int, int, str, TaskAllocationABI]] = []
+    ranked: list[tuple[int, int, str, TaskAllocationContract]] = []
     for digest, candidate in candidates.items():
         score = sum(
             count * distance(digest, observed_digest)
@@ -98,7 +88,7 @@ def derive_core_allocation_path(
     core_tokens = tokenized[digest]
     observations: list[TaskAllocationPathObservation] = []
     for probe in probes:
-        observed_tokens = _operation_tokens(probe.allocation_abi)
+        observed_tokens = _operation_tokens(probe.allocation_contract)
         probe_distance = _myers_edit_distance(core_tokens, observed_tokens)
         alignment = _unique_minimum_alignment(
             core_tokens,
@@ -115,7 +105,7 @@ def derive_core_allocation_path(
         observations.append(
             compare_allocation_path(
                 core,
-                probe.allocation_abi,
+                probe.allocation_contract,
                 probe_index=probe.probe_index,
                 repetition=probe.repetition,
                 operation_alignment=alignment,
@@ -124,9 +114,7 @@ def derive_core_allocation_path(
     # The warmed reference is also required to reconcile if another observed
     # path wins the medoid. This guards the physical baseline used for timing.
     reference_tokens = _operation_tokens(warmed_reference)
-    reference_distance = distance(
-        digest, warmed_reference.compatibility_digest
-    )
+    reference_distance = distance(digest, warmed_reference.compatibility_digest)
     reference_alignment = _unique_minimum_alignment(
         core_tokens,
         reference_tokens,
@@ -145,7 +133,7 @@ def derive_core_allocation_path(
         operation_alignment=reference_alignment,
     )
     return DerivedAllocationCore(
-        allocation_abi=core,
+        allocation_contract=core,
         source_digest=digest,
         weighted_edit_distance=score,
         reference_edit_distance=reference_distance,
@@ -153,21 +141,23 @@ def derive_core_allocation_path(
     )
 
 
-def _operation_tokens(abi: TaskAllocationABI) -> tuple[tuple[object, ...], ...]:
+def _operation_tokens(
+    contract: TaskAllocationContract,
+) -> tuple[tuple[object, ...], ...]:
     allocations = {
         step.allocation_ordinal: _allocation_token(step)
-        for step in abi.steps
+        for step in contract.steps
         if step.operation is TaskAllocationOperation.ALLOCATE
     }
     return tuple(
         _allocation_token(step)
         if step.operation is TaskAllocationOperation.ALLOCATE
         else ("free", *allocations[step.allocation_ordinal])
-        for step in abi.steps
+        for step in contract.steps
     )
 
 
-def _allocation_token(step: TaskAllocationABIStep) -> tuple[object, ...]:
+def _allocation_token(step: TaskAllocationContractStep) -> tuple[object, ...]:
     return (
         "allocate",
         step.requested_bytes,
@@ -221,18 +211,13 @@ def _myers_edit_distance(
         for diagonal in range(-edits, edits + 1, 2):
             if diagonal == -edits or (
                 diagonal != edits
-                and frontier.get(diagonal - 1, -1)
-                < frontier.get(diagonal + 1, -1)
+                and frontier.get(diagonal - 1, -1) < frontier.get(diagonal + 1, -1)
             ):
                 x = frontier.get(diagonal + 1, 0)
             else:
                 x = frontier.get(diagonal - 1, 0) + 1
             y = x - diagonal
-            while (
-                x < left_count
-                and y < right_count
-                and left[x] == right[y]
-            ):
+            while x < left_count and y < right_count and left[x] == right[y]:
                 x += 1
                 y += 1
             next_frontier[diagonal] = x
@@ -317,11 +302,7 @@ def _unique_minimum_alignment(
                 candidates.append(following[j] + 1)
             if j < right_count and j + 1 in row:
                 candidates.append(row[j + 1] + 1)
-            if (
-                j < right_count
-                and left[i] == right[j]
-                and j + 1 in following
-            ):
+            if j < right_count and left[i] == right[j] and j + 1 in following:
                 candidates.append(following[j + 1])
             if candidates:
                 value = min(candidates)

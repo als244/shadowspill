@@ -483,8 +483,9 @@ def _index_forward_inventory(
     }
     keys = sorted(
         {
-            profile_by_id[task_by_id[entrypoint.task_id].profile_id]
-            .compatibility_digest
+            profile_by_id[
+                task_by_id[entrypoint.task_id].profile_id
+            ].compatibility_digest
             for entrypoint in lowered.entrypoints
         }
     )
@@ -711,12 +712,12 @@ def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
         task_workspace_bytes=context.profile.workspace_bytes,
         workspace_extent_bytes=measurement.workspace_extent_bytes,
         persistent_extent_bytes=measurement.persistent_extent_bytes,
-        allocation_abi_digest=(
+        allocation_contract_digest=(
             None
-            if measurement.allocation_abi is None
-            else measurement.allocation_abi.compatibility_digest
+            if measurement.allocation_contract is None
+            else measurement.allocation_contract.compatibility_digest
         ),
-        allocation_abi=_plan_allocation_abi(measurement),
+        allocation_contract=_plan_allocation_contract(measurement),
         allocation_timeline=_plan_allocation_timeline(measurement),
     )
 
@@ -869,10 +870,10 @@ def _plan_allocation_timeline(
     )
 
 
-def _plan_allocation_abi(
+def _plan_allocation_contract(
     measurement: TaskMeasurement,
 ) -> tuple[PlanAllocationABIStep, ...]:
-    if measurement.allocation_abi is None:
+    if measurement.allocation_contract is None:
         return ()
     return tuple(
         PlanAllocationABIStep(
@@ -886,7 +887,7 @@ def _plan_allocation_abi(
             mutation_input_positions=step.mutation_input_positions,
             persistent_after_task=step.persistent_after_task,
         )
-        for step in measurement.allocation_abi.steps
+        for step in measurement.allocation_contract.steps
     )
 
 

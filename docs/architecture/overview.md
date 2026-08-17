@@ -165,7 +165,7 @@ releases without holding a general-purpose global runtime mutex.
 | IR | Objects, tasks, resources, graph-pair alternatives, schedules, and resolved execution records | PyTorch tensors or provider handles |
 | Planner | Complete recomputation selections, residency strategies, memory actions, and candidate ranking | Graph construction or numerical execution |
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
-| Physical admission | Allocation lifetimes, task-allocation ABI, fixed placements, dynamic scratch, and causal reuse dependencies | Logical PressureFit policy |
+| Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Logical PressureFit policy |
 | Runtime | Pools, leases, objects, events, transfer lanes, task boundaries, failure state, and worker progress | Graph capture or model semantics |
 | Backend | Provider allocation, copy, stream, event, and profiler operations | Object or schedule policy |
 

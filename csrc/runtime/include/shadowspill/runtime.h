@@ -44,7 +44,7 @@ typedef enum ShadowSpillRuntimeStatus {
     SHADOWSPILL_RUNTIME_WORKER_FAILURE = 8,
     SHADOWSPILL_RUNTIME_CLOSED = 9,
     SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10,
-    SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH = 11,
+    SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH = 11,
 } ShadowSpillRuntimeStatus;
 
 typedef enum ShadowSpillObjectResidency {
@@ -192,7 +192,7 @@ typedef enum ShadowSpillTaskAllocationOperation {
  * Output and mutation ownership remains in the framework storage contract;
  * the neutral runtime validates only callback order and geometry.
  */
-typedef struct ShadowSpillTaskAllocationABIStep {
+typedef struct ShadowSpillTaskAllocationContractStep {
     uint64_t allocation_ordinal;
     uint64_t requested_bytes;
     uint64_t charged_bytes;
@@ -205,7 +205,7 @@ typedef struct ShadowSpillTaskAllocationABIStep {
      * reconciled in order.
      */
     uint8_t required;
-} ShadowSpillTaskAllocationABIStep;
+} ShadowSpillTaskAllocationContractStep;
 
 typedef enum ShadowSpillFixedPlacementKind {
     SHADOWSPILL_FIXED_INITIAL_OBJECT = 0,
@@ -263,9 +263,9 @@ typedef struct ShadowSpillExecutionDescription {
     uint32_t update_count;
     const ShadowSpillRuntimeAction *actions;
     uint32_t action_count;
-    const ShadowSpillTaskAllocationABIStep *allocation_abi_steps;
-    uint32_t allocation_abi_step_count;
-    uint8_t enforce_allocation_abi;
+    const ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
+    uint32_t allocation_contract_step_count;
+    uint8_t enforce_allocation_contract;
     /*
      * Conservative task-local allocator envelope. Zero leaves a field
      * unbounded for a caller without a task profile. These bounds constrain
@@ -277,7 +277,7 @@ typedef struct ShadowSpillExecutionDescription {
     uint64_t live_charged_allocation_limit_bytes;
     /*
      * Bounded dynamic storage for allocator operations absent from the fixed
-     * core ABI. Zero preserves strict exact-ABI behavior.
+     * core contract. Zero preserves strict exact-contract behavior.
      */
     uint64_t dynamic_scratch_maximum_allocation_bytes;
     uint64_t dynamic_scratch_live_limit_bytes;

@@ -112,7 +112,7 @@ static void destroy_record(ShadowSpillExecutionRecord *record) {
     free(record->updates);
     free(record->actions);
     free(record->queued_actions);
-    free(record->allocation_abi_steps);
+    free(record->allocation_contract_steps);
     free(record);
 }
 
@@ -195,10 +195,10 @@ static int same_description(
     if (record->input_count != description->input_count ||
         record->update_count != description->update_count ||
         record->action_count != description->action_count ||
-        record->allocation_abi_step_count !=
-            description->allocation_abi_step_count ||
-        record->enforce_allocation_abi !=
-            description->enforce_allocation_abi ||
+        record->allocation_contract_step_count !=
+            description->allocation_contract_step_count ||
+        record->enforce_allocation_contract !=
+            description->enforce_allocation_contract ||
         record->maximum_requested_allocation_bytes !=
             description->maximum_requested_allocation_bytes ||
         record->maximum_charged_allocation_bytes !=
@@ -241,11 +241,11 @@ static int same_description(
         }
     }
     for (uint32_t index = 0U;
-         index < record->allocation_abi_step_count; ++index) {
-        const ShadowSpillTaskAllocationABIStep *left =
-            &record->allocation_abi_steps[index];
-        const ShadowSpillTaskAllocationABIStep *right =
-            &description->allocation_abi_steps[index];
+         index < record->allocation_contract_step_count; ++index) {
+        const ShadowSpillTaskAllocationContractStep *left =
+            &record->allocation_contract_steps[index];
+        const ShadowSpillTaskAllocationContractStep *right =
+            &description->allocation_contract_steps[index];
         if (left->allocation_ordinal != right->allocation_ordinal ||
             left->requested_bytes != right->requested_bytes ||
             left->charged_bytes != right->charged_bytes ||
@@ -272,9 +272,9 @@ static ShadowSpillExecutionRecord *create_record(
     record->input_count = description->input_count;
     record->update_count = description->update_count;
     record->action_count = description->action_count;
-    record->allocation_abi_step_count =
-        description->allocation_abi_step_count;
-    record->enforce_allocation_abi = description->enforce_allocation_abi;
+    record->allocation_contract_step_count =
+        description->allocation_contract_step_count;
+    record->enforce_allocation_contract = description->enforce_allocation_contract;
     record->maximum_requested_allocation_bytes =
         description->maximum_requested_allocation_bytes;
     record->maximum_charged_allocation_bytes =
@@ -314,10 +314,10 @@ static ShadowSpillExecutionRecord *create_record(
             record->action_count, sizeof(*record->queued_actions)
         );
     }
-    if (record->allocation_abi_step_count != 0U) {
-        record->allocation_abi_steps = calloc(
-            record->allocation_abi_step_count,
-            sizeof(*record->allocation_abi_steps)
+    if (record->allocation_contract_step_count != 0U) {
+        record->allocation_contract_steps = calloc(
+            record->allocation_contract_step_count,
+            sizeof(*record->allocation_contract_steps)
         );
     }
     if ((record->input_count != 0U &&
@@ -328,25 +328,25 @@ static ShadowSpillExecutionRecord *create_record(
         (record->update_count != 0U && record->updates == NULL) ||
         (record->action_count != 0U &&
          (record->actions == NULL || record->queued_actions == NULL)) ||
-        (record->allocation_abi_step_count != 0U &&
-         record->allocation_abi_steps == NULL)) {
+        (record->allocation_contract_step_count != 0U &&
+         record->allocation_contract_steps == NULL)) {
         destroy_record(record);
         return NULL;
     }
-    if (record->allocation_abi_step_count != 0U) {
+    if (record->allocation_contract_step_count != 0U) {
         memcpy(
-            record->allocation_abi_steps,
-            description->allocation_abi_steps,
-            record->allocation_abi_step_count *
-                sizeof(*record->allocation_abi_steps)
+            record->allocation_contract_steps,
+            description->allocation_contract_steps,
+            record->allocation_contract_step_count *
+                sizeof(*record->allocation_contract_steps)
         );
         for (uint32_t index = 0U;
-             index < record->allocation_abi_step_count;
+             index < record->allocation_contract_step_count;
              ++index) {
-            const ShadowSpillTaskAllocationABIStep *step =
-                &record->allocation_abi_steps[index];
+            const ShadowSpillTaskAllocationContractStep *step =
+                &record->allocation_contract_steps[index];
             if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
-                record->allocation_abi_allocation_count =
+                record->allocation_contract_allocation_count =
                     (uint32_t)(step->allocation_ordinal + 1U);
             }
         }
@@ -447,14 +447,14 @@ static ShadowSpillExecutionRecord *create_record(
     return record;
 }
 
-static int valid_allocation_abi(
+static int valid_allocation_contract(
     const ShadowSpillExecutionDescription *description
 ) {
-    if (!description->enforce_allocation_abi) {
-        return description->allocation_abi_step_count == 0U;
+    if (!description->enforce_allocation_contract) {
+        return description->allocation_contract_step_count == 0U;
     }
-    const uint32_t count = description->allocation_abi_step_count;
-    const ShadowSpillTaskAllocationABIStep **allocations = count == 0U
+    const uint32_t count = description->allocation_contract_step_count;
+    const ShadowSpillTaskAllocationContractStep **allocations = count == 0U
         ? NULL
         : calloc(count, sizeof(*allocations));
     if (count != 0U && allocations == NULL) {
@@ -463,8 +463,8 @@ static int valid_allocation_abi(
     uint64_t next_ordinal = 0U;
     int valid = 1;
     for (uint32_t index = 0U; index < count && valid; ++index) {
-        const ShadowSpillTaskAllocationABIStep *step =
-            &description->allocation_abi_steps[index];
+        const ShadowSpillTaskAllocationContractStep *step =
+            &description->allocation_contract_steps[index];
         if (step->charged_bytes == 0U || step->alignment_bytes == 0U ||
             step->requested_bytes > step->charged_bytes) {
             valid = 0;
@@ -485,7 +485,7 @@ static int valid_allocation_abi(
             valid = 0;
             break;
         }
-        const ShadowSpillTaskAllocationABIStep *allocation =
+        const ShadowSpillTaskAllocationContractStep *allocation =
             allocations[step->allocation_ordinal];
         if (allocation->requested_bytes != step->requested_bytes ||
             allocation->charged_bytes != step->charged_bytes ||
@@ -508,9 +508,9 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_execution(
          description->input_object_ids == NULL) ||
         (description->update_count != 0U && description->updates == NULL) ||
         (description->action_count != 0U && description->actions == NULL) ||
-        (description->allocation_abi_step_count != 0U &&
-         description->allocation_abi_steps == NULL) ||
-        !valid_allocation_abi(description) ||
+        (description->allocation_contract_step_count != 0U &&
+         description->allocation_contract_steps == NULL) ||
+        !valid_allocation_contract(description) ||
         (description->maximum_requested_allocation_bytes != 0U &&
          description->live_requested_allocation_limit_bytes != 0U &&
          description->maximum_requested_allocation_bytes >

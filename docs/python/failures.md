@@ -82,7 +82,7 @@ The record is organized into four groups:
 | Failure identity | `operation`, `status`, `status_name`, `device_ordinal` |
 | Memory state | `requested_bytes`, `free_bytes`, `largest_free_range_bytes`, `object_id`, `allocation_id` |
 | Task identity | `execution_task_id`, semantic name, canonical task ID, internal task ID |
-| Allocation contract | task live bytes and limits, maximum-request limits, ABI operation index, and expected/actual operation, ordinal, size, charge, and alignment |
+| Allocation contract | task live bytes and limits, maximum-request limits, contract operation index, and expected/actual operation, ordinal, size, charge, and alignment |
 
 The runtime status names are:
 
@@ -98,7 +98,7 @@ The runtime status names are:
 | `worker_failure` | The C worker latched its first asynchronous failure. |
 | `closed` | Work targeted an owner that has already closed. |
 | `task_allocation_envelope_exceeded` | A request or task-local live total exceeded the admitted profiled envelope. |
-| `task_allocation_abi_mismatch` | Allocation operation, order, geometry, or ownership differed from the admitted task ABI. |
+| `task_allocation_contract_mismatch` | Allocation operation, order, geometry, or ownership differed from the admitted task contract. |
 
 `is_allocator_oom`, `is_recoverable_no_progress`, and
 `is_shadowspill_contract_failure` provide stable classifications without
@@ -130,7 +130,7 @@ when the failing request already has those identities.
 
 ShadowSpill replaces a secondary provider error only when its own allocator or
 execution contract already identified the cause. Examples are a no-progress
-OOM, an allocation-envelope violation, and an allocation-ABI mismatch. This
+OOM, an allocation-envelope violation, and an allocation-contract mismatch. This
 prevents a later invalid-address or null-pointer device error from hiding the
 actionable failure.
 

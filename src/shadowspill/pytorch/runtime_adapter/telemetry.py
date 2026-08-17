@@ -67,7 +67,7 @@ class TaskWorkspaceProfile:
     output_allocation_ids: tuple[int, ...]
     events: tuple[CapturedAllocationEvent, ...]
     allocation_trace: tuple[TaskAllocationEvent, ...]
-    allocation_abi_trace: tuple[TaskAllocationEvent, ...]
+    allocation_contract_trace: tuple[TaskAllocationEvent, ...]
     output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_allocation_ids: tuple[int, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
@@ -352,7 +352,7 @@ def summarize_task_workspace(
     }
     output_views = dict(output_allocation_views or {})
     outputs = set(output_views)
-    allocation_trace, allocation_abi_trace, persistent_ids = (
+    allocation_trace, allocation_contract_trace, persistent_ids = (
         _normalize_task_allocation_trace(
             selected,
             output_views=output_views,
@@ -379,7 +379,7 @@ def summarize_task_workspace(
         output_allocation_ids=tuple(sorted(outputs)),
         events=selected,
         allocation_trace=allocation_trace,
-        allocation_abi_trace=allocation_abi_trace,
+        allocation_contract_trace=allocation_contract_trace,
         output_input_bindings=output_input_bindings,
         persistent_allocation_ids=persistent_ids,
         persistent_extent_bytes=persistent_extents,

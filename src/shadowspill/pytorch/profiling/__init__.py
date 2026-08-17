@@ -1,8 +1,8 @@
 """Task-local profiling, representative values, metadata, and cache APIs."""
 
-from .allocation_abi import (
-    TaskAllocationABI,
-    TaskAllocationABIStep,
+from .allocation_contract import (
+    TaskAllocationContract,
+    TaskAllocationContractStep,
     TaskAllocationPathObservation,
     compare_allocation_path,
 )
@@ -60,8 +60,8 @@ __all__ = [
     "RepresentativeInputSet",
     "RepresentativeInputSummary",
     "ResolvedTaskManifests",
-    "TaskAllocationABI",
-    "TaskAllocationABIStep",
+    "TaskAllocationContract",
+    "TaskAllocationContractStep",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
     "TaskAllocationPathObservation",

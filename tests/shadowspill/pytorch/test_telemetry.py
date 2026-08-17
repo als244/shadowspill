@@ -76,7 +76,9 @@ def test_workspace_excludes_outputs_resolved_after_task_execution() -> None:
         1,
         1,
     )
-    assert tuple(item.allocation_ordinal for item in profile.allocation_abi_trace) == (
+    assert tuple(
+        item.allocation_ordinal for item in profile.allocation_contract_trace
+    ) == (
         0,
         1,
         1,
@@ -117,7 +119,7 @@ def test_workspace_keeps_provider_growth_in_runtime_abi_only() -> None:
         2,
     )
     assert tuple(
-        event.allocation_ordinal for event in profile.allocation_abi_trace
+        event.allocation_ordinal for event in profile.allocation_contract_trace
     ) == (0, 1, 0, 2, 2)
 
 

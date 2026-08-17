@@ -393,10 +393,10 @@ typedef struct ShadowSpillExecutionRecord {
     ShadowSpillExecutionAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
-    ShadowSpillTaskAllocationABIStep *allocation_abi_steps;
-    uint32_t allocation_abi_step_count;
-    uint32_t allocation_abi_allocation_count;
-    uint8_t enforce_allocation_abi;
+    ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
+    uint32_t allocation_contract_step_count;
+    uint32_t allocation_contract_allocation_count;
+    uint8_t enforce_allocation_contract;
     uint64_t maximum_requested_allocation_bytes;
     uint64_t maximum_charged_allocation_bytes;
     uint64_t live_requested_allocation_limit_bytes;

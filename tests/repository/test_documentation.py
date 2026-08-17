@@ -42,12 +42,9 @@ _PUBLIC_C_REFERENCES = {
     ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "runtime.h": (
         DOCS / "c" / "runtime.md"
     ),
-    ROOT
-    / "csrc"
-    / "runtime"
-    / "include"
-    / "shadowspill"
-    / "admission_replay.h": DOCS / "c" / "runtime.md",
+    ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "admission_replay.h": DOCS
+    / "c"
+    / "runtime.md",
     ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "backend.h": (
         DOCS / "c" / "backends.md"
     ),
@@ -119,8 +116,10 @@ def _local_link(
     if value.startswith("<") and value.endswith(">"):
         value = value[1:-1]
     destination = value.split(maxsplit=1)[0]
-    if not destination or "://" in destination or destination.startswith(
-        ("mailto:", "plugin:")
+    if (
+        not destination
+        or "://" in destination
+        or destination.startswith(("mailto:", "plugin:"))
     ):
         return None, None
     path_value, separator, fragment = destination.partition("#")
@@ -202,9 +201,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
 
 
 def _find_callable(path: Path, qualified_name: str) -> ast.FunctionDef:
-    nodes: list[ast.stmt] = ast.parse(
-        path.read_text(), filename=str(path)
-    ).body
+    nodes: list[ast.stmt] = ast.parse(path.read_text(), filename=str(path)).body
     found: ast.AST | None = None
     for part in qualified_name.split("."):
         found = next(
@@ -430,7 +427,7 @@ def test_failure_guide_covers_public_boundaries_and_cleanup() -> None:
         "RuntimeExecutionError",
         "RuntimeFailureDiagnostics",
         "task_allocation_envelope_exceeded",
-        "task_allocation_abi_mismatch",
+        "task_allocation_contract_mismatch",
         "## Execution rollback",
         "## Normal close order",
     ):
@@ -440,9 +437,7 @@ def test_failure_guide_covers_public_boundaries_and_cleanup() -> None:
 def test_every_public_python_export_appears_on_its_api_page() -> None:
     missing = {
         page.relative_to(ROOT).as_posix(): sorted(
-            name
-            for name in names
-            if not _documented_symbol(page.read_text(), name)
+            name for name in names if not _documented_symbol(page.read_text(), name)
         )
         for page, names in _python_page_expectations().items()
     }
@@ -534,9 +529,7 @@ def test_normative_python_examples_compile_and_use_valid_public_keywords() -> No
                         f"{document.relative_to(ROOT)} block {index}: "
                         f"{call.func.id} has unknown keywords {unexpected}"
                     )
-    assert not failures, "invalid documented Python examples:\n" + "\n".join(
-        failures
-    )
+    assert not failures, "invalid documented Python examples:\n" + "\n".join(failures)
 
 
 def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
@@ -555,9 +548,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
     ):
         assert required in reference
 
-    recomputation = (
-        DOCS / "architecture" / "recomputation-selection.md"
-    ).read_text()
+    recomputation = (DOCS / "architecture" / "recomputation-selection.md").read_text()
     for required in (
         "## Inputs and output",
         "## Current portfolio algorithm",
@@ -568,9 +559,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
     ):
         assert required in recomputation
 
-    graph_pairs = (
-        DOCS / "architecture" / "graph-pair-construction.md"
-    ).read_text()
+    graph_pairs = (DOCS / "architecture" / "graph-pair-construction.md").read_text()
     for required in (
         "## Inputs and output",
         "## Saved-value accounting",
@@ -591,7 +580,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Offset vocabulary",
         "## Runtime adoption and validation",
         "FixedPhysicalLayout",
-        "TaskAllocationABI",
+        "TaskAllocationContract",
         "AdmissionTopology",
     ):
         assert required in admission
@@ -672,8 +661,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
     }
     violations = {path: values for path, values in violations.items() if values}
     assert not violations, (
-        "provider or topology language in current-contract docs: "
-        f"{violations}"
+        f"provider or topology language in current-contract docs: {violations}"
     )
 
 

@@ -1,6 +1,6 @@
 """Deterministic allocator contract for one compiled structural task.
 
-The task allocation ABI describes *what* the compiled callable asks from the
+The task allocation contract describes *what* the compiled callable asks from the
 PyTorch allocator.  It deliberately excludes allocation IDs, pointers, slab
 offsets, and runtime timing so the same fixed-shape callable has one stable
 identity across processes and placement policies.
@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 
-_TASK_ALLOCATION_ABI_SCHEMA = "shadowspill.task_allocation_abi/v3"
+_TASK_ALLOCATION_CONTRACT_SCHEMA = "shadowspill.task_allocation_contract/v1"
 
 
 class TaskAllocationOperation(StrEnum):
@@ -108,8 +108,8 @@ class TaskAllocationEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class TaskAllocationABIStep:
-    """One operation in a pointer-free compiled-task allocator ABI.
+class TaskAllocationContractStep:
+    """One operation in a pointer-free compiled-task allocator contract.
 
     A persistent allocation is either returned storage (identified by output
     leaves) or bounded provider-owned state retained beyond the task boundary.
@@ -128,29 +128,31 @@ class TaskAllocationABIStep:
 
     def __post_init__(self) -> None:
         if self.operation_index < 0 or self.allocation_ordinal < 0:
-            raise ValueError("task allocation ABI ordinals must be non-negative")
+            raise ValueError("task allocation contract ordinals must be non-negative")
         if not isinstance(self.operation, TaskAllocationOperation):
-            raise TypeError("task allocation ABI operation is invalid")
+            raise TypeError("task allocation contract operation is invalid")
         if self.requested_bytes < 0 or self.charged_bytes <= 0:
-            raise ValueError("task allocation ABI sizes are invalid")
+            raise ValueError("task allocation contract sizes are invalid")
         if self.alignment_bytes <= 0:
-            raise ValueError("task allocation ABI alignment must be positive")
+            raise ValueError("task allocation contract alignment must be positive")
         if any(value < 0 for value in self.output_leaf_indices):
-            raise ValueError("task allocation ABI output leaves are invalid")
+            raise ValueError("task allocation contract output leaves are invalid")
         if any(value < 0 for value in self.mutation_input_positions):
-            raise ValueError("task allocation ABI mutation positions are invalid")
+            raise ValueError("task allocation contract mutation positions are invalid")
         if self.operation is TaskAllocationOperation.FREE and (
             self.output_leaf_indices
             or self.mutation_input_positions
             or self.persistent_after_task
             or self.required
         ):
-            raise ValueError("task allocation ABI free carries allocation-only fields")
+            raise ValueError(
+                "task allocation contract free carries allocation-only fields"
+            )
         if self.required and not (
             self.output_leaf_indices or self.mutation_input_positions
         ):
             raise ValueError(
-                "required task allocation ABI storage must publish an output "
+                "required task allocation contract storage must publish an output "
                 "or mutation"
             )
 
@@ -169,9 +171,9 @@ class TaskAllocationABIStep:
         }
 
     @classmethod
-    def from_dict(cls, value: object) -> TaskAllocationABIStep:
+    def from_dict(cls, value: object) -> TaskAllocationContractStep:
         if not isinstance(value, dict):
-            raise ValueError("cached task allocation ABI step must be an object")
+            raise ValueError("cached task allocation contract step must be an object")
         try:
             return cls(
                 operation_index=int(value["operation_index"]),
@@ -190,34 +192,34 @@ class TaskAllocationABIStep:
                 required=bool(value["required"]),
             )
         except (KeyError, TypeError) as exc:
-            raise ValueError("cached task allocation ABI step is invalid") from exc
+            raise ValueError("cached task allocation contract step is invalid") from exc
 
 
 @dataclass(frozen=True, slots=True)
-class TaskAllocationABI:
+class TaskAllocationContract:
     """Validated, deterministic allocator behavior for one structural task."""
 
-    steps: tuple[TaskAllocationABIStep, ...]
+    steps: tuple[TaskAllocationContractStep, ...]
     compatibility_digest: str
 
     def __post_init__(self) -> None:
         if len(self.compatibility_digest) != 64:
-            raise ValueError("task allocation ABI digest must be SHA-256")
+            raise ValueError("task allocation contract digest must be SHA-256")
         if tuple(step.operation_index for step in self.steps) != tuple(
             range(len(self.steps))
         ):
-            raise ValueError("task allocation ABI operation indices must be dense")
+            raise ValueError("task allocation contract operation indices must be dense")
         _validate_steps(self.steps)
         if self.compatibility_digest != _digest_steps(self.steps):
-            raise ValueError("task allocation ABI digest does not match its steps")
+            raise ValueError("task allocation contract digest does not match its steps")
 
     @classmethod
     def capture(
         cls,
         trace: Sequence[TaskAllocationEvent],
         contract: TaskStorageContract | None = None,
-    ) -> TaskAllocationABI:
-        """Build an ABI from one normalized trace and offline mutation semantics."""
+    ) -> TaskAllocationContract:
+        """Build a contract from one trace and offline mutation semantics."""
 
         mutation_by_leaf = (
             {}
@@ -234,7 +236,7 @@ class TaskAllocationABI:
             if event.operation is TaskAllocationOperation.FREE
         }
         steps = tuple(
-            _abi_step(index, event, mutation_by_leaf, freed_ordinals)
+            _contract_step(index, event, mutation_by_leaf, freed_ordinals)
             for index, event in enumerate(trace)
         )
         return cls(steps, _digest_steps(steps))
@@ -242,14 +244,14 @@ class TaskAllocationABI:
     def for_retained_output_leaves(
         self,
         leaf_indices: Sequence[int],
-    ) -> TaskAllocationABI:
+    ) -> TaskAllocationContract:
         """Specialize profiled output destruction for one execution task.
 
         Isolated profiling destroys every returned tensor after inspecting its
         storage.  Repeated execution instead promotes only the leaves declared
         by the selected Program.  Retaining any view keeps its complete root
         allocation alive; terminal frees for that allocation are removed.
-        Input-backed output leaves do not appear in this allocator ABI and are
+        Input-backed output leaves do not appear in this allocator contract and are
         intentionally ignored here.
         """
 
@@ -262,7 +264,7 @@ class TaskAllocationABI:
             if step.operation is TaskAllocationOperation.ALLOCATE
             and retained_leaves.intersection(step.output_leaf_indices)
         }
-        rewritten: list[TaskAllocationABIStep] = []
+        rewritten: list[TaskAllocationContractStep] = []
         for step in self.steps:
             if (
                 step.operation is TaskAllocationOperation.FREE
@@ -283,29 +285,29 @@ class TaskAllocationABI:
                 )
             )
         values = tuple(rewritten)
-        return TaskAllocationABI(values, _digest_steps(values))
+        return TaskAllocationContract(values, _digest_steps(values))
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema": _TASK_ALLOCATION_ABI_SCHEMA,
+            "schema": _TASK_ALLOCATION_CONTRACT_SCHEMA,
             "compatibility_digest": self.compatibility_digest,
             "steps": [step.identity() for step in self.steps],
         }
 
     @classmethod
-    def from_dict(cls, value: object) -> TaskAllocationABI:
+    def from_dict(cls, value: object) -> TaskAllocationContract:
         if not isinstance(value, dict):
-            raise ValueError("cached task allocation ABI must be an object")
-        if value.get("schema") != _TASK_ALLOCATION_ABI_SCHEMA:
-            raise ValueError("cached task allocation ABI has an invalid schema")
+            raise ValueError("cached task allocation contract must be an object")
+        if value.get("schema") != _TASK_ALLOCATION_CONTRACT_SCHEMA:
+            raise ValueError("cached task allocation contract has an invalid schema")
         try:
             steps = tuple(
-                TaskAllocationABIStep.from_dict(item) for item in value["steps"]
+                TaskAllocationContractStep.from_dict(item) for item in value["steps"]
             )
             digest = str(value["compatibility_digest"])
         except (KeyError, TypeError) as exc:
             raise ValueError(
-                "cached task allocation ABI has an invalid schema"
+                "cached task allocation contract has an invalid schema"
             ) from exc
         return cls(steps, digest)
 
@@ -352,9 +354,7 @@ class TaskAllocationPathObservation:
             "operation_count": self.operation_count,
             "allocation_count": self.allocation_count,
             "scratch_allocation_count": self.scratch_allocation_count,
-            "scratch_maximum_requested_bytes": (
-                self.scratch_maximum_requested_bytes
-            ),
+            "scratch_maximum_requested_bytes": (self.scratch_maximum_requested_bytes),
             "scratch_maximum_charged_bytes": self.scratch_maximum_charged_bytes,
             "scratch_peak_requested_bytes": self.scratch_peak_requested_bytes,
             "scratch_peak_charged_bytes": self.scratch_peak_charged_bytes,
@@ -379,12 +379,8 @@ class TaskAllocationPathObservation:
                 scratch_maximum_charged_bytes=int(
                     value["scratch_maximum_charged_bytes"]
                 ),
-                scratch_peak_requested_bytes=int(
-                    value["scratch_peak_requested_bytes"]
-                ),
-                scratch_peak_charged_bytes=int(
-                    value["scratch_peak_charged_bytes"]
-                ),
+                scratch_peak_requested_bytes=int(value["scratch_peak_requested_bytes"]),
+                scratch_peak_charged_bytes=int(value["scratch_peak_charged_bytes"]),
                 scratch_terminal_charged_bytes=int(
                     value["scratch_terminal_charged_bytes"]
                 ),
@@ -396,14 +392,14 @@ class TaskAllocationPathObservation:
 
 
 def compare_allocation_path(
-    reference: TaskAllocationABI,
-    observed: TaskAllocationABI,
+    reference: TaskAllocationContract,
+    observed: TaskAllocationContract,
     *,
     probe_index: int,
     repetition: int,
     operation_alignment: Sequence[tuple[int, int]] | None = None,
 ) -> TaskAllocationPathObservation:
-    """Reconcile one observed path against an optional fixed-core ABI."""
+    """Reconcile one observed path against an optional fixed-core contract."""
 
     if operation_alignment is not None:
         return _compare_aligned_allocation_path(
@@ -456,16 +452,12 @@ def compare_allocation_path(
             )
             scratch_live_requested += actual.requested_bytes
             scratch_live_charged += actual.charged_bytes
-            scratch_peak_requested = max(
-                scratch_peak_requested, scratch_live_requested
-            )
+            scratch_peak_requested = max(scratch_peak_requested, scratch_live_requested)
             scratch_peak_charged = max(scratch_peak_charged, scratch_live_charged)
             scratch_maximum_requested = max(
                 scratch_maximum_requested, actual.requested_bytes
             )
-            scratch_maximum_charged = max(
-                scratch_maximum_charged, actual.charged_bytes
-            )
+            scratch_maximum_charged = max(scratch_maximum_charged, actual.charged_bytes)
             scratch_count += 1
             continue
 
@@ -477,9 +469,7 @@ def compare_allocation_path(
             scratch_live_requested -= requested
             scratch_live_charged -= charged
             continue
-        core_index = _skip_omitted_core_frees(
-            reference.steps, core_states, core_index
-        )
+        core_index = _skip_omitted_core_frees(reference.steps, core_states, core_index)
         if core_index >= len(reference.steps):
             raise ValueError("observed allocation path has an extra core free")
         expected = reference.steps[core_index]
@@ -503,9 +493,7 @@ def compare_allocation_path(
             )
         core_index += 1
 
-    core_index = _finish_optional_core(
-        reference.steps, core_states, core_index
-    )
+    core_index = _finish_optional_core(reference.steps, core_states, core_index)
     if core_index != len(reference.steps):
         expected = reference.steps[core_index]
         raise ValueError(
@@ -529,8 +517,8 @@ def compare_allocation_path(
 
 
 def _compare_aligned_allocation_path(
-    reference: TaskAllocationABI,
-    observed: TaskAllocationABI,
+    reference: TaskAllocationContract,
+    observed: TaskAllocationContract,
     *,
     probe_index: int,
     repetition: int,
@@ -548,9 +536,7 @@ def _compare_aligned_allocation_path(
     ) != len(operation_alignment):
         raise ValueError("allocation operation alignment is not one-to-one")
 
-    reference_operations = {
-        step.operation_index: step for step in reference.steps
-    }
+    reference_operations = {step.operation_index: step for step in reference.steps}
     observed_operations = {step.operation_index: step for step in observed.steps}
     previous_reference = -1
     previous_observed = -1
@@ -642,16 +628,12 @@ def _compare_aligned_allocation_path(
         if step.operation is TaskAllocationOperation.ALLOCATE:
             scratch_live_requested += step.requested_bytes
             scratch_live_charged += step.charged_bytes
-            scratch_peak_requested = max(
-                scratch_peak_requested, scratch_live_requested
-            )
+            scratch_peak_requested = max(scratch_peak_requested, scratch_live_requested)
             scratch_peak_charged = max(scratch_peak_charged, scratch_live_charged)
             scratch_maximum_requested = max(
                 scratch_maximum_requested, step.requested_bytes
             )
-            scratch_maximum_charged = max(
-                scratch_maximum_charged, step.charged_bytes
-            )
+            scratch_maximum_charged = max(scratch_maximum_charged, step.charged_bytes)
         else:
             scratch_live_requested -= step.requested_bytes
             scratch_live_charged -= step.charged_bytes
@@ -672,7 +654,7 @@ def _compare_aligned_allocation_path(
 
 
 def _operation_lifetimes(
-    steps: Sequence[TaskAllocationABIStep],
+    steps: Sequence[TaskAllocationContractStep],
 ) -> dict[int, tuple[int, int | None]]:
     allocations: dict[int, int] = {}
     frees: dict[int, int] = {}
@@ -688,8 +670,8 @@ def _operation_lifetimes(
 
 
 def _same_operation(
-    left: TaskAllocationABIStep,
-    right: TaskAllocationABIStep,
+    left: TaskAllocationContractStep,
+    right: TaskAllocationContractStep,
 ) -> bool:
     return (
         left.operation is right.operation
@@ -703,15 +685,13 @@ def _same_operation(
     )
 
 
-def _allocation_count(steps: Sequence[TaskAllocationABIStep]) -> int:
-    return sum(
-        step.operation is TaskAllocationOperation.ALLOCATE for step in steps
-    )
+def _allocation_count(steps: Sequence[TaskAllocationContractStep]) -> int:
+    return sum(step.operation is TaskAllocationOperation.ALLOCATE for step in steps)
 
 
 def _same_geometry(
-    left: TaskAllocationABIStep,
-    right: TaskAllocationABIStep,
+    left: TaskAllocationContractStep,
+    right: TaskAllocationContractStep,
 ) -> bool:
     return (
         left.operation is right.operation
@@ -723,12 +703,12 @@ def _same_geometry(
 
 
 def _find_core_allocation(
-    steps: Sequence[TaskAllocationABIStep],
+    steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     *,
     start: int,
-    actual: TaskAllocationABIStep,
-) -> tuple[TaskAllocationABIStep | None, tuple[int, ...]]:
+    actual: TaskAllocationContractStep,
+) -> tuple[TaskAllocationContractStep | None, tuple[int, ...]]:
     skipped: list[int] = []
     skipped_set: set[int] = set()
     scan = start
@@ -752,7 +732,7 @@ def _find_core_allocation(
 
 
 def _skip_omitted_core_frees(
-    steps: Sequence[TaskAllocationABIStep],
+    steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     start: int,
 ) -> int:
@@ -770,7 +750,7 @@ def _skip_omitted_core_frees(
 
 
 def _finish_optional_core(
-    steps: Sequence[TaskAllocationABIStep],
+    steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     start: int,
 ) -> int:
@@ -787,19 +767,19 @@ def _finish_optional_core(
     return index
 
 
-def _abi_step(
+def _contract_step(
     operation_index: int,
     event: TaskAllocationEvent,
     mutation_by_leaf: dict[int, int],
     freed_ordinals: set[int],
-) -> TaskAllocationABIStep:
+) -> TaskAllocationContractStep:
     leaves = event.output_leaf_indices
     mutations = tuple(
         dict.fromkeys(
             mutation_by_leaf[leaf] for leaf in leaves if leaf in mutation_by_leaf
         )
     )
-    return TaskAllocationABIStep(
+    return TaskAllocationContractStep(
         operation_index=operation_index,
         allocation_ordinal=event.allocation_ordinal,
         operation=event.operation,
@@ -819,8 +799,8 @@ def _abi_step(
     )
 
 
-def _validate_steps(steps: tuple[TaskAllocationABIStep, ...]) -> None:
-    live: dict[int, TaskAllocationABIStep] = {}
+def _validate_steps(steps: tuple[TaskAllocationContractStep, ...]) -> None:
+    live: dict[int, TaskAllocationContractStep] = {}
     retired: set[int] = set()
     returned_leaves: set[int] = set()
     next_allocation_ordinal = 0
@@ -829,36 +809,38 @@ def _validate_steps(steps: tuple[TaskAllocationABIStep, ...]) -> None:
         if step.operation is TaskAllocationOperation.ALLOCATE:
             if ordinal != next_allocation_ordinal:
                 raise ValueError(
-                    "task allocation ABI requires dense allocation ordinals"
+                    "task allocation contract requires dense allocation ordinals"
                 )
             next_allocation_ordinal += 1
             if ordinal in live or ordinal in retired:
-                raise ValueError("task allocation ABI allocates one ordinal twice")
+                raise ValueError("task allocation contract allocates one ordinal twice")
             if returned_leaves.intersection(step.output_leaf_indices):
-                raise ValueError("task allocation ABI returns one leaf twice")
+                raise ValueError("task allocation contract returns one leaf twice")
             live[ordinal] = step
             returned_leaves.update(step.output_leaf_indices)
             continue
         allocated = live.pop(ordinal, None)
         if allocated is None:
-            raise ValueError("task allocation ABI frees an unknown ordinal")
+            raise ValueError("task allocation contract frees an unknown ordinal")
         if allocated.persistent_after_task:
-            raise ValueError("task allocation ABI frees returned persistent storage")
+            raise ValueError(
+                "task allocation contract frees returned persistent storage"
+            )
         if (
             allocated.requested_bytes != step.requested_bytes
             or allocated.charged_bytes != step.charged_bytes
             or allocated.alignment_bytes != step.alignment_bytes
         ):
-            raise ValueError("task allocation ABI changes geometry on free")
+            raise ValueError("task allocation contract changes geometry on free")
         retired.add(ordinal)
     if any(not step.persistent_after_task for step in live.values()):
-        raise ValueError("task allocation ABI leaves anonymous storage live")
+        raise ValueError("task allocation contract leaves anonymous storage live")
 
 
-def _digest_steps(steps: tuple[TaskAllocationABIStep, ...]) -> str:
+def _digest_steps(steps: tuple[TaskAllocationContractStep, ...]) -> str:
     encoded = json.dumps(
         {
-            "schema": _TASK_ALLOCATION_ABI_SCHEMA,
+            "schema": _TASK_ALLOCATION_CONTRACT_SCHEMA,
             "steps": [step.identity() for step in steps],
         },
         sort_keys=True,
@@ -868,8 +850,8 @@ def _digest_steps(steps: tuple[TaskAllocationABIStep, ...]) -> str:
 
 
 __all__ = [
-    "TaskAllocationABI",
-    "TaskAllocationABIStep",
+    "TaskAllocationContract",
+    "TaskAllocationContractStep",
     "TaskAllocationEvent",
     "TaskAllocationOperation",
     "TaskAllocationPathObservation",

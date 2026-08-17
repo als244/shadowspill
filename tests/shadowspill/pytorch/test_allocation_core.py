@@ -5,14 +5,14 @@ import pytest
 from shadowspill.pytorch.profiling import (
     AllocationPathProbe,
     AmbiguousAllocationPathError,
-    TaskAllocationABI,
+    TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
     derive_core_allocation_path,
 )
 
 
-def _abi(*sizes: int) -> TaskAllocationABI:
+def _abi(*sizes: int) -> TaskAllocationContract:
     events: list[TaskAllocationEvent] = []
     for ordinal, size in enumerate(sizes):
         events.append(
@@ -31,7 +31,7 @@ def _abi(*sizes: int) -> TaskAllocationABI:
                 size,
             )
         )
-    return TaskAllocationABI.capture(events)
+    return TaskAllocationContract.capture(events)
 
 
 def test_identical_probe_matrix_keeps_exact_core() -> None:
@@ -44,7 +44,7 @@ def test_identical_probe_matrix_keeps_exact_core() -> None:
         ),
     )
 
-    assert derived.allocation_abi == reference
+    assert derived.allocation_contract == reference
     assert derived.weighted_edit_distance == 0
     assert all(item.scratch_allocation_count == 0 for item in derived.observations)
 
@@ -60,7 +60,7 @@ def test_one_time_insertion_is_scratch_around_warmed_core() -> None:
         ),
     )
 
-    assert derived.allocation_abi == reference
+    assert derived.allocation_contract == reference
     cold_observation, warm_observation = derived.observations
     assert cold_observation.scratch_allocation_count == 1
     assert cold_observation.scratch_peak_charged_bytes == 24

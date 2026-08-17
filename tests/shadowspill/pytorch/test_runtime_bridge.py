@@ -8,7 +8,7 @@ import torch
 
 from shadowspill.ir import AliasGroupSpec, ObjectRole, ObjectSpec
 from shadowspill.pytorch.profiling import (
-    TaskAllocationABI,
+    TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
 )
@@ -55,38 +55,36 @@ def test_abort_task_only_closes_the_native_scope() -> None:
     assert library.aborted
 
 
-def test_execution_buffers_project_pointer_free_allocation_abi() -> None:
+def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
     program = representative_program()
     bridge = RuntimeBridge(_Runtime(object()), program, 1)  # type: ignore[arg-type]
     trace = (
         TaskAllocationEvent(0, TaskAllocationOperation.ALLOCATE, 64, 64),
         TaskAllocationEvent(0, TaskAllocationOperation.FREE, 64, 64),
     )
-    allocation_abi = TaskAllocationABI.capture(trace)
+    allocation_contract = TaskAllocationContract.capture(trace)
 
     buffers = bridge._execution_buffers(
         replace(program.tasks[0], task_id="task_000000"),
         (),
         (),
         (),
-        TaskMemoryEnvelope(allocation_abi=allocation_abi),
+        TaskMemoryEnvelope(allocation_contract=allocation_contract),
     )
 
-    assert buffers.description.enforce_allocation_abi == 1
-    assert buffers.description.allocation_abi_step_count == 2
-    assert buffers.allocation_abi_steps[0].operation == 0
-    assert buffers.allocation_abi_steps[0].allocation_ordinal == 0
-    assert buffers.allocation_abi_steps[0].requested_bytes == 64
-    assert buffers.allocation_abi_steps[1].operation == 1
+    assert buffers.description.enforce_allocation_contract == 1
+    assert buffers.description.allocation_contract_step_count == 2
+    assert buffers.allocation_contract_steps[0].operation == 0
+    assert buffers.allocation_contract_steps[0].allocation_ordinal == 0
+    assert buffers.allocation_contract_steps[0].requested_bytes == 64
+    assert buffers.allocation_contract_steps[1].operation == 1
 
 
 class _LabelLibrary:
     def __init__(self) -> None:
         self.labels: tuple[str, ...] = ()
 
-    def shadowspill_pytorch_task_labels_configure(
-        self, values: Any, count: int
-    ) -> int:
+    def shadowspill_pytorch_task_labels_configure(self, values: Any, count: int) -> int:
         labels = ctypes.cast(values, ctypes.POINTER(ctypes.c_char_p))
         self.labels = tuple(labels[index].decode() for index in range(count))
         return 0

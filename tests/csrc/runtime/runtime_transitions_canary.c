@@ -1229,12 +1229,12 @@ static int admitted_task_rejects_envelope_excess(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_task_accepts_exact_allocation_abi(void) {
+static int admitted_task_accepts_exact_allocation_contract(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillTaskAllocationABIStep steps[] = {
+    const ShadowSpillTaskAllocationContractStep steps[] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 32U,
@@ -1252,9 +1252,9 @@ static int admitted_task_accepts_exact_allocation_abi(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 55U,
-        .allocation_abi_steps = steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
         .maximum_requested_allocation_bytes = 32U,
         .maximum_charged_allocation_bytes = 32U,
         .live_requested_allocation_limit_bytes = 32U,
@@ -1288,7 +1288,7 @@ static int admitted_task_accepts_exact_allocation_abi(void) {
     if (failed) {
         fprintf(
             stderr,
-            "allocation ABI exact mismatch: admit=%u before=%u allocate=%u free=%u after=%u idle=%u\n",
+            "allocation contract exact mismatch: admit=%u before=%u allocate=%u free=%u after=%u idle=%u\n",
             (unsigned)admit_status,
             (unsigned)before_status,
             (unsigned)allocate_status,
@@ -1306,7 +1306,7 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillTaskAllocationABIStep step = {
+    const ShadowSpillTaskAllocationContractStep step = {
         .allocation_ordinal = 0U,
         .requested_bytes = 32U,
         .charged_bytes = 32U,
@@ -1316,9 +1316,9 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 56U,
-        .allocation_abi_steps = &step,
-        .allocation_abi_step_count = 1U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = &step,
+        .allocation_contract_step_count = 1U,
+        .enforce_allocation_contract = 1U,
         .maximum_requested_allocation_bytes = 32U,
         .maximum_charged_allocation_bytes = 32U,
         .live_requested_allocation_limit_bytes = 32U,
@@ -1358,12 +1358,12 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
+static int admitted_task_rejects_allocation_contract_geometry_mismatch(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillTaskAllocationABIStep step = {
+    const ShadowSpillTaskAllocationContractStep step = {
         .allocation_ordinal = 0U,
         .requested_bytes = 32U,
         .charged_bytes = 32U,
@@ -1373,9 +1373,9 @@ static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 56U,
-        .allocation_abi_steps = &step,
-        .allocation_abi_step_count = 1U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = &step,
+        .allocation_contract_step_count = 1U,
+        .enforce_allocation_contract = 1U,
         .maximum_requested_allocation_bytes = 64U,
         .maximum_charged_allocation_bytes = 64U,
         .live_requested_allocation_limit_bytes = 64U,
@@ -1389,11 +1389,11 @@ static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
             fixture.runtime, execution.task_id, fixture.compute, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_allocate(
             fixture.runtime, 16U, 1U, fixture.compute, &allocation
-        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH ||
         shadowspill_runtime_failure(
             fixture.runtime, &failure
         ) != SHADOWSPILL_RUNTIME_OK ||
-        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH ||
         failure.task_id != execution.task_id ||
         failure.task_allocation_operation_index != 0U ||
         failure.task_allocation_expected_ordinal != 0U ||
@@ -1409,12 +1409,12 @@ static int admitted_task_rejects_allocation_abi_geometry_mismatch(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_task_rejects_incomplete_allocation_abi(void) {
+static int admitted_task_rejects_incomplete_allocation_contract(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillTaskAllocationABIStep steps[] = {
+    const ShadowSpillTaskAllocationContractStep steps[] = {
         {
             .allocation_ordinal = 0U,
             .requested_bytes = 32U,
@@ -1432,9 +1432,9 @@ static int admitted_task_rejects_incomplete_allocation_abi(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 57U,
-        .allocation_abi_steps = steps,
-        .allocation_abi_step_count = 2U,
-        .enforce_allocation_abi = 1U,
+        .allocation_contract_steps = steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
         .maximum_requested_allocation_bytes = 32U,
         .maximum_charged_allocation_bytes = 32U,
         .live_requested_allocation_limit_bytes = 32U,
@@ -1450,11 +1450,11 @@ static int admitted_task_rejects_incomplete_allocation_abi(void) {
             fixture.runtime, 32U, 1U, fixture.compute, &allocation
         ) != SHADOWSPILL_RUNTIME_OK || shadowspill_after_execution(
             fixture.runtime, execution.task_id, fixture.compute
-        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        ) != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH ||
         shadowspill_runtime_failure(
             fixture.runtime, &failure
         ) != SHADOWSPILL_RUNTIME_OK ||
-        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ABI_MISMATCH ||
+        failure.status != SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH ||
         failure.task_allocation_operation_index != 1U ||
         failure.task_allocation_expected_operation !=
             SHADOWSPILL_TASK_ALLOCATION_FREE ||
@@ -1468,7 +1468,7 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillTaskAllocationABIStep steps[] = {
+    const ShadowSpillTaskAllocationContractStep steps[] = {
         {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
         {0U, 16U, 16U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
         {1U, 32U, 32U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 0U},
@@ -1479,10 +1479,10 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
     };
     const ShadowSpillExecutionDescription execution = {
         .task_id = 58U,
-        .allocation_abi_steps = steps,
-        .allocation_abi_step_count =
+        .allocation_contract_steps = steps,
+        .allocation_contract_step_count =
             (uint32_t)(sizeof(steps) / sizeof(steps[0])),
-        .enforce_allocation_abi = 1U,
+        .enforce_allocation_contract = 1U,
         .maximum_requested_allocation_bytes = 64U,
         .maximum_charged_allocation_bytes = 64U,
         .live_requested_allocation_limit_bytes = 128U,
@@ -2241,10 +2241,10 @@ int main(void) {
     REQUIRE_CANARY(admitted_allocation_without_progress_reports_no_progress());
     REQUIRE_CANARY(admitted_dynamic_allocations_use_deterministic_low_ranges());
     REQUIRE_CANARY(admitted_task_rejects_envelope_excess());
-    REQUIRE_CANARY(admitted_task_accepts_exact_allocation_abi());
+    REQUIRE_CANARY(admitted_task_accepts_exact_allocation_contract());
     REQUIRE_CANARY(delayed_free_is_not_charged_to_later_task_invocation());
-    REQUIRE_CANARY(admitted_task_rejects_allocation_abi_geometry_mismatch());
-    REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_abi());
+    REQUIRE_CANARY(admitted_task_rejects_allocation_contract_geometry_mismatch());
+    REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_contract());
     REQUIRE_CANARY(admitted_task_reconciles_ordered_scratch_and_omissions());
     REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());

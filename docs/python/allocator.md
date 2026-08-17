@@ -18,7 +18,7 @@ PyTorch allocation callbacks enter the adapter and then the neutral C runtime:
 A nonzero allocation failure raises `RuntimeExecutionError` from the adapter.
 No nonzero request returns a null pointer to compiled code. Structured
 diagnostics distinguish no-progress OOM, task-envelope violation,
-allocation-ABI mismatch, worker failure, and backend failure.
+allocation-contract mismatch, worker failure, and backend failure.
 
 Zero-byte requests are tracked separately in diagnostics. They do not acquire
 a physical lease and are not counted as ordinary allocations requiring a

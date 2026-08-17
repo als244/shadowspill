@@ -42,14 +42,14 @@ Production plans use one complete step-level physical layout for
 schedule-managed allocations:
 
 - initial object generations;
-- strict task-allocation ABI core slots;
+- strict task-allocation contract core slots;
 - persistent outputs and mutation replacements;
 - fetch and evict destinations.
 
 Offsets are relative to the callable's admitted slice of the runtime pool.
 The layout models actual allocation/free geometry and causal overlap; it does
 not collapse a task into one synthetic workspace block. Runtime callbacks
-validate the allocation ABI before returning a planned range.
+validate the allocation contract before returning a planned range.
 
 Two cases remain dynamic by design:
 
@@ -150,7 +150,7 @@ small object/lease/action orchestrators. They contain no PyTorch storage logic.
 Nonzero allocation failures become typed exceptions in the PyTorch adapter;
 they are never returned as a null pointer to a kernel. Runtime failures retain
 the execution ID, semantic task, request, pool state, and first native cause.
-No-progress OOM, allocation-ABI mismatch, worker failure, and backend failure
+No-progress OOM, allocation-contract mismatch, worker failure, and backend failure
 remain distinguishable.
 
 Planned callables close their admitted execution state. Python

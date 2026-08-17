@@ -180,7 +180,7 @@ behavior.
 | Timing | `runtime_ns`, `samples_ns`, `timing_relative_mad`, `timing_half_drift`, `timing_unstable` | How stable is the task-duration estimate? |
 | Object bytes | `inputs`, `mutations`, `outputs` and logical/allocation totals | Which named values create pressure? |
 | Temporary bytes | workspace fields and extent lists | How much anonymous task memory was live? |
-| Allocation behavior | `allocation_abi_digest`, `allocation_abi`, `allocation_timeline` | Which strict core operations and observed lifetime events were admitted? |
+| Allocation behavior | `allocation_contract_digest`, `allocation_contract`, `allocation_timeline` | Which strict core operations and observed lifetime events were admitted? |
 
 Logical bytes describe tensor views; allocation bytes describe the containing
 storage extents. Do not add input, mutation, and output totals blindly: a view

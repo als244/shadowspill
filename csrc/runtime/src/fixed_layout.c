@@ -595,13 +595,13 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_fixed_layout(
     return status;
 }
 
-static const ShadowSpillTaskAllocationABIStep *allocation_step(
+static const ShadowSpillTaskAllocationContractStep *allocation_step(
     const ShadowSpillExecutionRecord *record,
     uint64_t ordinal
 ) {
-    for (uint32_t index = 0U; index < record->allocation_abi_step_count; ++index) {
-        const ShadowSpillTaskAllocationABIStep *step =
-            &record->allocation_abi_steps[index];
+    for (uint32_t index = 0U; index < record->allocation_contract_step_count; ++index) {
+        const ShadowSpillTaskAllocationContractStep *step =
+            &record->allocation_contract_steps[index];
         if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
             step->allocation_ordinal == ordinal) {
             return step;
@@ -631,7 +631,7 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
     }
     if (placement->kind == SHADOWSPILL_FIXED_TASK_ALLOCATION ||
         placement->kind == SHADOWSPILL_DYNAMIC_TASK_ALLOCATION) {
-        const ShadowSpillTaskAllocationABIStep *step = allocation_step(
+        const ShadowSpillTaskAllocationContractStep *step = allocation_step(
             record, placement->ordinal
         );
         return step != NULL && step->charged_bytes == placement->bytes &&
@@ -682,10 +682,10 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
     for (ShadowSpillExecutionRecord *record = plan->execution.owned_head;
          record != NULL; record = record->ownership_next) {
         for (uint32_t index = 0U;
-             index < record->allocation_abi_step_count;
+             index < record->allocation_contract_step_count;
              ++index) {
-            const ShadowSpillTaskAllocationABIStep *step =
-                &record->allocation_abi_steps[index];
+            const ShadowSpillTaskAllocationContractStep *step =
+                &record->allocation_contract_steps[index];
             if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
                 allocation_policy_count(
                     plan, record->task_id, step->allocation_ordinal

@@ -348,8 +348,8 @@ class PlanGraphProfile:
     task_workspace_bytes: int
     workspace_extent_bytes: tuple[int, ...]
     persistent_extent_bytes: tuple[int, ...]
-    allocation_abi_digest: str | None
-    allocation_abi: tuple[PlanAllocationABIStep, ...]
+    allocation_contract_digest: str | None
+    allocation_contract: tuple[PlanAllocationABIStep, ...]
     allocation_timeline: tuple[PlanAllocationEvent, ...]
 
     def as_dict(self) -> dict[str, object]:
@@ -406,8 +406,10 @@ class PlanGraphProfile:
             "task_workspace_bytes": self.task_workspace_bytes,
             "workspace_extent_bytes": list(self.workspace_extent_bytes),
             "persistent_extent_bytes": list(self.persistent_extent_bytes),
-            "allocation_abi_digest": self.allocation_abi_digest,
-            "allocation_abi": [item.as_dict() for item in self.allocation_abi],
+            "allocation_contract_digest": self.allocation_contract_digest,
+            "allocation_contract": [
+                item.as_dict() for item in self.allocation_contract
+            ],
             "allocation_timeline": [
                 item.as_dict() for item in self.allocation_timeline
             ],
@@ -525,8 +527,8 @@ class PlanTaskMemoryEnvelope:
     live_charged_allocation_limit_bytes: int
     dynamic_scratch_maximum_allocation_bytes: int
     dynamic_scratch_live_limit_bytes: int
-    allocation_abi_digest: str | None
-    allocation_abi_operation_count: int
+    allocation_contract_digest: str | None
+    allocation_contract_operation_count: int
     allocation_path_digests: tuple[str, ...]
 
     def as_dict(self) -> dict[str, object]:
@@ -535,9 +537,7 @@ class PlanTaskMemoryEnvelope:
             "maximum_requested_allocation_bytes": (
                 self.maximum_requested_allocation_bytes
             ),
-            "maximum_charged_allocation_bytes": (
-                self.maximum_charged_allocation_bytes
-            ),
+            "maximum_charged_allocation_bytes": (self.maximum_charged_allocation_bytes),
             "live_requested_allocation_limit_bytes": (
                 self.live_requested_allocation_limit_bytes
             ),
@@ -547,11 +547,11 @@ class PlanTaskMemoryEnvelope:
             "dynamic_scratch_maximum_allocation_bytes": (
                 self.dynamic_scratch_maximum_allocation_bytes
             ),
-            "dynamic_scratch_live_limit_bytes": (
-                self.dynamic_scratch_live_limit_bytes
+            "dynamic_scratch_live_limit_bytes": (self.dynamic_scratch_live_limit_bytes),
+            "allocation_contract_digest": self.allocation_contract_digest,
+            "allocation_contract_operation_count": (
+                self.allocation_contract_operation_count
             ),
-            "allocation_abi_digest": self.allocation_abi_digest,
-            "allocation_abi_operation_count": self.allocation_abi_operation_count,
             "allocation_path_digests": list(self.allocation_path_digests),
         }
 
@@ -577,9 +577,7 @@ class PlanFixedLayoutAttempt:
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "accepted": self.accepted,
             "pressurefit_wall_time_ns": self.pressurefit_wall_time_ns,
-            "physical_admission_wall_time_ns": (
-                self.physical_admission_wall_time_ns
-            ),
+            "physical_admission_wall_time_ns": (self.physical_admission_wall_time_ns),
             "pressurefit_diagnostics": (
                 None
                 if self.pressurefit_diagnostics is None
@@ -625,9 +623,7 @@ class PlanPhysicalLayout:
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "original_object_capacity_bytes": self.original_object_capacity_bytes,
             "effective_object_capacity_bytes": self.effective_object_capacity_bytes,
-            "object_capacity_reduction_bytes": (
-                self.object_capacity_reduction_bytes
-            ),
+            "object_capacity_reduction_bytes": (self.object_capacity_reduction_bytes),
             "fixed_slice_bytes": self.fixed_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
             "scratch_reserve_bytes": self.scratch_reserve_bytes,
@@ -694,9 +690,7 @@ class PlanDiagnostics:
                 "cache_hits": self.profile_cache_hits,
                 "cache_misses": self.profile_cache_misses,
                 "allocation_probe_seeds": self.allocation_probe_seeds,
-                "allocation_probe_repetitions": (
-                    self.allocation_probe_repetitions
-                ),
+                "allocation_probe_repetitions": (self.allocation_probe_repetitions),
             },
             "compiler": {
                 "phases": [
@@ -731,9 +725,7 @@ class PlanDiagnostics:
                 }
                 for index, item in enumerate(self.pressurefit_runs)
             ],
-            "physical_layouts": [
-                item.as_dict() for item in self.physical_layouts
-            ],
+            "physical_layouts": [item.as_dict() for item in self.physical_layouts],
             "tasks": {
                 execution_task_id: item.as_dict()
                 for execution_task_id, item in selected_tasks.items()
