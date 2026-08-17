@@ -674,24 +674,12 @@ static int handle_action(
                         pthread_mutex_unlock(&object->lock);
                         return -1;
                     }
-                    if (object->handoff_task_id !=
-                            SHADOWSPILL_RUNTIME_NO_ID) {
-                        if (allocation->handoff_head_object_id !=
-                                object->object_id) {
-                            shadowspill_memory_pool_unlock_reclamation(
-                                action->plan_owner->execution_pool
-                            );
-                            pthread_mutex_unlock(&object->lock);
-                            return 0;
-                        }
-                        ShadowSpillObject *target =
-                            shadowspill_find_object(
-                                runtime,
-                                object->handoff_destination_object_id
-                            );
-                        if (object->handoff_task_id != action->task_id ||
-                            target == NULL ||
-                            target->allocation_id != allocation->allocation_id) {
+                    if (action->handoff_lease != NULL) {
+                        if (allocation != action->handoff_lease ||
+                            allocation->generation !=
+                                action->handoff_generation ||
+                            allocation->bound_object == NULL ||
+                            allocation->bound_object == object) {
                             shadowspill_memory_pool_unlock_reclamation(
                                 action->plan_owner->execution_pool
                             );
@@ -722,19 +710,6 @@ static int handle_action(
                         object->residency = spill->current
                             ? SHADOWSPILL_OBJECT_SPILL_ONLY
                             : SHADOWSPILL_OBJECT_RELEASED;
-                        allocation->handoff_head_object_id =
-                            object->handoff_next_source_object_id;
-                        if (allocation->handoff_head_object_id ==
-                                SHADOWSPILL_RUNTIME_NO_ID) {
-                            allocation->handoff_tail_object_id =
-                                SHADOWSPILL_RUNTIME_NO_ID;
-                        }
-                        object->handoff_destination_object_id =
-                            SHADOWSPILL_RUNTIME_NO_ID;
-                        object->handoff_task_id =
-                            SHADOWSPILL_RUNTIME_NO_ID;
-                        object->handoff_next_source_object_id =
-                            SHADOWSPILL_RUNTIME_NO_ID;
                         shadowspill_memory_pool_unlock_reclamation(
                             action->plan_owner->execution_pool
                         );
@@ -742,6 +717,21 @@ static int handle_action(
                         pthread_mutex_unlock(&object->lock);
                         complete_action(runtime, action);
                         return 2;
+                    }
+                    if (allocation->bound_object != object) {
+                        shadowspill_memory_pool_unlock_reclamation(
+                            action->plan_owner->execution_pool
+                        );
+                        latch_action_failure(
+                            runtime,
+                            action,
+                            SHADOWSPILL_RUNTIME_INVALID_STATE,
+                            object->object_id,
+                            allocation->allocation_id,
+                            allocation->requested_bytes
+                        );
+                        pthread_mutex_unlock(&object->lock);
+                        return -1;
                     }
                     object->retired_generation = object->generation;
                     object->retired_execution_pointer = allocation->pointer;

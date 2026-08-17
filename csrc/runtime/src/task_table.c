@@ -99,8 +99,59 @@ static void destroy_record(ShadowSpillTaskRecord *record) {
     free(record->publications);
     free(record->actions);
     free(record->queued_actions);
+    free(record->release_bindings);
     free(record->allocation_contract_steps);
     free(record);
+}
+
+static int compare_release_bindings(const void *left, const void *right) {
+    const ShadowSpillTaskReleaseBinding *lhs = left;
+    const ShadowSpillTaskReleaseBinding *rhs = right;
+    const uintptr_t lhs_object = (uintptr_t)lhs->object;
+    const uintptr_t rhs_object = (uintptr_t)rhs->object;
+    return lhs_object < rhs_object ? -1 : lhs_object > rhs_object ? 1 : 0;
+}
+
+ShadowSpillQueuedAction *shadowspill_task_release_action(
+    const ShadowSpillTaskRecord *record,
+    const ShadowSpillObject *object
+) {
+    if (record == NULL || object == NULL) {
+        return NULL;
+    }
+    uint32_t lower = 0U;
+    uint32_t upper = record->release_binding_count;
+    const uintptr_t key = (uintptr_t)object;
+    while (lower < upper) {
+        const uint32_t middle = lower + (upper - lower) / 2U;
+        const uintptr_t candidate =
+            (uintptr_t)record->release_bindings[middle].object;
+        if (candidate < key) {
+            lower = middle + 1U;
+        } else {
+            upper = middle;
+        }
+    }
+    return lower < record->release_binding_count &&
+            record->release_bindings[lower].object == object
+        ? record->release_bindings[lower].action
+        : NULL;
+}
+
+void shadowspill_task_clear_pending_handoffs(
+    const ShadowSpillTaskRecord *record
+) {
+    if (record == NULL) {
+        return;
+    }
+    for (uint32_t index = 0U; index < record->release_binding_count; ++index) {
+        ShadowSpillQueuedAction *action =
+            record->release_bindings[index].action;
+        if (!action->active) {
+            action->handoff_lease = NULL;
+            action->handoff_generation = 0U;
+        }
+    }
 }
 
 int shadowspill_task_table_initialize(
@@ -322,6 +373,9 @@ static ShadowSpillTaskRecord *create_record(
         record->queued_actions = calloc(
             record->action_count, sizeof(*record->queued_actions)
         );
+        record->release_bindings = calloc(
+            record->action_count, sizeof(*record->release_bindings)
+        );
     }
     if (record->allocation_contract_step_count != 0U) {
         record->allocation_contract_steps = calloc(
@@ -337,7 +391,8 @@ static ShadowSpillTaskRecord *create_record(
         (record->update_count != 0U && record->updates == NULL) ||
         (record->publication_count != 0U && record->publications == NULL) ||
         (record->action_count != 0U &&
-         (record->actions == NULL || record->queued_actions == NULL)) ||
+         (record->actions == NULL || record->queued_actions == NULL ||
+          record->release_bindings == NULL)) ||
         (record->allocation_contract_step_count != 0U &&
          record->allocation_contract_steps == NULL)) {
         destroy_record(record);
@@ -480,6 +535,22 @@ static ShadowSpillTaskRecord *create_record(
             .trace_label = trace_label,
             .admitted = 1U,
         };
+        if (description->actions[index].kind ==
+            SHADOWSPILL_RUNTIME_RELEASE) {
+            record->release_bindings[record->release_binding_count++] =
+                (ShadowSpillTaskReleaseBinding){
+                    .object = object,
+                    .action = &record->queued_actions[index],
+                };
+        }
+    }
+    if (record->release_binding_count != 0U) {
+        qsort(
+            record->release_bindings,
+            record->release_binding_count,
+            sizeof(*record->release_bindings),
+            compare_release_bindings
+        );
     }
     return record;
 }

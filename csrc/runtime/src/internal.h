@@ -43,6 +43,9 @@ typedef struct ShadowSpillStreamRecord {
     struct ShadowSpillStreamRecord *next;
 } ShadowSpillStreamRecord;
 
+typedef struct ShadowSpillObject ShadowSpillObject;
+typedef struct ShadowSpillTaskRecord ShadowSpillTaskRecord;
+
 struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
     uint64_t generation;
@@ -169,14 +172,7 @@ typedef struct ShadowSpillMemoryLease {
     int plan_owned;
     int ever_plan_owned;
     int framework_free_seen;
-    uint64_t bound_object_id;
-    /*
-     * Zero-copy task outputs may hand this lease through several logical
-     * objects before the worker observes the first completion fence.  The
-     * source objects form an intrusive FIFO; the lease owns only its ends.
-     */
-    uint64_t handoff_head_object_id;
-    uint64_t handoff_tail_object_id;
+    ShadowSpillObject *bound_object;
     ShadowSpillStreamRecord *streams;
     ShadowSpillEventRecord *retirement_events;
     ShadowSpillEventLease *retirement_event;
@@ -270,7 +266,7 @@ typedef struct ShadowSpillObjectLocation {
 typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
-typedef struct ShadowSpillObject {
+struct ShadowSpillObject {
     ShadowSpillRuntime *runtime;
     uint64_t object_id;
     uint64_t size_bytes;
@@ -298,15 +294,12 @@ typedef struct ShadowSpillObject {
     uint8_t has_readiness_event;
     uint64_t retired_generation;
     void *retired_execution_pointer;
-    uint64_t handoff_destination_object_id;
-    uint64_t handoff_task_id;
-    uint64_t handoff_next_source_object_id;
     ShadowSpillQueuedAction *action_head;
     ShadowSpillQueuedAction *action_tail;
     struct ShadowSpillObject *ownership_next;
     struct ShadowSpillObject **ownership_previous_link;
     struct ShadowSpillObject *id_index_next;
-} ShadowSpillObject;
+};
 
 struct ShadowSpillObjectHandle {
     ShadowSpillRuntime *runtime;
@@ -350,6 +343,14 @@ struct ShadowSpillQueuedAction {
     uint8_t active;
     uint8_t produces_current_execution;
     uint8_t produces_current_spill;
+    /*
+     * A zero-copy publication may replace this action's logical source with
+     * another object while preserving the same physical lease. Admission
+     * resolves the release action directly; publication records the exact
+     * lease generation here without building an object-ID handoff chain.
+     */
+    ShadowSpillMemoryLease *handoff_lease;
+    uint64_t handoff_generation;
     uint64_t scheduled_version;
     struct ShadowSpillQueuedAction *previous;
     struct ShadowSpillQueuedAction *next;
@@ -416,7 +417,12 @@ typedef struct ShadowSpillTaskAction {
     char *trace_label;
 } ShadowSpillTaskAction;
 
-typedef struct ShadowSpillTaskRecord {
+typedef struct ShadowSpillTaskReleaseBinding {
+    ShadowSpillObject *object;
+    ShadowSpillQueuedAction *action;
+} ShadowSpillTaskReleaseBinding;
+
+struct ShadowSpillTaskRecord {
     ShadowSpillPlan *plan_owner;
     uint64_t task_id;
     ShadowSpillObject **inputs;
@@ -434,6 +440,8 @@ typedef struct ShadowSpillTaskRecord {
     ShadowSpillTaskAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
+    ShadowSpillTaskReleaseBinding *release_bindings;
+    uint32_t release_binding_count;
     ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
     uint32_t allocation_contract_step_count;
     uint32_t allocation_contract_allocation_count;
@@ -451,7 +459,7 @@ typedef struct ShadowSpillTaskRecord {
     uint8_t boundary_kind;
     struct ShadowSpillTaskRecord *hash_next;
     struct ShadowSpillTaskRecord *ownership_next;
-} ShadowSpillTaskRecord;
+};
 
 enum {
     SHADOWSPILL_BOUNDARY_TASK = 0U,
@@ -1147,6 +1155,7 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
     uint64_t allocation_id,
+    const ShadowSpillTaskRecord *task,
     ShadowSpillObjectBinding *binding
 );
 ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
@@ -1161,6 +1170,13 @@ void shadowspill_task_table_clear(ShadowSpillTaskTable *table);
 ShadowSpillTaskRecord *shadowspill_task_table_acquire(
     ShadowSpillTaskTable *table,
     uint64_t task_id
+);
+ShadowSpillQueuedAction *shadowspill_task_release_action(
+    const ShadowSpillTaskRecord *record,
+    const ShadowSpillObject *object
+);
+void shadowspill_task_clear_pending_handoffs(
+    const ShadowSpillTaskRecord *record
 );
 char *shadowspill_copy_action_trace_label(
     const ShadowSpillRuntimeAction *action,

@@ -139,8 +139,7 @@ static ShadowSpillRuntimeStatus try_reserve_action_destination_locked(
     }
     if (status == SHADOWSPILL_RUNTIME_OK &&
         action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
-        action->destination_lease->bound_object_id =
-            action->object->object_id;
+        action->destination_lease->bound_object = action->object;
     }
     return status;
 }
@@ -263,71 +262,6 @@ static ShadowSpillRuntimeStatus publish_mutations_locked(
         pthread_mutex_unlock(&object->lock);
     }
     return SHADOWSPILL_RUNTIME_OK;
-}
-
-static int action_releases_object(
-    const ShadowSpillTaskRecord *record,
-    uint64_t object_id
-) {
-    for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (record->actions[index].object->object_id == object_id &&
-            record->actions[index].kind == SHADOWSPILL_RUNTIME_RELEASE) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static ShadowSpillRuntimeStatus validate_handoffs_locked(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillTaskRecord *record,
-    uint64_t *failure_object_id,
-    uint64_t *failure_allocation_id
-) {
-    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
-    ShadowSpillMemoryPool *pool = record->plan_owner->execution_pool;
-    pthread_mutex_lock(&pool->lock);
-    for (ShadowSpillMemoryLease *allocation = pool->active_leases;
-         allocation != NULL; allocation = allocation->active_next) {
-        uint64_t source_id = allocation->handoff_head_object_id;
-        uint64_t traversed = 0U;
-        while (source_id != SHADOWSPILL_RUNTIME_NO_ID) {
-            ShadowSpillObject *source = shadowspill_find_object(
-                runtime, source_id
-            );
-            if (source == NULL || ++traversed >
-                    atomic_load_explicit(
-                        &runtime->registered_objects, memory_order_acquire
-                    )) {
-                *failure_object_id = source_id;
-                *failure_allocation_id = allocation->allocation_id;
-                status = SHADOWSPILL_RUNTIME_INVALID_STATE;
-                break;
-            }
-            if (source->handoff_task_id == record->task_id &&
-                !action_releases_object(record, source->object_id)) {
-                *failure_object_id = source->handoff_destination_object_id;
-                *failure_allocation_id = allocation->allocation_id;
-                status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-                break;
-            }
-            source_id = source->handoff_next_source_object_id;
-        }
-        if (status != SHADOWSPILL_RUNTIME_OK) {
-            break;
-        }
-    }
-    pthread_mutex_unlock(&pool->lock);
-    if (status != SHADOWSPILL_RUNTIME_OK) {
-        shadowspill_latch_failure_locked(
-            runtime,
-            status,
-            *failure_object_id,
-            *failure_allocation_id,
-            0U
-        );
-    }
-    return status;
 }
 
 static uint64_t count_task_retirements_locked(
@@ -524,7 +458,8 @@ static ShadowSpillRuntimeStatus instantiate_actions_locked(
             }
             const int keeps_lease_for_handoff =
                 action->kind == SHADOWSPILL_RUNTIME_RELEASE &&
-                object->handoff_task_id == record->task_id;
+                queued->handoff_lease == source &&
+                queued->handoff_generation == source->generation;
             if (!keeps_lease_for_handoff) {
                 pthread_mutex_lock(
                     &record->plan_owner->execution_pool->lock
@@ -748,11 +683,6 @@ ShadowSpillRuntimeStatus shadowspill_after_task_record(
             runtime, record, &failure_object_id, &failure_allocation_id
         );
     }
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = validate_handoffs_locked(
-            runtime, record, &failure_object_id, &failure_allocation_id
-        );
-    }
     const uint64_t retirement_count = status == SHADOWSPILL_RUNTIME_OK
         ? count_task_retirements_locked(runtime, record->task_id)
         : 0U;
@@ -786,6 +716,7 @@ ShadowSpillRuntimeStatus shadowspill_after_task_record(
         if (task_completion_event != NULL) {
             discard_action_batch_locked(runtime, &batch);
         }
+        shadowspill_task_clear_pending_handoffs(record);
         shadowspill_latch_failure_locked(
             runtime,
             status,

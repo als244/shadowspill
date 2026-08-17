@@ -312,9 +312,7 @@ static ShadowSpillMemoryLease *create_execution_record(
     created->origin_task_allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     created->origin_task_allocation_is_scratch = 0U;
     created->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    created->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    created->bound_object = NULL;
     return created;
 }
 
@@ -703,9 +701,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
         );
         split->origin_task_id = origin_task_id;
         split->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        split->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+        split->bound_object = NULL;
         own_execution_record(pool, split);
         activate_allocation_locked(pool, split);
         index_allocation_id_locked(pool, split);
@@ -778,9 +774,7 @@ static ShadowSpillRuntimeStatus reuse_pending_allocation_locked(
     selected->alignment_bytes = alignment;
     selected->origin_task_id = origin_task_id;
     selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    selected->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    selected->bound_object = NULL;
     selected->logical_freed = 0;
     selected->state = SHADOWSPILL_LEASE_IN_USE;
     selected->causal_event = NULL;
@@ -843,9 +837,7 @@ void shadowspill_release_execution_lease_locked(
     deactivate_allocation_locked(allocation);
     allocation->logical_freed = 1;
     allocation->plan_owned = 0;
-    allocation->bound_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    allocation->handoff_head_object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    allocation->handoff_tail_object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    allocation->bound_object = NULL;
     pool->requested_allocated_bytes -= requested_bytes;
     if (pool->live_allocations != 0U) {
         --pool->live_allocations;

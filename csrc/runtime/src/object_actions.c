@@ -132,6 +132,8 @@ int shadowspill_object_reset_admitted_action_locked(
     action->active = 0U;
     action->produces_current_execution = 0U;
     action->produces_current_spill = 0U;
+    action->handoff_lease = NULL;
+    action->handoff_generation = 0U;
     action->scheduled_version = 0U;
     action->previous = NULL;
     action->next = NULL;

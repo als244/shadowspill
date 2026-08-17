@@ -753,6 +753,7 @@ void shadowspill_abort_current_task(ShadowSpillRuntime *runtime) {
     shadowspill_finalize_aborted_task_retirements(
         runtime, shadowspill_current_task_id(runtime)
     );
+    shadowspill_task_clear_pending_handoffs(task_scope.task);
     shadowspill_leave_task_scope(runtime);
 }
 
