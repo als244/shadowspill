@@ -19,10 +19,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     TaskDescription,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import (
-    install_allocator,
-    resize_spill_pool,
-)
+from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import begin_task
 
 
@@ -152,12 +149,9 @@ def main() -> int:
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
-        spill_pool_bytes=16 << 20,
+        spill_pool_bytes=32 << 20,
         worker_poll_nanoseconds=10_000,
     )
-    resize_spill_pool(installed, spill_pool_bytes=32 << 20, spill_budget_bytes=64 << 20)
-    if installed.admission.spill_pool_bytes != 32 << 20:
-        raise AssertionError("planning-time host admission did not grow")
     capabilities = AdapterCapabilities()
     installed.library.shadowspill_pytorch_adapter_capabilities(
         ctypes.byref(capabilities)
@@ -516,8 +510,6 @@ def main() -> int:
         raise AssertionError("post-clear statistics query failed")
     if cleared_statistics.physical_budget_sealed != 1:
         raise AssertionError("execution-plan clear dropped the runtime physical seal")
-    if int(library.shadowspill_pytorch_resize_spill_pool(48 << 20)) == 0:
-        raise AssertionError("sealed adapter accepted pinned-host growth")
     if sealed_statistics.physical_checks < 3:
         raise AssertionError("adapter did not record physical reconciliation")
     if (

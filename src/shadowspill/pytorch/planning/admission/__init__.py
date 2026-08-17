@@ -28,9 +28,7 @@ from .refinement import (
 )
 from .selection import (
     SelectedAdmission,
-    admit_selected_schedule,
     build_fixed_selected_admission,
-    build_selected_admission,
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
 )
@@ -53,11 +51,9 @@ __all__ = [
     "OwnershipTransitionKind",
     "SelectedAdmission",
     "TaskOutputBinding",
-    "admit_selected_schedule",
     "build_admission_topology",
     "build_fixed_layout_admission",
     "build_fixed_selected_admission",
-    "build_selected_admission",
     "dynamic_scratch_reserve_bytes",
     "output_bindings_for_entrypoints",
     "physical_admission",

@@ -37,7 +37,6 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
     _function_pointer,
     install_allocator,
-    resize_spill_pool,
     validate_dynamic_execution_reservation,
 )
 
@@ -67,7 +66,6 @@ class _Library:
     shadowspill_pytorch_debug_task_timing_read = _Function()
     shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
-    shadowspill_pytorch_resize_spill_pool = _Function()
     shadowspill_pytorch_allocation_telemetry_start = _Function()
     shadowspill_pytorch_allocation_telemetry_stop = _Function()
     shadowspill_pytorch_allocation_telemetry_read = _Function()
@@ -179,7 +177,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(ctypes.c_uint32),
     ]
     assert library.shadowspill_pytorch_debug_task_timing_disable.argtypes == []
-    assert library.shadowspill_pytorch_resize_spill_pool.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
         ctypes.c_uint64
     ]
@@ -282,36 +279,6 @@ def test_adapter_signatures_are_configured_together() -> None:
     assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
         ctypes.c_size_t,
     ]
-
-
-def test_planning_host_growth_updates_admission_and_enforces_overlap() -> None:
-    class _ResizeLibrary:
-        spill_bytes = 16
-
-        def shadowspill_pytorch_resize_spill_pool(self, value: int) -> int:
-            self.spill_bytes = value
-            return 0
-
-        def shadowspill_pytorch_physical_admission(self, output: object) -> int:
-            admission = ctypes.cast(output, ctypes.POINTER(PhysicalAdmission))[0]
-            admission.spill_pool_bytes = self.spill_bytes
-            return 0
-
-    admission = PhysicalAdmission()
-    admission.spill_pool_bytes = 16
-    installed = InstalledAllocator(
-        library=_ResizeLibrary(),
-        allocator=object(),
-        path=Path("/adapter"),
-        admission=admission,
-    )
-    resize_spill_pool(installed, spill_pool_bytes=32, spill_budget_bytes=64)
-    assert installed.admission.spill_pool_bytes == 32
-    resize_spill_pool(installed, spill_pool_bytes=32, spill_budget_bytes=64)
-    with pytest.raises(AllocatorInstallError, match="shrink"):
-        resize_spill_pool(installed, spill_pool_bytes=31, spill_budget_bytes=64)
-    with pytest.raises(AllocatorInstallError, match="exceeds"):
-        resize_spill_pool(installed, spill_pool_bytes=40, spill_budget_bytes=64)
 
 
 def test_execution_reservation_accepts_fragmented_dynamic_capacity() -> None:
