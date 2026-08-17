@@ -176,7 +176,7 @@ shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_seal_physical_budget(
     uint64_t required_provider_headroom_bytes,
-    uint64_t event_pool_reserve
+    uint64_t runtime_record_reserve
 );
 
 /* Cold-path immutable execution admission and hot predecoded boundaries. */

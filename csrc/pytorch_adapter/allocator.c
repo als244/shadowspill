@@ -688,7 +688,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
     uint64_t required_provider_headroom_bytes,
-    uint64_t event_pool_reserve
+    uint64_t runtime_record_reserve
 ) {
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillCudaBackend *cuda = adapter.cuda;
@@ -698,12 +698,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
         return SHADOWSPILL_RUNTIME_CLOSED;
     }
     ShadowSpillRuntimeStatus reserve_status =
-        shadowspill_runtime_reserve_event_leases(runtime, event_pool_reserve);
+        shadowspill_runtime_reserve_event_leases(runtime, runtime_record_reserve);
     if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
         return reserve_status;
     }
     reserve_status = shadowspill_runtime_reserve_retirement_records(
-        runtime, event_pool_reserve
+        runtime, runtime_record_reserve
     );
     if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
         return reserve_status;
@@ -712,13 +712,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
          pool_id < adapter.admission.pool_count;
          ++pool_id) {
         reserve_status = shadowspill_runtime_reserve_memory_lease_records(
-            runtime, pool_id, event_pool_reserve
+            runtime, pool_id, runtime_record_reserve
         );
         if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
             return reserve_status;
         }
     }
-    if (shadowspill_cuda_backend_seal_event_pool(cuda, event_pool_reserve) != 0) {
+    if (shadowspill_cuda_backend_seal_event_pool(
+            cuda, runtime_record_reserve) != 0) {
         return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
     }
     ShadowSpillRuntimeStatus status =

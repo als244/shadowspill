@@ -556,7 +556,11 @@ def admit_forward_plan(
                 shared_inputs=captured.shared_inputs,
             )
         with timer.measure("physical_sealing"):
-            seal_physical_budget(captured.installed, execution_plan)
+            seal_physical_budget(
+                captured.installed,
+                execution_plan,
+                fixed_layout,
+            )
         with timer.measure("callable_construction"):
             executor = ForwardExecutor(
                 captured.partitioned,

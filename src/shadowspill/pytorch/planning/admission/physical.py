@@ -11,8 +11,32 @@ from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from ...contracts import AdmissionError
 from ...runtime_adapter import PlanMemory
 from ..common import round_up
+from .layout import FixedPhysicalLayout
 
 _MIB = 1 << 20
+
+
+def _runtime_record_reserve(
+    *,
+    selected_task_count: int,
+    initial_transfer_count: int,
+    scheduled_transfer_count: int,
+    event_pool_peak_in_use: int,
+    fixed_lifetime_count: int,
+    dynamic_lifetime_count: int,
+) -> int:
+    """Return one safe lower bound for all sealed runtime record tables."""
+
+    event_records = max(
+        256,
+        selected_task_count
+        + initial_transfer_count
+        + scheduled_transfer_count
+        + 2 * event_pool_peak_in_use
+        + 64,
+    )
+    lifetime_records = fixed_lifetime_count + dynamic_lifetime_count + 64
+    return max(event_records, lifetime_records)
 
 
 def reconcile_spill_pool(*, predicted_peak: int, budget: int) -> None:
@@ -64,8 +88,14 @@ def physical_admission(
 def seal_physical_budget(
     installed: InstalledAllocator,
     execution_plan: ExecutionPlan,
+    fixed_layout: FixedPhysicalLayout,
 ) -> None:
-    """Seal provider headroom and the complete steady-state event inventory."""
+    """Seal provider headroom and complete steady-state record inventories."""
+
+    if fixed_layout.program_digest != execution_plan.program.digest:
+        raise AdmissionError("fixed layout belongs to a different Program")
+    if fixed_layout.schedule_digest != execution_plan.schedule.digest:
+        raise AdmissionError("fixed layout belongs to a different memory schedule")
 
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
@@ -94,16 +124,28 @@ def seal_physical_budget(
         item.kind in {MemoryActionKind.OFFLOAD, MemoryActionKind.PREFETCH}
         for item in execution_plan.schedule.actions
     )
-    event_pool_reserve = max(
-        256,
-        len(execution_plan.program.selected_tasks(execution_plan.selections))
-        + initial_transfers
-        + scheduled_transfers
-        + 2 * int(statistics.cuda.event_pool_peak_in_use)
-        + 64,
+    # The host dispatcher may publish a complete step before CUDA retires its
+    # earliest task allocations and transfer reservations.  Reserve metadata
+    # for every lifetime certified by the physical layout; task/transfer
+    # counts alone undercount allocation-heavy compiled graphs.  The C seal
+    # uses one common lower bound for event, retirement, and per-pool lease
+    # records, so the larger of the event and lifetime inventories is safe for
+    # every component without adding a second sizing contract.
+    runtime_record_reserve = _runtime_record_reserve(
+        selected_task_count=len(
+            execution_plan.program.selected_tasks(execution_plan.selections)
+        ),
+        initial_transfer_count=initial_transfers,
+        scheduled_transfer_count=scheduled_transfers,
+        event_pool_peak_in_use=int(statistics.cuda.event_pool_peak_in_use),
+        fixed_lifetime_count=len(fixed_layout.placements),
+        dynamic_lifetime_count=len(fixed_layout.dynamic_lifetimes),
     )
     status = int(
-        library.shadowspill_pytorch_seal_physical_budget(required, event_pool_reserve)
+        library.shadowspill_pytorch_seal_physical_budget(
+            required,
+            runtime_record_reserve,
+        )
     )
     if status != 0:
         reserved = int(installed.admission.provider_headroom_bytes)
