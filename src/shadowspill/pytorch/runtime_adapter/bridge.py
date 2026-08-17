@@ -20,7 +20,6 @@ from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.runtime_adapter.abi import (
     FIXED_LAYOUT_ABI_VERSION,
     AdapterStatistics,
-    ExecutionDescription,
     FixedDependencyDescription,
     FixedLayoutDescription,
     FixedPlacementDescription,
@@ -28,6 +27,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectSnapshot,
     ObjectUpdate,
     RuntimeAction,
+    TaskDescription,
     TaskHostTiming,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
@@ -119,7 +119,7 @@ class TaskHostTimestamps:
 
 @dataclass(slots=True)
 class _ExecutionBuffers:
-    description: ExecutionDescription
+    description: TaskDescription
     input_ids: Any
     updates: Any
     actions: Any
@@ -597,7 +597,7 @@ class RuntimeBridge:
                 for step in contract_steps
             )
         )
-        description = ExecutionDescription(
+        description = TaskDescription(
             task_id=_plan_local_id(task.task_id, "task_"),
             input_object_ids=input_ids if inputs else None,
             input_count=len(inputs),
@@ -1036,12 +1036,12 @@ class RuntimeBridge:
             "submit admitted initial actions",
         )
 
-    def clear_execution_plan(self) -> None:
-        """Discard immutable execution records and their fixed layout."""
+    def clear_tasks(self) -> None:
+        """Discard immutable task records and their fixed layout."""
 
         self._require(
-            self.library.shadowspill_pytorch_plan_clear_execution(self.plan_handle),
-            "clear execution plan",
+            self.library.shadowspill_pytorch_plan_clear_tasks(self.plan_handle),
+            "clear plan tasks",
         )
         self._admitted_tasks.clear()
         self._admitted_action_batches.clear()

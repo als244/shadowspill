@@ -99,7 +99,7 @@ class _Library:
     shadowspill_pytorch_plan_admit_task = _Function()
     shadowspill_pytorch_plan_admit_fixed_layout = _Function()
     shadowspill_pytorch_plan_seal_fixed_layout = _Function()
-    shadowspill_pytorch_plan_clear_execution = _Function()
+    shadowspill_pytorch_plan_clear_tasks = _Function()
     shadowspill_pytorch_plan_admit_object_acquisition = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_plan_admit_action_batch = _Function()

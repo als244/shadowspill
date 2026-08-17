@@ -171,7 +171,7 @@ static int worker_submission_failure_reaches_dispatcher(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription trigger = {
+    const ShadowSpillTaskDescription trigger = {
         .task_id = 90U,
         .actions = &fetch,
         .action_count = 1U,
@@ -289,7 +289,7 @@ static int failed_task_retirement_recovery(void) {
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation impossible = {0};
     ShadowSpillAllocation recovered = {0};
-    const ShadowSpillExecutionDescription task = {.task_id = 41U};
+    const ShadowSpillTaskDescription task = {.task_id = 41U};
     int result = 0;
     if (shadowspill_test_create_runtime(
             mock, 128U, 1U, 1U, 1000U, &runtime
@@ -368,7 +368,7 @@ static int failed_prefetch_reports_trigger_reservation_oom(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 81U,
         .actions = &prefetch,
         .action_count = 1U,

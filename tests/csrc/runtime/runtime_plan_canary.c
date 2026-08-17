@@ -25,7 +25,7 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         .fetch_route_id = 0U,
         .evict_route_id = 1U,
     };
-    const ShadowSpillExecutionDescription task = {.task_id = 7U};
+    const ShadowSpillTaskDescription task = {.task_id = 7U};
     const ShadowSpillTaskHandle *first_handle = NULL;
     const ShadowSpillTaskHandle *second_handle = NULL;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
@@ -191,7 +191,7 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
         .initially_spill_resident = 1U,
     };
     const uint64_t input = 7U;
-    const ShadowSpillExecutionDescription task = {
+    const ShadowSpillTaskDescription task = {
         .task_id = 11U,
         .input_object_ids = &input,
         .input_count = 1U,

@@ -573,7 +573,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_fixed_layout(
     if (plan == NULL || !descriptions_are_valid(description)) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    if (plan->fixed_layout.active || plan->execution.owned_head != NULL) {
+    if (plan->fixed_layout.active || plan->tasks.owned_head != NULL) {
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     ShadowSpillRuntimeStatus status = copy_layout_description(
@@ -596,7 +596,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_fixed_layout(
 }
 
 static const ShadowSpillTaskAllocationContractStep *allocation_step(
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     uint64_t ordinal
 ) {
     for (uint32_t index = 0U; index < record->allocation_contract_step_count; ++index) {
@@ -623,8 +623,8 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
         return valid ? SHADOWSPILL_RUNTIME_OK
                      : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
     }
-    ShadowSpillExecutionRecord *record = shadowspill_execution_table_acquire(
-        &plan->execution, placement->task_id
+    ShadowSpillTaskRecord *record = shadowspill_task_table_acquire(
+        &plan->tasks, placement->task_id
     );
     if (record == NULL) {
         return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
@@ -641,7 +641,7 @@ static ShadowSpillRuntimeStatus validate_resolved_placement(
     if (placement->ordinal >= record->action_count) {
         return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
     }
-    const ShadowSpillExecutionAction *action =
+    const ShadowSpillTaskAction *action =
         &record->actions[placement->ordinal];
     return action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
         action->plan_object_id == placement->object_id &&
@@ -679,7 +679,7 @@ static int allocation_policy_count(
 static ShadowSpillRuntimeStatus validate_layout_coverage(
     ShadowSpillPlan *plan
 ) {
-    for (ShadowSpillExecutionRecord *record = plan->execution.owned_head;
+    for (ShadowSpillTaskRecord *record = plan->tasks.owned_head;
          record != NULL; record = record->ownership_next) {
         for (uint32_t index = 0U;
              index < record->allocation_contract_step_count;
@@ -694,7 +694,7 @@ static ShadowSpillRuntimeStatus validate_layout_coverage(
             }
         }
         for (uint32_t index = 0U; index < record->action_count; ++index) {
-            const ShadowSpillExecutionAction *action = &record->actions[index];
+            const ShadowSpillTaskAction *action = &record->actions[index];
             if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
                 int policy_count = 0;
                 if (shadowspill_fixed_layout_find_placement(
@@ -730,9 +730,9 @@ static ShadowSpillRuntimeStatus resolve_dependency(
 ) {
     const ShadowSpillFixedDependencyDescription *item =
         &dependency->description;
-    ShadowSpillExecutionRecord *predecessor =
-        shadowspill_execution_table_acquire(
-            &plan->execution, item->predecessor_task_id
+    ShadowSpillTaskRecord *predecessor =
+        shadowspill_task_table_acquire(
+            &plan->tasks, item->predecessor_task_id
         );
     if (predecessor == NULL ||
         item->predecessor_action_ordinal >= predecessor->action_count ||
@@ -744,9 +744,9 @@ static ShadowSpillRuntimeStatus resolve_dependency(
         &predecessor->queued_actions[item->predecessor_action_ordinal];
     uint64_t successor_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     if (item->successor_kind == SHADOWSPILL_FIXED_ACTION_DESTINATION) {
-        ShadowSpillExecutionRecord *successor_record =
-            shadowspill_execution_table_acquire(
-                &plan->execution, item->successor_task_id
+        ShadowSpillTaskRecord *successor_record =
+            shadowspill_task_table_acquire(
+                &plan->tasks, item->successor_task_id
             );
         if (successor_record == NULL ||
             item->successor_ordinal >= successor_record->action_count) {

@@ -133,7 +133,7 @@ sequenceDiagram
     participant W as ShadowSpill worker
     participant T as Fetch / evict lanes
 
-    D->>R: before_task(execution record)
+    D->>R: before_task(task record)
     R-->>D: current leases + readiness events
     D->>G: insert unfinished event waits
     D->>C: invoke with rebound storages
@@ -162,7 +162,7 @@ releases without holding a general-purpose global runtime mutex.
 | Component | Owns | Does not own |
 |---|---|---|
 | PyTorch frontend | Export/AOT capture, stage partitioning, compiled callables, storage rebinding, objective and optimizer integration | Memory-policy search or transfer progress |
-| IR | Objects, tasks, resources, graph-pair alternatives, schedules, and resolved execution records | PyTorch tensors or provider handles |
+| IR | Objects, tasks, resources, graph-pair alternatives, schedules, and resolved task records | PyTorch tensors or provider handles |
 | Planner | Complete recomputation selections, residency strategies, memory actions, and candidate ranking | Graph construction or numerical execution |
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
 | Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Logical PressureFit policy |
@@ -185,7 +185,7 @@ A logical value retains one identity even as its physical address changes:
 5. Recomputation selection and PressureFit decide whether the value exists,
    resides, moves, or is recreated at each boundary.
 6. Physical admission assigns ranges and proves every reuse dependency.
-7. Materialization registers direct execution records with the runtime.
+7. Materialization registers direct task records with the runtime.
 8. At execution, `before_task()` binds the current lease generation and
    `after_task()` publishes its successor generation.
 9. The worker submits transfers and publishes completion; generation checks

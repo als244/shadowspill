@@ -308,7 +308,7 @@ def restore_persistent_state(
 
 
 def restore_persistent_object_ids(runtime: Runtime) -> None:
-    """Return adopted objects to their stable IDs after execution records clear."""
+    """Return adopted objects to their stable IDs after task records clear."""
 
     library = runtime._installed.library
     for state in registry_for(runtime).values():

@@ -25,8 +25,8 @@ extern "C" {
 
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
-typedef struct ShadowSpillExecutionRecord ShadowSpillTaskHandle;
-typedef struct ShadowSpillExecutionRecord ShadowSpillActionBatchHandle;
+typedef struct ShadowSpillTaskRecord ShadowSpillTaskHandle;
+typedef struct ShadowSpillTaskRecord ShadowSpillActionBatchHandle;
 typedef struct ShadowSpillObjectAcquisitionRecord
     ShadowSpillObjectAcquisitionHandle;
 typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
@@ -288,7 +288,7 @@ typedef struct ShadowSpillFixedLayoutDescription {
     uint64_t dependency_count;
 } ShadowSpillFixedLayoutDescription;
 
-typedef struct ShadowSpillExecutionDescription {
+typedef struct ShadowSpillTaskDescription {
     uint64_t task_id;
     const uint64_t *input_object_ids;
     uint32_t input_count;
@@ -314,7 +314,7 @@ typedef struct ShadowSpillExecutionDescription {
      */
     uint64_t dynamic_scratch_maximum_allocation_bytes;
     uint64_t dynamic_scratch_live_limit_bytes;
-} ShadowSpillExecutionDescription;
+} ShadowSpillTaskDescription;
 
 typedef struct ShadowSpillAllocationEvent {
     uint64_t sequence;
@@ -649,7 +649,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_unregister_object(
  * Changes the public identity of one idle SPILL_ONLY or RELEASED object
  * without moving any pool lease or payload. This is used by framework
  * adapters to transfer a preloaded generic lease into and out of a resolved
- * execution plan. No execution record or queued action may reference the
+ * execution plan. No task record or queued action may reference the
  * object while it is rekeyed.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_rekey_object(
@@ -712,7 +712,7 @@ shadowspill_replace_object_allocation(
  * Transfers one settled EXECUTION_READY generation to ordinary caller
  * ownership while preserving the registered object record for recurrent
  * execution. Pending actions are drained before handoff so immutable
- * execution records never retain a stale object identity. The object becomes
+ * task records never retain a stale object identity. The object becomes
  * RELEASED and may bind a new generation on the next invocation. The
  * framework's eventual logical free and recorded streams govern range reuse.
  */
@@ -728,12 +728,12 @@ shadowspill_transfer_object_to_caller(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_plan_admit_task(
     ShadowSpillPlan *plan,
-    const ShadowSpillExecutionDescription *description,
+    const ShadowSpillTaskDescription *description,
     const ShadowSpillTaskHandle **handle
 );
 
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
-shadowspill_plan_clear_execution(ShadowSpillPlan *plan);
+shadowspill_plan_clear_tasks(ShadowSpillPlan *plan);
 
 /*
  * Copies and validates one immutable physical-layout certificate and reserves

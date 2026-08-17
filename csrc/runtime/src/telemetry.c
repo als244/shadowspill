@@ -7,7 +7,7 @@
 typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
     uint64_t task_id;
-    const ShadowSpillExecutionRecord *execution;
+    const ShadowSpillTaskRecord *task;
     uint64_t invocation;
     uint64_t operation_index;
     uint64_t allocation_sequence;
@@ -41,7 +41,7 @@ enum {
 static _Thread_local ShadowSpillTaskScope task_scope = {
     .runtime = NULL,
     .task_id = SHADOWSPILL_RUNTIME_NO_ID,
-    .execution = NULL,
+    .task = NULL,
 };
 
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime) {
@@ -53,7 +53,7 @@ uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime) {
 uint64_t shadowspill_current_task_allocation_ordinal(
     ShadowSpillRuntime *runtime
 ) {
-    return task_scope.runtime == runtime && task_scope.execution != NULL
+    return task_scope.runtime == runtime && task_scope.task != NULL
         ? task_scope.allocation_sequence
         : SHADOWSPILL_RUNTIME_NO_ID;
 }
@@ -61,7 +61,7 @@ uint64_t shadowspill_current_task_allocation_ordinal(
 uint64_t shadowspill_current_task_core_allocation_ordinal(
     ShadowSpillRuntime *runtime
 ) {
-    return task_scope.runtime == runtime && task_scope.execution != NULL &&
+    return task_scope.runtime == runtime && task_scope.task != NULL &&
             task_scope.pending_allocation && !task_scope.pending_is_scratch
         ? task_scope.pending_core_ordinal
         : SHADOWSPILL_RUNTIME_NO_ID;
@@ -70,19 +70,19 @@ uint64_t shadowspill_current_task_core_allocation_ordinal(
 int shadowspill_current_task_allocation_is_scratch(
     ShadowSpillRuntime *runtime
 ) {
-    return task_scope.runtime == runtime && task_scope.execution != NULL &&
+    return task_scope.runtime == runtime && task_scope.task != NULL &&
         task_scope.pending_allocation && task_scope.pending_is_scratch;
 }
 
 uint64_t shadowspill_current_task_invocation(ShadowSpillRuntime *runtime) {
-    return task_scope.runtime == runtime && task_scope.execution != NULL
+    return task_scope.runtime == runtime && task_scope.task != NULL
         ? task_scope.invocation
         : 0U;
 }
 
 ShadowSpillPlan *shadowspill_current_plan(ShadowSpillRuntime *runtime) {
-    return task_scope.runtime == runtime && task_scope.execution != NULL
-        ? task_scope.execution->plan_owner
+    return task_scope.runtime == runtime && task_scope.task != NULL
+        ? task_scope.task->plan_owner
         : NULL;
 }
 
@@ -123,7 +123,7 @@ int shadowspill_enter_task_scope(
     }
     task_scope.runtime = runtime;
     task_scope.task_id = task_id;
-    task_scope.execution = NULL;
+    task_scope.task = NULL;
     task_scope.invocation = 0U;
     task_scope.operation_index = 0U;
     task_scope.allocation_sequence = 0U;
@@ -147,7 +147,7 @@ int shadowspill_enter_task_scope(
 }
 
 static int prepare_allocation_matcher(
-    const ShadowSpillExecutionRecord *record
+    const ShadowSpillTaskRecord *record
 ) {
     const uint32_t count = record->allocation_contract_allocation_count;
     if (count > task_scope.allocation_state_capacity) {
@@ -166,13 +166,13 @@ static int prepare_allocation_matcher(
 }
 
 static const ShadowSpillTaskAllocationContractStep *expected_allocation_step(void) {
-    if (task_scope.execution == NULL ||
-        !task_scope.execution->enforce_allocation_contract ||
+    if (task_scope.task == NULL ||
+        !task_scope.task->enforce_allocation_contract ||
         task_scope.operation_index >=
-            task_scope.execution->allocation_contract_step_count) {
+            task_scope.task->allocation_contract_step_count) {
         return NULL;
     }
-    return &task_scope.execution->allocation_contract_steps[
+    return &task_scope.task->allocation_contract_steps[
         task_scope.operation_index
     ];
 }
@@ -209,22 +209,22 @@ static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
     return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH;
 }
 
-int shadowspill_enter_execution_scope(
+int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record
+    const ShadowSpillTaskRecord *record
 ) {
     if (record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime ||
         shadowspill_enter_task_scope(runtime, record->task_id) != 0) {
         return -1;
     }
-    task_scope.execution = record;
+    task_scope.task = record;
     if (prepare_allocation_matcher(record) != 0) {
         shadowspill_leave_task_scope(runtime);
         return -1;
     }
     task_scope.invocation = atomic_fetch_add_explicit(
-        &((ShadowSpillExecutionRecord *)record)->invocation_count,
+        &((ShadowSpillTaskRecord *)record)->invocation_count,
         1U,
         memory_order_acq_rel
     ) + 1U;
@@ -270,16 +270,16 @@ static void classify_task_allocation(
     skip_omitted_free_operations();
     const uint64_t start = task_scope.operation_index;
     uint64_t scan = start;
-    while (scan < task_scope.execution->allocation_contract_step_count) {
+    while (scan < task_scope.task->allocation_contract_step_count) {
         const ShadowSpillTaskAllocationContractStep *step =
-            &task_scope.execution->allocation_contract_steps[scan];
+            &task_scope.task->allocation_contract_steps[scan];
         if (step->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
             if (allocation_geometry_matches(
                     step, requested_bytes, charged_bytes, alignment_bytes
                 )) {
                 for (uint64_t index = start; index < scan; ++index) {
                     const ShadowSpillTaskAllocationContractStep *skipped =
-                        &task_scope.execution->allocation_contract_steps[index];
+                        &task_scope.task->allocation_contract_steps[index];
                     if (skipped->operation ==
                             SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
                         skipped->allocation_ordinal <
@@ -318,7 +318,7 @@ static void classify_task_allocation(
     }
     for (uint64_t index = start; index < scan; ++index) {
         const ShadowSpillTaskAllocationContractStep *candidate =
-            &task_scope.execution->allocation_contract_steps[index];
+            &task_scope.task->allocation_contract_steps[index];
         if (candidate->operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE &&
             candidate->allocation_ordinal < task_scope.allocation_state_count &&
             task_scope.allocation_states[candidate->allocation_ordinal] ==
@@ -339,10 +339,10 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
         alignment_bytes == 0U) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
-    if (task_scope.runtime != runtime || task_scope.execution == NULL) {
+    if (task_scope.runtime != runtime || task_scope.task == NULL) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    const ShadowSpillExecutionRecord *record = task_scope.execution;
+    const ShadowSpillTaskRecord *record = task_scope.task;
     const uint64_t projected_requested =
         task_scope.live_requested_bytes + requested_bytes;
     const uint64_t projected_charged =
@@ -403,7 +403,7 @@ uint64_t shadowspill_commit_task_allocation(
     uint64_t requested_bytes,
     uint64_t charged_bytes
 ) {
-    if (task_scope.runtime != runtime || task_scope.execution == NULL) {
+    if (task_scope.runtime != runtime || task_scope.task == NULL) {
         return SHADOWSPILL_RUNTIME_NO_ID;
     }
     const uint64_t allocation_sequence = task_scope.allocation_sequence++;
@@ -449,12 +449,12 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     uint64_t charged_bytes,
     uint64_t alignment_bytes
 ) {
-    if (task_scope.runtime != runtime || task_scope.execution == NULL ||
+    if (task_scope.runtime != runtime || task_scope.task == NULL ||
         task_scope.task_id != origin_task_id ||
         task_scope.invocation != origin_task_invocation) {
         return SHADOWSPILL_RUNTIME_OK;
     }
-    if (task_scope.execution->enforce_allocation_contract &&
+    if (task_scope.task->enforce_allocation_contract &&
         !allocation_is_scratch) {
         skip_omitted_free_operations();
         const ShadowSpillTaskAllocationContractStep *expected =
@@ -505,8 +505,8 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
     ShadowSpillRuntime *runtime
 ) {
-    if (task_scope.runtime != runtime || task_scope.execution == NULL ||
-        !task_scope.execution->enforce_allocation_contract) {
+    if (task_scope.runtime != runtime || task_scope.task == NULL ||
+        !task_scope.task->enforce_allocation_contract) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     for (;;) {
@@ -527,7 +527,7 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
         ++task_scope.operation_index;
     }
     if (task_scope.operation_index ==
-        task_scope.execution->allocation_contract_step_count) {
+        task_scope.task->allocation_contract_step_count) {
         return SHADOWSPILL_RUNTIME_OK;
     }
     return latch_allocation_contract_mismatch(
@@ -552,7 +552,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         }
         task_scope.runtime = NULL;
         task_scope.task_id = SHADOWSPILL_RUNTIME_NO_ID;
-        task_scope.execution = NULL;
+        task_scope.task = NULL;
         task_scope.invocation = 0U;
         task_scope.operation_index = 0U;
         task_scope.allocation_sequence = 0U;
@@ -745,10 +745,10 @@ ShadowSpillRuntimeStatus shadowspill_abort_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle
 ) {
-    const ShadowSpillExecutionRecord *record = handle;
+    const ShadowSpillTaskRecord *record = handle;
     if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime ||
-        record->boundary_kind != SHADOWSPILL_BOUNDARY_EXECUTION_TASK) {
+        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK) {
         return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     if (shadowspill_current_plan(runtime) != record->plan_owner ||

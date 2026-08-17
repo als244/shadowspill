@@ -97,7 +97,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 7U,
         .allocation_contract_steps = allocation_steps,
         .allocation_contract_step_count = 2U,
@@ -119,7 +119,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription dynamic_execution = {
+    const ShadowSpillTaskDescription dynamic_execution = {
         .task_id = 10U,
         .allocation_contract_steps = dynamic_steps,
         .allocation_contract_step_count = 2U,
@@ -129,7 +129,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
     };
-    const ShadowSpillExecutionDescription eviction_task = {
+    const ShadowSpillTaskDescription eviction_task = {
         .task_id = 8U,
         .actions = &eviction,
         .action_count = 1U,
@@ -138,7 +138,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription fetch_task = {
+    const ShadowSpillTaskDescription fetch_task = {
         .task_id = 9U,
         .actions = &fetch,
         .action_count = 1U,
@@ -303,7 +303,7 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 15U,
         .allocation_contract_steps = steps,
         .allocation_contract_step_count = 2U,
@@ -382,7 +382,7 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription fetch_task = {
+    const ShadowSpillTaskDescription fetch_task = {
         .task_id = 21U,
         .actions = &fetch,
         .action_count = 1U,
@@ -391,7 +391,7 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    const ShadowSpillExecutionDescription release_task = {
+    const ShadowSpillTaskDescription release_task = {
         .task_id = 22U,
         .actions = &release,
         .action_count = 1U,
@@ -500,7 +500,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription fetch_task = {
+    const ShadowSpillTaskDescription fetch_task = {
         .task_id = 6U,
         .actions = &fetch,
         .action_count = 1U,
@@ -521,7 +521,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription allocation_task = {
+    const ShadowSpillTaskDescription allocation_task = {
         .task_id = 7U,
         .allocation_contract_steps = allocation_steps,
         .allocation_contract_step_count = 2U,
@@ -531,7 +531,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
     };
-    const ShadowSpillExecutionDescription eviction_task = {
+    const ShadowSpillTaskDescription eviction_task = {
         .task_id = 8U,
         .actions = &eviction,
         .action_count = 1U,
@@ -671,7 +671,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         .object_id = objects[0].object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription first_fetch_task = {
+    const ShadowSpillTaskDescription first_fetch_task = {
         .task_id = 11U,
         .actions = &fetch_first,
         .action_count = 1U,
@@ -684,7 +684,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         .object_id = objects[0].object_id,
         .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
     };
-    const ShadowSpillExecutionDescription eviction_task = {
+    const ShadowSpillTaskDescription eviction_task = {
         .task_id = 12U,
         .updates = &mutate_first,
         .update_count = 1U,
@@ -695,7 +695,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         .object_id = successor_object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription second_fetch_task = {
+    const ShadowSpillTaskDescription second_fetch_task = {
         .task_id = 13U,
         .actions = &fetch_second,
         .action_count = 1U,
@@ -704,7 +704,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         .object_id = successor_object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    const ShadowSpillExecutionDescription release_task = {
+    const ShadowSpillTaskDescription release_task = {
         .task_id = 14U,
         .actions = &release_second,
         .action_count = 1U,

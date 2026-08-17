@@ -335,7 +335,7 @@ class TaskAllocationContractStep(ctypes.Structure):
     ]
 
 
-class ExecutionDescription(ctypes.Structure):
+class TaskDescription(ctypes.Structure):
     _fields_ = [
         ("task_id", ctypes.c_uint64),
         ("input_object_ids", ctypes.POINTER(ctypes.c_uint64)),
@@ -775,7 +775,7 @@ def _configure_execution(library: Any) -> None:
         "shadowspill_pytorch_plan_admit_task",
         [
             ctypes.c_size_t,
-            ctypes.POINTER(ExecutionDescription),
+            ctypes.POINTER(TaskDescription),
             ctypes.POINTER(ctypes.c_size_t),
         ],
         ctypes.c_uint32,
@@ -794,7 +794,7 @@ def _configure_execution(library: Any) -> None:
     )
     _signature(
         library,
-        "shadowspill_pytorch_plan_clear_execution",
+        "shadowspill_pytorch_plan_clear_tasks",
         [ctypes.c_size_t],
         ctypes.c_uint32,
     )

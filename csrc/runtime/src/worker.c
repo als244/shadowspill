@@ -1092,7 +1092,7 @@ static int handle_actions(ShadowSpillRuntime *runtime) {
 
 static int handle_submission_actions(
     ShadowSpillRuntime *runtime,
-    ShadowSpillExecutionRecord *record,
+    ShadowSpillTaskRecord *record,
     uint64_t invocation
 ) {
     int changed = 0;
@@ -1123,7 +1123,7 @@ static int handle_submission_actions(
 }
 
 static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
-    ShadowSpillExecutionRecord *record = atomic_load_explicit(
+    ShadowSpillTaskRecord *record = atomic_load_explicit(
         &runtime->worker_submission, memory_order_acquire
     );
     if (record == NULL) {
@@ -1170,7 +1170,7 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
     atomic_store_explicit(
         &record->acknowledgement_sequence, sequence, memory_order_release
     );
-    ShadowSpillExecutionRecord *expected = record;
+    ShadowSpillTaskRecord *expected = record;
     (void)atomic_compare_exchange_strong_explicit(
         &runtime->worker_submission,
         &expected,

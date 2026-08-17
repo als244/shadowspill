@@ -190,7 +190,7 @@ shadowspill_pytorch_plan_bind_object(
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_task(
     uintptr_t plan_handle,
-    const ShadowSpillExecutionDescription *description,
+    const ShadowSpillTaskDescription *description,
     uintptr_t *task_handle
 );
 
@@ -204,7 +204,7 @@ SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_seal_fixed_layout(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_plan_clear_execution(uintptr_t plan_handle);
+shadowspill_pytorch_plan_clear_tasks(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_plan_admit_object_acquisition(

@@ -13,11 +13,11 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterCapabilities,
     AdapterStatistics,
     Allocation,
-    ExecutionDescription,
     ObjectBinding,
     ObjectSnapshot,
     PhysicalMemory,
     RuntimeAction,
+    TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
     install_allocator,
@@ -94,7 +94,7 @@ def _admit_task(
         _bind_plan_object(library, plan, object_id)
     encoded_inputs = (ctypes.c_uint64 * len(inputs))(*inputs)
     encoded_actions = (RuntimeAction * len(actions))(*actions)
-    description = ExecutionDescription(
+    description = TaskDescription(
         task_id=task_id,
         input_object_ids=encoded_inputs if inputs else None,
         input_count=len(inputs),
@@ -520,7 +520,7 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
-    if int(library.shadowspill_pytorch_plan_clear_execution(plan)) != 0:
+    if int(library.shadowspill_pytorch_plan_clear_tasks(plan)) != 0:
         raise AssertionError("execution-plan clear failed after physical sealing")
     cleared_statistics = AdapterStatistics()
     if (

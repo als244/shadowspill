@@ -776,7 +776,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_object_to_caller(
     uint64_t expected_generation = 0U;
 
     /*
-     * An admitted execution record retains direct object pointers.  Caller
+     * An admitted task record retains direct object pointers. Caller
      * handoff therefore drains this generation's actions but preserves the
      * object record itself for the next recurrent invocation.
      */

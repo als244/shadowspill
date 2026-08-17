@@ -335,7 +335,7 @@ int main(void) {
         .object_id = object.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillExecutionDescription first_task = {
+    const ShadowSpillTaskDescription first_task = {
         .task_id = 1U,
         .updates = &update,
         .update_count = 1U,
@@ -372,7 +372,7 @@ int main(void) {
         .object_id = object.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 3U,
         .input_object_ids = input_ids,
         .input_count = 2U,
@@ -461,7 +461,7 @@ int main(void) {
         {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
         {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
     };
-    const ShadowSpillExecutionDescription pair_consumer = {
+    const ShadowSpillTaskDescription pair_consumer = {
         .task_id = 5U,
         .input_object_ids = pair_inputs,
         .input_count = 2U,

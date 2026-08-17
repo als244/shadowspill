@@ -64,7 +64,7 @@ structured no-progress status.
   bindings. A later execution may publish a replacement generation into the
   same object.
 
-Object pointers retained by execution records and queued actions stay valid
+Object pointers retained by task records and queued actions stay valid
 after table removal until their own references are released.
 
 ## Task and execution API
@@ -93,7 +93,7 @@ runtime's pool, route, event, and object owners:
   generations and inserts readiness waits without opening a task boundary.
 - `shadowspill_plan_admit_fixed_layout()` and
   `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
-- `shadowspill_plan_clear_execution()` discards admitted records and bindings.
+- `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 
@@ -119,7 +119,7 @@ non-execution boundary:
   the supplied stream fence and closes the scope.
 - `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.
 
-Allocation scopes do not resolve execution records, publish object mutations,
+Allocation scopes do not resolve task records, publish object mutations,
 decode actions, or enter the task API. They exist only where isolated
 compilation/profiling needs the runtime allocator and its causal retirement
 rules.

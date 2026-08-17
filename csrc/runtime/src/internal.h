@@ -380,20 +380,20 @@ typedef struct ShadowSpillIdleWakeup {
     uint8_t initialized;
 } ShadowSpillIdleWakeup;
 
-typedef struct ShadowSpillExecutionUpdate {
+typedef struct ShadowSpillTaskUpdate {
     ShadowSpillObject *object;
     uint64_t plan_object_id;
     uint64_t version_delta;
-} ShadowSpillExecutionUpdate;
+} ShadowSpillTaskUpdate;
 
-typedef struct ShadowSpillExecutionAction {
+typedef struct ShadowSpillTaskAction {
     ShadowSpillObject *object;
     uint64_t plan_object_id;
     uint8_t kind;
     char *trace_label;
-} ShadowSpillExecutionAction;
+} ShadowSpillTaskAction;
 
-typedef struct ShadowSpillExecutionRecord {
+typedef struct ShadowSpillTaskRecord {
     ShadowSpillPlan *plan_owner;
     uint64_t task_id;
     ShadowSpillObject **inputs;
@@ -404,9 +404,9 @@ typedef struct ShadowSpillExecutionRecord {
     uint32_t unique_input_count;
     uint32_t *input_unique_indices;
     uint32_t *unique_first_positions;
-    ShadowSpillExecutionUpdate *updates;
+    ShadowSpillTaskUpdate *updates;
     uint32_t update_count;
-    ShadowSpillExecutionAction *actions;
+    ShadowSpillTaskAction *actions;
     ShadowSpillQueuedAction *queued_actions;
     uint32_t action_count;
     ShadowSpillTaskAllocationContractStep *allocation_contract_steps;
@@ -424,22 +424,22 @@ typedef struct ShadowSpillExecutionRecord {
     _Atomic uint64_t submission_invocation;
     _Atomic uint64_t acknowledgement_sequence;
     uint8_t boundary_kind;
-    struct ShadowSpillExecutionRecord *hash_next;
-    struct ShadowSpillExecutionRecord *ownership_next;
-} ShadowSpillExecutionRecord;
+    struct ShadowSpillTaskRecord *hash_next;
+    struct ShadowSpillTaskRecord *ownership_next;
+} ShadowSpillTaskRecord;
 
 enum {
-    SHADOWSPILL_BOUNDARY_EXECUTION_TASK = 0U,
+    SHADOWSPILL_BOUNDARY_TASK = 0U,
     SHADOWSPILL_BOUNDARY_ACTION_BATCH = 1U,
 };
 
-typedef struct ShadowSpillExecutionTable {
+typedef struct ShadowSpillTaskTable {
     pthread_rwlock_t lock;
-    ShadowSpillExecutionRecord **by_id;
-    ShadowSpillExecutionRecord *owned_head;
+    ShadowSpillTaskRecord **by_id;
+    ShadowSpillTaskRecord *owned_head;
     uint64_t bucket_count;
     uint8_t lock_initialized;
-} ShadowSpillExecutionTable;
+} ShadowSpillTaskTable;
 
 typedef struct ShadowSpillObjectAcquisitionRecord
     ShadowSpillObjectAcquisitionRecord;
@@ -478,7 +478,7 @@ struct ShadowSpillPlan {
     ShadowSpillRouteState *fetch_route;
     ShadowSpillRouteState *evict_route;
     ShadowSpillPlanObjectTable object_bindings;
-    ShadowSpillExecutionTable execution;
+    ShadowSpillTaskTable tasks;
     ShadowSpillObjectAcquisitionRecord *object_acquisitions;
     ShadowSpillFixedLayoutState fixed_layout;
     pthread_mutex_t lifecycle_lock;
@@ -487,7 +487,7 @@ struct ShadowSpillPlan {
     _Atomic uint8_t closed;
     uint8_t lifecycle_lock_initialized;
     uint8_t object_bindings_initialized;
-    uint8_t execution_initialized;
+    uint8_t tasks_initialized;
     struct ShadowSpillPlan *ownership_next;
     struct ShadowSpillPlan **ownership_previous_link;
 };
@@ -554,7 +554,7 @@ struct ShadowSpillRuntime {
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;
     ShadowSpillActionQueue actions;
-    _Atomic(ShadowSpillExecutionRecord *) worker_submission;
+    _Atomic(ShadowSpillTaskRecord *) worker_submission;
     _Atomic uint64_t next_worker_submission_sequence;
 
     uint64_t next_allocation_id;
@@ -1008,9 +1008,9 @@ int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
     uint64_t task_id
 );
-int shadowspill_enter_execution_scope(
+int shadowspill_enter_task_scope(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record
+    const ShadowSpillTaskRecord *record
 );
 ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
@@ -1091,8 +1091,8 @@ void shadowspill_plan_destroy_all(ShadowSpillRuntime *runtime);
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);
 void shadowspill_transfer_profiles_destroy(ShadowSpillRuntime *runtime);
 void shadowspill_publish_execution_geometry_locked(ShadowSpillRuntime *runtime);
-int shadowspill_execution_table_initialize(
-    ShadowSpillExecutionTable *table,
+int shadowspill_task_table_initialize(
+    ShadowSpillTaskTable *table,
     uint64_t bucket_count
 );
 void shadowspill_object_acquisitions_clear(ShadowSpillPlan *plan);
@@ -1108,10 +1108,10 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 );
-void shadowspill_execution_table_destroy(ShadowSpillExecutionTable *table);
-void shadowspill_execution_table_clear(ShadowSpillExecutionTable *table);
-ShadowSpillExecutionRecord *shadowspill_execution_table_acquire(
-    ShadowSpillExecutionTable *table,
+void shadowspill_task_table_destroy(ShadowSpillTaskTable *table);
+void shadowspill_task_table_clear(ShadowSpillTaskTable *table);
+ShadowSpillTaskRecord *shadowspill_task_table_acquire(
+    ShadowSpillTaskTable *table,
     uint64_t task_id
 );
 char *shadowspill_copy_action_trace_label(
@@ -1121,7 +1121,7 @@ char *shadowspill_copy_action_trace_label(
 );
 ShadowSpillRuntimeStatus shadowspill_after_task_record(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillExecutionRecord *record,
+    const ShadowSpillTaskRecord *record,
     ShadowSpillBackendStream compute_stream
 );
 int shadowspill_transfer_lane_initialize(ShadowSpillTransferLane *lane);

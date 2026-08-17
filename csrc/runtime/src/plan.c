@@ -45,9 +45,9 @@ static void destroy_plan_record(ShadowSpillPlan *plan) {
     }
     shadowspill_fixed_layout_destroy(plan);
     shadowspill_object_acquisitions_clear(plan);
-    if (plan->execution_initialized) {
-        shadowspill_execution_table_destroy(&plan->execution);
-        plan->execution_initialized = 0U;
+    if (plan->tasks_initialized) {
+        shadowspill_task_table_destroy(&plan->tasks);
+        plan->tasks_initialized = 0U;
     }
     if (plan->object_bindings_initialized) {
         shadowspill_plan_object_table_destroy(&plan->object_bindings);
@@ -102,11 +102,11 @@ ShadowSpillRuntimeStatus shadowspill_plan_create(
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
     plan->object_bindings_initialized = 1U;
-    if (shadowspill_execution_table_initialize(&plan->execution, 4096U) != 0) {
+    if (shadowspill_task_table_initialize(&plan->tasks, 4096U) != 0) {
         destroy_plan_record(plan);
         return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
     }
-    plan->execution_initialized = 1U;
+    plan->tasks_initialized = 1U;
 
     pthread_mutex_lock(&runtime->plans_lock);
     if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U) {
@@ -183,7 +183,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_close(ShadowSpillPlan *plan) {
         pthread_mutex_unlock(&plan->lifecycle_lock);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_plan_clear_execution(plan);
+    ShadowSpillRuntimeStatus status = shadowspill_plan_clear_tasks(plan);
     if (status == SHADOWSPILL_RUNTIME_OK) {
         unlink_plan(plan);
         atomic_store_explicit(&plan->closed, 1U, memory_order_release);

@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
-    ExecutionDescription,
     TaskAllocationContractStep,
+    TaskDescription,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
@@ -22,7 +22,7 @@ TASK_ID = 17
 CONTRACT_MISMATCH = 11
 
 
-def _admit_task(library: object, description: ExecutionDescription) -> int:
+def _admit_task(library: object, description: TaskDescription) -> int:
     plan = ctypes.c_size_t()
     status = int(library.shadowspill_pytorch_plan_create(0, 1, ctypes.byref(plan)))
     if status != 0 or plan.value == 0:
@@ -60,7 +60,7 @@ def main() -> int:
             required=1,
         )
     )
-    description = ExecutionDescription(
+    description = TaskDescription(
         task_id=TASK_ID,
         input_object_ids=None,
         input_count=0,

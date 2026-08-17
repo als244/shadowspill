@@ -176,7 +176,7 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         statistics.allocated_bytes != 64U ||
         statistics.fetch_transfers != 2U;
     const uint64_t input = 2U;
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 2U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -254,7 +254,7 @@ static int inflight_prefetch_transfers_to_caller(void) {
     ShadowSpillAllocation caller = {0};
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 2U,
         .input_object_ids = &object.object_id,
         .input_count = 1U,
@@ -457,7 +457,7 @@ static int invalid_before_task(uint8_t initially_spill_resident) {
         .initially_spill_resident = initially_spill_resident,
     };
     const uint64_t input = object.object_id;
-    const ShadowSpillExecutionDescription task = {
+    const ShadowSpillTaskDescription task = {
         .task_id = 1U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -529,7 +529,7 @@ static int output_allocation_handoff(void) {
         .object_id = source.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    const ShadowSpillExecutionDescription task = {
+    const ShadowSpillTaskDescription task = {
         .task_id = 9U,
         .input_object_ids = &input_id,
         .input_count = 1U,
@@ -623,14 +623,14 @@ static int chained_output_allocation_handoff(void) {
         .object_id = 2U,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    const ShadowSpillExecutionDescription first_execution = {
+    const ShadowSpillTaskDescription first_execution = {
         .task_id = 9U,
         .input_object_ids = &first_input,
         .input_count = 1U,
         .actions = &first_release,
         .action_count = 1U,
     };
-    const ShadowSpillExecutionDescription second_execution = {
+    const ShadowSpillTaskDescription second_execution = {
         .task_id = 10U,
         .input_object_ids = &second_input,
         .input_count = 1U,
@@ -850,12 +850,12 @@ static int immutable_execution_admission(void) {
     };
     ShadowSpillAllocation allocation = {0};
     const uint64_t input = description.object_id;
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 17U,
         .input_object_ids = &input,
         .input_count = 1U,
     };
-    const ShadowSpillExecutionDescription conflict = {
+    const ShadowSpillTaskDescription conflict = {
         .task_id = execution.task_id,
     };
     ShadowSpillObjectBinding binding = {0};
@@ -900,12 +900,12 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
-    const ShadowSpillExecutionDescription evict_task = {
+    const ShadowSpillTaskDescription evict_task = {
         .task_id = 18U,
         .actions = &evict,
         .action_count = 1U,
     };
-    const ShadowSpillExecutionDescription fetch_task = {
+    const ShadowSpillTaskDescription fetch_task = {
         .task_id = 19U,
         .actions = &fetch,
         .action_count = 1U,
@@ -994,12 +994,12 @@ static int shared_task_completion_event_survives_action_reuse(void) {
                 allocations[index].allocation_id
             ) != SHADOWSPILL_RUNTIME_OK;
     }
-    const ShadowSpillExecutionDescription evict_task = {
+    const ShadowSpillTaskDescription evict_task = {
         .task_id = 301U,
         .actions = evictions,
         .action_count = OBJECT_COUNT,
     };
-    const ShadowSpillExecutionDescription fetch_task = {
+    const ShadowSpillTaskDescription fetch_task = {
         .task_id = 302U,
         .actions = fetches,
         .action_count = OBJECT_COUNT,
@@ -1050,7 +1050,7 @@ static int admitted_task_allocates_dynamic_ranges(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 51U,
         .maximum_requested_allocation_bytes = 40U,
         .maximum_charged_allocation_bytes = 40U,
@@ -1085,14 +1085,14 @@ static int admitted_reuse_reacquires_retired_dynamic_range(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillExecutionDescription first_execution = {
+    const ShadowSpillTaskDescription first_execution = {
         .task_id = 61U,
         .maximum_requested_allocation_bytes = 64U,
         .maximum_charged_allocation_bytes = 64U,
         .live_requested_allocation_limit_bytes = 64U,
         .live_charged_allocation_limit_bytes = 64U,
     };
-    const ShadowSpillExecutionDescription reuse_execution = {
+    const ShadowSpillTaskDescription reuse_execution = {
         .task_id = 62U,
         .maximum_requested_allocation_bytes = 64U,
         .maximum_charged_allocation_bytes = 64U,
@@ -1140,14 +1140,14 @@ static int admitted_allocation_without_progress_reports_no_progress(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillExecutionDescription first_execution = {
+    const ShadowSpillTaskDescription first_execution = {
         .task_id = 63U,
         .maximum_requested_allocation_bytes = 128U,
         .maximum_charged_allocation_bytes = 128U,
         .live_requested_allocation_limit_bytes = 128U,
         .live_charged_allocation_limit_bytes = 128U,
     };
-    const ShadowSpillExecutionDescription reuse_execution = {
+    const ShadowSpillTaskDescription reuse_execution = {
         .task_id = 64U,
         .maximum_requested_allocation_bytes = 64U,
         .maximum_charged_allocation_bytes = 64U,
@@ -1192,7 +1192,7 @@ static int admitted_dynamic_allocations_use_deterministic_low_ranges(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 53U,
         .maximum_requested_allocation_bytes = 32U,
         .maximum_charged_allocation_bytes = 32U,
@@ -1223,7 +1223,7 @@ static int admitted_task_rejects_envelope_excess(void) {
     if (fixture_create(&fixture) != 0) {
         return -1;
     }
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 54U,
         .maximum_requested_allocation_bytes = 32U,
         .maximum_charged_allocation_bytes = 32U,
@@ -1278,7 +1278,7 @@ static int admitted_task_accepts_exact_allocation_contract(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 55U,
         .allocation_contract_steps = steps,
         .allocation_contract_step_count = 2U,
@@ -1342,7 +1342,7 @@ static int delayed_free_is_not_charged_to_later_task_invocation(void) {
         .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
         .required = 1U,
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 56U,
         .allocation_contract_steps = &step,
         .allocation_contract_step_count = 1U,
@@ -1399,7 +1399,7 @@ static int admitted_task_rejects_allocation_contract_geometry_mismatch(void) {
         .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
         .required = 1U,
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 56U,
         .allocation_contract_steps = &step,
         .allocation_contract_step_count = 1U,
@@ -1461,7 +1461,7 @@ static int admitted_task_rejects_incomplete_allocation_contract(void) {
             .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
         },
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 57U,
         .allocation_contract_steps = steps,
         .allocation_contract_step_count = 2U,
@@ -1508,7 +1508,7 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
         {2U, 64U, 64U, 1U, SHADOWSPILL_TASK_ALLOCATION_FREE, 0U},
         {3U, 48U, 48U, 1U, SHADOWSPILL_TASK_ALLOCATION_ALLOCATE, 1U},
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 58U,
         .allocation_contract_steps = steps,
         .allocation_contract_step_count =
@@ -1607,12 +1607,12 @@ static int execution_plan_lifecycle(void) {
         .size_bytes = 32U,
     };
     const uint64_t input = object.object_id;
-    const ShadowSpillExecutionDescription first_plan = {
+    const ShadowSpillTaskDescription first_plan = {
         .task_id = 18U,
         .input_object_ids = &input,
         .input_count = 1U,
     };
-    const ShadowSpillExecutionDescription second_plan = {
+    const ShadowSpillTaskDescription second_plan = {
         .task_id = first_plan.task_id,
     };
     int failed = shadowspill_register_object(fixture.runtime, &object) !=
@@ -1651,7 +1651,7 @@ static int functional_mutation_replaces_lease_without_copy(void) {
         .object_id = description.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 41U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -1755,7 +1755,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
         .object_id = description.object_id,
         .version_delta = 1U,
     };
-    const ShadowSpillExecutionDescription execution = {
+    const ShadowSpillTaskDescription execution = {
         .task_id = 42U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -1854,7 +1854,7 @@ static int queued_release_causally_precedes_fetch(void) {
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
     const uint64_t input = description.object_id;
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 3U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -1966,7 +1966,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         .version_delta = 1U,
     };
     const uint64_t input = description.object_id;
-    const ShadowSpillExecutionDescription task = {
+    const ShadowSpillTaskDescription task = {
         .task_id = 2U,
         .input_object_ids = &input,
         .input_count = 1U,
@@ -2166,7 +2166,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
     const uint64_t input = object.object_id;
-    const ShadowSpillExecutionDescription consumer = {
+    const ShadowSpillTaskDescription consumer = {
         .task_id = 73U,
         .input_object_ids = &input,
         .input_count = 1U,
