@@ -309,6 +309,36 @@ static int promised_dependency_is_published_before_acquisition(void) {
     return failed ? -1 : 0;
 }
 
+static int range_metadata_reuses_its_high_water_inventory(void) {
+    ShadowSpillMemoryPool pool = {0};
+    if (initialize_pool(&pool) != 0) {
+        return -1;
+    }
+    uint64_t first = UINT64_MAX;
+    uint64_t aligned = UINT64_MAX;
+    int failed = shadowspill_memory_pool_reserve_locked(
+            &pool, 8U, 1U, SHADOWSPILL_MEMORY_BEST_FIT_LOW, &first
+        ) != 0 || shadowspill_memory_pool_reserve_locked(
+            &pool, 8U, 64U, SHADOWSPILL_MEMORY_BEST_FIT_LOW, &aligned
+        ) != 0 || first != 0U || aligned != 64U;
+    failed = failed || pool.ranges.node_capacity < 2U ||
+        shadowspill_memory_pool_release_locked(&pool, aligned, 8U) != 0 ||
+        shadowspill_memory_pool_release_locked(&pool, first, 8U) != 0;
+    const uint64_t high_water = pool.ranges.node_capacity;
+
+    first = UINT64_MAX;
+    aligned = UINT64_MAX;
+    failed = failed || shadowspill_memory_pool_reserve_locked(
+            &pool, 8U, 1U, SHADOWSPILL_MEMORY_BEST_FIT_LOW, &first
+        ) != 0 || shadowspill_memory_pool_reserve_locked(
+            &pool, 8U, 64U, SHADOWSPILL_MEMORY_BEST_FIT_LOW, &aligned
+        ) != 0 || pool.ranges.node_capacity != high_water ||
+        shadowspill_memory_pool_release_locked(&pool, aligned, 8U) != 0 ||
+        shadowspill_memory_pool_release_locked(&pool, first, 8U) != 0;
+    destroy_pool(&pool);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (completion_without_successor_frees_and_coalesces() != 0) {
         fprintf(stderr, "completion-to-free transition failed\n");
@@ -332,6 +362,10 @@ int main(void) {
     }
     if (promised_dependency_is_published_before_acquisition() != 0) {
         fprintf(stderr, "promised dependency acquisition failed\n");
+        return 1;
+    }
+    if (range_metadata_reuses_its_high_water_inventory() != 0) {
+        fprintf(stderr, "range metadata high-water reuse failed\n");
         return 1;
     }
     return 0;

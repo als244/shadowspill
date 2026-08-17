@@ -984,3 +984,17 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   native, CUDA, and PyTorch canaries; the complete Python suite with four
   expected skips; Ruff; strict mypy over 177 installed source files; and
   `git diff --check`.
+
+## 2026-08-17 — Reusable range-allocator metadata
+
+- Found that the generic production range allocator freed its list node on
+  every coalesce and called `calloc` when a later aligned split needed the node
+  again. This caused process-heap traffic even when physical pool usage had
+  reached a stable repeating pattern.
+- The range allocator now retains released metadata nodes on its own free list.
+  Dynamic production pools grow only to their observed node high-water mark;
+  bounded AdmissionReplay workspaces retain their existing fixed borrowed
+  arena and fail closed when that arena is exhausted.
+- Added native coverage that creates leading/trailing fragments, coalesces
+  them, repeats the identical pattern, and proves the node inventory does not
+  grow on the second pass.

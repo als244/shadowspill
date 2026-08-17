@@ -18,15 +18,19 @@ static uint64_t align_down(uint64_t value, uint64_t alignment) {
 }
 
 static ShadowSpillRange *acquire_node(ShadowSpillRangeAllocator *allocator) {
-    if (allocator->node_storage == NULL) {
-        return calloc(1U, sizeof(ShadowSpillRange));
-    }
     ShadowSpillRange *node = allocator->available_nodes;
-    if (node == NULL) {
+    if (node != NULL) {
+        allocator->available_nodes = node->next;
+        *node = (ShadowSpillRange){0};
+        return node;
+    }
+    if (allocator->node_storage != NULL) {
         return NULL;
     }
-    allocator->available_nodes = node->next;
-    *node = (ShadowSpillRange){0};
+    node = calloc(1U, sizeof(*node));
+    if (node != NULL) {
+        ++allocator->node_capacity;
+    }
     return node;
 }
 
@@ -35,10 +39,6 @@ static void release_node(
     ShadowSpillRange *node
 ) {
     if (node == NULL) {
-        return;
-    }
-    if (allocator->node_storage == NULL) {
-        free(node);
         return;
     }
     *node = (ShadowSpillRange){.next = allocator->available_nodes};
@@ -202,11 +202,19 @@ void shadowspill_range_destroy(ShadowSpillRangeAllocator *allocator) {
     if (allocator == NULL) {
         return;
     }
-    ShadowSpillRange *range = allocator->free_ranges;
-    while (range != NULL) {
-        ShadowSpillRange *next = range->next;
-        release_node(allocator, range);
-        range = next;
+    if (allocator->node_storage == NULL) {
+        ShadowSpillRange *range = allocator->free_ranges;
+        while (range != NULL) {
+            ShadowSpillRange *next = range->next;
+            free(range);
+            range = next;
+        }
+        range = allocator->available_nodes;
+        while (range != NULL) {
+            ShadowSpillRange *next = range->next;
+            free(range);
+            range = next;
+        }
     }
     *allocator = (ShadowSpillRangeAllocator){0};
 }
