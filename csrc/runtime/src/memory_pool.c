@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
     ShadowSpillRuntime *runtime,
@@ -190,6 +191,58 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
     }
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};
+}
+
+ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
+    ShadowSpillMemoryPool *pool,
+    uint64_t minimum_free_records
+) {
+    if (pool == NULL || !pool->initialized || minimum_free_records == 0U) {
+        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&pool->lock);
+    if (pool->lease_record_available >= minimum_free_records) {
+        pool->lease_records_sealed = 1U;
+        pthread_mutex_unlock(&pool->lock);
+        return SHADOWSPILL_RUNTIME_OK;
+    }
+    const uint64_t additional =
+        minimum_free_records - pool->lease_record_available;
+    pthread_mutex_unlock(&pool->lock);
+
+    ShadowSpillMemoryLease *created = NULL;
+    uint64_t created_count = 0U;
+    while (created_count < additional) {
+        ShadowSpillMemoryLease *record = calloc(1U, sizeof(*record));
+        if (record == NULL) {
+            while (created != NULL) {
+                ShadowSpillMemoryLease *next = created->free_record_next;
+                free(created);
+                created = next;
+            }
+            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        }
+        record->free_record_next = created;
+        created = record;
+        ++created_count;
+    }
+
+    pthread_mutex_lock(&pool->lock);
+    while (created != NULL) {
+        ShadowSpillMemoryLease *next = created->free_record_next;
+        created->metadata_owner = pool;
+        atomic_init(&created->references, 1U);
+        created->ownership_next = pool->owned_leases;
+        pool->owned_leases = created;
+        created->free_record_next = pool->free_lease_records;
+        pool->free_lease_records = created;
+        created = next;
+    }
+    pool->lease_record_capacity += created_count;
+    pool->lease_record_available += created_count;
+    pool->lease_records_sealed = 1U;
+    pthread_mutex_unlock(&pool->lock);
+    return SHADOWSPILL_RUNTIME_OK;
 }
 
 void shadowspill_memory_pool_lock_foreground(ShadowSpillMemoryPool *pool) {

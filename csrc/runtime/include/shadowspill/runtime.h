@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 38U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 39U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -483,6 +483,10 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t retirement_record_in_use;
     uint64_t retirement_record_peak_in_use;
     uint64_t retirement_record_growth_rejections;
+    uint64_t memory_lease_record_capacity;
+    uint64_t memory_lease_record_in_use;
+    uint64_t memory_lease_record_peak_in_use;
+    uint64_t memory_lease_record_growth_rejections;
 } ShadowSpillRuntimeStatistics;
 
 typedef struct ShadowSpillRuntimeFailure {
@@ -562,6 +566,18 @@ shadowspill_runtime_reserve_event_leases(
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
 shadowspill_runtime_reserve_retirement_records(
     ShadowSpillRuntime *runtime,
+    uint64_t minimum_free_records
+);
+
+/*
+ * Cold-path capacity reservation for one pool's reusable MemoryLease records.
+ * The first call seals hot acquisition: later exhaustion fails closed instead
+ * of allocating process-heap metadata from an allocator callback.
+ */
+SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
+shadowspill_runtime_reserve_memory_lease_records(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
     uint64_t minimum_free_records
 );
 

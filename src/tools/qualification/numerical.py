@@ -843,6 +843,15 @@ def _planned_worker(
         "retirement_record_growth_rejections": int(
             runtime_statistics.runtime.retirement_record_growth_rejections
         ),
+        "memory_lease_record_capacity": int(
+            runtime_statistics.runtime.memory_lease_record_capacity
+        ),
+        "memory_lease_record_peak_in_use": int(
+            runtime_statistics.runtime.memory_lease_record_peak_in_use
+        ),
+        "memory_lease_record_growth_rejections": int(
+            runtime_statistics.runtime.memory_lease_record_growth_rejections
+        ),
         "cuda_device_allocations": int(runtime_statistics.cuda.device_allocations),
         "steady_state_cuda_device_allocations": int(
             runtime_statistics.cuda.device_allocations

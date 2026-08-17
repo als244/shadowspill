@@ -117,7 +117,9 @@ static ShadowSpillRuntimeStatus release_object_residency(
             location->version = 0U;
             location->current = 0U;
             if (location->owns_lease) {
-                free(lease);
+                shadowspill_memory_pool_try_recycle_lease_record_locked(
+                    lease
+                );
             }
             location->owns_lease = 0U;
         }
@@ -320,28 +322,29 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
         goto done;
     }
     if (initial_pool != NULL) {
-        ShadowSpillMemoryLease *initial_lease = calloc(
-            1U, sizeof(*initial_lease)
-        );
-        if (initial_lease == NULL) {
-            pthread_cond_destroy(&created->state_changed);
-            pthread_mutex_destroy(&created->lock);
-            free(created->locations);
-            free(created);
-            status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
-            goto done;
-        }
         shadowspill_memory_pool_lock_foreground(initial_pool);
-        const int reserve_status = shadowspill_memory_pool_reserve_lease_locked(
-            initial_pool,
-            initial_lease,
-            description->size_bytes,
-            1U,
-            SHADOWSPILL_MEMORY_FIRST_FIT
-        );
+        ShadowSpillMemoryLease *initial_lease =
+            shadowspill_memory_pool_acquire_lease_record_locked(
+                runtime,
+                initial_pool,
+                SHADOWSPILL_RUNTIME_NO_ID
+            );
+        const int reserve_status = initial_lease == NULL
+            ? -1
+            : shadowspill_memory_pool_reserve_lease_locked(
+                  initial_pool,
+                  initial_lease,
+                  description->size_bytes,
+                  1U,
+                  SHADOWSPILL_MEMORY_FIRST_FIT
+              );
+        if (reserve_status != 0 && initial_lease != NULL) {
+            shadowspill_memory_pool_try_recycle_lease_record_locked(
+                initial_lease
+            );
+        }
         shadowspill_memory_pool_unlock_foreground(initial_pool);
         if (reserve_status != 0) {
-            free(initial_lease);
             pthread_cond_destroy(&created->state_changed);
             pthread_mutex_destroy(&created->lock);
             free(created->locations);
@@ -368,8 +371,10 @@ ShadowSpillRuntimeStatus shadowspill_register_object(
             (void)shadowspill_memory_pool_release_lease_locked(
                 initial->lease
             );
+            shadowspill_memory_pool_try_recycle_lease_record_locked(
+                initial->lease
+            );
             shadowspill_memory_pool_unlock_foreground(initial_pool);
-            free(initial->lease);
             initial->lease = NULL;
             initial->owns_lease = 0U;
         }
@@ -1002,13 +1007,15 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
         const int release_status = shadowspill_memory_pool_release_lease_locked(
             spill->lease
         );
+        if (release_status == 0 && spill->owns_lease) {
+            shadowspill_memory_pool_try_recycle_lease_record_locked(
+                spill->lease
+            );
+        }
         shadowspill_memory_pool_unlock_foreground(spill_pool);
         if (release_status != 0) {
             status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
             goto done_allocation;
-        }
-        if (spill->owns_lease) {
-            free(spill->lease);
         }
         spill->lease = NULL;
         spill->owns_lease = 0U;

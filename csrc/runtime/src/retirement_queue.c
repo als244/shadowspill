@@ -103,8 +103,11 @@ static void destroy_retirement_record(
     if (record == NULL) {
         return;
     }
+    ShadowSpillMemoryLease *allocation = record->allocation;
+    record->allocation = NULL;
     release_retirement_requirements(runtime, record);
     release_retirement_record(&runtime->retirements, record);
+    shadowspill_memory_lease_release(allocation);
 }
 
 int shadowspill_retirement_queue_initialize(
@@ -179,7 +182,10 @@ void shadowspill_retirement_queue_destroy(
     ShadowSpillRetirementRecord *record = queue->head;
     while (record != NULL) {
         ShadowSpillRetirementRecord *next = record->next;
+        ShadowSpillMemoryLease *allocation = record->allocation;
+        record->allocation = NULL;
         release_retirement_requirements(runtime, record);
+        shadowspill_memory_lease_release(allocation);
         if (!record->pool_owned) {
             free(record);
         }
@@ -241,6 +247,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         shadowspill_event_lease_retain(event->event);
     }
     record->allocation = allocation;
+    shadowspill_memory_lease_retain(allocation);
     record->pool = allocation->pool;
     record->allocation_id = allocation->allocation_id;
     record->allocation_generation = allocation->generation;

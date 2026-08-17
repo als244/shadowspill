@@ -1032,3 +1032,31 @@ tests, measurements, regressions, fixes, and commits are added chronologically.
   ASan runtime canary; and `git diff --check`. The host's ThreadSanitizer binary
   still exits before `main` with its known `unexpected memory mapping` runtime
   failure, so it supplied no program race result for this Python-only change.
+
+## 2026-08-17 — Pool-owned reusable MemoryLease records
+
+- Removed the process-heap `calloc`/`free` lifecycle from physical lease
+  creation. Every generic `MemoryPool` now owns a reusable metadata inventory
+  independently of the ranges leased from that pool. Execution allocations,
+  spill-residency objects, and fetch/evict destination reservations all use
+  the same `MemoryLease` record owner.
+- Physical release does not destroy public object identity. The stable logical
+  object continues to be updated in place; only its current lease and
+  generation change. A record returns to its pool's free metadata list only
+  after physical release, causal links, task-local retirement links, queued
+  retirement evidence, and any delayed framework free have all ended.
+- Retirement records now retain the exact lease record they reference. This
+  makes metadata lifetime explicit and prevents a completed or stale worker
+  record from observing recycled metadata. The final retirement or framework
+  callback performs the O(1) return to the owning pool.
+- Physical sealing grows and seals both configured pools' lease-record
+  inventories at the cold admission boundary. Exhaustion after sealing fails
+  closed rather than allocating host memory. Runtime and qualification
+  diagnostics report aggregate capacity, current/peak use, and rejected hot
+  growth. Runtime ABI 39 and PyTorch adapter ABI 48 describe the change.
+- The completion canary holds 64 allocations simultaneously, then performs
+  256 additional allocation/retirement rounds and proves the record capacity
+  remains exactly 64 with zero hot growth. Validation passed: warnings-as-
+  errors native and ASan builds; all 28 native/CUDA/PyTorch canaries; the
+  complete Python suite with four expected skips; Ruff; strict mypy over 178
+  installed source files; and `git diff --check`.

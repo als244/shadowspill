@@ -213,11 +213,6 @@ void shadowspill_object_release(ShadowSpillObject *object) {
         ) != 1U) {
         return;
     }
-    for (uint32_t index = 0U; index < object->location_count; ++index) {
-        if (object->locations[index].owns_lease) {
-            free(object->locations[index].lease);
-        }
-    }
     free(object->locations);
     pthread_cond_destroy(&object->state_changed);
     pthread_mutex_destroy(&object->lock);

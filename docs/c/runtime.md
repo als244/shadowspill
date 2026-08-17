@@ -14,6 +14,10 @@ worker, trace buffers, and first-failure state.
 - `shadowspill_runtime_reserve_retirement_records()` does the same for the
   immutable records queued between logical release and physical reclamation.
   A sealed inventory never falls back to `malloc` on the task or worker path.
+- `shadowspill_runtime_reserve_memory_lease_records()` grows and seals one
+  pool's reusable `MemoryLease` metadata inventory. Physical range release and
+  the final framework free return records to this owner; exhaustion after
+  sealing fails closed instead of allocating process-heap metadata.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.
