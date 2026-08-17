@@ -33,7 +33,7 @@ static void destroy_retirement_record(
         runtime,
         record->events,
         record->event_count,
-        record->allocation->allocation_id
+        record->allocation_id
     );
     if (shadowspill_event_lease_release(
             runtime, record->task_completion_event
@@ -42,7 +42,7 @@ static void destroy_retirement_record(
             runtime,
             SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
             SHADOWSPILL_RUNTIME_NO_ID,
-            record->allocation->allocation_id,
+            record->allocation_id,
             0U
         );
     }
@@ -122,6 +122,8 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         shadowspill_event_lease_retain(event->event);
     }
     record->allocation = allocation;
+    record->pool = allocation->pool;
+    record->allocation_id = allocation->allocation_id;
     record->allocation_generation = allocation->generation;
     record->events = events;
     record->event_count = event_count;
@@ -239,7 +241,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
          * client is waiting.  Requeue the remaining completed records and let
          * the foreground call run before another background attempt.
          */
-        ShadowSpillMemoryPool *pool = record->allocation->pool;
+        ShadowSpillMemoryPool *pool = record->pool;
         if (!shadowspill_memory_pool_try_lock_reclamation(pool)) {
             work.pool_busy = 1U;
             append_retry(&retry_head, &retry_tail, record);
@@ -254,7 +256,8 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
         ShadowSpillEventLease *owned_task_completion_event = NULL;
         int released = 0;
         ShadowSpillMemoryLease *allocation = record->allocation;
-        if (allocation->generation == record->allocation_generation &&
+        if (allocation->pool == pool &&
+            allocation->generation == record->allocation_generation &&
             allocation->logical_freed && allocation->pointer != NULL &&
             allocation->retirement_enqueued_generation ==
                 record->allocation_generation) {
@@ -281,7 +284,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
             runtime,
             owned_events,
             owned_task_completion_event,
-            record->allocation->allocation_id
+            record->allocation_id
         );
         if (released && atomic_fetch_sub_explicit(
                 &runtime->pending_retirements, 1U, memory_order_release

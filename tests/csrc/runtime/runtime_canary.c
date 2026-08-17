@@ -12,6 +12,8 @@ static int best_fit_preserves_largest_range(void) {
     ShadowSpillMockBackend *mock = NULL;
     const ShadowSpillMockBackendConfig mock_config = {
         .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+        /* Keep all three frees pending while best-fit chooses a successor. */
+        .event_delay_nanoseconds = 10000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
