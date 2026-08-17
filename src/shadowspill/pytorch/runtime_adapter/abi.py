@@ -706,6 +706,21 @@ def _configure_objects(library: Any) -> None:
 def _configure_task_boundaries(library: Any) -> None:
     _signature(
         library,
+        "shadowspill_pytorch_allocation_scope_begin",
+        [ctypes.c_uint64],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_allocation_scope_end",
+        [ctypes.c_uint64, ctypes.c_size_t],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library, "shadowspill_pytorch_allocation_scope_abort", [], None
+    )
+    _signature(
+        library,
         "shadowspill_pytorch_before_task",
         [
             ctypes.c_uint64,

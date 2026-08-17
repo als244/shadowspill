@@ -332,15 +332,17 @@ class _TaskLibrary:
         self.before_status = before_status
         self.aborted = False
 
-    def shadowspill_pytorch_before_task(self, *arguments: object) -> int:
+    def shadowspill_pytorch_allocation_scope_begin(
+        self, *arguments: object
+    ) -> int:
         del arguments
         return self.before_status
 
-    def shadowspill_pytorch_after_task(self, *arguments: object) -> int:
+    def shadowspill_pytorch_allocation_scope_end(self, *arguments: object) -> int:
         del arguments
         return 0
 
-    def shadowspill_pytorch_abort_task_range(self) -> None:
+    def shadowspill_pytorch_allocation_scope_abort(self) -> None:
         self.aborted = True
 
     @staticmethod
@@ -399,12 +401,12 @@ def test_workspace_boundary_always_stops_telemetry(
         warmup_iterations=1,
         sample_iterations=1,
     )
-    with pytest.raises(CaptureError, match="before_task"):
+    with pytest.raises(CaptureError, match="allocation scope begin"):
         failing._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
     assert calls[-2:] == ["start:65536", "stop"]
 
 
-def test_workspace_releases_disposable_results_before_after_task(
+def test_workspace_releases_disposable_results_before_scope_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -414,9 +416,11 @@ def test_workspace_releases_disposable_results_before_after_task(
             calls.append("release-result")
 
     class Library(_TaskLibrary):
-        def shadowspill_pytorch_after_task(self, *arguments: object) -> int:
+        def shadowspill_pytorch_allocation_scope_end(
+            self, *arguments: object
+        ) -> int:
             del arguments
-            calls.append("after-task")
+            calls.append("end-scope")
             return 0
 
     monkeypatch.setattr(
@@ -439,7 +443,7 @@ def test_workspace_releases_disposable_results_before_after_task(
     artifact = _artifact()
     executable = _compiled_task(artifact, lambda: Result())
     profiler._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
-    assert calls == ["release-result", "after-task"]
+    assert calls == ["release-result", "end-scope"]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
