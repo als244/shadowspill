@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 44U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 45U
 
 typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
@@ -427,50 +427,11 @@ shadowspill_pytorch_rekey_object(
     uint64_t replacement_object_id
 );
 
-/* Bind an already registered object to one ordinary framework allocation. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_bind_registered_allocation(
-    uint64_t object_id,
-    uint64_t address,
-    uint64_t size_bytes,
-    ShadowSpillObjectBinding *binding
-);
-
-/* Replace a registered object's lease with a fresh functional output. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_replace_registered_allocation(
-    uint64_t object_id,
-    uint64_t address,
-    uint64_t size_bytes,
-    ShadowSpillObjectBinding *binding
-);
-
-/* Transfer one final execution allocation from plan to caller ownership. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_transfer_output_to_caller(
-    uint64_t object_id,
-    uintptr_t consumer_stream,
-    ShadowSpillAllocation *allocation
-);
-
 /* Release one caller-owned allocation from the private owning DataPtr. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_release_caller_allocation(
     uint64_t allocation_id,
     uintptr_t stream
-);
-
-/*
- * Converts an existing ordinary PyTorch allocation into one plan-owned object
- * and returns its current address generation. This is used only after graph
- * output allocation and before the owning DataPtr is replaced.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
-shadowspill_pytorch_promote_allocation(
-    uint64_t object_id,
-    uint64_t address,
-    uint64_t size_bytes,
-    ShadowSpillObjectBinding *binding
 );
 
 /* Validate one CPU-addressable spill lease before rebinding CPU storage. */

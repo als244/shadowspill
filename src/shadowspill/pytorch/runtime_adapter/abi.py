@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-ADAPTER_ABI_VERSION: Final = 44
+ADAPTER_ABI_VERSION: Final = 45
 RUNTIME_ABI_VERSION: Final = 35
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
@@ -673,33 +673,6 @@ def _configure_objects(library: Any) -> None:
         "shadowspill_pytorch_rekey_object",
         [ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
-    )
-    binding = [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
-    ]
-    _signature(
-        library,
-        "shadowspill_pytorch_bind_registered_allocation",
-        binding,
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_replace_registered_allocation",
-        binding,
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_transfer_output_to_caller",
-        [ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(Allocation)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library, "shadowspill_pytorch_promote_allocation", binding, ctypes.c_uint32
     )
     _signature(
         library,

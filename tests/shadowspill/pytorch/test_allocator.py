@@ -82,10 +82,6 @@ class _Library:
     shadowspill_pytorch_read_spill_object = _Function()
     shadowspill_pytorch_unregister_object = _Function()
     shadowspill_pytorch_rekey_object = _Function()
-    shadowspill_pytorch_bind_registered_allocation = _Function()
-    shadowspill_pytorch_replace_registered_allocation = _Function()
-    shadowspill_pytorch_transfer_output_to_caller = _Function()
-    shadowspill_pytorch_promote_allocation = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
     shadowspill_pytorch_allocation_scope_abort = _Function()
@@ -277,23 +273,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
-    ]
-    assert library.shadowspill_pytorch_bind_registered_allocation.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
-    ]
-    assert library.shadowspill_pytorch_transfer_output_to_caller.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.POINTER(Allocation),
-    ]
-    assert library.shadowspill_pytorch_promote_allocation.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
     ]
     assert library.shadowspill_pytorch_allocation_scope_begin.argtypes == [
         ctypes.c_uint64

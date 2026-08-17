@@ -54,6 +54,36 @@ def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
         library.shadowspill_pytorch_object_handle_release(handle.value)
 
 
+def _publish_initial(
+    library: object,
+    plan: int,
+    tensor: torch.Tensor,
+    object_id: int,
+    *,
+    already_registered: bool = False,
+) -> ObjectBinding:
+    if not already_registered:
+        status = int(
+            library.shadowspill_pytorch_register_placeholder_object(
+                object_id, tensor.untyped_storage().nbytes(), 0
+            )
+        )
+        if status != 0:
+            raise AssertionError(
+                f"placeholder registration failed with status {status}"
+            )
+    _bind_plan_object(library, plan, object_id)
+    binding = ObjectBinding()
+    status = int(
+        library.shadowspill_pytorch_plan_publish_initial_allocation(
+            plan, object_id, tensor.data_ptr(), ctypes.byref(binding)
+        )
+    )
+    if status != 0:
+        raise AssertionError(f"initial publication failed with status {status}")
+    return binding
+
+
 def _submit_actions(
     library: object,
     plan: int,
@@ -227,15 +257,9 @@ def main() -> int:
     parameter_identity = id(parameter)
     storage_identity = parameter.untyped_storage()._cdata
     address = parameter.data_ptr()
-    size_bytes = parameter.untyped_storage().nbytes()
-    binding = ObjectBinding()
-    status = int(
-        library.shadowspill_pytorch_promote_allocation(
-            1001, address, size_bytes, ctypes.byref(binding)
-        )
-    )
-    if status != 0 or binding.pointer != address:
-        raise AssertionError("ordinary PyTorch allocation promotion failed")
+    binding = _publish_initial(library, plan, parameter, 1001)
+    if binding.pointer != address:
+        raise AssertionError("ordinary PyTorch allocation publication failed")
     try:
         torch.ops.shadowspill._acquire_storages(
             [parameter, parameter], [address, address + 256]
@@ -364,17 +388,9 @@ def main() -> int:
     if status != 0:
         raise AssertionError(f"direct host registration failed with status {status}")
     host_tensor = torch.empty_like(host_source, device="cuda")
-    host_binding = ObjectBinding()
-    status = int(
-        library.shadowspill_pytorch_bind_registered_allocation(
-            3001,
-            host_tensor.untyped_storage().data_ptr(),
-            host_tensor.untyped_storage().nbytes(),
-            ctypes.byref(host_binding),
-        )
+    _publish_initial(
+        library, plan, host_tensor, 3001, already_registered=True
     )
-    if status != 0:
-        raise AssertionError(f"registered allocation bind failed with status {status}")
     host_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
     _submit_actions(library, plan, 300, compute_stream, tuple(host_release))
     torch.ops.shadowspill._dematerialize_storages([host_tensor])
@@ -413,25 +429,44 @@ def main() -> int:
         raise AssertionError("direct host final release did not drain")
 
     caller_output = torch.arange(1024, dtype=torch.float32, device="cuda")
-    caller_binding = ObjectBinding()
+    caller_binding = _publish_initial(library, plan, caller_output, 3002)
+    caller_ids = (ctypes.c_uint64 * 1)(3002)
+    caller_handle = ctypes.c_size_t()
     if (
         int(
-            library.shadowspill_pytorch_promote_allocation(
-                3002,
-                caller_output.untyped_storage().data_ptr(),
-                caller_output.untyped_storage().nbytes(),
-                ctypes.byref(caller_binding),
+            library.shadowspill_pytorch_plan_admit_object_acquisition(
+                plan, caller_ids, 1, ctypes.byref(caller_handle)
+            )
+        )
+        != 0
+        or caller_handle.value == 0
+    ):
+        raise AssertionError("caller output acquisition admission failed")
+    caller_acquired = (ObjectBinding * 1)()
+    if (
+        int(
+            library.shadowspill_pytorch_acquire_objects_handle(
+                caller_handle.value,
+                torch.cuda.current_stream().cuda_stream,
+                caller_acquired,
+                1,
             )
         )
         != 0
     ):
-        raise AssertionError("caller output promotion failed")
+        raise AssertionError("caller output acquisition failed")
+    if caller_acquired[0].allocation_id != caller_binding.allocation_id:
+        raise AssertionError("caller acquisition changed the published lease")
     caller_allocation = Allocation()
     if (
         int(
-            library.shadowspill_pytorch_transfer_output_to_caller(
-                caller_binding.object_id,
+            library.shadowspill_pytorch_transfer_acquired_object_to_caller(
+                caller_handle.value,
+                0,
                 torch.cuda.current_stream().cuda_stream,
+                caller_acquired[0].pointer,
+                caller_acquired[0].generation,
+                caller_acquired[0].allocation_id,
                 ctypes.byref(caller_allocation),
             )
         )
