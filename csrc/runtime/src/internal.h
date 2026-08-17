@@ -231,6 +231,8 @@ typedef struct ShadowSpillFixedLayoutState {
 
 typedef struct ShadowSpillRetirementRecord {
     ShadowSpillMemoryLease *allocation;
+    ShadowSpillMemoryPool *pool;
+    uint64_t allocation_id;
     uint64_t allocation_generation;
     ShadowSpillEventLease **events;
     uint32_t event_count;
