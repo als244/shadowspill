@@ -28,6 +28,7 @@ class ExecutionTaskRecord:
     entrypoint: TrainingTaskEntrypoint
     task: TaskSpec
     input_aliases: tuple[str, ...]
+    input_storage_aliases: tuple[str, ...]
     actions: tuple[MemoryAction, ...]
     task_index: int
     execution_ordinal: int
@@ -201,10 +202,14 @@ def _build_task_record(
         if item.destination_object_id in task.outputs
     )
     execution_ordinal, semantic_name = identity
+    publications = _task_publications(outputs, gradient_outputs, optimizer_outputs)
     return ExecutionTaskRecord(
         entrypoint=entrypoint,
         task=task,
         input_aliases=input_aliases,
+        input_storage_aliases=tuple(
+            alias_id for alias_id in input_aliases if bridge.requires_storage(alias_id)
+        ),
         actions=actions,
         task_index=int(entrypoint.task_id.removeprefix("task_")),
         execution_ordinal=execution_ordinal,
@@ -215,7 +220,7 @@ def _build_task_record(
         forward_outputs=outputs,
         gradient_outputs=gradient_outputs,
         optimizer_outputs=optimizer_outputs,
-        publications=_task_publications(outputs, gradient_outputs, optimizer_outputs),
+        publications=publications,
         optimizer_argument_object_ids=tuple(
             optimizer_objects.get(name) for name in entrypoint.optimizer_binding_names
         ),

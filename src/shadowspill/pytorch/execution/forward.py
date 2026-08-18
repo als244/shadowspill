@@ -96,15 +96,18 @@ class _ExecutingStage(nn.Module):
         self._identity = identity
         self._task_handle = task_handle
         self._annotations = annotations
-        self._trace_label = (
-            f"{identity.execution_task_id}.{identity.semantic_name}"
-        )
+        self._trace_label = f"{identity.execution_task_id}.{identity.semantic_name}"
         self._publication_ordinals = {
             item.alias_id: ordinal for ordinal, item in enumerate(publications)
         }
         self._device_ordinal = state.device.index or 0
         self._input_aliases = tuple(
             bridge.alias_for_object(slot.object_id) for slot in entrypoint.input_slots
+        )
+        self._input_storage_indices = tuple(
+            index
+            for index, alias_id in enumerate(self._input_aliases)
+            if bridge.requires_storage(alias_id)
         )
 
     def forward(self, *arguments: object) -> object:
@@ -126,14 +129,13 @@ class _ExecutingStage(nn.Module):
                 self._bridge.before_task_and_acquire(
                     self._task_handle,
                     self._device_ordinal,
-                    input_tensors,
-                    self._input_aliases,
+                    tuple(
+                        input_tensors[index] for index in self._input_storage_indices
+                    ),
                 )
                 runtime_scope_open = True
                 self._publish_input_bindings(input_tensors)
-                prepared = _PreparedForwardTask(
-                    input_tensors, self._input_aliases
-                )
+                prepared = _PreparedForwardTask(input_tensors, self._input_aliases)
             return prepared
         except BaseException:
             if runtime_scope_open:
@@ -163,9 +165,7 @@ class _ExecutingStage(nn.Module):
         # Forward-only execution has no captured backward. Avoid creating
         # hidden dispatcher-autograd contexts across planned task bounds.
         with (
-            self._annotations.range(
-                f"shadowspill.compiled_call.{self._trace_label}"
-            ),
+            self._annotations.range(f"shadowspill.compiled_call.{self._trace_label}"),
             torch.no_grad(),
         ):
             return self._function(*prepared.arguments)
@@ -175,14 +175,13 @@ class _ExecutingStage(nn.Module):
         prepared: _PreparedForwardTask,
         output: object,
     ) -> object:
-        with self._annotations.range(
-            f"shadowspill.after_task.{self._trace_label}"
-        ):
+        with self._annotations.range(f"shadowspill.after_task.{self._trace_label}"):
             processed = self._process_outputs(output)
             self._bridge.after_task_and_update(
                 self._task_handle,
                 self._device_ordinal,
                 processed.adopted,
+                tuple(range(len(processed.adopted))),
                 tuple(tensor for _, tensor in processed.dematerialized),
                 replacements=processed.replacements,
             )
@@ -277,9 +276,7 @@ class _ExecutingStage(nn.Module):
         self,
         processed: _ProcessedForwardOutputs,
     ) -> None:
-        replacement_by_alias = {
-            item.alias_id: item for item in processed.replacements
-        }
+        replacement_by_alias = {item.alias_id: item for item in processed.replacements}
         for alias_id, tensor in processed.bindings:
             self._state.object_store[alias_id] = tensor
         for item in processed.adopted:
@@ -290,9 +287,7 @@ class _ExecutingStage(nn.Module):
             else:
                 self._state.object_store[alias_id] = tensor
 
-    def _forget_released_bindings(
-        self, processed: _ProcessedForwardOutputs
-    ) -> None:
+    def _forget_released_bindings(self, processed: _ProcessedForwardOutputs) -> None:
         adopted = {item.alias_id for item in processed.adopted}
         for alias_id, _ in processed.dematerialized:
             if alias_id in adopted:
