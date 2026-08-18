@@ -810,6 +810,12 @@ class TrainingExecutor:
         """Acquire, rebind, and assemble one complete frontend task boundary."""
 
         timing = self._begin_task_timing(record.entrypoint)
+        if (
+            timing is None
+            and not self._task_annotations.enabled
+            and self._armed_span_timing is None
+        ):
+            return self._before_task_fast(run, record)
         runtime_scope_open = False
         try:
             with self._profile_range(f"shadowspill.before_task.{record.trace_label}"):
@@ -845,6 +851,54 @@ class TrainingExecutor:
             self._finish_task_timing(timing)
             raise
 
+    def _before_task_fast(
+        self,
+        run: _PlanRun,
+        record: _ExecutionTaskRecord,
+    ) -> _PreparedTask:
+        """Execute the default-off-observability boundary without cold-path work."""
+
+        runtime_scope_open = False
+        try:
+            # Resolve the already-admitted storage-only input vector.
+            try:
+                input_tensors = tuple(
+                    self._state.object_store[alias_id]
+                    for alias_id in record.input_storage_aliases
+                )
+            except KeyError as error:
+                raise RuntimeError(
+                    f"task input {error.args[0]!r} has no tensor binding"
+                ) from error
+
+            # Acquire readiness and install every current storage binding.
+            self._bridge.before_task_and_acquire(
+                record.task_handle,
+                self._state.device.index or 0,
+                input_tensors,
+            )
+            runtime_scope_open = True
+
+            # Assemble the selected callable and its predecoded arguments.
+            call = (
+                self._assemble_optimizer_call(record)
+                if record.entrypoint.phase == "optimizer"
+                else self._assemble_graph_call(record)
+            )
+            return _PreparedTask(
+                run=run,
+                record=record,
+                stream=None,
+                arguments=call.arguments,
+                function=call.function,
+                eager_optimizer=call.eager_optimizer,
+                timing=None,
+            )
+        except BaseException:
+            if runtime_scope_open:
+                self._bridge.abort_task(record.task_handle)
+            raise
+
     def _resolve_task_stream(
         self,
         record: _ExecutionTaskRecord,
@@ -874,7 +928,7 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         tensors: list[torch.Tensor] = []
-        for alias_id in record.input_aliases:
+        for alias_id in record.input_storage_aliases:
             tensor = self._state.object_store.get(alias_id)
             if tensor is None:
                 raise RuntimeError(f"task input {alias_id!r} has no tensor binding")
@@ -912,7 +966,6 @@ class TrainingExecutor:
             record.task_handle,
             self._state.device.index or 0,
             tensors,
-            record.input_aliases,
         )
 
     def _assemble_task_call(
@@ -1003,9 +1056,14 @@ class TrainingExecutor:
     ) -> tuple[torch.Tensor, ...]:
         """Publish outputs, actions, and cleanup for one frontend task."""
 
-        with self._profile_range(
-            f"shadowspill.after_task.{prepared.record.trace_label}"
-        ):
+        annotation_id = (
+            self._task_annotations.begin(
+                f"shadowspill.after_task.{prepared.record.trace_label}"
+            )
+            if self._task_annotations.enabled
+            else 0
+        )
+        try:
             processed, dematerialized = self._prepare_task_publication(
                 prepared, raw_outputs
             )
@@ -1016,8 +1074,16 @@ class TrainingExecutor:
             del raw_outputs
             self._publish_task_to_runtime(prepared, processed, dematerialized)
             self._publish_frontend_bindings(prepared, processed)
-            self._finish_task_cleanup(prepared)
+            if (
+                prepared.record.released_ephemeral
+                or prepared.record.task.task_id
+                == prepared.run.lowered.optimizer_task_id
+            ):
+                self._finish_task_cleanup(prepared)
             outputs = processed.outputs
+        finally:
+            if annotation_id:
+                self._task_annotations.end(annotation_id)
         self._finish_task_timing(prepared.timing)
         return outputs
 
@@ -1027,14 +1093,22 @@ class TrainingExecutor:
         raw_outputs: object,
     ) -> tuple[_ProcessedTaskOutputs, tuple[torch.Tensor, ...]]:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        with self._profile_range(
-            f"shadowspill.output_processing.{prepared.record.trace_label}"
-        ):
+        annotation_id = (
+            self._task_annotations.begin(
+                f"shadowspill.output_processing.{prepared.record.trace_label}"
+            )
+            if self._task_annotations.enabled
+            else 0
+        )
+        try:
             processed = self._process_task_outputs(prepared, raw_outputs)
             dematerialized = self._dematerialization_tensors(
                 prepared.record,
                 processed.adopted,
             )
+        finally:
+            if annotation_id:
+                self._task_annotations.end(annotation_id)
         if prepared.timing is not None:
             prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
         return processed, dematerialized
@@ -1046,10 +1120,18 @@ class TrainingExecutor:
         dematerialized: tuple[torch.Tensor, ...],
     ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        with self._profile_range(
-            f"shadowspill.runtime.after_task.{prepared.record.trace_label}"
-        ):
+        annotation_id = (
+            self._task_annotations.begin(
+                f"shadowspill.runtime.after_task.{prepared.record.trace_label}"
+            )
+            if self._task_annotations.enabled
+            else 0
+        )
+        try:
             self._publish_admitted_task(prepared, processed, dematerialized)
+        finally:
+            if annotation_id:
+                self._task_annotations.end(annotation_id)
         prepared.runtime_scope_open = False
         if prepared.timing is not None:
             prepared.timing.host_native_after_task_ns = (
@@ -1070,6 +1152,7 @@ class TrainingExecutor:
                 record.task_handle,
                 self._state.device.index or 0,
                 processed.adopted,
+                tuple(item.publication_ordinal for item in processed.adopted),
                 dematerialized,
                 replacements=processed.replacements,
             )
@@ -1095,10 +1178,17 @@ class TrainingExecutor:
         processed: _ProcessedTaskOutputs,
     ) -> None:
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
-        replacement_by_alias = {item.alias_id: item for item in processed.replacements}
+        replacement_by_alias = (
+            {item.alias_id: item for item in processed.replacements}
+            if processed.replacements
+            else {}
+        )
+        replacement_aliases = (
+            processed.replacement_aliases if processed.replacements else ()
+        )
         for publication in processed.adopted:
             alias_id = publication.alias_id
-            if alias_id in processed.replacement_aliases:
+            if alias_id in replacement_aliases:
                 self._state.publish_replacement_views(replacement_by_alias[alias_id])
             else:
                 self._state.object_store[alias_id] = publication.tensor
@@ -1142,34 +1232,41 @@ class TrainingExecutor:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
         else:
             started_ns = time.perf_counter_ns() if timing is not None else 0
-            leaves, _ = tree_flatten(raw_outputs)
+            if isinstance(raw_outputs, (tuple, list)):
+                leaves = raw_outputs
+            else:
+                leaves, _ = tree_flatten(raw_outputs)
             if timing is not None:
                 timing.host_output_flatten_ns = time.perf_counter_ns() - started_ns
             started_ns = time.perf_counter_ns() if timing is not None else 0
             if entrypoint.phase == "forward":
-                tensor_outputs = tuple(
-                    value for value in leaves if isinstance(value, torch.Tensor)
-                )
-                if len(tensor_outputs) != len(leaves):
+                if not all(isinstance(value, torch.Tensor) for value in leaves):
                     raise RuntimeError("captured forward graph returned a static leaf")
+                tensor_outputs = tuple(cast(torch.Tensor, value) for value in leaves)
                 adopted, replacement_aliases = self._bind_forward_outputs(
                     prepared.record,
                     tensor_outputs,
                     timing,
                 )
-                outputs = tuple(
-                    tensor_outputs[index] for index in entrypoint.public_output_leaves
-                )
+                if entrypoint.public_output_leaves:
+                    outputs = tuple(
+                        tensor_outputs[index]
+                        for index in entrypoint.public_output_leaves
+                    )
             else:
                 adopted = self._accumulate_gradients(prepared.record, leaves, timing)
             if timing is not None:
                 timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
-        replacements = tuple(
-            self._state.replacement_storage_views(alias_id)
-            for item in adopted
-            for alias_id in (item.alias_id,)
-            if alias_id in replacement_aliases
+        replacements = (
+            tuple(
+                self._state.replacement_storage_views(alias_id)
+                for item in adopted
+                for alias_id in (item.alias_id,)
+                if alias_id in replacement_aliases
+            )
+            if replacement_aliases
+            else ()
         )
         return _ProcessedTaskOutputs(
             outputs,
@@ -1212,14 +1309,12 @@ class TrainingExecutor:
         replacements: set[str] = set()
         for item in record.forward_outputs:
             tensor = outputs[item.leaf_index]
-            if item.adopt:
+            if item.adopt and item.publication_ordinal is not None:
                 adopted.append(
                     PublishedStorage(
                         tensor,
                         item.alias_id,
-                        -1
-                        if item.publication_ordinal is None
-                        else item.publication_ordinal,
+                        item.publication_ordinal,
                     )
                 )
             if item.replace:
@@ -1234,7 +1329,7 @@ class TrainingExecutor:
     def _accumulate_gradients(
         self,
         record: _ExecutionTaskRecord,
-        leaves: list[object],
+        leaves: Sequence[object],
         timing: _ArmedTaskTiming | None,
     ) -> tuple[PublishedStorage, ...]:
         started_ns = time.perf_counter_ns() if timing is not None else 0
@@ -1272,13 +1367,14 @@ class TrainingExecutor:
             timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
         adopted: list[PublishedStorage] = []
         for _object_id, alias_id, contribution, publication_ordinal in first:
-            adopted.append(
-                PublishedStorage(
-                    contribution,
-                    alias_id,
-                    -1 if publication_ordinal is None else publication_ordinal,
+            if publication_ordinal is not None:
+                adopted.append(
+                    PublishedStorage(
+                        contribution,
+                        alias_id,
+                        publication_ordinal,
+                    )
                 )
-            )
         started_ns = time.perf_counter_ns() if timing is not None else 0
         for object_id, alias_id, contribution, _publication_ordinal in first:
             self._state.object_store[alias_id] = contribution
@@ -1324,14 +1420,12 @@ class TrainingExecutor:
                 raise RuntimeError(
                     f"optimizer did not create planned state {item.name!r}"
                 )
-            if item.alias_id not in produced:
+            if item.alias_id not in produced and item.publication_ordinal is not None:
                 adopted.append(
                     PublishedStorage(
                         tensor,
                         item.alias_id,
-                        -1
-                        if item.publication_ordinal is None
-                        else item.publication_ordinal,
+                        item.publication_ordinal,
                     )
                 )
                 produced.add(item.alias_id)
@@ -1404,6 +1498,8 @@ class TrainingExecutor:
         record: _ExecutionTaskRecord,
         adopted: tuple[PublishedStorage, ...],
     ) -> tuple[torch.Tensor, ...]:
+        if not record.dematerialize_aliases:
+            return ()
         newly_produced = {item.alias_id: item.tensor for item in adopted}
         pending: list[torch.Tensor] = []
         for alias_id in record.dematerialize_aliases:

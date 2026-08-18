@@ -1772,3 +1772,101 @@ the following work from the merged commit in this order:
 - Bumped the neutral runtime ABI to 46 and the PyTorch adapter ABI to 56. The
   complete Python suite, documentation audit, Ruff, strict PyTorch typing,
   warnings-as-errors build, and all 29 compiled C/CUDA/PyTorch canaries pass.
+
+## 2026-08-17 — Default-off task-boundary hot-path investigation
+
+- Measured the complete Python frontend boundary on the retained pure-Qwen
+  30-GiB control, rather than timing only the neutral C entrypoints. Before
+  optimization, ready action-free tasks measured approximately 19.5 us median
+  in `before_task()` and 26.7 us median in `after_task()`; the selected-task
+  span remained 292.5--298.3 ms.
+- An initial outer Python timing wrapper retained the compiled result in an
+  additional frame. That delayed one allocator free and correctly triggered a
+  task-allocation contract mismatch at execution 30. The unwrapped control
+  passed. This is useful fail-closed evidence: instrumentation that changes
+  tensor lifetime is not a valid boundary measurement technique. Subsequent
+  measurements used non-retaining probes inside the boundary implementation.
+- Removed default-off annotation formatting and backend range calls, admitted
+  a prefiltered storage-input vector, and added no-observability frontend fast
+  paths. Flat compiled outputs now bypass generic pytree flattening, empty
+  replacement/dematerialization paths avoid map construction, and action-free
+  cleanup is skipped when there is no work.
+- The optimized action-free medians are approximately 15.7 us for
+  `before_task()` and 18.5 us for `after_task()`. The second repeated stage-0
+  task reaches approximately 9.8 us in `before_task()`; its first occurrence
+  still carries cache-cold frontend cost. The selected-task span improved to
+  approximately 287.8--288.0 ms, below the retained 312.4-ms gate.
+- Backward publication cannot use one static list of all declared outputs:
+  later microbatches may accumulate into existing gradient storages and
+  publish no replacement generation. Publication ordinals are therefore
+  derived from the outputs actually adopted at that invocation, while the
+  admitted handle continues to validate them transactionally.
+- Focused runtime-bridge, boundary, public forward/training, and explicit-pair
+  tests pass. The complete suite, full-model comparison cells, final NSYS gate,
+  and the remaining sub-10-us boundary work are still pending; this entry does
+  not mark the cleanup plan complete.
+
+## 2026-08-17 — Boundary optimization qualification
+
+- The complete Python suite passed after the boundary changes. Ruff, strict
+  mypy for all installed `shadowspill` sources, and `git diff --check` passed.
+  The warnings-as-errors build and all 29 compiled C, CUDA-backend, and PyTorch
+  adapter canaries also passed serially.
+- All five approximately-1B numerical cells passed five planned steps plus
+  bitwise checkpoint replay: PyTorch and mlops Llama 3, PyTorch and mlops
+  Qwen 3.5, and mlops OLMoE. The cells reused the canonical external reference
+  states and enforced their 10-GiB Llama/Qwen and 8-GiB OLMoE execution caps.
+- The mlops-OLMoE 7B full-model control reproduced the retained plan exactly at
+  77.607/53.435 GB fetch/evict. Its selected-task span was 4.2958 s versus
+  4.2926 s retained (+0.08%), and median wall time improved from 4.6251 s to
+  4.6196 s. The simulator predicted 4.7099 s and remained conservatively high
+  by 1.92%. All 13 logical steps, physical checks, and runtime invariants
+  passed.
+- The mlops-Qwen 3.5 9B full-model control likewise preserved the exact
+  196.290/107.500 GB fetch/evict ledger. Its selected span improved from
+  21.3827 s to 21.3669 s and median wall time improved from 21.8088 s to
+  21.7870 s. The 21.6361-s simulator prediction differed by +0.70%; all 13
+  logical steps and strict runtime/physical checks passed.
+- Qwen planning took 459.481 s versus 279.618 s retained. The regression is
+  isolated to structural profiling (309.476 s versus 162.047 s), including two
+  long device-busy head profiles; PressureFit remained comparable at 49.820 s
+  versus 47.260 s. This is an open planning-efficiency investigation, not a
+  runtime stall or deadlock.
+- The mlops-Llama 8B control passed all 13 logical steps and strict 16-GiB
+  physical/runtime gates. Its selected span improved from 18.9143 s to
+  18.7767 s, median wall time from 19.3280 s to 19.2070 s, and throughput from
+  3,390.7 to 3,412.1 token/s. That process obtained a transiently low
+  21.72/21.51 GB/s concurrent fetch/evict calibration, versus approximately
+  25.2 GB/s in the retained and immediately subsequent OLMoE/Qwen runs. It
+  therefore selected a different, higher-traffic plan and is retained as
+  execution evidence, but not as a valid simulator-fidelity comparison.
+- The pure-Qwen 30-GiB control retained a 287.8--288.0-ms selected-task span,
+  comfortably below the 312.4-ms gate. No end-to-end runtime regression was
+  observed from the boundary fast path.
+
+## Remaining work after boundary qualification
+
+The repository is consolidated into the canonical `main` worktree, but the
+accepted cleanup plan remains deliberately open. Resume with:
+
+1. Finish stable shared-output handles, explicit shared-object reference
+   ownership, deterministic final-owner release, and the documented causal
+   versus unordered writable modes. Shared-input write classification and
+   plan-local asynchronous invocation are implemented, but do not complete
+   this wider ownership contract.
+2. Complete the final handle-only symbol audit and delete any surviving raw,
+   task-ID, fake-boundary, or Python fallback entrypoint.
+3. Continue the boundary optimization from approximately 15.7 us
+   `before_task()` and 18.5 us `after_task()` medians to the accepted at-most
+   10-us median and 25-us p99 gates without weakening readable orchestration.
+4. Run worker-acknowledgement stress and the final NSYS gate, proving no worker
+   condition wait, futex, sleep, yield, global runtime lock, population scan,
+   steady-state allocation, or event creation on the hot path.
+5. Capture the final semantic pure-Qwen NSYS trace and retain its at-most
+   312.4-ms selected-span gate.
+6. Complete the legacy schema, diagnostic, dependency, and naming audit.
+   Compiled PressureFit and simulation must remain the only installed
+   production paths; Python implementations stay isolated as references.
+7. Root-cause Qwen's structural-profiling wall regression and reduce its
+   repeated physical-admission work without changing contracts, schedules, or
+   physical certificates.

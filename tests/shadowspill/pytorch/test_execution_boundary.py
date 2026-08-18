@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import weakref
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -18,10 +18,14 @@ class _AfterTaskHarness(TrainingExecutor):
     def __init__(self) -> None:
         self.released: weakref.ReferenceType[_RawOutputs] | None = None
         self.publication_observed_release = False
+        self._task_annotations = TaskBoundaryAnnotations(
+            cast(Any, _AnnotationBridge())
+        )
 
     @staticmethod
-    def _before_task(_run: object, record: object) -> object:
+    def _before_task(run: object, record: object) -> object:
         return SimpleNamespace(
+            run=run,
             record=record,
             timing=None,
         )
@@ -70,31 +74,39 @@ class _AfterTaskHarness(TrainingExecutor):
 
 def test_after_task_releases_unadopted_outputs_before_runtime_actions() -> None:
     harness = _AfterTaskHarness()
-    record = SimpleNamespace(trace_label="test")
+    record = SimpleNamespace(
+        trace_label="test",
+        released_ephemeral=(),
+        task=SimpleNamespace(task_id="task"),
+    )
+    run = SimpleNamespace(
+        lowered=SimpleNamespace(optimizer_task_id="optimizer")
+    )
     # Exercise the complete orchestration path: a local in _execute_task would
     # keep the result alive even if _after_task dropped its own parameter.
-    TrainingExecutor._execute_task(harness, object(), record)  # type: ignore[arg-type]
+    TrainingExecutor._execute_task(harness, run, record)  # type: ignore[arg-type]
     assert harness.publication_observed_release
-
-
-class _RecordingRange(AbstractContextManager[None]):
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-
-    def __enter__(self) -> None:
-        self._calls.append("range_enter")
-
-    def __exit__(self, *_error: object) -> None:
-        self._calls.append("range_exit")
 
 
 class _TimedAfterTaskHarness(_AfterTaskHarness):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[str] = []
+        self._task_annotations = cast(
+            Any,
+            SimpleNamespace(
+                enabled=True,
+                begin=self._begin_annotation,
+                end=self._end_annotation,
+            ),
+        )
 
-    def _profile_range(self, _label: str) -> AbstractContextManager[None]:
-        return _RecordingRange(self.calls)
+    def _begin_annotation(self, _label: str) -> int:
+        self.calls.append("range_enter")
+        return 1
+
+    def _end_annotation(self, _range_id: int) -> None:
+        self.calls.append("range_exit")
 
     def _prepare_task_publication(
         self, _prepared: object, _raw_outputs: object
@@ -123,7 +135,14 @@ class _TimedAfterTaskHarness(_AfterTaskHarness):
 def test_after_task_annotation_and_timing_cover_the_complete_boundary() -> None:
     harness = _TimedAfterTaskHarness()
     prepared = SimpleNamespace(
-        record=SimpleNamespace(trace_label="test"),
+        run=SimpleNamespace(
+            lowered=SimpleNamespace(optimizer_task_id="optimizer")
+        ),
+        record=SimpleNamespace(
+            trace_label="test",
+            released_ephemeral=("temporary",),
+            task=SimpleNamespace(task_id="task"),
+        ),
         timing=object(),
     )
 

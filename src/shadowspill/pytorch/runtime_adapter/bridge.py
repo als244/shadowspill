@@ -1163,23 +1163,11 @@ class RuntimeBridge:
         task_handle: int,
         device_ordinal: int,
         tensors: Sequence[torch.Tensor],
-        alias_ids: Sequence[str],
     ) -> None:
-        """Run the admitted neutral boundary and install acquired storages."""
+        """Acquire one predecoded storage-only input vector."""
 
-        if len(tensors) != len(alias_ids):
-            raise RuntimeExecutionError(
-                "task tensors and input aliases have different lengths"
-            )
-        materialized = tuple(
-            (index, tensor, alias_id)
-            for index, (tensor, alias_id) in enumerate(
-                zip(tensors, alias_ids, strict=True)
-            )
-            if self.requires_storage(alias_id)
-        )
         torch.ops.shadowspill._before_task_storages(
-            [tensor for _, tensor, _ in materialized],
+            tensors,
             task_handle,
             device_ordinal,
         )
@@ -1189,17 +1177,29 @@ class RuntimeBridge:
         task_handle: int,
         device_ordinal: int,
         adopted: Sequence[PublishedStorage],
+        publication_ordinals: Sequence[int],
         dematerialized: Sequence[torch.Tensor],
         *,
         replacements: Sequence[ReplacementStorageViews] = (),
     ) -> None:
         """Overwrite logical objects and publish one admitted task boundary."""
 
-        materialized = tuple(
-            (index, item)
-            for index, item in enumerate(adopted)
-            if self.requires_storage(item.alias_id)
-        )
+        if len(adopted) != len(publication_ordinals):
+            raise RuntimeExecutionError(
+                "task publication tensors and ordinals have different lengths"
+            )
+        if not replacements:
+            torch.ops.shadowspill._after_task_storages(
+                tuple(item.tensor for item in adopted),
+                publication_ordinals,
+                (),
+                (),
+                dematerialized,
+                task_handle,
+                device_ordinal,
+            )
+            return
+        materialized = tuple(enumerate(adopted))
         replacement_by_alias = {item.alias_id: item for item in replacements}
         if len(replacement_by_alias) != len(replacements):
             raise RuntimeExecutionError("task replacement aliases are not unique")
@@ -1221,11 +1221,11 @@ class RuntimeBridge:
                 replacement_tensors.append(tensor)
                 replacement_target_indices.append(target_index)
         torch.ops.shadowspill._after_task_storages(
-            [item.tensor for _, item in materialized],
-            [item.publication_ordinal for _, item in materialized],
+            tuple(item.tensor for _, item in materialized),
+            publication_ordinals,
             replacement_tensors,
             replacement_target_indices,
-            list(dematerialized),
+            dematerialized,
             task_handle,
             device_ordinal,
         )
