@@ -86,6 +86,11 @@ import_model_state(model, *, runtime, pool, release_source=True)
 export_model_state(model, *, runtime, release_runtime=False)
 ```
 
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:release_model_state -->
+```text
+release_model_state(model, *, runtime)
+```
+
 <!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state -->
 ```text
 import_optimizer_state(optimizer, *, runtime, pool, release_source=True)
@@ -101,6 +106,11 @@ tensors point at runtime spill leases. `release_source=True` means ShadowSpill
 does not retain the input model; Python releases it when no caller reference
 remains. `export_model_state()` rebinds the same registered tensor
 identities to ordinary CPU storages and optionally releases runtime objects.
+`release_model_state()` releases those runtime objects without materializing
+any CPU copy: the module's registered tensors become invalid, so the module
+must be discarded afterward. It is the teardown operation for callers that no
+longer need the state, such as qualification hosts that cannot hold an
+anonymous model copy beside the full pinned spill arena.
 
 `import_optimizer_state()` and `export_optimizer_state()` apply the same
 storage policy to already materialized optimizer state. `plan_step()` normally

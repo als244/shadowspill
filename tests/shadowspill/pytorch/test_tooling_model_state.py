@@ -60,36 +60,22 @@ def test_tooling_replaces_case_source_with_imported_model(
     }
 
 
-def test_tooling_exports_the_case_model(
+def test_tooling_releases_the_case_model_without_a_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = nn.Linear(4, 4)
     case = _Case(model)
     calls: dict[str, object] = {}
 
-    def export_state(
+    def release_state(
         value: nn.Module,
         *,
         runtime: object,
-        release_runtime: bool,
-    ) -> nn.Module:
-        calls.update(
-            model=value,
-            runtime=runtime,
-            release_runtime=release_runtime,
-        )
-        return value
+    ) -> None:
+        calls.update(model=value, runtime=runtime)
 
-    monkeypatch.setattr(model_state, "export_model_state", export_state)
+    monkeypatch.setattr(model_state, "release_model_state", release_state)
     runtime = object()
-    result = model_state.export_case_model(
-        case,
-        runtime=cast(Any, runtime),
-    )
+    model_state.release_case_model(case, runtime=cast(Any, runtime))
 
-    assert result is model
-    assert calls == {
-        "model": model,
-        "runtime": runtime,
-        "release_runtime": True,
-    }
+    assert calls == {"model": model, "runtime": runtime}

@@ -166,6 +166,7 @@ Successful workflows close owners in reverse ownership order:
 ```text
 planned callable
   -> export imported state with release_runtime=True
+     (or release_model_state() when the state is no longer needed)
   -> Runtime
 ```
 
