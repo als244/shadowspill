@@ -36,11 +36,6 @@ typedef struct ShadowSpillPrefetchTriggerConstraint {
 } ShadowSpillPrefetchTriggerConstraint;
 
 /* Keep one logical object absent at one residency boundary. */
-typedef struct ShadowSpillForcedAbsenceConstraint {
-    uint32_t alias;
-    uint32_t boundary;
-} ShadowSpillForcedAbsenceConstraint;
-
 int shadowspill_schedule_facts_create(
     const ShadowSpillPressureFitContext *context,
     ShadowSpillScheduleFacts *facts
