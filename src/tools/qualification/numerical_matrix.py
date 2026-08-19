@@ -7,7 +7,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -17,6 +16,7 @@ from typing import Final
 
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
+from .matrix_logging import MatrixConsole, format_bytes, utc_now
 from .references import (
     DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
     canonical_reference_path,
@@ -98,6 +98,9 @@ def _run_case(
     cold: bool,
     cache_directory: Path | None,
     detailed_artifacts: bool,
+    console: MatrixConsole,
+    progress: str,
+    case_log: Path,
 ) -> CaseResult:
     prefix = f"{implementation}_{family}"
     reference = canonical_reference_path(
@@ -182,11 +185,19 @@ def _run_case(
                 command.append("--detailed-artifacts")
             if cold:
                 command.append("--force-fresh")
+        phase = (
+            "compiled reference generation"
+            if is_reference
+            else "planned parity, checkpoint replay, and physical budgets"
+        )
+        console.emit(f"PHASE: {phase}", prefix=progress)
         try:
-            completed = subprocess.run(
-                command, check=False, env=command_environment
+            return_code = console.stream(
+                command,
+                cell_log_path=case_log,
+                prefix=progress,
+                environment=command_environment,
             )
-            return_code = completed.returncode
         finally:
             if cache_root is not None:
                 shutil.rmtree(cache_root.parent)
@@ -362,62 +373,119 @@ def main() -> int:
         )
     ]
     results: list[CaseResult] = []
-    for family, implementation in selected_cases:
-        budget = overrides.get(family, DEFAULT_DEVICE_BUDGETS.get(family, 0))
-        print(
-            f"\n== {family}/{implementation}: {budget} physical bytes ==",
-            flush=True,
+    matrix_started = time.perf_counter()
+    with MatrixConsole(output_directory / "matrix.log") as console:
+        console.block(
+            "MATRIX START",
+            [
+                f"UTC: {utc_now()}",
+                f"OUTPUT: {output_directory}",
+                f"REFERENCES: {reference_directory}",
+                "CASES: "
+                + ", ".join(
+                    f"{implementation}_{family}"
+                    for family, implementation in selected_cases
+                ),
+                f"COLD CACHES: {arguments.cold}",
+                f"SEED: {arguments.seed}",
+            ],
         )
-        result = _run_case(
-            family=family,
-            implementation=implementation,
-            device_budget=budget,
-            output_directory=output_directory,
-            reference_directory=reference_directory,
-            environment=environment,
-            regenerate_reference=arguments.regenerate_reference,
-            seed=arguments.seed,
-            model_config=arguments.model_config,
-            data_geometry=arguments.data_geometry,
-            case_factory=arguments.case_factory,
-            case_options=arguments.case_option,
-            optimizer_ordering=arguments.optimizer_ordering,
-            cold=arguments.cold,
-            cache_directory=arguments.cache_dir,
-            detailed_artifacts=arguments.detailed_artifacts,
-        )
-        results.append(result)
-        print(
-            f"{family}/{implementation}: "
-            f"{'PASS' if result.passed else 'FAIL'} "
-            f"({result.elapsed_seconds:.3f}s)",
-            flush=True,
-        )
-        if not result.passed and not arguments.keep_going:
-            break
+        for ordinal, (family, implementation) in enumerate(selected_cases, start=1):
+            progress = f"[{ordinal}/{len(selected_cases)}]"
+            budget = overrides.get(family, DEFAULT_DEVICE_BUDGETS.get(family, 0))
+            identity = f"{implementation}_{family}"
+            case_log = output_directory / f"{identity}.log"
+            case_log.unlink(missing_ok=True)
+            reference = canonical_reference_path(
+                reference_directory,
+                model_name=family,
+                implementation=implementation,
+            )
+            reference_state = (
+                "regenerating"
+                if arguments.regenerate_reference
+                or not reference_artifact_exists(reference)
+                else "reusing canonical"
+            )
+            started_at = utc_now()
+            console.emit()
+            console.block(
+                f"CASE START {progress} {identity}",
+                [
+                    f"MODEL: {implementation}/{family}",
+                    f"DEVICE BUDGET: {format_bytes(budget)}",
+                    f"REFERENCE: {reference} ({reference_state})",
+                    f"LOG: {case_log}",
+                    f"START: {started_at}",
+                ],
+            )
+            result = _run_case(
+                family=family,
+                implementation=implementation,
+                device_budget=budget,
+                output_directory=output_directory,
+                reference_directory=reference_directory,
+                environment=environment,
+                regenerate_reference=arguments.regenerate_reference,
+                seed=arguments.seed,
+                model_config=arguments.model_config,
+                data_geometry=arguments.data_geometry,
+                case_factory=arguments.case_factory,
+                case_options=arguments.case_option,
+                optimizer_ordering=arguments.optimizer_ordering,
+                cold=arguments.cold,
+                cache_directory=arguments.cache_dir,
+                detailed_artifacts=arguments.detailed_artifacts,
+                console=console,
+                progress=progress,
+                case_log=case_log,
+            )
+            results.append(result)
+            console.block(
+                f"CASE {'PASS' if result.passed else 'FAIL'} {progress} {identity}",
+                [
+                    f"ARTIFACT: {result.artifact}",
+                    f"START: {started_at}",
+                    f"STOP: {utc_now()}",
+                    f"DURATION: {result.elapsed_seconds:.3f} seconds",
+                ],
+            )
+            if not result.passed and not arguments.keep_going:
+                break
 
-    summary = {
-        "schema": "shadowspill.model_correctness_matrix/v1",
-        "passed": len(results) == len(selected_cases)
-        and all(item.passed for item in results),
-        "cold": arguments.cold,
-        "cases": [
-            {
-                "family": item.family,
-                "implementation": item.implementation,
-                "device_budget_bytes": item.device_budget_bytes,
-                "elapsed_seconds": item.elapsed_seconds,
-                "return_code": item.return_code,
-                "reference": item.reference,
-                "artifact": item.artifact,
-                "passed": item.passed,
-            }
-            for item in results
-        ],
-    }
-    summary_path = output_directory / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    print(f"\nSummary: {summary_path}", flush=True)
+        summary = {
+            "schema": "shadowspill.model_correctness_matrix/v1",
+            "passed": len(results) == len(selected_cases)
+            and all(item.passed for item in results),
+            "cold": arguments.cold,
+            "cases": [
+                {
+                    "family": item.family,
+                    "implementation": item.implementation,
+                    "device_budget_bytes": item.device_budget_bytes,
+                    "elapsed_seconds": item.elapsed_seconds,
+                    "return_code": item.return_code,
+                    "reference": item.reference,
+                    "artifact": item.artifact,
+                    "passed": item.passed,
+                }
+                for item in results
+            ],
+        }
+        summary_path = output_directory / "summary.json"
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+        console.emit()
+        console.block(
+            "MATRIX " + ("PASS" if summary["passed"] else "FAIL"),
+            [
+                "CASES PASSED: "
+                f"{sum(1 for item in results if item.passed)}"
+                f"/{len(selected_cases)}",
+                f"SUMMARY: {summary_path}",
+                f"STOP: {utc_now()}",
+                f"DURATION: {time.perf_counter() - matrix_started:.3f} seconds",
+            ],
+        )
     return 0 if summary["passed"] else 1
 
 
