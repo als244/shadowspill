@@ -34,6 +34,21 @@ typedef struct CutIndex {
     uint64_t ref_count;
 } CutIndex;
 
+/*
+ * One lazily validated max-excess candidate. Entries are ordered by the
+ * exact selection total order of the reducer: larger excess first, then
+ * smaller boundary, then smaller device priority, then smaller device
+ * index. Stale entries (whose recorded excess no longer matches the
+ * current pressure) are corrected or discarded at pop time, so the heap
+ * yields the same selection sequence as a full scan.
+ */
+typedef struct {
+    uint64_t excess;
+    uint32_t boundary;
+    uint32_t priority;
+    uint32_t device;
+} ExcessEntry;
+
 struct ShadowSpillResidencyWorkspace {
     uint32_t alias_count;
     uint32_t boundary_count;
@@ -50,10 +65,86 @@ struct ShadowSpillResidencyWorkspace {
     uint64_t *cut_cursors;
     uint8_t *cut_active;
     uint32_t cut_active_capacity;
+    ExcessEntry *excess_entries;
+    uint64_t excess_count;
+    uint64_t excess_capacity;
     CutIndex cut_index;
     uint8_t geometry_valid;
     uint8_t pressure_valid[2];
 };
+
+static int excess_entry_before(const ExcessEntry *a, const ExcessEntry *b) {
+    if (a->excess != b->excess) {
+        return a->excess > b->excess;
+    }
+    if (a->boundary != b->boundary) {
+        return a->boundary < b->boundary;
+    }
+    if (a->priority != b->priority) {
+        return a->priority < b->priority;
+    }
+    return a->device < b->device;
+}
+
+static int excess_heap_push(
+    ShadowSpillResidencyWorkspace *workspace,
+    ExcessEntry entry
+) {
+    if (workspace->excess_count == workspace->excess_capacity) {
+        uint64_t grown = workspace->excess_capacity == 0U
+            ? 256U
+            : workspace->excess_capacity * 2U;
+        ExcessEntry *entries = realloc(
+            workspace->excess_entries,
+            (size_t)grown * sizeof(*entries)
+        );
+        if (entries == NULL) {
+            return -1;
+        }
+        workspace->excess_entries = entries;
+        workspace->excess_capacity = grown;
+    }
+    ExcessEntry *entries = workspace->excess_entries;
+    uint64_t child = workspace->excess_count++;
+    while (child != 0U) {
+        uint64_t parent = (child - 1U) / 2U;
+        if (!excess_entry_before(&entry, &entries[parent])) {
+            break;
+        }
+        entries[child] = entries[parent];
+        child = parent;
+    }
+    entries[child] = entry;
+    return 0;
+}
+
+static void excess_heap_pop(ShadowSpillResidencyWorkspace *workspace) {
+    ExcessEntry *entries = workspace->excess_entries;
+    uint64_t count = --workspace->excess_count;
+    if (count == 0U) {
+        return;
+    }
+    ExcessEntry moved = entries[count];
+    uint64_t parent = 0U;
+    while (1) {
+        uint64_t left = parent * 2U + 1U;
+        if (left >= count) {
+            break;
+        }
+        uint64_t right = left + 1U;
+        uint64_t best = left;
+        if (right < count &&
+            excess_entry_before(&entries[right], &entries[left])) {
+            best = right;
+        }
+        if (!excess_entry_before(&entries[best], &moved)) {
+            break;
+        }
+        entries[parent] = entries[best];
+        parent = best;
+    }
+    entries[parent] = moved;
+}
 
 static uint64_t cell(uint32_t alias, uint32_t boundary_count, uint32_t index) {
     return (uint64_t)alias * boundary_count + index;
@@ -985,6 +1076,7 @@ void shadowspill_residency_workspace_destroy(
     free(workspace->base_pressure[1]);
     free(workspace->cut_cursors);
     free(workspace->cut_active);
+    free(workspace->excess_entries);
     destroy_cut_index(&workspace->cut_index);
     free(workspace);
 }
@@ -1065,41 +1157,78 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
         );
     }
 
+    /*
+     * Seed the max-excess heap once from the initial pressure map; the
+     * per-cut delta loop below pushes a corrected entry whenever a
+     * cell's pressure increases, so the full boundary-by-device scan
+     * never repeats. Excess is a pure function of the current pressure
+     * (capacity and extra pressure are constant within one reduction),
+     * so stale entries are validated and corrected at pop time.
+     */
+    workspace->excess_count = 0U;
+    for (uint32_t device = 0U; device < problem->device_count; ++device) {
+        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
+             ++boundary) {
+            uint64_t position =
+                (uint64_t)device * problem->boundary_count + boundary;
+            uint64_t used = pressure[position] +
+                options->extra_pressure_bytes[position];
+            uint64_t capacity = shadowspill_boundary_capacity(
+                problem,
+                device,
+                boundary
+            );
+            if (used <= capacity) {
+                continue;
+            }
+            ExcessEntry entry = {
+                used - capacity,
+                boundary,
+                problem->device_priority[device],
+                device,
+            };
+            if (excess_heap_push(workspace, entry) != 0) {
+                return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+            }
+        }
+    }
+
     while (1) {
         uint32_t selected_device = UINT32_MAX;
         uint32_t selected_boundary = UINT32_MAX;
         uint64_t selected_excess = 0U;
         uint64_t selected_used = 0U;
-        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
-             ++boundary) {
-            for (uint32_t device = 0U; device < problem->device_count; ++device) {
-                uint64_t position =
-                    (uint64_t)device * problem->boundary_count + boundary;
-                uint64_t used = pressure[position] +
-                    options->extra_pressure_bytes[position];
-                uint64_t capacity = shadowspill_boundary_capacity(
-                    problem,
-                    device,
-                    boundary
-                );
-                if (used <= capacity) {
-                    continue;
-                }
-                uint64_t excess = used - capacity;
-                int better = selected_device == UINT32_MAX ||
-                    excess > selected_excess ||
-                    (excess == selected_excess && boundary < selected_boundary) ||
-                    (excess == selected_excess && boundary == selected_boundary &&
-                     problem->device_priority[device] <
-                         problem->device_priority[selected_device]);
-                if (better) {
-                    selected_device = device;
-                    selected_boundary = boundary;
-                    selected_excess = excess;
-                    selected_used = used;
-                }
+        while (workspace->excess_count != 0U) {
+            ExcessEntry top = workspace->excess_entries[0];
+            uint64_t position =
+                (uint64_t)top.device * problem->boundary_count + top.boundary;
+            uint64_t used = pressure[position] +
+                options->extra_pressure_bytes[position];
+            uint64_t capacity = shadowspill_boundary_capacity(
+                problem,
+                top.device,
+                top.boundary
+            );
+            if (used <= capacity) {
+                excess_heap_pop(workspace);
+                continue;
             }
+            uint64_t excess = used - capacity;
+            if (excess != top.excess) {
+                excess_heap_pop(workspace);
+                top.excess = excess;
+                if (excess_heap_push(workspace, top) != 0) {
+                    return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+                }
+                continue;
+            }
+            selected_device = top.device;
+            selected_boundary = top.boundary;
+            selected_excess = excess;
+            selected_used = used;
+            break;
         }
+        (void)selected_excess;
         if (selected_device == UINT32_MAX) {
             canonicalize_breaks(
                 result->breaks,
@@ -1172,8 +1301,27 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 pressure[(uint64_t)device * problem->boundary_count + boundary] -=
                     problem->alias_size_bytes[alias];
             } else if (delta > 0) {
-                pressure[(uint64_t)device * problem->boundary_count + boundary] +=
-                    problem->alias_size_bytes[alias];
+                uint64_t position =
+                    (uint64_t)device * problem->boundary_count + boundary;
+                pressure[position] += problem->alias_size_bytes[alias];
+                uint64_t used = pressure[position] +
+                    options->extra_pressure_bytes[position];
+                uint64_t capacity = shadowspill_boundary_capacity(
+                    problem,
+                    device,
+                    boundary
+                );
+                if (used > capacity) {
+                    ExcessEntry entry = {
+                        used - capacity,
+                        boundary,
+                        problem->device_priority[device],
+                        device,
+                    };
+                    if (excess_heap_push(workspace, entry) != 0) {
+                        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+                    }
+                }
             }
         }
     }
