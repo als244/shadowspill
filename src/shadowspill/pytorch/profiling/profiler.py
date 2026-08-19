@@ -42,7 +42,6 @@ from .allocation_contract import (
     TaskAllocationPathObservation,
 )
 from .allocation_core import AllocationPathProbe, derive_core_allocation_path
-from .context import profile_input_context_digest
 from .executables import ProfileExecutable, ProfileExecutableStore
 from .records import TaskMeasurement, TaskOutputInputBinding
 from .runner import ProfilableArtifact
@@ -232,18 +231,26 @@ class CudaTaskProfiler:
         finally:
             del executable
 
-    def resolve_graph_pair_controls(self, pair: AotGraphPair) -> AotGraphPair:
+    def resolve_graph_pair_controls(
+        self,
+        pair: AotGraphPair,
+        metadata_digest: str | None = None,
+    ) -> AotGraphPair:
         """Populate backward saved controls from the paired forward task."""
 
         compilation_before = self.compilation_wall_time_ns
         try:
-            return self._resolve_graph_pair_controls(pair)
+            return self._resolve_graph_pair_controls(pair, metadata_digest)
         finally:
             self._saved_control_compilation_wall_time_ns += (
                 self.compilation_wall_time_ns - compilation_before
             )
 
-    def _resolve_graph_pair_controls(self, pair: AotGraphPair) -> AotGraphPair:
+    def _resolve_graph_pair_controls(
+        self,
+        pair: AotGraphPair,
+        metadata_digest: str | None,
+    ) -> AotGraphPair:
         """Resolve one pair while the public wrapper accounts compilation."""
 
         provenance = pair.backward.input_provenance
@@ -256,7 +263,7 @@ class CudaTaskProfiler:
             return pair
         key = (
             pair.forward.compatibility_digest,
-            profile_input_context_digest(pair.forward),
+            metadata_digest,
             pair.saved_value_count,
         )
         values = self._saved_control_values.get(key)

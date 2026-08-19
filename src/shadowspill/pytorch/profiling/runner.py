@@ -7,7 +7,6 @@ from typing import Protocol
 
 from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 
-from .context import profile_input_context_digest
 from .records import (
     ProfileEnvironment,
     ProfileKey,
@@ -45,7 +44,6 @@ def profile_unique_artifacts(
         positions,
         representatives,
         position_keys,
-        input_contexts,
     ) = _index_profile_keys(
         sequence,
         metadata,
@@ -64,7 +62,6 @@ def profile_unique_artifacts(
     )
     return _build_profiling_result(
         metadata,
-        input_contexts,
         keys,
         positions,
         position_keys,
@@ -101,22 +98,18 @@ def _index_profile_keys(
     dict[str, list[int]],
     dict[str, ProfilableArtifact],
     tuple[str, ...],
-    tuple[str | None, ...],
 ]:
     keys: dict[str, ProfileKey] = {}
     positions: dict[str, list[int]] = {}
     representatives: dict[str, ProfilableArtifact] = {}
     position_keys: list[str] = []
-    input_contexts: list[str | None] = []
     for position, (artifact, metadata_digest) in enumerate(
         zip(artifacts, metadata, strict=True)
     ):
-        input_context = profile_input_context_digest(artifact)
         key = ProfileKey(
             artifact.compatibility_digest,
             environment,
             metadata_digest,
-            input_context,
             allocation_probe_seeds,
             allocation_probe_repetitions,
         )
@@ -124,13 +117,11 @@ def _index_profile_keys(
         position_keys.append(key.digest)
         positions.setdefault(key.digest, []).append(position)
         representatives.setdefault(key.digest, artifact)
-        input_contexts.append(input_context)
     return (
         keys,
         positions,
         representatives,
         tuple(position_keys),
-        tuple(input_contexts),
     )
 
 
@@ -207,7 +198,6 @@ def _report_progress(
 
 def _build_profiling_result(
     metadata: tuple[str | None, ...],
-    input_contexts: tuple[str | None, ...],
     keys: dict[str, ProfileKey],
     positions: dict[str, list[int]],
     position_keys: tuple[str, ...],
@@ -238,7 +228,6 @@ def _build_profiling_result(
         fixed_slab_bytes=sum(persistent_by_graph.values()),
         key_digests=position_keys,
         profiling_metadata_digests=metadata,
-        input_context_digests=input_contexts,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
     )

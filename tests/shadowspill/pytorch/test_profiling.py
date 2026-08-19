@@ -186,9 +186,18 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
     assert calls == 2
 
 
-def test_profile_identity_includes_control_contents(
+def test_profile_identity_ignores_control_contents(
     tmp_path: Path,
 ) -> None:
+    """One profile per (compiled contract, declared metadata).
+
+    Input values are never inspected: artifacts sharing a contract and
+    metadata share one representative measurement even when their
+    integer control contents differ. Structure the caller wants
+    distinguished must be declared through profiling metadata (covered
+    by test_profiling_metadata_splits_measurements_without_recompiling
+    _identity).
+    """
     module = torch.fx.symbolic_trace(nn.Identity())
 
     def artifact(value: torch.Tensor) -> GraphArtifact:
@@ -235,12 +244,11 @@ def test_profile_identity_includes_control_contents(
         measure=measure,
         cache=ProfileRepository(tmp_path),
     )
-    assert calls == 2
-    assert result.unique_keys == 2
-    assert len(set(result.input_context_digests)) == 2
+    assert calls == 1
+    assert result.unique_keys == 1
     assert len({item.compatibility_digest for item in artifacts}) == 1
     assert result.measurements[0] is result.measurements[1]
-    assert result.measurements[0] is not result.measurements[2]
+    assert result.measurements[0] is result.measurements[2]
 
 
 def test_profile_identity_accepts_scalar_integer_control(tmp_path: Path) -> None:
@@ -265,7 +273,6 @@ def test_profile_identity_accepts_scalar_integer_control(tmp_path: Path) -> None
         cache=ProfileRepository(tmp_path),
     )
     assert result.unique_keys == 1
-    assert result.input_context_digests[0] is not None
 
 
 def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:
