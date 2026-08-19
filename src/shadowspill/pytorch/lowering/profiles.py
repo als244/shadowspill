@@ -15,11 +15,10 @@ from shadowspill.pytorch.compilation.layout import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.pytorch.profiling.context import profile_input_context_digest
 
 from ..contracts import CaptureError
 
-ProfileMeasurementKey = str | tuple[str, str | None, str | None]
+ProfileMeasurementKey = str | tuple[str, str | None]
 ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact
 
 
@@ -62,7 +61,7 @@ class TaskProfileCatalog:
         root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
         | None = None,
         compatibility_digests: Mapping[
-            tuple[str, str | None, str | None], str
+            tuple[str, str | None], str
         ]
         | None = None,
         metadata_enabled: bool = False,
@@ -101,7 +100,6 @@ class TaskProfileCatalog:
             (
                 artifact.compatibility_digest,
                 metadata_digest,
-                profile_input_context_digest(artifact),
             )
         )
         if measurement is None and not self._metadata_enabled:
@@ -204,7 +202,6 @@ class TaskProfileCatalog:
                 (
                     artifact.compatibility_digest,
                     metadata_digest,
-                    profile_input_context_digest(artifact),
                 )
             ]
         except KeyError as exc:

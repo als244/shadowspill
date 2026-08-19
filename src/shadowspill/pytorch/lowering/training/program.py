@@ -38,7 +38,7 @@ def lower_partitioned_training_program(
     layout_cache: CompiledLayoutIndex | None = None,
     profiling_metadata_digests: tuple[str, ...] | None = None,
     profile_compatibility_digests: Mapping[
-        tuple[str, str | None, str | None], str
+        tuple[str, str | None], str
     ]
     | None = None,
 ) -> LoweredTrainingProgram:

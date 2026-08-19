@@ -57,7 +57,6 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.pytorch.profiling.context import profile_input_context_digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,7 +420,6 @@ def _training_measurement(
         (
             artifact.compatibility_digest,
             metadata,
-            profile_input_context_digest(artifact),
         )
     )
     if measurement is None and metadata_digests is None:

@@ -12,7 +12,6 @@ from .allocation_core import (
     DerivedAllocationCore,
     derive_core_allocation_path,
 )
-from .context import ProfileInputContext, profile_input_context_digest
 from .environment import profile_environment
 from .inputs import (
     REPRESENTATIVE_VALUE_POLICY,
@@ -52,7 +51,6 @@ __all__ = [
     "PlanningArtifactRecorder",
     "ProfilableArtifact",
     "ProfileEnvironment",
-    "ProfileInputContext",
     "ProfileKey",
     "ProfileRepository",
     "ProfilingMetadata",
@@ -72,7 +70,6 @@ __all__ = [
     "derive_core_allocation_path",
     "materialize_representative_inputs",
     "profile_environment",
-    "profile_input_context_digest",
     "profile_unique_artifacts",
     "resolve_task_manifests",
     "training_profiling_metadata",

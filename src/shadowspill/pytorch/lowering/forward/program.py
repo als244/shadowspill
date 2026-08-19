@@ -12,7 +12,6 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.pytorch.profiling.context import profile_input_context_digest
 
 from ...contracts import CaptureError
 from ...partition import PartitionedExport
@@ -165,7 +164,6 @@ def _forward_profile_catalog(
             (
                 artifact.compatibility_digest,
                 occurrence_key,
-                profile_input_context_digest(artifact),
             ): measurement
             for artifact, occurrence_key, measurement in zip(
                 artifacts,
@@ -180,7 +178,6 @@ def _forward_profile_catalog(
             (
                 artifact.compatibility_digest,
                 occurrence_key,
-                profile_input_context_digest(artifact),
             ): profile_digest
             for artifact, occurrence_key, profile_digest in zip(
                 artifacts,

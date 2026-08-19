@@ -48,7 +48,6 @@ from shadowspill.pytorch.profiling import (
     resolve_task_manifests,
     validate_compiled_profile,
 )
-from shadowspill.pytorch.profiling.context import profile_input_context_digest
 from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     training_profiling_metadata,
@@ -139,7 +138,7 @@ from .repositories import PlanningArtifactRepositories, open_artifact_repositori
 @dataclass(frozen=True, slots=True)
 class _TrainingTaskInventory:
     compile_tasks: tuple[OptimizerTaskArtifact, ...]
-    profile_keys: tuple[tuple[str, str | None, str | None], ...]
+    profile_keys: tuple[tuple[str, str | None], ...]
     profile_tasks: tuple[OptimizerTaskArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
 
@@ -400,6 +399,7 @@ def profile_training_tasks(
         partitioned = resolve_partitioned_saved_controls(
             captured.partitioned,
             profiler.resolve_graph_pair_controls,
+            tuple(workload.digest for workload in captured.workloads),
         )
     resolved_capture = replace(captured, partitioned=partitioned)
     inventory = _training_task_inventory(
@@ -591,7 +591,7 @@ def _training_measurement_maps(
 ) -> tuple[
     dict[ProfileMeasurementKey, TaskMeasurement],
     dict[str, TaskMeasurement],
-    dict[tuple[str, str | None, str | None], str],
+    dict[tuple[str, str | None], str],
 ]:
     measurements: dict[ProfileMeasurementKey, TaskMeasurement] = dict(
         zip(
@@ -622,7 +622,7 @@ def _lower_optimizer_phases(
     optimizer_capture: OptimizerCapture,
     profiled: TrainingProfileArtifacts,
     measurements: dict[ProfileMeasurementKey, TaskMeasurement],
-    compatibility_digests: dict[tuple[str, str | None, str | None], str],
+    compatibility_digests: dict[tuple[str, str | None], str],
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
 ) -> tuple[LoweredTrainingProgram, LoweredTrainingProgram]:
@@ -1495,7 +1495,7 @@ def _training_task_inventory(
     optimizer_capture: OptimizerCapture,
 ) -> _TrainingTaskInventory:
     compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
-    profile_by_key: dict[tuple[str, str | None, str | None], OptimizerTaskArtifact] = {}
+    profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:
@@ -1509,7 +1509,6 @@ def _training_task_inventory(
                         (
                             artifact.compatibility_digest,
                             metadata_digest,
-                            profile_input_context_digest(artifact),
                         ),
                         artifact,
                     )
@@ -1522,7 +1521,6 @@ def _training_task_inventory(
             (
                 task.artifact.compatibility_digest,
                 None,
-                profile_input_context_digest(task.artifact),
             ),
             task.artifact,
         )
@@ -1535,7 +1533,6 @@ def _training_task_inventory(
             (
                 optimizer_capture.initial.compatibility_digest,
                 None,
-                profile_input_context_digest(optimizer_capture.initial),
             ),
             optimizer_capture.initial,
         )

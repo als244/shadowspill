@@ -21,7 +21,7 @@ from shadowspill.pytorch.profiling.inputs import (
 # Profile artifacts are strict snapshots of the current measurement contract.
 # Bump this identity whenever serialized measurement fields or their semantics
 # change; historical profile artifacts are not migrated.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v25"
+PROFILE_SCHEMA = "shadowspill.pytorch.profile/v26"
 
 _TASK_MEASUREMENT_FIELDS = frozenset(
     {
@@ -386,10 +386,17 @@ class TaskMeasurement:
 
 @dataclass(frozen=True, slots=True)
 class ProfileKey:
+    """One profile belongs to (compiled contract, declared metadata).
+
+    Inputs are never inspected: values that shape a task are already in
+    the compiled contract through specialization, and cost-relevant
+    per-microbatch structure must be declared through
+    ``profiling_metadata``.
+    """
+
     graph_digest: str
     environment: ProfileEnvironment
     profiling_metadata_digest: str | None = None
-    input_context_digest: str | None = None
     allocation_probe_seeds: int = 1
     allocation_probe_repetitions: int = 2
 
@@ -407,7 +414,6 @@ class ProfileKey:
             "graph_digest": self.graph_digest,
             "environment": self.environment.identity(),
             "profiling_metadata_digest": self.profiling_metadata_digest,
-            "input_context_digest": self.input_context_digest,
             "allocation_probe_seeds": self.allocation_probe_seeds,
             "allocation_probe_repetitions": self.allocation_probe_repetitions,
         }
@@ -426,7 +432,6 @@ class ProfilingResult:
     fixed_slab_bytes: int
     key_digests: tuple[str, ...] = ()
     profiling_metadata_digests: tuple[str | None, ...] = ()
-    input_context_digests: tuple[str | None, ...] = ()
     allocation_probe_seeds: int = 1
     allocation_probe_repetitions: int = 2
 
