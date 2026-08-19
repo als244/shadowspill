@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from functools import cache
 
 from shadowspill.ir import (
     Program,
@@ -29,6 +30,7 @@ from ._admission import (
 )
 from ._capi import load_planner_library
 from ._native_portfolio import (
+    NativeCandidateDiagnostic,
     NativeContextResult,
     NativePreflightResult,
     decode_candidate_diagnostic,
@@ -39,6 +41,7 @@ from ._native_portfolio import (
 from ._recomputation import build_recomputation_portfolio
 from .admission import AdmissionTopology
 from .diagnostics import (
+    PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationContextDiagnostics,
@@ -289,24 +292,106 @@ def _native_worker_count(options: PressureFitOptions, count: int) -> int:
     return min(max(os.cpu_count() or 1, 1), count)
 
 
+@cache
+def _shared_native_pool() -> ThreadPoolExecutor:
+    """One process-wide pool for all compiled evaluation units.
+
+    Concurrent plans — the speculative capacity-ladder rungs above
+    all — submit their units here instead of nesting private pools,
+    so live compiled threads never exceed the machine's cores and
+    idle cores drain whichever rung still has work. Worker count is
+    scheduling only; results are merged in deterministic unit order.
+    """
+
+    return ThreadPoolExecutor(max_workers=max(os.cpu_count() or 1, 1))
+
+
 def _run_native_contexts(
     contexts: tuple[_NativeSelectionContext, ...],
     options: PressureFitOptions,
 ) -> tuple[NativeContextResult | None, ...]:
-    """Evaluate every recomputation selection in the compiled planner."""
+    """Evaluate every recomputation selection in the compiled planner.
 
-    def evaluate(context: _NativeSelectionContext) -> NativeContextResult | None:
+    Each context's portfolio is split by residency strategy into one
+    compiled evaluation per (context, strategy), so parallelism scales
+    with context_count x strategy_count instead of context count
+    alone. The per-context merge restores the exact serial candidate
+    order and tie-breaks, so the selected schedule is identical to a
+    single-call evaluation; only cross-strategy cache-hit counters can
+    differ.
+    """
+
+    strategies = options.residency_strategies
+    units = tuple(
+        (context_index, replace(options, residency_strategies=(strategy,)))
+        for context_index, _context in enumerate(contexts)
+        for strategy in strategies
+    )
+
+    def evaluate(
+        unit: tuple[int, PressureFitOptions],
+    ) -> NativeContextResult | None:
+        context_index, unit_options = unit
+        context = contexts[context_index]
         return evaluate_program_context_compiled(
             context.compiled_template,
-            options,
+            unit_options,
             admission=context.compiled_admission,
         )
 
-    workers = _native_worker_count(options, len(contexts))
+    workers = _native_worker_count(options, len(units))
     if workers == 1:
-        return tuple(evaluate(context) for context in contexts)
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        return tuple(executor.map(evaluate, contexts))
+        chunk_results = [evaluate(unit) for unit in units]
+    elif options.workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            chunk_results = list(executor.map(evaluate, units))
+    else:
+        chunk_results = list(_shared_native_pool().map(evaluate, units))
+    per_context = len(strategies)
+    return tuple(
+        _merge_strategy_results(
+            chunk_results[index * per_context : (index + 1) * per_context]
+        )
+        for index in range(len(contexts))
+    )
+
+
+def _merge_strategy_results(
+    chunks: list[NativeContextResult | None],
+) -> NativeContextResult | None:
+    """Concatenate per-strategy evaluations back into one context result."""
+
+    if any(chunk is None for chunk in chunks):
+        return None
+    merged = [chunk for chunk in chunks if chunk is not None]
+    if len(merged) == 1:
+        return merged[0]
+    candidates: list[NativeCandidateDiagnostic] = []
+    selected_index: int | None = None
+    selected_makespan: int | None = None
+    selected_schedule = None
+    repairs = PressureFitRepairDiagnostics()
+    work = PressureFitWorkDiagnostics()
+    for chunk in merged:
+        offset = len(candidates)
+        candidates.extend(chunk.candidates)
+        repairs += chunk.repairs
+        work += chunk.work
+        if chunk.selected_candidate_index is None:
+            continue
+        assert chunk.selected_makespan_ns is not None
+        if selected_makespan is None or chunk.selected_makespan_ns < selected_makespan:
+            selected_index = offset + chunk.selected_candidate_index
+            selected_makespan = chunk.selected_makespan_ns
+            selected_schedule = chunk.selected_schedule
+    return NativeContextResult(
+        selected_candidate_index=selected_index,
+        selected_makespan_ns=selected_makespan,
+        selected_schedule=selected_schedule,
+        candidates=tuple(candidates),
+        repairs=repairs,
+        work=work,
+    )
 
 
 def _finish_native_pressurefit(
