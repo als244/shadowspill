@@ -46,7 +46,7 @@ def test_candidate_parallelism_preserves_the_complete_result(workers: int) -> No
         == "39a5428ad479d2a19a6a74e6b4f13472d62c25805c6bd91b8ff62ad45d0d055e"
     )
     assert result.diagnostics.selected_makespan_ns == 5_000
-    assert result.diagnostics.candidate_evaluation_count == 50
+    assert result.diagnostics.candidate_evaluation_count == 32
 
 
 def test_names_do_not_affect_schedule_geometry_or_makespan() -> None:

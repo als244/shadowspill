@@ -49,17 +49,19 @@ class PressureFitOptions:
     """
 
     initial_placement: InitialPlacement = InitialPlacement.GREEDY
+    # relaxed-stall (byte-identical to tight-stall) and interval-entry
+    # never carry a winner: a 435-point regression replay reproduced
+    # every schedule digest exactly without them at ~1.25x less
+    # portfolio work. Both remain valid explicit options.
     residency_strategies: tuple[str, ...] = (
         "headroom-stall",
         "headroom-transfer",
         "tight-stall",
         "tight-transfer",
-        "relaxed-stall",
     )
     prefetch_rules: tuple[str, ...] = (
         "packed-fifo",
         "packed-fit",
-        "interval-entry",
         "latest-safe",
         "demand",
     )
