@@ -236,11 +236,15 @@ static void unpack_boolean_cells(
     size_t count,
     uint8_t *destination
 ) {
-    uint8_t expanded[256][8];
-    for (uint32_t value = 0U; value < 256U; ++value) {
-        for (uint32_t bit = 0U; bit < 8U; ++bit) {
-            expanded[value][bit] = (uint8_t)((value >> bit) & 1U);
+    static _Thread_local uint8_t expanded[256][8];
+    static _Thread_local int expanded_ready = 0;
+    if (!expanded_ready) {
+        for (uint32_t value = 0U; value < 256U; ++value) {
+            for (uint32_t bit = 0U; bit < 8U; ++bit) {
+                expanded[value][bit] = (uint8_t)((value >> bit) & 1U);
+            }
         }
+        expanded_ready = 1;
     }
     size_t complete = count / 8U;
     for (size_t index = 0U; index < complete; ++index) {
