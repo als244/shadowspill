@@ -22,7 +22,7 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-from tools.qualification.model_state import export_case_model, import_case_model
+from tools.qualification.model_state import import_case_model, release_case_model
 from tools.qualification.pressurefit_fixtures import write_pressurefit_fixtures
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
@@ -286,7 +286,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 "runtime_transfer_capabilities": runtime_transfer_capabilities,
             }
             training.close()
-            export_case_model(case, runtime=runtime)
+            release_case_model(case, runtime=runtime)
             runtime.close()
             return result
 
@@ -471,7 +471,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "pressurefit_fixtures": fixtures,
         }
         training.close()
-        export_case_model(case, runtime=runtime)
+        # Qualification never reuses the model; an export copy would stack an
+        # anonymous full-model allocation on the registered spill arena.
+        release_case_model(case, runtime=runtime)
         runtime.close()
         return result
 

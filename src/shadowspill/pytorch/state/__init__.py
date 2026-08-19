@@ -1,6 +1,6 @@
 """Persistent PyTorch state import and export."""
 
-from .model import export_model_state, import_model_state
+from .model import export_model_state, import_model_state, release_model_state
 from .optimizer import export_optimizer_state, import_optimizer_state
 
 __all__ = [
@@ -8,4 +8,5 @@ __all__ = [
     "export_optimizer_state",
     "import_model_state",
     "import_optimizer_state",
+    "release_model_state",
 ]

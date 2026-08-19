@@ -77,6 +77,7 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/runtime_adapter/runtime.py:Runtime.__init__",
     "src/shadowspill/pytorch/state/model.py:export_model_state",
     "src/shadowspill/pytorch/state/model.py:import_model_state",
+    "src/shadowspill/pytorch/state/model.py:release_model_state",
     "src/shadowspill/pytorch/state/optimizer.py:export_optimizer_state",
     "src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state",
 }

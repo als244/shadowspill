@@ -15,6 +15,7 @@ from .storage import (
     own_persistent_state,
     persistent_state,
     register_tensor_storages,
+    release_persistent_tensors,
     unregister_tensor_storages,
 )
 
@@ -106,6 +107,27 @@ def export_model_state[ModelT: nn.Module](
     return model
 
 
+def release_model_state(
+    model: nn.Module,
+    *,
+    runtime: Runtime,
+) -> None:
+    """Release imported model state without materializing a CPU copy.
+
+    Unlike ``export_model_state()``, no ordinary CPU allocation is created
+    and the module's registered tensors are not rebound: they become invalid
+    the moment their pool leases are released, so the module must be
+    discarded afterward. This is the teardown operation for callers that no
+    longer need the state, such as throughput qualification on hosts that
+    cannot hold an additional anonymous model copy beside the pinned spill
+    arena. Export remains the correct operation when the model is used
+    again. A model that is not owned by ``runtime`` is left unchanged.
+    """
+
+    runtime._require_state_operation_allowed()
+    release_persistent_tensors(model, runtime=runtime)
+
+
 def _model_tensors(model: nn.Module) -> tuple[NamedTensor, ...]:
     return (
         *(
@@ -122,5 +144,6 @@ def _model_tensors(model: nn.Module) -> tuple[NamedTensor, ...]:
 __all__ = [
     "export_model_state",
     "import_model_state",
+    "release_model_state",
     "require_model_state_for_plan",
 ]

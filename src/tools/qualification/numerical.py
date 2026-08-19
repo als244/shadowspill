@@ -26,7 +26,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
-from tools.qualification.model_state import export_case_model, import_case_model
+from tools.qualification.model_state import import_case_model, release_case_model
 from workloads.numerical import (
     DEFAULT_DEVICE_BUDGETS,
     ModelImplementation,
@@ -644,7 +644,10 @@ def _planned_worker(
         report = training.plan_report
         runtime_statistics = _adapter_statistics()
         training.close()
-        export_case_model(case, runtime=runtime)
+        # Reference parity, checkpoint replay, and transfer evidence all read
+        # the state_dict() copies captured above; the model itself is never
+        # used again, so release it without another anonymous copy.
+        release_case_model(case, runtime=runtime)
         runtime.close()
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)

@@ -10,8 +10,8 @@ import torch.nn as nn
 
 from shadowspill.pytorch import (
     Runtime,
-    export_model_state,
     import_model_state,
+    release_model_state,
 )
 
 
@@ -38,24 +38,21 @@ def import_case_model[CaseT](
     try:
         updated = _replace_case_model(case, imported)
     except BaseException:
-        export_model_state(imported, runtime=runtime, release_runtime=True)
+        release_model_state(imported, runtime=runtime)
         raise
     return cast(CaseT, updated)
 
 
-def export_case_model(
-    case: object,
-    *,
-    runtime: Runtime,
-    release_runtime: bool = True,
-) -> nn.Module:
-    """Export the model currently owned by a qualification case."""
+def release_case_model(case: object, *, runtime: Runtime) -> None:
+    """Release the case's runtime-owned model without an anonymous CPU copy.
 
-    return export_model_state(
-        _case_model(case),
-        runtime=runtime,
-        release_runtime=release_runtime,
-    )
+    Qualification evidence is captured through ``state_dict()`` copies before
+    teardown, so the model itself is never reused after its protocol. An
+    export copy cannot coexist with the full pinned spill arena on
+    qualification hosts. The case must be discarded after this call.
+    """
+
+    release_model_state(_case_model(case), runtime=runtime)
 
 
 def _replace_case_model(case: object, model: nn.Module) -> object:
@@ -83,4 +80,4 @@ def _case_model(case: object) -> nn.Module:
     return model
 
 
-__all__ = ["export_case_model", "import_case_model"]
+__all__ = ["import_case_model", "release_case_model"]

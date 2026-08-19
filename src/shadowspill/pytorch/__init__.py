@@ -73,6 +73,7 @@ from .state import (
     export_optimizer_state,
     import_model_state,
     import_optimizer_state,
+    release_model_state,
 )
 
 __all__ = [
@@ -141,6 +142,7 @@ __all__ = [
     "plan_forward",
     "plan_step",
     "pressurefit_program",
+    "release_model_state",
     "shared_input",
     "shared_output",
 ]
