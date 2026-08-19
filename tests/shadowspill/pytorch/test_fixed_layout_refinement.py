@@ -155,6 +155,66 @@ def test_refinement_switches_to_512_mib_steps_after_one_gib() -> None:
     assert reductions[5:8] == (1536 << 20, 2048 << 20, 2560 << 20)
 
 
+def test_refinement_first_rung_runs_without_speculation() -> None:
+    capacity = 2 << 30
+    resolved: list[int] = []
+
+    def resolve(config):  # type: ignore[no-untyped-def]
+        resolved.append(config.devices[0].capacity_bytes)
+        return _selection(config)
+
+    selected = resolve_fixed_layout_selection(
+        _config(capacity),
+        _topology(capacity),
+        resolve,
+    )
+
+    # A point whose full-capacity plan admits must plan exactly once:
+    # speculative rungs open only after the first rejection.
+    assert resolved == [capacity]
+    assert len(selected.attempts) == 1
+
+
+def test_refinement_consumes_speculative_rungs_in_ladder_order(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    capacity = 2 << 30
+    admitted: list[int] = []
+    resolved: list[int] = []
+    original = refinement.build_fixed_layout_admission  # type: ignore[attr-defined]
+
+    def resolve(config):  # type: ignore[no-untyped-def]
+        resolved.append(config.devices[0].capacity_bytes)
+        return _selection(config)
+
+    def reject_first_three(selected, topology, **kwargs):  # type: ignore[no-untyped-def]
+        admitted.append(topology.object_capacity_bytes)
+        if len(admitted) <= 3:
+            raise FixedLayoutInfeasibleError(capacity + 1, capacity)
+        return original(selected, topology, **kwargs)
+
+    monkeypatch.setattr(
+        refinement, "build_fixed_layout_admission", reject_first_three
+    )
+
+    selected = resolve_fixed_layout_selection(
+        _config(capacity),
+        _topology(capacity),
+        resolve,
+    )
+
+    # Admission consumes rungs in strict ladder order regardless of the
+    # speculative planning that runs them concurrently.
+    step = 256 << 20
+    assert admitted == [capacity - index * step for index in range(4)]
+    assert tuple(item.accepted for item in selected.attempts) == (
+        False, False, False, True,
+    )
+    assert selected.capacity_reduction_bytes == 3 * step
+    # Speculation planned ahead of the accepted rung.
+    assert len(set(resolved)) > 4
+
+
 def test_refinement_rejects_invalid_effective_capacity() -> None:
     capacity = 1 << 30
     invalid = replace(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from shadowspill.ir import MemoryLocation
@@ -25,6 +26,7 @@ _MIB = 1 << 20
 _FINE_STEP_BYTES = 256 * _MIB
 _FINE_LIMIT_BYTES = 1 << 30
 _COARSE_STEP_BYTES = 512 * _MIB
+_SPECULATIVE_RUNGS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,54 +98,106 @@ def resolve_fixed_layout_selection(
     """
 
     original_capacity = _single_device_capacity(config, topology.device_id)
+    reductions = _capacity_reductions(original_capacity)
     attempts: list[FixedLayoutAttempt] = []
     last_error: FixedLayoutInfeasibleError | None = None
-    for reduction in _capacity_reductions(original_capacity):
-        requested_capacity = original_capacity - reduction
+    # Ladder rungs are independent, so once the full-capacity rung has
+    # been rejected the following rungs are planned speculatively in
+    # parallel while results are consumed strictly in ladder order —
+    # the accepted rung and its plan are byte-identical to a serial
+    # walk. The first rung runs alone: points whose full-capacity plan
+    # admits (the common case) never pay a speculative plan. On accept
+    # or error, still-running speculative rungs are abandoned without
+    # waiting; their planning threads finish in the background.
+    executor = ThreadPoolExecutor(max_workers=_SPECULATIVE_RUNGS)
+    futures: dict[int, Future[tuple[CachedPressureFitResult, int]]] = {}
+
+    def timed_resolve(
+        requested_capacity: int,
+    ) -> tuple[CachedPressureFitResult, int]:
         requested_config = _config_with_capacity(
             config,
             device_id=topology.device_id,
             capacity_bytes=requested_capacity,
         )
+        started = time.perf_counter_ns()
         # PressureFit selects against logical capacity. The fixed-layout
         # builder below is the sole physical-placement authority for this
-        # strategy; prefiltering through dynamic-pool admission would discard
-        # schedules that are feasible under certified fixed placement.
-        pressurefit_started = time.perf_counter_ns()
-        selected = resolve(requested_config)
-        pressurefit_wall_time_ns = time.perf_counter_ns() - pressurefit_started
-        admission_started = time.perf_counter_ns()
-        effective_topology = replace(
-            topology,
-            object_capacity_bytes=_effective_object_capacity(
-                selected,
-                requested_capacity=requested_capacity,
-            ),
-        )
-        dynamic_aliases = frozenset(
-            item.alias_group_id
-            for item in selected.result.schedule.final_residency
-            if item.location is MemoryLocation.DEVICE
-        )
-        try:
-            admitted = build_fixed_layout_admission(
-                selected.result,
-                effective_topology,
-                dynamic_alias_group_ids=dynamic_aliases,
-                scratch_reserve_bytes=scratch_reserve_bytes,
+        # strategy; prefiltering through dynamic-pool admission would
+        # discard schedules that are feasible under certified fixed
+        # placement.
+        resolved = resolve(requested_config)
+        return resolved, time.perf_counter_ns() - started
+
+    def ensure_submitted(index: int) -> None:
+        window = 1 if index == 0 else _SPECULATIVE_RUNGS
+        for ahead in range(index, min(index + window, len(reductions))):
+            if ahead not in futures:
+                futures[ahead] = executor.submit(
+                    timed_resolve, original_capacity - reductions[ahead]
+                )
+
+    try:
+        for index, reduction in enumerate(reductions):
+            ensure_submitted(index)
+            requested_capacity = original_capacity - reduction
+            selected, pressurefit_wall_time_ns = futures[index].result()
+            admission_started = time.perf_counter_ns()
+            effective_topology = replace(
+                topology,
+                object_capacity_bytes=_effective_object_capacity(
+                    selected,
+                    requested_capacity=requested_capacity,
+                ),
             )
-        except FixedLayoutInfeasibleError as error:
+            dynamic_aliases = frozenset(
+                item.alias_group_id
+                for item in selected.result.schedule.final_residency
+                if item.location is MemoryLocation.DEVICE
+            )
+            try:
+                admitted = build_fixed_layout_admission(
+                    selected.result,
+                    effective_topology,
+                    dynamic_alias_group_ids=dynamic_aliases,
+                    scratch_reserve_bytes=scratch_reserve_bytes,
+                )
+            except FixedLayoutInfeasibleError as error:
+                physical_admission_wall_time_ns = (
+                    time.perf_counter_ns() - admission_started
+                )
+                last_error = error
+                attempts.append(
+                    FixedLayoutAttempt(
+                        requested_capacity,
+                        effective_topology.object_capacity_bytes,
+                        error.required_bytes,
+                        error.capacity_bytes,
+                        False,
+                        pressurefit_wall_time_ns,
+                        physical_admission_wall_time_ns,
+                        selected.result.diagnostics,
+                    )
+                )
+                if progress is not None:
+                    progress(
+                        "fixed layout rejected PressureFit capacity "
+                        f"{effective_topology.object_capacity_bytes}: "
+                        f"required={error.required_bytes}, "
+                        f"physical_pool={error.capacity_bytes}, "
+                        f"requested_reduction={reduction}"
+                    )
+                continue
             physical_admission_wall_time_ns = (
                 time.perf_counter_ns() - admission_started
             )
-            last_error = error
             attempts.append(
                 FixedLayoutAttempt(
                     requested_capacity,
                     effective_topology.object_capacity_bytes,
-                    error.required_bytes,
-                    error.capacity_bytes,
-                    False,
+                    admitted.layout.required_bytes,
+                    admitted.layout.pool_capacity_bytes,
+                    True,
                     pressurefit_wall_time_ns,
                     physical_admission_wall_time_ns,
                     selected.result.diagnostics,
@@ -151,47 +205,27 @@ def resolve_fixed_layout_selection(
             )
             if progress is not None:
                 progress(
-                    "fixed layout rejected PressureFit capacity "
+                    "fixed layout accepted PressureFit capacity "
                     f"{effective_topology.object_capacity_bytes}: "
-                    f"required={error.required_bytes}, "
-                    f"physical_pool={error.capacity_bytes}, "
-                    f"requested_reduction={reduction}"
+                    f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
+                    f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
+                    f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
+                    f"slack={admitted.layout.slack_bytes}, "
+                    f"total_reduction="
+                    f"{original_capacity - effective_topology.object_capacity_bytes}"
                 )
-            continue
-        physical_admission_wall_time_ns = time.perf_counter_ns() - admission_started
-        attempts.append(
-            FixedLayoutAttempt(
-                requested_capacity,
-                effective_topology.object_capacity_bytes,
-                admitted.layout.required_bytes,
-                admitted.layout.pool_capacity_bytes,
-                True,
-                pressurefit_wall_time_ns,
-                physical_admission_wall_time_ns,
-                selected.result.diagnostics,
+            return FixedLayoutSelection(
+                selected,
+                effective_topology,
+                admitted,
+                tuple(attempts),
+                original_capacity,
             )
-        )
-        if progress is not None:
-            progress(
-                "fixed layout accepted PressureFit capacity "
-                f"{effective_topology.object_capacity_bytes}: "
-                f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
-                f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
-                f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
-                f"slack={admitted.layout.slack_bytes}, "
-                f"total_reduction="
-                f"{original_capacity - effective_topology.object_capacity_bytes}"
-            )
-        return FixedLayoutSelection(
-            selected,
-            effective_topology,
-            admitted,
-            tuple(attempts),
-            original_capacity,
-        )
-    if last_error is None:
-        raise ValueError("fixed-layout refinement has no positive capacity")
-    raise last_error
+        if last_error is None:
+            raise ValueError("fixed-layout refinement has no positive capacity")
+        raise last_error
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _effective_object_capacity(
