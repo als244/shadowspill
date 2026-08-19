@@ -125,6 +125,19 @@ def _report_runtime_transfer_capabilities(runtime: Runtime) -> dict[str, object]
     return capabilities.as_dict()
 
 
+def _calibration_suspect(runtime: Runtime) -> bool:
+    """Detect the degraded bidirectional-concurrent calibration mode."""
+
+    capabilities = runtime.transfer_capabilities
+    for route in runtime.routes.values():
+        profile = capabilities.route(route.source, route.destination)
+        solo = profile.solo_bandwidth_bytes_per_second
+        concurrent = profile.concurrent_bandwidth_bytes_per_second
+        if solo > 0 and concurrent < 0.65 * solo:
+            return True
+    return False
+
+
 def _manifest_with_overrides(
     family: str,
     implementation: str,
@@ -193,6 +206,23 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "evict": transfer_route(source="execution", destination="spill"),
         },
     )
+    # Bidirectional-concurrent calibration is bimodal on this host
+    # despite the runtime-first lifecycle (about 21 versus about 25
+    # GB/s across runs; solo variance is expected and not the anomaly),
+    # and a degraded calibration steers planning toward a different,
+    # higher-traffic plan.  The concurrent/solo ratio separates the two
+    # observed modes; a legitimately high solo at most triggers one
+    # benign extra probe.  Persistently low results are recorded and
+    # planning proceeds against the final measurement.
+    calibration_attempts = 1
+    while calibration_attempts < 4 and _calibration_suspect(runtime):
+        print(
+            "suspect bidirectional-concurrent calibration "
+            f"(attempt {calibration_attempts}); recalibrating",
+            flush=True,
+        )
+        runtime.calibrate_transfer_capabilities()
+        calibration_attempts += 1
     runtime_transfer_capabilities = _report_runtime_transfer_capabilities(runtime)
     case = build_case(manifest, seed=arguments.seed)
     with case.implementations():
@@ -432,6 +462,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "physical_budget_statuses": physical_statuses,
             "physical_budget_passed": physical_passed,
             "planning_spill_budget_bytes": planning_spill_budget,
+            "calibration_attempts": calibration_attempts,
             "strict_runtime_passed": strict_runtime,
             "runtime_delta": runtime_delta,
             "runtime_statistics": statistics_dict(execution_statistics),
