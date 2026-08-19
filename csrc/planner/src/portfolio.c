@@ -6,6 +6,7 @@
 #include "residency_internal.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -1939,6 +1940,34 @@ static int evaluate_candidate(
                 sizeof(diagnostic->schedule_digest)
             );
             return 1;
+        }
+
+        /*
+         * Diagnostic-only repair tracing for the planning-efficiency
+         * investigation (docs/internal/plans/planning_efficiency_0818,
+         * E012).  Enabled by SHADOWSPILL_REPAIR_TRACE; never active in
+         * normal planning.
+         */
+        static _Thread_local int repair_trace = -1;
+        if (repair_trace < 0) {
+            repair_trace = getenv("SHADOWSPILL_REPAIR_TRACE") != NULL;
+        }
+        if (repair_trace) {
+            fprintf(
+                stderr,
+                "repair-trace strategy=%u rule=%u coalesced=%u "
+                "attempt=%llu status=%d time=%llu used=%llu "
+                "requested=%llu capacity=%llu\n",
+                strategy,
+                rule,
+                coalesced,
+                (unsigned long long)repair_total(&diagnostic->repairs),
+                (int)simulation_status,
+                (unsigned long long)simulation.error_time_ns,
+                (unsigned long long)simulation.error_used_bytes,
+                (unsigned long long)simulation.error_requested_bytes,
+                (unsigned long long)simulation.error_capacity_bytes
+            );
         }
 
         if (repair_total(&diagnostic->repairs) <
