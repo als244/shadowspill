@@ -27,10 +27,11 @@ python -m qualification.performance.run llama3 mlops \
   --force-fresh
 ```
 
-For a throughput-only runtime probe on a host that cannot hold both the full
-pinned spill arena and an anonymous checkpoint copy, add `--skip-checkpoint`.
-The resulting artifact records that checkpoint qualification was skipped; the
-default release gate still checkpoints and restores.
+A host cannot hold both the full pinned spill arena and an anonymous
+checkpoint copy. `--skip-checkpoint` runs the throughput protocol without that
+copy, and the resulting artifact records that checkpoint qualification was
+skipped. A single-cell `run` invocation still checkpoints and restores by
+default; checkpoint/replay release coverage lives in the numerical matrix.
 
 `--spill-budget-gib` changes the configured runtime spill-pool capacity.
 `--planning-spill-budget-gib` may set a smaller budget for PressureFit without
@@ -43,9 +44,19 @@ Run the complete five-cell matrix with:
 python -m qualification.performance.matrix \
   --output-directory qualification/results/full_model \
   --force-fresh \
-  --keep-going
+  --keep-going \
+  --planning-spill-budget-gib mlops_qwen35=100
 ```
 
-The default protocol checkpoints the planned callable, performs and diagnoses
-one warm step, restores the checkpoint, then measures three groups of four
-steps. Planning, compilation, warmup, and restore are outside timed execution.
+The matrix runs every cell as a checkpoint-free throughput probe: it forwards
+`--skip-checkpoint` so the anonymous full-state copy never coexists with the
+pinned spill arena. `--checkpoint` opts a matrix run back into the
+checkpoint/restore protocol. The repeatable `--planning-spill-budget-gib
+IDENTITY=GIB` option forwards a per-cell planning budget; the retained Qwen
+setup plans against 100 GiB inside its 112-GiB pool.
+
+With checkpointing, the protocol checkpoints the planned callable, performs
+and diagnoses one warm step, restores the checkpoint, then measures three
+groups of four steps. Without it, the warm step is kept rather than restored
+and the same three groups follow. Planning, compilation, warmup, and restore
+are outside timed execution.

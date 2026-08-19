@@ -49,6 +49,13 @@ python -m qualification.performance.matrix \
   --keep-going
 ```
 
+Both matrix launchers follow the planning-evaluation logging protocol: every
+cell opens with a labeled START block (model, data geometry, budgets), the
+cell subprocess streams live under a `[cell/N]` prefix, and every cell closes
+with a PASS/FAIL block carrying per-gate status and UTC START, STOP, and
+DURATION records. The console stream is duplicated with timestamps into
+`matrix.log` beside `summary.json`, and each cell keeps one timestamped log.
+
 Framework-free PressureFit benchmarking belongs in
 `benchmarking/planning_eval/fixture_benchmark.py`. Step and NSYS inspection
 belong in `src/tools/diagnostics/`.

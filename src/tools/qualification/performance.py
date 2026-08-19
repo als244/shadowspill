@@ -506,7 +506,33 @@ def main() -> int:
         )
         raise
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(result, indent=2, sort_keys=True))
+    identity = f"{arguments.implementation}_{arguments.family}"
+    print(f"RESULT {'PASS' if result['passed'] else 'FAIL'}: {identity}", flush=True)
+    if not arguments.plan_only:
+        gates = (
+            ("protocol_complete", "PROTOCOL"),
+            ("objectives_finite", "OBJECTIVES"),
+            ("logical_steps_passed", "LOGICAL STEPS"),
+            ("physical_budget_passed", "PHYSICAL BUDGETS"),
+            ("strict_runtime_passed", "STRICT RUNTIME"),
+            ("simulator_gate_passed", "SIMULATOR"),
+            ("historical_gate_passed", "HISTORICAL"),
+        )
+        for key, label in gates:
+            print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
+        print(
+            f"  MEDIAN STEP: {result['median_step_seconds']:.4f} seconds "
+            f"({result['median_tokens_per_second']:.1f} tokens/s)"
+        )
+        print(
+            f"  PREDICTED STEP: {result['predicted_makespan_seconds']:.4f} "
+            f"seconds (simulator error {result['simulator_relative_error']:+.2%})"
+        )
+        ratio = result["historical_throughput_ratio"]
+        if isinstance(ratio, float):
+            print(f"  HISTORICAL RATIO: {ratio:.2%}")
+    print(f"  PLANNING: {result['planning_seconds']:.3f} seconds")
+    print(f"  ARTIFACT: {arguments.output}", flush=True)
     if not result["passed"] and not arguments.plan_only:
         return 1
     return 0
