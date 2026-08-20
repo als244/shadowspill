@@ -141,9 +141,19 @@ def test_refinement_retries_in_256_mib_steps(monkeypatch) -> None:  # type: igno
         lambda config: _selection(config),
     )
 
-    assert calls == [capacity, capacity - (256 << 20)]
-    assert tuple(item.accepted for item in selected.attempts) == (False, True)
-    assert selected.capacity_reduction_bytes == 256 << 20
+    # The coarse rung accepts at capacity - 256 MiB; the fine final
+    # approach then bisects the rejected interval and recovers down to
+    # a 64-MiB reduction.
+    assert calls == [
+        capacity,
+        capacity - (256 << 20),
+        capacity - (128 << 20),
+        capacity - (64 << 20),
+    ]
+    assert tuple(item.accepted for item in selected.attempts) == (
+        False, True, True, True,
+    )
+    assert selected.capacity_reduction_bytes == 64 << 20
 
 
 def test_refinement_switches_to_512_mib_steps_after_one_gib() -> None:
@@ -204,13 +214,20 @@ def test_refinement_consumes_speculative_rungs_in_ladder_order(
     )
 
     # Admission consumes rungs in strict ladder order regardless of the
-    # speculative planning that runs them concurrently.
+    # speculative planning that runs them concurrently; the fine final
+    # approach then bisects back from the accepted rung.
     step = 256 << 20
-    assert admitted == [capacity - index * step for index in range(4)]
+    fine = 64 << 20
+    assert admitted == [
+        capacity - index * step for index in range(4)
+    ] + [
+        capacity - 3 * step + 2 * fine,
+        capacity - 3 * step + 3 * fine,
+    ]
     assert tuple(item.accepted for item in selected.attempts) == (
-        False, False, False, True,
+        False, False, False, True, True, True,
     )
-    assert selected.capacity_reduction_bytes == 3 * step
+    assert selected.capacity_reduction_bytes == 2 * step + fine
     # Speculation planned ahead of the accepted rung.
     assert len(set(resolved)) > 4
 
