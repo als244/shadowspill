@@ -63,6 +63,17 @@ class EntrypointSpec:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalAdmission:
+    """Physical execution and host admission for one selected plan.
+
+    ``workspace_reserve_bytes`` is the contiguous task-workspace
+    allowance the execution pool must be able to serve; it is validated
+    against ``slab_bytes`` and is NOT subtracted from the pool. Task
+    workspace is charged per boundary during planning and placed inside
+    the admitted fixed slice, so this value does not define PressureFit's
+    object capacity — see ``pytorch.planning.common.simulation_capacity``
+    for the capacity actually presented to the planner.
+    """
+
     device_budget_bytes: int
     host_budget_bytes: int
     context_bytes: int
@@ -106,10 +117,6 @@ class PhysicalAdmission:
             "admission.host_reservation_bytes",
             "cannot exceed host budget",
         )
-
-    @property
-    def object_capacity_bytes(self) -> int:
-        return self.slab_bytes - self.workspace_reserve_bytes
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {

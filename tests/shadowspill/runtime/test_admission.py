@@ -221,9 +221,6 @@ def test_physical_admission_exposes_every_subtraction() -> None:
     assert admission.provider_headroom_bytes == 1280 * MIB
     assert admission.slab_bytes == 4 * GIB - 500 * MIB - 1280 * MIB
     assert admission.workspace_reserve_bytes == 750 * MIB
-    assert admission.object_capacity_bytes == (
-        admission.slab_bytes - admission.workspace_reserve_bytes
-    )
     assert admission.host_reservation_bytes == 1280 * MIB
     assert replay.peak_allocated_bytes == 1 * GIB
 

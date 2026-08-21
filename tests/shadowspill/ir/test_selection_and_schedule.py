@@ -64,12 +64,6 @@ def test_schedule_reaches_declared_final_residency() -> None:
     )
 
 
-def test_physical_admission_exposes_object_capacity() -> None:
-    admission = representative_plan().admission
-
-    assert admission.object_capacity_bytes == 768
-
-
 def _retained_host_output_program() -> Program:
     return Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
