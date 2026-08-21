@@ -194,7 +194,7 @@ The capacity contract keys are:
 | `maximum_execution_budget_bytes` | Largest execution budget allowed without recompilation/reprofiling. |
 | `maximum_spill_budget_bytes` | Largest spill budget allowed by the source runtime. |
 | `fixed_execution_bytes` | Context/provider/fixed-service bytes outside the callable pool. |
-| `object_reserve_bytes` | Pool bytes withheld from PressureFit object capacity for physical allocation needs. |
+| `object_reserve_bytes` | Capacity leeway: pool bytes withheld from PressureFit's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
 | `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
 
 ## StepProgram format

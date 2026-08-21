@@ -64,9 +64,31 @@ Let:
 - $B_s$ be the public spill-memory budget.
 
 The `AdmissionTopology` records both $P$ and $C$. The difference $P-C$ is
-logical allocator/workspace leeway. PressureFit subtracts each selected task's
-actual workspace only at that task boundary; it does not reserve a monolithic
-workspace partition at every boundary.
+capacity leeway (`pytorch.planning.common.capacity_leeway`). PressureFit
+subtracts each selected task's actual workspace only at that task boundary; it
+does not reserve a monolithic workspace partition at every boundary, and the
+leeway is not such a partition either.
+
+The leeway exists because the two stages bound different quantities.
+PressureFit bounds *instantaneous* occupancy: composing the capacity with the
+per-boundary workspace subtraction gives
+
+\[
+\text{objects}(b) + \text{workspace}(b) \le C \quad\text{at every boundary } b,
+\]
+
+while admission must place a *fixed-offset extent* $L$ that is larger whenever
+overlapping lifetimes prevent two leases from sharing an offset. A layout whose
+excess $L - C$ fits inside the leeway is admitted with no refinement attempt;
+anything larger drives the capacity-refinement ladder below.
+
+`PhysicalAdmission.workspace_reserve_bytes` is a separate quantity: the
+contiguous workspace allowance the pool must be able to serve. It is validated
+against the slab and reported, but it is not subtracted from $P$ and does not
+define $C$. The current leeway is derived from it — the allowance above the
+peak task workspace, a quarter of that peak under the default 5/4 policy —
+which is historical rather than principled, since the excess it absorbs is a
+property of lifetime overlap rather than of workspace.
 
 For one fixed layout, let:
 
@@ -342,6 +364,20 @@ more physical slack; it does not shrink the runtime pool. Every rejected and
 accepted attempt records requested/effective object capacity, required bytes,
 physical capacity, PressureFit wall time, physical-admission wall time, and
 candidate diagnostics.
+
+The relationship between logical capacity and required extent is neither
+monotone nor continuous. Lowering the capacity by one step can change which
+candidate wins, and different candidate families carry very different
+fixed-extent excess $L - C$: measured on one qwen point, plans built from
+`demand` prefetch carried about 1.4 GiB of excess while `packed-fit` plans
+carried about 3.3 GiB, so the required extent moved by 2 GiB across a 62 MiB
+capacity change. A step therefore may overshoot: the accepted attempt can leave
+a large part of the pool unused while a slightly different capacity would have
+admitted a materially better plan. After the first acceptance the orchestrator
+bisects the interval between the last rejected and first accepted capacities on
+a 64 MiB grid and keeps the highest admitting capacity whose admitted
+re-simulation is no worse, which recovers stranded capacity without ever
+choosing a worse plan than the coarse ladder would have.
 
 The framework-neutral `pressurefit()` API can alternatively receive an
 `AdmissionTopology` and evaluate the production dynamic-pool policy inside

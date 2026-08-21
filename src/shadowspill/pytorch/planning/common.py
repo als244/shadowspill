@@ -178,10 +178,36 @@ def estimate_spill_reservation(
 
 
 def workspace_reserve(measurements: Sequence[TaskMeasurement]) -> int:
-    """Return the conservative global workspace reserve."""
+    """Return the contiguous workspace allowance the pool must serve.
+
+    Recorded on `PhysicalAdmission` and validated against the slab. It is
+    not subtracted from the pool: task workspace is charged per boundary
+    during planning and placed inside the admitted fixed slice.
+    """
 
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
     return workspace_reserve_bytes(peak)
+
+
+def capacity_leeway(measurements: Sequence[TaskMeasurement]) -> int:
+    """Return the bytes withheld from PressureFit's object capacity.
+
+    PressureFit bounds instantaneous object-plus-workspace occupancy by
+    the capacity it is given, while physical admission must place a
+    fixed-offset slice whose extent is larger whenever overlapping
+    lifetimes block offset reuse. These withheld bytes are the head start
+    the capacity-refinement ladder gets against that excess: a layout
+    whose excess fits here is admitted without any refinement attempt.
+
+    The amount is the workspace allowance above the peak task workspace
+    it is derived from, so with the default 5/4 policy it is a quarter of
+    the peak. That derivation is historical rather than principled — the
+    excess it absorbs is a property of lifetime overlap, not of workspace
+    (docs/architecture/physical-admission.md, "Capacity refinement").
+    """
+
+    peak = max((item.workspace_charged_bytes for item in measurements), default=0)
+    return workspace_reserve_bytes(peak) - peak
 
 
 def simulation_capacity(
@@ -191,7 +217,11 @@ def simulation_capacity(
     *,
     fixed_slab_bytes: int = 0,
 ) -> int:
-    """Translate a physical slab admission into PressureFit object capacity."""
+    """Translate a physical slab admission into PressureFit object capacity.
+
+    The capacity is the usable slab minus `capacity_leeway`; the workspace
+    allowance is accepted only so it can be validated against the slab.
+    """
 
     usable_slab = execution_pool_bytes - fixed_slab_bytes
     if fixed_slab_bytes < 0 or usable_slab < 0:
@@ -201,13 +231,10 @@ def simulation_capacity(
         )
     if workspace_reserve_bytes_ > usable_slab:
         raise AdmissionError(
-            "the admitted slab is smaller than the workspace reserve: "
-            f"usable_slab={usable_slab}, reserve={workspace_reserve_bytes_}"
+            "the admitted slab is smaller than the workspace allowance: "
+            f"usable_slab={usable_slab}, allowance={workspace_reserve_bytes_}"
         )
-    maximum_workspace = max(
-        (item.workspace_charged_bytes for item in measurements), default=0
-    )
-    capacity = usable_slab - workspace_reserve_bytes_ + maximum_workspace
+    capacity = usable_slab - capacity_leeway(measurements)
     if capacity <= 0:
         raise public_infeasible_plan_error(
             PressureFitInfeasibleError(
@@ -321,6 +348,7 @@ def round_up(value: int, alignment: int) -> int:
 __all__ = [
     "PlanningTimer",
     "build_simulation_config",
+    "capacity_leeway",
     "estimate_spill_reservation",
     "public_infeasible_plan_error",
     "public_search_exhausted_error",
