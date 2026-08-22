@@ -1,16 +1,12 @@
 """Give a compiled operation stream its identifiers back.
 
-NOT YET WIRED. `measure_fixed_layout` still uses the readable builder. This
-reproduces four of that builder's six outputs exactly - the identified steps'
-shape, active aliases, initial-object leases, task-allocation leases and
-action-destination leases - verified on three plans by
-`docs/internal/plans/robust_capacity_refinement_0821/experiments/E008-replay`.
-
-One difference remains: when an allocation step reuses an earlier slot the
-readable builder OVERWRITES that lease's provenance with the reusing step's,
-so provenance reflects a lease's most recent use rather than its first. A
-reuse emits no operation, so matching it needs the allocation steps replayed
-alongside the stream. Until that is done this module is unused.
+A lease's provenance is that of the operation which acquired it, except for
+task allocations: a task may free a slot and reallocate it, and a reallocation
+emits no operation of its own. Those steps are replayed alongside the stream,
+so a reused lease records what it most recently became rather than what it
+first was. That is the role the fixed/dynamic split checks - a slot first used
+as workspace and then retained as an output really is an output by the end of
+the task - and it is why `_validate_dynamic_lifetimes` accepts it.
 
 `shadowspill_build_admission_operations` returns one schedule's pool
 operations as indexed columns. Everything downstream - lifetime construction,
@@ -38,6 +34,18 @@ from .admission_replay import (
     AdmissionReplayStep,
     _LeaseProvenance,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class AllocationStep:
+    """One task allocation step, in the order the topology flattens them."""
+
+    task_id: str
+    ordinal: int
+    slot: int
+    allocates: bool
+    purpose: AdmissionReplayPurpose
+    alias_group_id: str | None
 
 #: Compiled purpose codes, in the order `ShadowSpillAdmissionPurpose` declares.
 _PURPOSES = (
@@ -91,16 +99,25 @@ def identify_operations(
     *,
     task_ids: tuple[str, ...],
     alias_ids: tuple[str, ...],
-    allocation_ordinals: tuple[tuple[str, int], ...],
-    allocation_slots: tuple[int, ...],
+    allocation_steps: tuple[AllocationStep, ...],
+    action_trigger_tasks: tuple[int, ...],
+    storage_handoffs: tuple[tuple[str, str], ...],
 ) -> IdentifiedOperations:
     """Walk the stream once, resolving indices to identifiers.
 
-    `allocation_ordinals` and `allocation_slots` describe each flattened
-    allocation offset: the (task, ordinal) pair of the step there, and the
-    lease slot it uses. A step that reuses an earlier ordinal's slot emits no
-    operation of its own, so every step is mapped through its slot rather than
-    through the operation stream.
+    `allocation_steps` is indexed by flattened allocation offset, which is what
+    an operation records when it acquires a task lease. Replaying those steps
+    resolves the leases a reallocation reuses without inventing operations for
+    them, and supplies the alias each step owns.
+
+    `action_trigger_tasks` gives each action's triggering task, because an
+    action-boundary operation belongs to both: the action names what happened
+    and the task names when.
+
+    `storage_handoffs` lists (source, destination) alias pairs in task order. A
+    handoff moves a live lease between aliases without allocating, so it emits
+    no operation and has to be replayed for the active-alias map to end
+    correct.
     """
 
     steps: list[AdmissionReplayStep] = []
@@ -119,14 +136,25 @@ def identify_operations(
         index = operations.indices[sequence]
         is_action = boundary in _ACTION_BOUNDARIES
         is_initial = boundary == _INITIAL_BOUNDARY
-        task_id = None if is_action or is_initial else task_ids[index]
         action_index = index if is_action else None
-        alias_slot = (
-            operations.lease_aliases[lease_id]
-            if lease_id < len(operations.lease_aliases)
-            else None
-        )
-        alias_id = None if alias_slot is None else alias_ids[alias_slot]
+        if is_initial:
+            task_id = None
+        elif is_action:
+            task_id = task_ids[action_trigger_tasks[index]]
+        else:
+            task_id = task_ids[index]
+        offset = operations.allocation_offsets[sequence]
+        if offset is not None:
+            # A task allocation owns whatever its step declares, which is
+            # None for anonymous workspace.
+            alias_id = allocation_steps[offset].alias_group_id
+        else:
+            alias_slot = (
+                operations.lease_aliases[lease_id]
+                if lease_id < len(operations.lease_aliases)
+                else None
+            )
+            alias_id = None if alias_slot is None else alias_ids[alias_slot]
 
         step_provenance = _LeaseProvenance(
             purpose,
@@ -170,14 +198,26 @@ def identify_operations(
         ):
             destinations[action_index] = lease_id
         else:
-            offset = operations.allocation_offsets[sequence]
             if offset is not None:
-                slot_leases[allocation_slots[offset]] = lease_id
+                slot_leases[allocation_steps[offset].slot] = lease_id
 
-    for offset, ordinal in enumerate(allocation_ordinals):
-        lease = slot_leases.get(allocation_slots[offset])
+    for step in allocation_steps:
+        if not step.allocates:
+            continue
+        lease = slot_leases.get(step.slot)
+        if lease is None:
+            continue
+        allocations[(step.task_id, step.ordinal)] = lease
+        provenance[lease] = _LeaseProvenance(
+            step.purpose,
+            task_id=step.task_id,
+            alias_group_id=step.alias_group_id,
+        )
+
+    for source, destination in storage_handoffs:
+        lease = active.pop(source, None)
         if lease is not None:
-            allocations[ordinal] = lease
+            active[destination] = lease
 
     return IdentifiedOperations(
         steps=tuple(steps),
@@ -191,4 +231,4 @@ def identify_operations(
     )
 
 
-__all__ = ["IdentifiedOperations", "identify_operations"]
+__all__ = ["AllocationStep", "IdentifiedOperations", "identify_operations"]

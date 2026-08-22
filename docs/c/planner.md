@@ -29,6 +29,11 @@ limit, and initial placement. Results contain the selected indexed schedule,
 every candidate status, exact repair counters, component work counters,
 timings, and failure boundary.
 
+`ShadowSpillAdmissionOperations` is parallel arrays, one entry per operation,
+plus the alias each lease owns. Every array is caller-owned and sized from
+`shadowspill_admission_operation_bounds`, so the builder allocates nothing the
+caller must release. An operation's sequence is its index.
+
 `ShadowSpillPlacementProblem` is independent of the rest of the data model:
 it is five parallel arrays describing one lease each — size, alignment,
 predicted lifetime, and lease id — and `ShadowSpillPlacementResult` receives
@@ -51,6 +56,15 @@ array is caller-owned, so placement allocates nothing the caller must release.
   against the exact admission topology.
 - `shadowspill_pressurefit_context_result_destroy()` releases arrays owned by
   a context result.
+- `shadowspill_admission_operation_bounds()` reports how many operations and
+  leases a schedule will produce, so the caller can size the arrays the
+  builder fills.
+- `shadowspill_build_admission_operations()` derives the pool operations a
+  schedule implies, with the provenance a fixed layout needs: where each
+  operation sits, why each lease exists, and which allocation step produced
+  it. It also reports the bytes each transfer lane must move, which bound the
+  schedule's makespan without simulating. The rules it follows are specified
+  in [from a resolved program to leases](../architecture/admission-leases.md).
 - `shadowspill_place_lifetimes()` assigns each lease a fixed offset within
   one execution-pool slice and reports the bytes required. Leases are placed
   largest first, longest-lived first among equals, and each takes the lowest
