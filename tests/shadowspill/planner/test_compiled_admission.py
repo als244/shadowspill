@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -33,7 +34,6 @@ from shadowspill.planner._admission import (
 )
 from shadowspill.planner._capi import planner_library_path
 from shadowspill.pytorch.planning.admission import (
-    replay_admission,
     simulation_admission_from_replay,
 )
 from shadowspill.simulator import SimulationConfig

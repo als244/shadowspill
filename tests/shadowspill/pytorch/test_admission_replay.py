@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
     MemoryAction,
@@ -26,7 +27,6 @@ from shadowspill.planner import (
 from shadowspill.pytorch.planning.admission.admission_replay import (
     AdmissionReplayPurpose,
     OwnershipTransitionKind,
-    replay_admission,
 )
 from shadowspill.runtime import AdmissionReplayOperationKind
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE

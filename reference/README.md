@@ -7,9 +7,10 @@ and differential testing. Production imports never select these modules.
   simulator.
 - `python/pressurefit/` contains the readable residency, action-emission, and
   PressureFit algorithms plus narrow compiled-component differential helpers.
-- `python/admission/` is the readable oracle for physical admission: fixed
-  offset placement today, and the schedule-to-lease replay once that moves to
-  the planner library.
+- `python/admission/` holds the readable oracles for physical admission: the
+  fixed-offset placement and the schedule-to-lease replay, both of which the
+  planner library now implements. They define what the compiled versions must
+  reproduce and are the baselines their speedups are measured against.
 
 The wheel includes only `src/shadowspill`. Missing or ABI-incompatible compiled
 planner and simulator libraries therefore fail immediately instead of changing

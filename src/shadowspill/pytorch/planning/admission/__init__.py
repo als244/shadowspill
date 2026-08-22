@@ -7,7 +7,6 @@ from .admission_replay import (
     CausalAdmissionDependency,
     OwnershipTransition,
     OwnershipTransitionKind,
-    replay_admission,
 )
 from .bindings import TaskOutputBinding, build_admission_topology
 from .layout import (
@@ -65,7 +64,6 @@ __all__ = [
     "physical_admission",
     "project_runtime_fixed_layout",
     "reconcile_spill_pool",
-    "replay_admission",
     "resolve_fixed_layout_selection",
     "seal_physical_budget",
     "simulation_admission_from_replay",
