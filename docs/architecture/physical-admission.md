@@ -46,6 +46,29 @@ It returns `FixedLayoutAdmission`, which contains:
 - a new `SimulationResult` that includes the added dependencies;
 - stable digests tying the layout to its Program, schedule, and topology.
 
+### Measuring and certifying are separate steps
+
+Admission answers two questions of very different cost, and the entry points
+above compose two that can also be called on their own.
+
+`measure_fixed_layout` replays the schedule into leases, gives each a
+lifetime, and places them. It returns a `FixedLayoutMeasurement` carrying
+`required_bytes` and the pool capacity, and it never rejects: a layout larger
+than the pool is reported through `fits`, `slack_bytes` and
+`shortfall_bytes`, so a caller searching for a schedule that fits can act on
+how far it missed by instead of catching an exception to find out.
+
+`certify_fixed_layout` takes that measurement and completes it: it recovers
+the reuse dependencies, assembles the certificate, and re-simulates under
+those dependencies. This is the half that produces what the runtime enforces,
+and it costs about as much again as the measurement — measured at 106 ms
+against 82 ms on one qwen point.
+
+A caller that only wants an admitted layout or an error calls
+`build_fixed_layout_admission`, which is exactly the composition of the two.
+A caller searching over schedules measures many and certifies only what it
+keeps.
+
 The admitted layout is pointer-free. Runtime materialization translates its
 semantic IDs to contiguous task, action, and object indices only after the execution
 plan has been resolved.
@@ -204,6 +227,13 @@ and
 \[
 0 \le o_l, \qquad o_l+s_l \le L.
 \]
+
+`shadowspill_place_lifetimes` in the planner library solves this, placing
+larger and longer-lived leases first and giving each the lowest aligned offset
+that clears every lease it overlaps in time. Only the union of the addresses
+already in use decides that offset, never the individual leases, so the index
+it walks stores merged address ranges: a packed layout's union collapses to
+10-17 disjoint ranges where 200-430 leases overlap.
 
 If two predicted lifetimes overlap, their byte ranges must be disjoint:
 
