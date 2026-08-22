@@ -29,10 +29,21 @@ limit, and initial placement. Results contain the selected indexed schedule,
 every candidate status, exact repair counters, component work counters,
 timings, and failure boundary.
 
-`ShadowSpillAdmissionOperations` is parallel arrays, one entry per operation,
-plus the alias each lease owns. Every array is caller-owned and sized from
+`ShadowSpillAdmissionOperations` is parallel arrays in two families. Arrays
+indexed by operation hold `operation_capacity` entries — an operation's
+sequence is its index — and carry its lease, the completion a reuse of that
+lease's address must await, the bytes and alignment it reserves, its kind, why
+the lease exists, where in the step it sits, which task or action that
+boundary names, and the allocation step behind it when it is a task
+allocation. Arrays indexed by lease hold `lease_capacity` entries and carry
+the alias a lease owns plus the operations that create and retire it, so a
+reader can go straight to a lease instead of scanning: several operations
+touch each lease and most touch none that matters.
+
+Every array is caller-owned and sized from
 `shadowspill_admission_operation_bounds`, so the builder allocates nothing the
-caller must release. An operation's sequence is its index.
+caller must release. The result also reports how many operations, leases and
+dependencies were produced, and the bytes each transfer lane must move.
 
 `ShadowSpillPlacementProblem` is independent of the rest of the data model:
 it is five parallel arrays describing one lease each — size, alignment,
@@ -58,7 +69,8 @@ array is caller-owned, so placement allocates nothing the caller must release.
   a context result.
 - `shadowspill_admission_operation_bounds()` reports how many operations and
   leases a schedule will produce, so the caller can size the arrays the
-  builder fills.
+  builder fills. It is pure arithmetic over the topology and schedule and
+  allocates nothing.
 - `shadowspill_build_admission_operations()` derives the pool operations a
   schedule implies, with the provenance a fixed layout needs: where each
   operation sits, why each lease exists, and which allocation step produced
@@ -70,7 +82,9 @@ array is caller-owned, so placement allocates nothing the caller must release.
   largest first, longest-lived first among equals, and each takes the lowest
   aligned offset clearing every lease it overlaps in time; lifetimes are
   half-open, so leases that merely touch may share an offset. The result is a
-  function of the lease set alone, independent of input order.
+  function of the lease set alone, independent of input order. The assignment
+  and the structure behind it are specified in
+  [fixed-offset placement](../architecture/fixed-placement.md).
 - `shadowspill_planner_abi_version()` and
   `shadowspill_planner_status_string()` support loading and diagnostics.
 

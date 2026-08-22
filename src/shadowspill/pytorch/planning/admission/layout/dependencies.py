@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-from shadowspill.runtime import AdmissionReplayOperationKind
+from dataclasses import dataclass
+
+from shadowspill.planner._operations import AdmissionOperations
 from shadowspill.simulator import MemoryReuseDependency
 
-from ..admission_replay import (
-    AdmissionReplayPurpose,
-    AdmissionReplayStep,
-)
+from ..admission_replay import AdmissionReplayPurpose
+from ..setup import AdmissionSetup
+from .lifetimes import _ACTION_BOUNDARIES, _INITIAL_BOUNDARY, _PURPOSES
 from .model import FixedLayoutPlacement, FixedLayoutReuse
+
+
+@dataclass(frozen=True, slots=True)
+class _Retirement:
+    """What a reuse of one lease's address must wait for."""
+
+    dependency_id: int | None
+    purpose: AdmissionReplayPurpose
+    task_id: str | None
+    action_index: int | None
+
 
 _EMPTY = -1
 _MIXED = -2
@@ -100,18 +112,37 @@ class _LatestOwnerIndex:
 
 
 def recover_reuse_dependencies(
-    operations: tuple[AdmissionReplayStep, ...],
+    operations: AdmissionOperations,
+    setup: AdmissionSetup,
     placements: tuple[FixedLayoutPlacement, ...],
 ) -> tuple[FixedLayoutReuse, ...]:
-    """Recover timing-independent predecessors from causal operation order."""
+    """Recover timing-independent predecessors from causal operation order.
 
-    retirement_by_lease: dict[int, AdmissionReplayStep] = {}
-    for step in operations:
-        if step.operation.kind in {
-            AdmissionReplayOperationKind.BEGIN_RETIREMENT,
-            AdmissionReplayOperationKind.RELEASE,
-        }:
-            retirement_by_lease.setdefault(step.operation.lease_id, step)
+    A predecessor's retirement is resolved only when its address is actually
+    reused, which is a small fraction of the leases.
+    """
+
+    def retirement(lease: int) -> _Retirement | None:
+        index = operations.lease_retires[lease]
+        if index is None:
+            return None
+        boundary = operations.boundaries[index]
+        position = operations.indices[index]
+        if boundary in _ACTION_BOUNDARIES:
+            task_id = setup.task_ids[setup.action_trigger_tasks[position]]
+            action_index: int | None = position
+        elif boundary == _INITIAL_BOUNDARY:
+            task_id = None
+            action_index = None
+        else:
+            task_id = setup.task_ids[position]
+            action_index = None
+        return _Retirement(
+            dependency_id=operations.dependency_ids[index],
+            purpose=_PURPOSES[operations.purposes[index]],
+            task_id=task_id,
+            action_index=action_index,
+        )
 
     by_lease = {item.lease_id: item for item in placements}
     latest = _LatestOwnerIndex(placements)
@@ -133,23 +164,23 @@ def recover_reuse_dependencies(
                     f"predecessor={predecessor_id}, "
                     f"successor={successor.lease_id}"
                 )
-            retirement = retirement_by_lease.get(predecessor_id)
-            if retirement is None or retirement.operation.dependency_id is None:
+            retired = retirement(predecessor_id)
+            if retired is None or retired.dependency_id is None:
                 raise ValueError(
                     f"fixed layout reuses lease {predecessor_id} without a "
                     "completion dependency"
                 )
-            if retirement.task_id is None:
+            if retired.task_id is None:
                 raise ValueError("fixed-layout predecessor lacks a task")
             if successor.task_id is None and successor.action_index is None:
                 raise ValueError("fixed-layout successor lacks a consumer")
             dependencies.add(
                 FixedLayoutReuse(
-                    dependency_id=retirement.operation.dependency_id,
+                    dependency_id=retired.dependency_id,
                     predecessor_lease_id=predecessor_id,
-                    predecessor_purpose=retirement.purpose,
-                    predecessor_task_id=retirement.task_id,
-                    predecessor_action_index=retirement.action_index,
+                    predecessor_purpose=retired.purpose,
+                    predecessor_task_id=retired.task_id,
+                    predecessor_action_index=retired.action_index,
                     successor_lease_id=successor.lease_id,
                     successor_task_id=successor.task_id,
                     successor_action_index=successor.action_index,

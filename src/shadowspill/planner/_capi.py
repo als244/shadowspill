@@ -149,6 +149,8 @@ class CAdmissionOperations(ctypes.Structure):
         ("allocation_offsets", ctypes.POINTER(ctypes.c_uint32)),
         ("operation_capacity", ctypes.c_uint64),
         ("lease_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("lease_starts", ctypes.POINTER(ctypes.c_uint64)),
+        ("lease_retires", ctypes.POINTER(ctypes.c_uint64)),
         ("lease_capacity", ctypes.c_uint64),
         ("operation_count", ctypes.c_uint64),
         ("lease_count", ctypes.c_uint64),

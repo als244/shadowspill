@@ -60,6 +60,8 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
     uint64_t *task_allocation_leases;
     uint8_t *task_allocation_live;
     uint32_t *lease_aliases;
+    uint64_t *lease_start_operations;
+    uint64_t *lease_retire_operations;
     uint64_t *repair_candidate_starts;
     uint64_t *repair_blocked_prefix;
     uint32_t *repair_unremovable_prefix;
@@ -121,6 +123,12 @@ typedef struct ScriptState {
 } ScriptState;
 
 /* topology.c */
+int shadowspill_admission_counts(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillIndexedSchedule *schedule,
+    uint64_t *lease_count,
+    uint64_t *operation_count
+);
 int shadowspill_admission_topology_valid(
     const ShadowSpillPressureFitContext *context
 );

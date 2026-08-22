@@ -19,6 +19,7 @@ extern "C" {
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 #define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX
+#define SHADOWSPILL_ADMISSION_NO_OPERATION UINT64_MAX
 
 typedef enum ShadowSpillPlannerStatus {
     SHADOWSPILL_PLANNER_OK = 0,
@@ -436,9 +437,16 @@ typedef struct ShadowSpillAdmissionOperations {
     uint32_t *allocation_offsets;
     uint64_t operation_capacity;
 
-    /* Caller-owned, `lease_capacity` entries: the alias each lease carries,
-     * or SHADOWSPILL_PLANNER_NO_INDEX for anonymous task workspace. */
+    /* Caller-owned, `lease_capacity` entries each. `lease_aliases` is the
+     * alias a lease carries, or SHADOWSPILL_PLANNER_NO_INDEX for anonymous
+     * task workspace. The other two are the operations that create and retire
+     * it, so a reader can go straight to a lease without scanning: several
+     * operations touch each lease and most touch none that matters.
+     * `lease_retires` is SHADOWSPILL_ADMISSION_NO_OPERATION for a lease that
+     * outlives the step. */
     uint32_t *lease_aliases;
+    uint64_t *lease_starts;
+    uint64_t *lease_retires;
     uint64_t lease_capacity;
 
     /* Filled by the builder. */

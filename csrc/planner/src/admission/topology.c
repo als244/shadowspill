@@ -170,33 +170,66 @@ static void free_action_buffers(
     workspace->action_capacity = 0U;
 }
 
-int shadowspill_admission_reserve_buffers(
+/* How many leases and operations a schedule can produce. Pure arithmetic:
+ * callers that only want the sizes must not pay for the buffers. */
+static int admission_counts(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillIndexedSchedule *schedule,
-    ShadowSpillCandidateAdmissionWorkspace *workspace
+    uint64_t *lease_count,
+    uint64_t *operation_count,
+    uint64_t *dependency_count
 ) {
-    uint64_t lease_count = invariant_lease_count(context);
-    uint64_t operation_count = invariant_operation_count(context);
-    uint64_t dependency_count = context->simulation->task_count;
+    *lease_count = invariant_lease_count(context);
+    *operation_count = invariant_operation_count(context);
+    *dependency_count = context->simulation->task_count;
     for (uint32_t action = 0U; action < schedule->action_count; ++action) {
         const uint8_t kind = schedule->action_kinds[action];
         if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
-            if (checked_add(lease_count, 1U, &lease_count) != 0 ||
-                checked_add(operation_count, 2U, &operation_count) != 0) {
+            if (checked_add(*lease_count, 1U, lease_count) != 0 ||
+                checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;
             }
         } else if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
-            if (checked_add(dependency_count, 1U, &dependency_count) != 0 ||
-                checked_add(operation_count, 2U, &operation_count) != 0) {
+            if (checked_add(*dependency_count, 1U, dependency_count) != 0 ||
+                checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;
             }
         } else if (kind == SHADOWSPILL_MEMORY_RELEASE) {
-            if (checked_add(operation_count, 2U, &operation_count) != 0) {
+            if (checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;
             }
         } else {
             return -1;
         }
+    }
+    return 0;
+}
+
+int shadowspill_admission_counts(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillIndexedSchedule *schedule,
+    uint64_t *lease_count,
+    uint64_t *operation_count
+) {
+    uint64_t dependency_count = 0U;
+    return admission_counts(
+        context, schedule, lease_count, operation_count, &dependency_count
+    );
+}
+
+int shadowspill_admission_reserve_buffers(
+    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillCandidateAdmissionWorkspace *workspace
+) {
+    uint64_t lease_count = 0U;
+    uint64_t operation_count = 0U;
+    uint64_t dependency_count = 0U;
+    if (admission_counts(
+            context, schedule, &lease_count, &operation_count,
+            &dependency_count
+        ) != 0) {
+        return -1;
     }
     if (lease_count > SIZE_MAX || operation_count > SIZE_MAX ||
         dependency_count > SIZE_MAX || lease_count > (SIZE_MAX - 2U) / 2U) {
@@ -253,6 +286,14 @@ int shadowspill_admission_reserve_buffers(
             (lease_count == 0U ? 1U : (size_t)lease_count) *
                 sizeof(*lease_aliases)
         );
+        uint64_t *lease_start_operations = malloc(
+            (lease_count == 0U ? 1U : (size_t)lease_count) *
+                sizeof(*lease_start_operations)
+        );
+        uint64_t *lease_retire_operations = malloc(
+            (lease_count == 0U ? 1U : (size_t)lease_count) *
+                sizeof(*lease_retire_operations)
+        );
         uint64_t *repair_candidate_starts = malloc(
             ((size_t)lease_count * 2U + 2U) *
                 sizeof(*repair_candidate_starts)
@@ -279,7 +320,9 @@ int shadowspill_admission_reserve_buffers(
         if (operations == NULL || decisions == NULL || annotations == NULL ||
             purposes == NULL || allocation_offsets == NULL ||
             dependencies == NULL || live_leases == NULL ||
-            lease_aliases == NULL || repair_candidate_starts == NULL ||
+            lease_aliases == NULL || lease_start_operations == NULL ||
+            lease_retire_operations == NULL ||
+            repair_candidate_starts == NULL ||
             repair_blocked_prefix == NULL ||
             repair_unremovable_prefix == NULL || pending == NULL ||
             predecessors == NULL || predecessor_tasks == NULL ||
@@ -294,6 +337,8 @@ int shadowspill_admission_reserve_buffers(
             free(dependencies);
             free(live_leases);
             free(lease_aliases);
+            free(lease_start_operations);
+            free(lease_retire_operations);
             free(repair_candidate_starts);
             free(repair_blocked_prefix);
             free(repair_unremovable_prefix);
@@ -311,6 +356,8 @@ int shadowspill_admission_reserve_buffers(
         free(workspace->dependencies);
         free(workspace->live_leases);
         free(workspace->lease_aliases);
+        free(workspace->lease_start_operations);
+        free(workspace->lease_retire_operations);
         free(workspace->repair_candidate_starts);
         free(workspace->repair_blocked_prefix);
         free(workspace->repair_unremovable_prefix);
@@ -326,6 +373,8 @@ int shadowspill_admission_reserve_buffers(
         workspace->dependencies = dependencies;
         workspace->live_leases = live_leases;
         workspace->lease_aliases = lease_aliases;
+        workspace->lease_start_operations = lease_start_operations;
+        workspace->lease_retire_operations = lease_retire_operations;
         workspace->repair_candidate_starts = repair_candidate_starts;
         workspace->repair_blocked_prefix = repair_blocked_prefix;
         workspace->repair_unremovable_prefix = repair_unremovable_prefix;
@@ -434,6 +483,8 @@ void shadowspill_candidate_admission_workspace_destroy(
     free(workspace->task_allocation_leases);
     free(workspace->task_allocation_live);
     free(workspace->lease_aliases);
+    free(workspace->lease_start_operations);
+    free(workspace->lease_retire_operations);
     free(workspace->repair_candidate_starts);
     free(workspace->repair_blocked_prefix);
     free(workspace->repair_unremovable_prefix);
