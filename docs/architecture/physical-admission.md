@@ -202,6 +202,12 @@ triggered it. `csrc/planner/src/admission/operations.c` derives the operations;
 
 ### The script
 
+How a schedule becomes leases - what is fixed before the walk starts, where
+each operation sits, why each lease exists, and the two transitions that
+happen without emitting an operation - is specified in
+[from a resolved program to leases](admission-leases.md). The summary below is
+the shape of the walk.
+
 The admission script applies the complete selected step in causal order:
 
 ```text
