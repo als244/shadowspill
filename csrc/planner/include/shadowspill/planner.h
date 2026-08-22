@@ -408,6 +408,63 @@ shadowspill_pressurefit_context_result_destroy(
     ShadowSpillPressureFitContextResult *result
 );
 
+/* The pool operations a schedule implies, with the provenance a fixed layout
+ * needs: why each lease exists, and which task or action it belongs to.
+ *
+ * `shadowspill_admission_operation_bounds` reports how many entries the arrays
+ * below must hold; `shadowspill_build_admission_operations` fills them. All
+ * arrays are caller-owned, so the builder allocates nothing the caller must
+ * release.
+ */
+typedef struct ShadowSpillAdmissionOperations {
+    /* Caller-owned, `operation_capacity` entries each, indexed alike. An
+     * operation's sequence is its index. */
+    uint64_t *lease_ids;
+    uint64_t *bytes;
+    uint64_t *alignments;
+    uint8_t *kinds;       /* ShadowSpillAdmissionReplayOperationKind */
+    uint8_t *purposes;    /* why the lease exists */
+    uint8_t *boundaries;  /* where in the step it sits */
+    uint32_t *indices;    /* which task or action, per the boundary */
+    /* For a task allocation, its offset into the topology's flattened
+     * allocation arrays; SHADOWSPILL_PLANNER_NO_INDEX otherwise. This is what
+     * ties a lease back to the allocation step that produced it. */
+    uint32_t *allocation_offsets;
+    uint64_t operation_capacity;
+
+    /* Caller-owned, `lease_capacity` entries: the alias each lease carries,
+     * or SHADOWSPILL_PLANNER_NO_INDEX for anonymous task workspace. */
+    uint32_t *lease_aliases;
+    uint64_t lease_capacity;
+
+    /* Filled by the builder. */
+    uint64_t operation_count;
+    uint64_t lease_count;
+    uint64_t dependency_count;
+
+    /* Bytes each transfer lane must move. A schedule cannot finish sooner
+     * than its busiest lane, so these bound its makespan without simulating. */
+    uint64_t fetch_bytes;
+    uint64_t evict_bytes;
+} ShadowSpillAdmissionOperations;
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_admission_operation_bounds(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    uint64_t *operation_capacity,
+    uint64_t *lease_capacity
+);
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+shadowspill_build_admission_operations(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillAdmissionOperations *result
+);
+
 /* Fixed-offset placement of lease lifetimes within one execution-pool slice.
  *
  * Every array below holds `lifetime_count` entries indexed alike. Lifetimes

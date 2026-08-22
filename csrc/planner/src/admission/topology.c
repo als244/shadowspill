@@ -232,6 +232,14 @@ int shadowspill_admission_reserve_buffers(
             operation_count == 0U ? 1U : (size_t)operation_count,
             sizeof(*annotations)
         );
+        uint8_t *purposes = calloc(
+            operation_count == 0U ? 1U : (size_t)operation_count,
+            sizeof(*purposes)
+        );
+        uint32_t *allocation_offsets = malloc(
+            (operation_count == 0U ? 1U : (size_t)operation_count) *
+                sizeof(*allocation_offsets)
+        );
         ShadowSpillAdmissionReuseDependency *dependencies = calloc(
             reuse_dependency_count == 0U
                 ? 1U : (size_t)reuse_dependency_count,
@@ -269,6 +277,7 @@ int shadowspill_admission_reserve_buffers(
         );
         ShadowSpillAdmissionReplayWorkspace *replay = NULL;
         if (operations == NULL || decisions == NULL || annotations == NULL ||
+            purposes == NULL || allocation_offsets == NULL ||
             dependencies == NULL || live_leases == NULL ||
             lease_aliases == NULL || repair_candidate_starts == NULL ||
             repair_blocked_prefix == NULL ||
@@ -280,6 +289,8 @@ int shadowspill_admission_reserve_buffers(
             free(operations);
             free(decisions);
             free(annotations);
+            free(purposes);
+            free(allocation_offsets);
             free(dependencies);
             free(live_leases);
             free(lease_aliases);
@@ -295,6 +306,8 @@ int shadowspill_admission_reserve_buffers(
         free(workspace->operations);
         free(workspace->decisions);
         free(workspace->annotations);
+        free(workspace->purposes);
+        free(workspace->allocation_offsets);
         free(workspace->dependencies);
         free(workspace->live_leases);
         free(workspace->lease_aliases);
@@ -308,6 +321,8 @@ int shadowspill_admission_reserve_buffers(
         workspace->operations = operations;
         workspace->decisions = decisions;
         workspace->annotations = annotations;
+        workspace->purposes = purposes;
+        workspace->allocation_offsets = allocation_offsets;
         workspace->dependencies = dependencies;
         workspace->live_leases = live_leases;
         workspace->lease_aliases = lease_aliases;
@@ -412,6 +427,8 @@ void shadowspill_candidate_admission_workspace_destroy(
     free(workspace->dependencies);
     free(workspace->live_leases);
     free(workspace->annotations);
+    free(workspace->purposes);
+    free(workspace->allocation_offsets);
     free(workspace->active_alias_leases);
     free(workspace->new_alias_leases);
     free(workspace->task_allocation_leases);

@@ -136,6 +136,27 @@ class CAdmissionTopology(ctypes.Structure):
     ]
 
 
+class CAdmissionOperations(ctypes.Structure):
+    _fields_ = [
+        ("lease_ids", ctypes.POINTER(ctypes.c_uint64)),
+        ("bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("alignments", ctypes.POINTER(ctypes.c_uint64)),
+        ("kinds", ctypes.POINTER(ctypes.c_uint8)),
+        ("purposes", ctypes.POINTER(ctypes.c_uint8)),
+        ("boundaries", ctypes.POINTER(ctypes.c_uint8)),
+        ("indices", ctypes.POINTER(ctypes.c_uint32)),
+        ("allocation_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("operation_capacity", ctypes.c_uint64),
+        ("lease_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("lease_capacity", ctypes.c_uint64),
+        ("operation_count", ctypes.c_uint64),
+        ("lease_count", ctypes.c_uint64),
+        ("dependency_count", ctypes.c_uint64),
+        ("fetch_bytes", ctypes.c_uint64),
+        ("evict_bytes", ctypes.c_uint64),
+    ]
+
+
 class CPlacementProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -360,6 +381,21 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitContextResult),
     ]
     library.shadowspill_pressurefit_context_result_destroy.restype = None
+    library.shadowspill_admission_operation_bounds.argtypes = [
+        ctypes.POINTER(CProgram),
+        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CIndexedSchedule),
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    library.shadowspill_admission_operation_bounds.restype = ctypes.c_uint32
+    library.shadowspill_build_admission_operations.argtypes = [
+        ctypes.POINTER(CProgram),
+        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CIndexedSchedule),
+        ctypes.POINTER(CAdmissionOperations),
+    ]
+    library.shadowspill_build_admission_operations.restype = ctypes.c_uint32
     library.shadowspill_place_lifetimes.argtypes = [
         ctypes.POINTER(CPlacementProblem),
         ctypes.POINTER(CPlacementResult),
@@ -373,6 +409,7 @@ def load_planner_library() -> ctypes.CDLL:
 __all__ = [
     "ABI_VERSION",
     "NO_INDEX",
+    "CAdmissionOperations",
     "CAdmissionTopology",
     "CCandidateResult",
     "CIndexedSchedule",
