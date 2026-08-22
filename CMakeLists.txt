@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.25)
 project(ShadowSpill VERSION 0.1.0 LANGUAGES C CXX)
 
+# An unnamed build type is no -O at all, and an unoptimized planner is
+# several times slower at exactly the work this project measures. Default to
+# the same type pyproject.toml builds the editable install with; naming one
+# explicitly still wins.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(
+    CMAKE_BUILD_TYPE RelWithDebInfo
+    CACHE STRING "Build type; RelWithDebInfo unless named otherwise" FORCE
+  )
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
