@@ -114,8 +114,11 @@ order they arrive in.
   records tie, the layout depends on the records alone and not on the order
   they were listed in. The assignment and the structure behind it are
   specified in [fixed-offset placement](../architecture/fixed-placement.md).
-- `shadowspill_planner_abi_version()` and
-  `shadowspill_planner_status_string()` support loading and diagnostics.
+`shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
+and diagnostics for this boundary as for every other; see the
+[C API guide](README.md#abi-use). `shadowspill_planner_abi_version()` and
+`shadowspill_planner_status_string()` remain as
+thin aliases of them.
 
 ## Diagnostics
 

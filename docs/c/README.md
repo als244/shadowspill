@@ -1,12 +1,13 @@
 # C API guide
 
-ShadowSpill's compiled components expose narrow C ABIs with caller-owned input
-and output buffers. Public headers are authoritative for exact layouts,
-constants, and signatures.
+The simulator, the planner and the runtime ship as one library,
+`libshadowspill`. They expose narrow C ABIs with caller-owned input and output
+buffers; the public headers are authoritative for exact layouts, constants and
+signatures.
 
-The C pages remain flat because each one maps directly to a compiled component
-or backend boundary; the table below is both the component inventory and the
-reference index.
+The C pages remain flat because each one maps to a boundary a caller uses
+independently, whether or not it is a separate library; the table below is both
+the inventory and the reference index.
 
 | Component | Header | Reference |
 |---|---|---|
@@ -20,22 +21,29 @@ reference index.
 
 ## ABI use
 
-Compile against the ABI macro from the installed header and compare it with
-the component's `*_abi_version()` function at load time. Do not hardcode a
-numeric ABI value outside the component that owns it.
+Everything in `libshadowspill` is built from one tree and versions as one
+thing: `SHADOWSPILL_ABI_VERSION`, in `<shadowspill/shadowspill.h>`. Compare it
+with `shadowspill_abi_version()` at load time, before passing any struct.
 
 ```c
-#include <shadowspill/simulator.h>
+#include <shadowspill/shadowspill.h>
 
-if (shadowspill_simulator_abi_version() !=
-    SHADOWSPILL_SIMULATOR_ABI_VERSION) {
-    /* Reject the loaded component before passing any structs. */
+if (shadowspill_abi_version() != SHADOWSPILL_ABI_VERSION) {
+    /* Reject the loaded library before passing any structs. */
 }
 ```
 
-Every public function returns a component status unless its signature is
-explicitly `void`. Use the corresponding `*_status_string()` function for a
-stable human-readable category and retain structured result fields for
+What versions separately is what is compiled separately: the three backend
+contracts in `<shadowspill/backend.h>`, the profiler struct a backend supplies,
+and the PyTorch adapter. Check those against the plugin you loaded. Do not
+hardcode a numeric ABI value.
+
+Every public function returns a `ShadowSpillStatus` unless its signature is
+explicitly `void`. One vocabulary covers the whole library: the three codes
+every component agrees on sit at 0-2, and each component owns a band after
+that, so a status decodes to exactly one meaning without knowing which
+component produced it. `shadowspill_status_string()` maps any of them to a
+stable human-readable category; retain structured result fields for
 diagnostics.
 
 ## Ownership rules
@@ -51,8 +59,8 @@ diagnostics.
 
 ## Build boundaries
 
-The simulator, planner, neutral runtime, and mock backend build without
-PyTorch or a device-provider SDK. Provider code is confined to runtime backend
-directories and the PyTorch adapter. See the
+`libshadowspill` and the mock backend build without PyTorch or a
+device-provider SDK. Provider code is confined to `csrc/backends/` and the
+PyTorch adapter, which stay separate libraries for that reason. See the
 [compiled component guide](../../csrc/README.md) for source layout and build
 dependencies.

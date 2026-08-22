@@ -128,11 +128,9 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
 from shadowspill.simulator._capi import load_simulator_library, simulator_library_path
 
 libraries = (
-    "libshadowspill_simulator.so",
-    "libshadowspill_runtime.so",
+    "libshadowspill.so",
     "libshadowspill_backend_mock.so",
     "libshadowspill_backend_cuda.so",
-    "libshadowspill_planner.so",
     "libshadowspill_pytorch.so",
 )
 missing = [filename for filename in libraries if resolve_library(filename) is None]
