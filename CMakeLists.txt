@@ -29,11 +29,10 @@ target_compile_options(
     $<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>:-Wall;-Wextra;-Werror;-Wpedantic>
 )
 
-# The dependency order is simulator/runtime -> planner -> PyTorch adapter.
-add_subdirectory(csrc/simulator)
-add_subdirectory(csrc/runtime)
-add_subdirectory(csrc/planner)
-add_subdirectory(csrc/pytorch_adapter)
+# One library for planning and execution, plus the pluggable backends and
+# the PyTorch adapter, which stay separate for the reasons csrc/CMakeLists.txt
+# gives.
+add_subdirectory(csrc)
 
 if(BUILD_TESTING)
   add_subdirectory(tests/csrc)

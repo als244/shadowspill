@@ -134,7 +134,7 @@ class CResult(ctypes.Structure):
 
 
 def simulator_library_path() -> Path | None:
-    return resolve_library("libshadowspill_simulator.so")
+    return resolve_library("libshadowspill.so")
 
 
 @cache
@@ -142,7 +142,7 @@ def load_simulator_library() -> ctypes.CDLL:
     path = simulator_library_path()
     if path is None:
         raise RuntimeError(
-            "libshadowspill_simulator.so was not found; install ShadowSpill or "
+            "libshadowspill.so was not found; install ShadowSpill or "
             "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))

@@ -375,17 +375,17 @@ class CScheduleAdmissionResult(ctypes.Structure):
 def planner_library_path() -> Path | None:
     """Return the selected planner library without loading it."""
 
-    return resolve_library("libshadowspill_planner.so")
+    return resolve_library("libshadowspill.so")
 
 
 @cache
 def load_planner_library() -> ctypes.CDLL:
-    """Load and validate ``libshadowspill_planner.so`` exactly once."""
+    """Load and validate ``libshadowspill.so`` exactly once."""
 
     path = planner_library_path()
     if path is None:
         raise RuntimeError(
-            "libshadowspill_planner.so was not found; install ShadowSpill or "
+            "libshadowspill.so was not found; install ShadowSpill or "
             "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))
