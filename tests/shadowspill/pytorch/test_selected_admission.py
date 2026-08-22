@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
     MutationSpec,
@@ -18,7 +19,6 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
     pressurefit,
 )
-from shadowspill.pytorch.planning.admission.admission_replay import replay_admission
 from shadowspill.pytorch.planning.admission.bindings import (
     TaskOutputBinding,
     build_admission_topology,

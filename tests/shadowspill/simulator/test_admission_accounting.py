@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -22,7 +23,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import AdmissionTopology, TaskAdmissionSpec
 from shadowspill.pytorch.planning.admission import (
-    replay_admission,
     simulation_admission_from_replay,
 )
 from shadowspill.simulator import (
