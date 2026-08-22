@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 
+from shadowspill._status import Status
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import Runtime
 
@@ -31,7 +32,7 @@ def main() -> int:
         torch.empty((1024,), device="cuda")
     except RuntimeError as error:
         message = str(error)
-        if "status: 9 (runtime is closed)" not in message:
+        if f"status: {int(Status.CLOSED)} (runtime is closed)" not in message:
             raise AssertionError(message) from error
         if "canonical_task:" in message:
             raise AssertionError(

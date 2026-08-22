@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 
+from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import (
     TaskAllocationContractStep,
     TaskDescription,
@@ -20,7 +21,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 TASK_ID = 17
-CONTRACT_MISMATCH = 11
+CONTRACT_MISMATCH = Status.TASK_ALLOCATION_CONTRACT_MISMATCH
 
 
 def _admit_task(library: object, description: TaskDescription) -> int:
@@ -96,7 +97,7 @@ def main() -> int:
         message = str(cause)
         for expected_text in (
             "task allocation contract mismatch",
-            "status: 11 (task allocation contract mismatch)",
+            f"status: {int(CONTRACT_MISMATCH)} (task allocation contract mismatch)",
             "reason: TASK_ALLOCATION_CONTRACT_MISMATCH",
             "execution_task: execution_000017",
             "semantic_task: canary.stage_0000.forward",

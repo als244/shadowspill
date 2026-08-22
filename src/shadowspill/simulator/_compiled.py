@@ -6,6 +6,7 @@ import ctypes
 from array import array
 from dataclasses import dataclass
 
+from shadowspill._status import Status
 from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
@@ -637,7 +638,12 @@ def _raise_error(
         alias_group_ids=(() if alias is None else (alias,)),
         location=(
             None
-            if int(result.error_device) == NO_INDEX and status not in (4, 8, 14)
+            if int(result.error_device) == NO_INDEX and status
+            not in (
+                Status.INITIAL_HOST_CAPACITY,
+                Status.OFFLOAD_HOST_CAPACITY,
+                Status.FINAL_RESIDENCY,
+            )
             else (
                 "host"
                 if int(result.error_location) == 1

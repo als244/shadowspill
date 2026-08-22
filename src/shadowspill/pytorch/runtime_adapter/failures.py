@@ -6,11 +6,32 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
+from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 
 _NO_ID = (1 << 64) - 1
-_OUT_OF_MEMORY = 3
-_NO_PROGRESS = 4
+_OUT_OF_MEMORY = Status.OUT_OF_MEMORY
+_NO_PROGRESS = Status.NO_PROGRESS
+_TASK_ALLOCATION_ENVELOPE_EXCEEDED = Status.TASK_ALLOCATION_ENVELOPE_EXCEEDED
+_TASK_ALLOCATION_CONTRACT_MISMATCH = Status.TASK_ALLOCATION_CONTRACT_MISMATCH
+_STATUS_NAMES: dict[int, str] = {
+    Status.OK: "ok",
+    Status.INVALID_ARGUMENT: "invalid_argument",
+    Status.INTERNAL_FAILURE: "internal_failure",
+    Status.OUT_OF_MEMORY: "out_of_memory",
+    Status.NO_PROGRESS: "no_progress",
+    Status.INVALID_STATE: "invalid_state",
+    Status.PLAN_VIOLATION: "plan_violation",
+    Status.BACKEND_FAILURE: "backend_failure",
+    Status.WORKER_FAILURE: "worker_failure",
+    Status.CLOSED: "closed",
+    Status.TASK_ALLOCATION_ENVELOPE_EXCEEDED: (
+        "task_allocation_envelope_exceeded"
+    ),
+    Status.TASK_ALLOCATION_CONTRACT_MISMATCH: (
+        "task_allocation_contract_mismatch"
+    ),
+}
 
 
 def format_bytes(value: int) -> str:
@@ -29,22 +50,7 @@ def format_bytes(value: int) -> str:
             return f"{scaled:.2f} {unit} ({value} bytes)"
         scaled /= 1024.0
     return f"{scaled * 1024.0:.2f} PiB ({value} bytes)"
-_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10
-_TASK_ALLOCATION_CONTRACT_MISMATCH = 11
-_STATUS_NAMES = {
-    0: "ok",
-    1: "invalid_argument",
-    2: "allocation_failure",
-    _OUT_OF_MEMORY: "out_of_memory",
-    _NO_PROGRESS: "no_progress",
-    5: "invalid_state",
-    6: "plan_violation",
-    7: "backend_failure",
-    8: "worker_failure",
-    9: "closed",
-    _TASK_ALLOCATION_ENVELOPE_EXCEEDED: "task_allocation_envelope_exceeded",
-    _TASK_ALLOCATION_CONTRACT_MISMATCH: "task_allocation_contract_mismatch",
-}
+
 
 _ALLOCATION_OPERATIONS = {0: "allocate", 1: "free", 255: "end_of_task"}
 

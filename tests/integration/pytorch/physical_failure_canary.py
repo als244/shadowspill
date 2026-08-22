@@ -6,12 +6,13 @@ import ctypes
 import sys
 from pathlib import Path
 
+from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 MIB = 1 << 20
-PLAN_VIOLATION = 6
+PLAN_VIOLATION = Status.PLAN_VIOLATION
 
 
 def main() -> int:

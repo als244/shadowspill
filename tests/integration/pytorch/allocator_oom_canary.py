@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 
+from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, TaskDescription
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
@@ -19,7 +20,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 )
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
-NO_PROGRESS = 4
+NO_PROGRESS = Status.NO_PROGRESS
 REQUEST_BYTES = 128 << 20
 
 

@@ -774,17 +774,6 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run(
 const char *shadowspill_admission_replay_status_string(
     ShadowSpillAdmissionReplayStatus status
 ) {
-    switch (status) {
-        case SHADOWSPILL_ADMISSION_REPLAY_OK:
-            return "ok";
-        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT:
-            return "invalid argument";
-        case SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE:
-            return "allocation failure";
-        case SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE:
-            return "infeasible";
-        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS:
-            return "invalid operation sequence";
-    }
-    return "unknown AdmissionReplay status";
+    return shadowspill_status_string(status);
 }
+

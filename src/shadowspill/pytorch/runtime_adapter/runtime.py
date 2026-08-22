@@ -15,6 +15,7 @@ from typing import Any
 import torch
 
 from shadowspill._libraries import resolve_library
+from shadowspill._status import Status
 from shadowspill.memory import (
     DevicePool,
     MemoryPoolConfig,
@@ -47,7 +48,7 @@ from shadowspill.runtime import ObjectRef
 
 _INITIALIZATION_PROVENANCE = 0
 _RECALIBRATION_PROVENANCE = 1
-_RUNTIME_INVALID_STATE = 5
+_RUNTIME_INVALID_STATE = Status.INVALID_STATE
 
 
 class RuntimeConfigurationError(RuntimeError):

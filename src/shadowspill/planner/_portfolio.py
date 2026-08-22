@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
+from shadowspill._status import Status
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -528,13 +529,13 @@ def _evaluate_native_context(
         )
     )
     try:
-        if status == 5:
+        if status == Status.ANALYTIC_INFEASIBLE:
             return None
-        if status == 1:
+        if status == Status.INVALID_ARGUMENT:
             raise CompiledContextPreparationError(
                 "compiled PressureFit context rejected the selected topology"
             )
-        if status not in (0, 3):
+        if status not in (Status.OK, Status.NO_FEASIBLE_CANDIDATE):
             encoded = library.shadowspill_planner_status_string(status)
             message = encoded.decode("utf-8") if encoded else f"planner status {status}"
             raise RuntimeError(message)

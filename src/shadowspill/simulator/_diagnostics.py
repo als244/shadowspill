@@ -2,43 +2,57 @@
 
 from __future__ import annotations
 
-_STATUS_KIND = {
-    1: "invalid-argument",
-    2: "allocation-failure",
-    3: "initial-device-capacity",
-    4: "initial-host-capacity",
-    5: "task-input-deadlock",
-    6: "task-device-capacity",
-    7: "prefetch-device-capacity",
-    8: "offload-host-capacity",
-    9: "transfer-deadlock",
-    10: "invalid-release",
-    11: "release-transfer-conflict",
-    12: "invalid-offload",
-    13: "invalid-prefetch",
-    14: "final-residency",
-    15: "internal-error",
+from shadowspill._status import Status
+
+_STATUS_KIND: dict[int, str] = {
+    Status.INVALID_ARGUMENT: "invalid-argument",
+    Status.INTERNAL_FAILURE: "allocation-failure",
+    Status.INITIAL_DEVICE_CAPACITY: "initial-device-capacity",
+    Status.INITIAL_HOST_CAPACITY: "initial-host-capacity",
+    Status.TASK_INPUT_DEADLOCK: "task-input-deadlock",
+    Status.TASK_DEVICE_CAPACITY: "task-device-capacity",
+    Status.PREFETCH_DEVICE_CAPACITY: "prefetch-device-capacity",
+    Status.OFFLOAD_HOST_CAPACITY: "offload-host-capacity",
+    Status.TRANSFER_DEADLOCK: "transfer-deadlock",
+    Status.INVALID_RELEASE: "invalid-release",
+    Status.RELEASE_TRANSFER_CONFLICT: "release-transfer-conflict",
+    Status.INVALID_OFFLOAD: "invalid-offload",
+    Status.INVALID_PREFETCH: "invalid-prefetch",
+    Status.FINAL_RESIDENCY: "final-residency",
+    Status.SIMULATION_INTERNAL_ERROR: "internal-error",
 }
 
-_STATUS_MESSAGE = {
-    1: "invalid argument",
-    2: "allocation failure",
-    3: "initial device capacity exceeded",
-    4: "initial host capacity exceeded",
-    5: "task input cannot become resident",
-    6: "task output and workspace exceed device capacity",
-    7: "prefetch cannot reserve device capacity",
-    8: "offload cannot reserve host capacity",
-    9: "transfer has no progress source",
-    10: "release has no ready device copy",
-    11: "release conflicts with a transfer",
-    12: "offload has no ready device source",
-    13: "prefetch has no host source or duplicates a device copy",
-    14: "required final residency was not reached",
-    15: "internal simulator invariant failed",
+_STATUS_MESSAGE: dict[int, str] = {
+    Status.INVALID_ARGUMENT: "invalid argument",
+    Status.INTERNAL_FAILURE: "allocation failure",
+    Status.INITIAL_DEVICE_CAPACITY: "initial device capacity exceeded",
+    Status.INITIAL_HOST_CAPACITY: "initial host capacity exceeded",
+    Status.TASK_INPUT_DEADLOCK: "task input cannot become resident",
+    Status.TASK_DEVICE_CAPACITY: (
+        "task output and workspace exceed device capacity"
+    ),
+    Status.PREFETCH_DEVICE_CAPACITY: "prefetch cannot reserve device capacity",
+    Status.OFFLOAD_HOST_CAPACITY: "offload cannot reserve host capacity",
+    Status.TRANSFER_DEADLOCK: "transfer has no progress source",
+    Status.INVALID_RELEASE: "release has no ready device copy",
+    Status.RELEASE_TRANSFER_CONFLICT: "release conflicts with a transfer",
+    Status.INVALID_OFFLOAD: "offload has no ready device source",
+    Status.INVALID_PREFETCH: (
+        "prefetch has no host source or duplicates a device copy"
+    ),
+    Status.FINAL_RESIDENCY: "required final residency was not reached",
+    Status.SIMULATION_INTERNAL_ERROR: "internal simulator invariant failed",
 }
 
-_CAPACITY_STATUSES = frozenset((3, 4, 6, 7, 8))
+_CAPACITY_STATUSES: frozenset[int] = frozenset(
+    (
+        Status.INITIAL_DEVICE_CAPACITY,
+        Status.INITIAL_HOST_CAPACITY,
+        Status.TASK_DEVICE_CAPACITY,
+        Status.PREFETCH_DEVICE_CAPACITY,
+        Status.OFFLOAD_HOST_CAPACITY,
+    )
+)
 
 
 def simulation_status_kind(status: int) -> str:
