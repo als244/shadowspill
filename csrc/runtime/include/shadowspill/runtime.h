@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION 46U
+#define SHADOWSPILL_RUNTIME_ABI_VERSION 47U
 #define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION 2U
 #define SHADOWSPILL_TRACE_ABI_VERSION 1U
 #define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION 2U
@@ -50,6 +50,34 @@ typedef enum ShadowSpillRuntimeStatus {
     SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10,
     SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH = 11,
 } ShadowSpillRuntimeStatus;
+
+/*
+ * Why an operation failed, where the status alone does not say.
+ *
+ * The status is the coarse class a caller acts on; the reason names the
+ * specific condition, so a report can explain itself. Several of these sit
+ * under one status on purpose - a lease that cannot be released and a host
+ * that refuses a record are both internal failures, and a caller treats them
+ * alike, but a reader must be able to tell them apart.
+ */
+typedef enum ShadowSpillFailureReason {
+    SHADOWSPILL_FAILURE_REASON_UNSPECIFIED = 0,
+    /* The process allocator refused memory for an internal record. This is
+     * anonymous memory, and is neither the device pool nor the spill pool. */
+    SHADOWSPILL_FAILURE_REASON_HOST_ALLOCATION_REFUSED = 1,
+    /* A sealed bookkeeping table had no free record. The reserve was sized
+     * too small for what this workload allocates; the pool has bytes. */
+    SHADOWSPILL_FAILURE_REASON_RECORD_CAPACITY_EXHAUSTED = 2,
+    /* A lease could not be released: it was not linked to the pool it names,
+     * was already free, or was mid-handoff. */
+    SHADOWSPILL_FAILURE_REASON_LEASE_RELEASE_REJECTED = 3,
+    /* A successor's claim on a predecessor's range could not be cancelled. */
+    SHADOWSPILL_FAILURE_REASON_RESERVATION_CANCEL_REJECTED = 4,
+    /* Freed bytes could not be returned to the range allocator. */
+    SHADOWSPILL_FAILURE_REASON_RANGE_RETURN_REJECTED = 5,
+    /* No range large enough, and nothing left to release for one. */
+    SHADOWSPILL_FAILURE_REASON_POOL_EXHAUSTED = 6,
+} ShadowSpillFailureReason;
 
 typedef enum ShadowSpillObjectResidency {
     SHADOWSPILL_OBJECT_SPILL_ONLY = 0,
@@ -502,6 +530,8 @@ typedef struct ShadowSpillRuntimeStatistics {
 
 typedef struct ShadowSpillRuntimeFailure {
     uint32_t status;
+    /* ShadowSpillFailureReason; UNSPECIFIED where the status says it all. */
+    uint32_t reason;
     uint32_t pool_id;
     uint64_t task_id;
     uint64_t object_id;
@@ -1078,6 +1108,11 @@ shadowspill_object_location_snapshot(
 );
 
 SHADOWSPILL_RUNTIME_API uint32_t shadowspill_runtime_abi_version(void);
+
+/* One sentence naming the condition behind a status. */
+SHADOWSPILL_RUNTIME_API const char *shadowspill_failure_reason_string(
+    ShadowSpillFailureReason reason
+);
 
 SHADOWSPILL_RUNTIME_API const char *shadowspill_runtime_status_string(
     ShadowSpillRuntimeStatus status

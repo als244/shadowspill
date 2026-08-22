@@ -6,6 +6,28 @@
 struct ShadowSpillMemoryPool;
 
 /* Thread-safe first-cause publication; callers need not hold another lock. */
+
+/* Latch a failure that can say why. The status is the class a caller acts
+ * on; the reason names the condition, so a report can explain itself. */
+void shadowspill_latch_failure_reason_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillRuntimeStatus status,
+    ShadowSpillFailureReason reason,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+);
+
+void shadowspill_latch_pool_failure_reason_locked(
+    ShadowSpillRuntime *runtime,
+    struct ShadowSpillMemoryPool *pool,
+    ShadowSpillRuntimeStatus status,
+    ShadowSpillFailureReason reason,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t requested_bytes
+);
+
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatus status,

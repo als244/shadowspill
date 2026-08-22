@@ -648,9 +648,10 @@ void shadowspill_cancel_execution_reservation_locked(
     if (lease->state == SHADOWSPILL_LEASE_SUCCESSOR_RESERVED) {
         ShadowSpillMemoryLease *predecessor = lease->causal_predecessor;
         if (shadowspill_memory_pool_cancel_reservation_locked(lease) != 0) {
-            shadowspill_latch_failure_locked(
+            shadowspill_latch_failure_reason_locked(
                 runtime,
                 SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
+                SHADOWSPILL_FAILURE_REASON_RESERVATION_CANCEL_REJECTED,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 lease->allocation_id,
                 lease->requested_bytes
@@ -913,9 +914,10 @@ void shadowspill_release_execution_lease_locked(
         unindex_allocation_id_locked(pool, allocation);
     }
     if (shadowspill_memory_pool_release_lease_locked(allocation) != 0) {
-        shadowspill_latch_failure_locked(
+        shadowspill_latch_failure_reason_locked(
             runtime,
             SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
+            SHADOWSPILL_FAILURE_REASON_LEASE_RELEASE_REJECTED,
             SHADOWSPILL_RUNTIME_NO_ID,
             allocation->allocation_id,
             charged_bytes
@@ -1108,10 +1110,11 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_allocate(
             break;
         }
         if (!has_release_source(pool)) {
-            shadowspill_latch_pool_failure_locked(
+            shadowspill_latch_pool_failure_reason_locked(
                 runtime,
                 pool,
                 SHADOWSPILL_RUNTIME_NO_PROGRESS,
+                SHADOWSPILL_FAILURE_REASON_POOL_EXHAUSTED,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 bytes

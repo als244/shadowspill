@@ -6,7 +6,7 @@ import ctypes
 from typing import Any, Final
 
 ADAPTER_ABI_VERSION: Final = 56
-RUNTIME_ABI_VERSION: Final = 46
+RUNTIME_ABI_VERSION: Final = 47
 FIXED_LAYOUT_ABI_VERSION: Final = 2
 TRACE_ABI_VERSION: Final = 1
 TRANSFER_PROFILE_ABI_VERSION: Final = 2
@@ -287,6 +287,7 @@ class CudaStatistics(ctypes.Structure):
 class RuntimeFailure(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
+        ("reason", ctypes.c_uint32),
         ("pool_id", ctypes.c_uint32),
         ("task_id", ctypes.c_uint64),
         ("object_id", ctypes.c_uint64),

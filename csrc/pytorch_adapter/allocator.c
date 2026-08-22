@@ -44,7 +44,17 @@ typedef struct ShadowSpillPytorchAdapterState {
     _Atomic uint32_t published_allocator_pool_id;
     char failure_task_label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U];
     ShadowSpillPytorchPhysicalAdmission admission;
+    /*
+     * `failure` is the first failure, which is what stopped the runtime and
+     * what a caller asking "is this runtime usable" wants. `recent` is the
+     * last one, which is what a caller asking "why did my call fail" wants.
+     * They are different questions: a failure that was recovered from must
+     * not describe a later one, and a first failure must not be overwritten
+     * by the calls it subsequently causes to fail.
+     */
     ShadowSpillPytorchAdapterFailure failure;
+    ShadowSpillPytorchAdapterFailure recent;
+    uint8_t recent_valid;
     uint8_t bootstrapped;
     uint8_t closed;
 } ShadowSpillPytorchAdapterState;
@@ -196,6 +206,13 @@ static void latch_failure(
     }
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.callback_failures;
+    adapter.recent = (ShadowSpillPytorchAdapterFailure){
+        .status = (uint32_t)status,
+        .device_ordinal = device_ordinal,
+        .address = (uint64_t)(uintptr_t)address,
+        .requested_bytes = requested_bytes,
+    };
+    adapter.recent_valid = 1U;
     if (adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
         adapter.failure.status = (uint32_t)status;
         adapter.failure.device_ordinal = device_ordinal;
@@ -952,6 +969,35 @@ static void append_failure_task(
     );
 }
 
+/* Bytes as a person reads them. Reports are read by people deciding what to
+ * change, and "16273899520" does not tell them it exceeds a 16 GiB budget. */
+static void append_bytes(
+    char *destination,
+    size_t destination_bytes,
+    size_t *offset,
+    const char *label,
+    uint64_t value
+) {
+    static const char *const units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+    size_t unit = 0U;
+    double scaled = (double)value;
+    while (scaled >= 1024.0 && unit + 1U < sizeof(units) / sizeof(units[0])) {
+        scaled /= 1024.0;
+        ++unit;
+    }
+    if (unit == 0U) {
+        append_failure_message(
+            destination, destination_bytes, offset, "%s: %llu B\n",
+            label, (unsigned long long)value
+        );
+        return;
+    }
+    append_failure_message(
+        destination, destination_bytes, offset, "%s: %.2f %s (%llu bytes)\n",
+        label, scaled, units[unit], (unsigned long long)value
+    );
+}
+
 static const char *allocation_operation_name(uint8_t operation) {
     if (operation == SHADOWSPILL_TASK_ALLOCATION_ALLOCATE) {
         return "allocate";
@@ -976,33 +1022,87 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
     ShadowSpillPytorchAdapterFailure failure = {0};
     ShadowSpillRuntimeStatus status =
         shadowspill_pytorch_allocator_failure(&failure);
-    if (status == SHADOWSPILL_RUNTIME_OK) {
-        status = SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+    /*
+     * Describe the call that failed, not the first failure the runtime ever
+     * saw. A recovered failure latched earlier says nothing about this one,
+     * and reporting its operands beside this call's makes every number in the
+     * message unattributable.
+     */
+    pthread_mutex_lock(&adapter.mutex);
+    const int have_recent = adapter.recent_valid != 0U;
+    const ShadowSpillPytorchAdapterFailure recent = adapter.recent;
+    pthread_mutex_unlock(&adapter.mutex);
+    int reported_first_failure = 0;
+    if (have_recent) {
+        reported_first_failure =
+            failure.status != SHADOWSPILL_RUNTIME_OK &&
+            failure.status != recent.status;
+        status = (ShadowSpillRuntimeStatus)recent.status;
+        failure.device_ordinal = recent.device_ordinal;
+        failure.requested_bytes = recent.requested_bytes;
     }
     const ShadowSpillRuntimeFailure *runtime = &failure.runtime;
-    const uint64_t requested_bytes = runtime->requested_bytes != 0U
-        ? runtime->requested_bytes
-        : failure.requested_bytes;
+    const uint64_t requested_bytes = failure.requested_bytes != 0U
+        ? failure.requested_bytes
+        : runtime->requested_bytes;
     size_t offset = 0U;
-    if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+    if (!have_recent && status == SHADOWSPILL_RUNTIME_OK) {
+        /* Nothing recorded this call. Say so rather than inventing a status:
+         * a made-up diagnosis is worse than an admitted absence. */
         append_failure_message(
             destination,
             destination_bytes,
             &offset,
-            "ShadowSpill no-progress OOM\n"
+            "ShadowSpill allocator returned no memory and recorded no reason\n"
+        );
+        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+    }
+    /* Name the pool: "out of memory" means very different things for the
+     * device execution pool and the host spill pool, and an internal failure
+     * belongs to neither. */
+    const char *pool_name = runtime->pool_id == UINT32_MAX
+        ? "no pool"
+        : runtime->pool_id == bound_allocator_pool_id() ? "execution pool"
+                                                        : "spill pool";
+    if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+        append_failure_message(
+            destination, destination_bytes, &offset,
+            "ShadowSpill out of memory in the %s (device %d), with nothing "
+            "left to release\n",
+            pool_name, failure.device_ordinal
         );
     } else if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
         append_failure_message(
-            destination, destination_bytes, &offset, "ShadowSpill OOM\n"
+            destination, destination_bytes, &offset,
+            "ShadowSpill out of memory in the %s (device %d)\n",
+            pool_name, failure.device_ordinal
         );
     } else {
         append_failure_message(
-            destination,
-            destination_bytes,
-            &offset,
-            "ShadowSpill allocator callback failed\nstatus: %u (%s)\n",
+            destination, destination_bytes, &offset,
+            "ShadowSpill %s (device %d)\nstatus: %u (%s)\n",
+            shadowspill_runtime_status_string(status),
+            failure.device_ordinal,
             (unsigned int)status,
             shadowspill_runtime_status_string(status)
+        );
+    }
+    if (runtime->reason != SHADOWSPILL_FAILURE_REASON_UNSPECIFIED) {
+        append_failure_message(
+            destination, destination_bytes, &offset, "reason: %s\n",
+            shadowspill_failure_reason_string(
+                (ShadowSpillFailureReason)runtime->reason
+            )
+        );
+    }
+    if (reported_first_failure) {
+        append_failure_message(
+            destination, destination_bytes, &offset,
+            "note: an earlier failure (%s) had already stopped this runtime; "
+            "later calls fail because of it, not on their own\n",
+            shadowspill_runtime_status_string(
+                (ShadowSpillRuntimeStatus)failure.status
+            )
         );
     }
     if (runtime->task_id != UINT64_MAX) {
@@ -1013,17 +1113,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             runtime->task_id
         );
     }
-    append_failure_message(
-        destination,
-        destination_bytes,
-        &offset,
-        "device: %d\nrequested: %llu\nfree: %llu\n"
-        "largest_free_range: %llu\n",
-        failure.device_ordinal,
-        (unsigned long long)requested_bytes,
-        (unsigned long long)runtime->free_bytes,
-        (unsigned long long)runtime->largest_free_range_bytes
-    );
+    append_bytes(destination, destination_bytes, &offset, "requested",
+        requested_bytes);
+    if (runtime->free_bytes != 0U || runtime->largest_free_range_bytes != 0U) {
+        append_bytes(destination, destination_bytes, &offset, "pool free",
+            runtime->free_bytes);
+        append_bytes(destination, destination_bytes, &offset,
+            "largest free range", runtime->largest_free_range_bytes);
+    }
     if (status == SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED) {
         append_failure_message(
             destination,
