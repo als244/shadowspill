@@ -80,7 +80,8 @@ Provider dependencies stay inside those boundaries.
 
 A private header named `internal.h` belongs to the directory holding it and is
 included by path from anywhere else, so `"internal.h"` always means this
-directory's.
+directory's. Each one compiles on its own, and a source includes the narrowest
+one that covers what it touches.
 
 ## Tests
 

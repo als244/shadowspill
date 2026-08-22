@@ -1,4 +1,4 @@
-#include "../internal.h"
+#include "internal.h"
 
 #include <stddef.h>
 #include <stdint.h>
