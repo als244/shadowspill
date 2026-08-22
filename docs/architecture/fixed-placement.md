@@ -18,12 +18,18 @@ One record per lease, and nothing else:
 | `bytes` | how much the lease occupies |
 | `alignment` | the offset must be a multiple of this |
 | `predicted_start_ns`, `predicted_end_ns` | when it is live, half-open |
+| `causal_start`, `causal_end` | its position in the operation order |
 | `lease_id` | identity, used only to break ties |
 
 The lifetime is half-open, so leases that merely touch are **not** live at the
-same moment and may share an address. Everything else about a lease — what it
-is for, which task owns it, whether it is an output — is irrelevant here.
-Placement sees geometry and time.
+same moment and may share an address.
+
+The two pairs of boundaries do different jobs, and the distinction is what
+makes the result safe under imperfect predictions: the predicted lifetime
+chooses offsets, the causal boundaries decide whether a shared address is
+legal. See [timings choose the offsets](#timings-choose-the-offsets-causality-makes-them-safe)
+below. Everything else about a lease — what it is for, which task owns it,
+whether it is an output — is irrelevant here.
 
 ## Output
 
@@ -96,6 +102,46 @@ is quadratic. Real layouts are far sparser — mean `k` about 1.5% of `n` — bu
 growth is superlinear.
 
 Measured on real plans: 14.6 ms at 2,543 leases, 68 ms at 17,250.
+
+## Timings choose the offsets; causality makes them safe
+
+Placement decides two leases may share an address by looking at their
+*predicted* lifetimes. Those predictions come from a simulation and will not
+match a real run exactly. The assignment is still correct, and the reason is
+that predicted time is used for one job only.
+
+Each lease carries a second pair of boundaries alongside its predicted
+lifetime: `causal_start` and `causal_end`, which are **positions in the
+operation order**, not times — the sequence number of the operation that
+acquires the lease and of the one that retires it. Before any two leases are
+allowed to share an address, the layout checks
+
+```text
+predecessor.causal_end <= successor.causal_start
+```
+
+and refuses the layout otherwise. That is a statement about the order
+operations happen in, which no amount of timing drift can change: the
+predecessor's retirement *precedes* the successor's acquisition in the
+schedule itself.
+
+The runtime then enforces it. Every shared address produces a reuse
+dependency, and a successor is held out of its transfer lane until the
+predecessor has published the completion that frees the range. The wait is on
+an event, never on a predicted time.
+
+So the two roles are cleanly separated:
+
+| what | uses | if it is wrong |
+|---|---|---|
+| choosing an offset | predicted lifetimes | the layout is bigger or smaller than it needed to be |
+| allowing a shared address | causal order | cannot be wrong; it is a property of the schedule |
+| honouring a shared address | published completions | cannot be wrong; the successor waits |
+
+**Bad predictions cost bytes and time, never correctness.** A slow task
+delays the successor that reuses its address, which is why the reuse slack
+below is worth reporting — but the successor waits rather than writing into a
+range someone still holds.
 
 ## Judging the result
 
