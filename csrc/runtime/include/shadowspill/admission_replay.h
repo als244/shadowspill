@@ -21,7 +21,7 @@ typedef enum ShadowSpillAdmissionReplayStatus {
     SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT = 1,
     SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE = 2,
     SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE = 3,
-    SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT = 4,
+    SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS = 4,
 } ShadowSpillAdmissionReplayStatus;
 
 /*
@@ -140,7 +140,8 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
     ShadowSpillAdmissionReplayWorkspace;
 
 /*
- * Replays one ordered script through the production MemoryPool policy. Input
+ * Replays one ordered operation sequence through the production MemoryPool
+ * policy. Input
  * and output buffers are borrowed for the call. Lease and dependency IDs are
  * contiguous zero-based indices bounded by their respective counts. The function
  * performs no backend operations and owns no storage after it returns.
