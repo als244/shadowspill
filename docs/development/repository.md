@@ -132,16 +132,27 @@ The CMake build enables warnings as errors and registers compiled canaries with
 CTest:
 
 ```bash
-cmake -S . -B build/dev -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake -S . -B build/dev -DBUILD_TESTING=ON
 cmake --build build/dev --parallel
 ctest --test-dir build/dev --output-on-failure
 ```
 
-Name the build type. CMake's default is an empty `CMAKE_BUILD_TYPE`, which
-means no `-O` at all, and `pyproject.toml` builds the editable install as
-`RelWithDebInfo`. An unoptimized planner is several times slower, and
-`build/dev` is on the library search path, so an unnamed build type there is
-easy to measure without noticing.
+An unnamed build type builds `RelWithDebInfo`, matching the editable install;
+CMake's own default is empty, which is no `-O` at all, and an unoptimized
+planner is several times slower at exactly the work this project measures.
+Pass `-DCMAKE_BUILD_TYPE=Debug` when that is what you want.
+
+Python never loads out of this directory on its own. It searches the installed
+package and the editable `build/{wheel_tag}` location, in that order, and
+nothing else unless `SHADOWSPILL_LIBRARY_DIRECTORY` names a directory to try
+first:
+
+```bash
+SHADOWSPILL_LIBRARY_DIRECTORY=build/dev pytest tests/shadowspill
+```
+
+A build the loader finds without being told to is the kind of mistake that
+reads as the code being slow or subtly broken.
 
 Device integration tests require a matching provider/PyTorch toolchain.
 Accelerator-free runtime tests use the mock backend.
