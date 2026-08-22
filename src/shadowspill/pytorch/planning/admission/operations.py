@@ -1,17 +1,17 @@
-"""Give a compiled operation stream its identifiers back.
+"""Give a compiled operation sequence its identifiers back.
 
 A lease's provenance is that of the operation which acquired it, except for
 task allocations: a task may free a slot and reallocate it, and a reallocation
-emits no operation of its own. Those steps are replayed alongside the stream,
+emits no operation of its own. Those steps are replayed alongside the sequence,
 so a reused lease records what it most recently became rather than what it
 first was. That is the role the fixed/dynamic split checks - a slot first used
 as workspace and then retained as an output really is an output by the end of
 the task - and it is why `_validate_dynamic_lifetimes` accepts it.
 
 `shadowspill_build_admission_operations` returns one schedule's pool
-operations as indexed columns. Everything downstream - lifetime construction,
+operations as indexed columns. Everything below - lifetime construction,
 placement, the layout certificate - works in identifiers, so this walks the
-stream once and produces the identified steps plus the four lease maps the
+sequence once and produces the identified steps plus the four lease maps the
 certificate needs.
 
 The walk derives rather than decides: a lease's provenance is the provenance
@@ -103,7 +103,7 @@ def identify_operations(
     action_trigger_tasks: tuple[int, ...],
     storage_handoffs: tuple[tuple[str, str], ...],
 ) -> IdentifiedOperations:
-    """Walk the stream once, resolving indices to identifiers.
+    """Walk the sequence once, resolving indices to identifiers.
 
     `allocation_steps` is indexed by flattened allocation offset, which is what
     an operation records when it acquires a task lease. Replaying those steps

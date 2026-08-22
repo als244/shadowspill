@@ -15,7 +15,7 @@ from ._capi import (
 
 @dataclass(frozen=True, slots=True)
 class AdmissionOperations:
-    """One schedule's operation stream, with the provenance a layout needs.
+    """One schedule's operation sequence, with the provenance a layout needs.
 
     Every tuple below has `len(kinds)` entries indexed alike; an operation's
     sequence is its index. `lease_aliases` is indexed by lease id instead, and
