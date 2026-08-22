@@ -185,12 +185,12 @@ def test_plan_reservation_can_be_smaller_than_runtime_spill_pool() -> None:
         memory,  # type: ignore[arg-type]
         installed,  # type: ignore[arg-type]
         workspace_reserve=20,
-        predicted_host_peak_bytes=90,
+        predicted_spill_peak_bytes=90,
         predicted_fragmentation_bytes=8,
     )
 
-    assert admission.host_budget_bytes == 100
-    assert admission.host_reservation_bytes == 90
+    assert admission.spill_budget_bytes == 100
+    assert admission.spill_reservation_bytes == 90
 
 
 def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:

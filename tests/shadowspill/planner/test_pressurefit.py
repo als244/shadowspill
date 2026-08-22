@@ -71,7 +71,7 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     )
     assert result.simulation.makespan_ns == 5_000
     assert result.simulation.device_peak("cuda_0").total_bytes == 122
-    assert result.simulation.host_peak_bytes == 61
+    assert result.simulation.spill_peak_bytes == 61
 
 
 def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
@@ -97,7 +97,7 @@ def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
         program,
         initial_residency=(
             ResidencySpec("retained", MemoryLocation.DEVICE),
-            ResidencySpec("later", MemoryLocation.HOST),
+            ResidencySpec("later", MemoryLocation.SPILL),
         ),
         config=config(61),
         options=PressureFitOptions(
@@ -142,7 +142,7 @@ def test_demand_prefetch_uses_final_legal_boundary() -> None:
         program,
         initial_residency=(
             ResidencySpec("retained", MemoryLocation.DEVICE),
-            ResidencySpec("later", MemoryLocation.HOST),
+            ResidencySpec("later", MemoryLocation.SPILL),
         ),
         config=config(61),
         options=PressureFitOptions(

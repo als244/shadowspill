@@ -24,7 +24,9 @@ SCHEDULE_SCHEMA = "shadowspill.memory_schedule/v1"
 
 class MemoryLocation(StrEnum):
     DEVICE = "device"
-    HOST = "host"
+    # The serialized value stays "host": the saved-Program corpus is verified
+    # against digests taken over it.
+    SPILL = "host"
 
 
 class MemoryActionKind(StrEnum):
@@ -208,12 +210,12 @@ class MemorySchedule:
             if group.size_bytes == 0
         }
         device_resident: set[str] = set(shared_aliases)
-        host_resident = {
+        spill_resident = {
             group.alias_group_id
             for group in program.alias_groups
             if group.retain_spill_copy
         }
-        host_current = set(host_resident)
+        spill_current = set(spill_resident)
         for index, residency in enumerate(self.initial_residency):
             require(
                 residency.alias_group_id in alias_ids,
@@ -230,8 +232,8 @@ class MemorySchedule:
             if residency.location is MemoryLocation.DEVICE:
                 device_resident.add(residency.alias_group_id)
             else:
-                host_resident.add(residency.alias_group_id)
-                host_current.add(residency.alias_group_id)
+                spill_resident.add(residency.alias_group_id)
+                spill_current.add(residency.alias_group_id)
 
         actions_by_task: dict[str, list[tuple[int, MemoryAction]]] = {}
         previous_trigger = -1
@@ -283,11 +285,11 @@ class MemorySchedule:
                 if alias_id in zero_size_aliases:
                     continue
                 device_resident.add(alias_id)
-                host_current.discard(alias_id)
+                spill_current.discard(alias_id)
             for mutation in task.mutations:
                 alias_id = object_alias[mutation.object_id]
                 if alias_id not in zero_size_aliases:
-                    host_current.discard(alias_id)
+                    spill_current.discard(alias_id)
             for action_index, action in actions_by_task.get(task.task_id, []):
                 path = f"schedule.actions[{action_index}]"
                 alias_id = action.alias_group_id
@@ -299,20 +301,20 @@ class MemorySchedule:
                     )
                     device_resident.remove(alias_id)
                     if not alias_by_id[alias_id].retain_spill_copy:
-                        host_resident.discard(alias_id)
-                        host_current.discard(alias_id)
+                        spill_resident.discard(alias_id)
+                        spill_current.discard(alias_id)
                 elif action.kind is MemoryActionKind.OFFLOAD:
                     require(
                         alias_id in device_resident,
                         path,
                         "offload requires device residency",
                     )
-                    host_resident.add(alias_id)
-                    host_current.add(alias_id)
+                    spill_resident.add(alias_id)
+                    spill_current.add(alias_id)
                     device_resident.remove(alias_id)
                 else:
                     require(
-                        alias_id in host_resident and alias_id in host_current,
+                        alias_id in spill_resident and alias_id in spill_current,
                         path,
                         "prefetch requires current host residency",
                     )
@@ -323,8 +325,8 @@ class MemorySchedule:
                     )
                     device_resident.add(alias_id)
                     if not alias_by_id[alias_id].retain_spill_copy:
-                        host_resident.remove(alias_id)
-                        host_current.remove(alias_id)
+                        spill_resident.remove(alias_id)
+                        spill_current.remove(alias_id)
 
         for index, residency in enumerate(self.final_residency):
             require(
@@ -343,8 +345,8 @@ class MemorySchedule:
                 reached = residency.alias_group_id in device_resident
             else:
                 reached = (
-                    residency.alias_group_id in host_resident
-                    and residency.alias_group_id in host_current
+                    residency.alias_group_id in spill_resident
+                    and residency.alias_group_id in spill_current
                 )
             require(
                 reached,

@@ -76,7 +76,7 @@ def config(capacity: int = 122) -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=capacity,
-        host_capacity_bytes=1_000,
+        spill_capacity_bytes=1_000,
         fetch_bandwidth_bytes_per_second=61_000_000,
         evict_bandwidth_bytes_per_second=61_000_000,
     )
@@ -210,11 +210,11 @@ def training_chain_program(layers: int) -> Program:
                 AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True)
             )
             objects.append(ObjectSpec(name, name, 0, 64))
-            initial.append(ResidencySpec(name, MemoryLocation.HOST))
+            initial.append(ResidencySpec(name, MemoryLocation.SPILL))
     for name in ("W_head", "dW_head"):
         alias_groups.append(AliasGroupSpec(name, "cuda_0", 64, retain_spill_copy=True))
         objects.append(ObjectSpec(name, name, 0, 64))
-        initial.append(ResidencySpec(name, MemoryLocation.HOST))
+        initial.append(ResidencySpec(name, MemoryLocation.SPILL))
 
     tasks: list[TaskSpec] = []
     previous: str | None = None
@@ -297,14 +297,14 @@ def training_chain_initial(layers: int) -> tuple[ResidencySpec, ...]:
     for layer in range(layers):
         values.extend(
             (
-                ResidencySpec(f"W_{layer}", MemoryLocation.HOST),
-                ResidencySpec(f"dW_{layer}", MemoryLocation.HOST),
+                ResidencySpec(f"W_{layer}", MemoryLocation.SPILL),
+                ResidencySpec(f"dW_{layer}", MemoryLocation.SPILL),
             )
         )
     values.extend(
         (
-            ResidencySpec("W_head", MemoryLocation.HOST),
-            ResidencySpec("dW_head", MemoryLocation.HOST),
+            ResidencySpec("W_head", MemoryLocation.SPILL),
+            ResidencySpec("dW_head", MemoryLocation.SPILL),
         )
     )
     return tuple(values)
@@ -314,7 +314,7 @@ def training_chain_config(capacity: int) -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=capacity,
-        host_capacity_bytes=10_000,
+        spill_capacity_bytes=10_000,
         fetch_bandwidth_bytes_per_second=8_000_000,
         evict_bandwidth_bytes_per_second=8_000_000,
     )

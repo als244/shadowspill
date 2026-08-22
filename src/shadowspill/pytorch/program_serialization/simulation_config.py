@@ -10,10 +10,13 @@ from shadowspill.simulator.model import DeviceSimulationConfig
 from .common import _integer, _list, _mapping, _string
 
 
+# The saved-Program schema is v1, whose key names spell the spill pool
+# "host". Every stored case is verified against digests taken over those
+# names, so the wire format keeps them while the code does not.
 def _simulation_config_to_dict(config: SimulationConfig) -> dict[str, object]:
     return {
         "devices": [asdict(item) for item in config.devices],
-        "host_capacity_bytes": config.host_capacity_bytes,
+        "host_capacity_bytes": config.spill_capacity_bytes,
     }
 
 

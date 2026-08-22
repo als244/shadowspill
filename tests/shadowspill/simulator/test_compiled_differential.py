@@ -153,7 +153,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
         ),
     )
     schedule = MemorySchedule(
-        initial_residency=(ResidencySpec("storage", MemoryLocation.HOST),),
+        initial_residency=(ResidencySpec("storage", MemoryLocation.SPILL),),
         actions=(
             MemoryAction(
                 "trigger",
@@ -166,7 +166,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=size,
-        host_capacity_bytes=size,
+        spill_capacity_bytes=size,
         fetch_bandwidth_bytes_per_second=bandwidth,
         evict_bandwidth_bytes_per_second=bandwidth,
     )
@@ -271,7 +271,7 @@ def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
         task_intervals=(),
         transfer_intervals=(),
         device_peaks=(),
-        host_peak_bytes=0,
+        spill_peak_bytes=0,
     )
     result.attach_interval_arrays(
         IntervalArrays(

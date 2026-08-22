@@ -301,7 +301,7 @@ def test_schedule_checks_inputs_and_final_residency() -> None:
     )
     wrong_final = replace(
         schedule,
-        final_residency=(ResidencySpec("output_storage", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("output_storage", MemoryLocation.SPILL),),
     )
     assert_invalid(
         "schedule.final_residency[0]",
@@ -356,7 +356,7 @@ def test_zero_size_alias_requires_no_residency_but_rejects_memory_actions() -> N
             {"predicted_fragmentation_bytes": 897},
             "admission.predicted_fragmentation_bytes",
         ),
-        ({"host_reservation_bytes": 1025}, "admission.host_reservation_bytes"),
+        ({"spill_reservation_bytes": 1025}, "admission.spill_reservation_bytes"),
     ],
 )
 def test_physical_admission_rejects_budget_violations(
@@ -386,7 +386,7 @@ def test_execution_plan_requires_exact_entrypoint_bindings() -> None:
     ("prediction", "path"),
     [
         (PlanPrediction(1025, 128, 38), "plan.prediction.device_peak_bytes"),
-        (PlanPrediction(900, 1025, 38), "plan.prediction.host_peak_bytes"),
+        (PlanPrediction(900, 1025, 38), "plan.prediction.spill_peak_bytes"),
     ],
 )
 def test_execution_prediction_must_fit_public_budgets(

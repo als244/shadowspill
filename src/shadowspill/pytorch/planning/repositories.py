@@ -91,7 +91,7 @@ class PlanningArtifactRepositories:
                 "final_residency": [item.to_dict() for item in final_residency],
                 "simulation": {
                     "devices": [asdict(item) for item in config.devices],
-                    "host_capacity_bytes": config.host_capacity_bytes,
+                    "spill_capacity_bytes": config.spill_capacity_bytes,
                 },
                 "options": {
                     "initial_placement": selected_options.initial_placement.value,

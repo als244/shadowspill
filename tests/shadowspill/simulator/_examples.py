@@ -24,12 +24,12 @@ from shadowspill.simulator import SimulationConfig
 def calibrated_config(
     *,
     device_capacity_bytes: int = 1024,
-    host_capacity_bytes: int = 1024,
+    spill_capacity_bytes: int = 1024,
 ) -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=device_capacity_bytes,
-        host_capacity_bytes=host_capacity_bytes,
+        spill_capacity_bytes=spill_capacity_bytes,
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )
@@ -196,7 +196,7 @@ def ordered_action_schedule() -> MemorySchedule:
             MemoryAction("short_task", "short_storage", MemoryActionKind.OFFLOAD),
         ),
         final_residency=(
-            ResidencySpec("long_storage", MemoryLocation.HOST),
-            ResidencySpec("short_storage", MemoryLocation.HOST),
+            ResidencySpec("long_storage", MemoryLocation.SPILL),
+            ResidencySpec("short_storage", MemoryLocation.SPILL),
         ),
     )

@@ -77,7 +77,7 @@ def _config(capacity: int) -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=capacity,
-        host_capacity_bytes=capacity,
+        spill_capacity_bytes=capacity,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )

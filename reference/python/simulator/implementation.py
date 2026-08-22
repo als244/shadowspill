@@ -40,9 +40,9 @@ class _AliasState:
     device_allocated: bool = False
     device_ready: bool = False
     device_version: int = 0
-    host_allocated: bool = False
-    host_ready: bool = False
-    host_version: int = 0
+    spill_allocated: bool = False
+    spill_ready: bool = False
+    spill_version: int = 0
     fetch_pending: bool = False
     evict_pending: bool = False
 
@@ -159,7 +159,7 @@ class _Simulator:
                 initial_version=item.initial_version,
                 retain_spill_copy=item.retain_spill_copy,
                 device_version=item.initial_version,
-                host_version=item.initial_version,
+                spill_version=item.initial_version,
             )
             for item in program.alias_groups
         }
@@ -185,8 +185,8 @@ class _Simulator:
         self.device_object_peaks = {device.device_id: 0 for device in config.devices}
         self.device_workspace_peaks = {device.device_id: 0 for device in config.devices}
         self.device_total_peaks = {device.device_id: 0 for device in config.devices}
-        self.host_bytes = 0
-        self.host_peak_bytes = 0
+        self.spill_bytes = 0
+        self.spill_peak_bytes = 0
         self.task_intervals: list[TaskInterval] = []
         self.transfer_intervals: list[TransferInterval] = []
         self.memory_timeline: list[MemorySnapshot] = []
@@ -257,14 +257,14 @@ class _Simulator:
                 self.device_total_peaks[device_id],
                 self.device_physical_bytes[device_id],
             )
-        self.host_peak_bytes = max(self.host_peak_bytes, self.host_bytes)
+        self.spill_peak_bytes = max(self.spill_peak_bytes, self.spill_bytes)
         if self.record_timeline:
             self.memory_timeline.append(
                 MemorySnapshot(
                     time_ns=self.now_ns,
                     device_object_bytes=tuple(self.device_object_bytes.items()),
                     device_workspace_bytes=tuple(self.device_workspace_bytes.items()),
-                    host_bytes=self.host_bytes,
+                    spill_bytes=self.spill_bytes,
                     device_physical_bytes=tuple(self.device_physical_bytes.items()),
                 )
             )
@@ -278,9 +278,9 @@ class _Simulator:
                 state.device_ready = True
                 continue
             if state.retain_spill_copy:
-                state.host_allocated = True
-                state.host_ready = True
-                self.host_bytes += state.size_bytes
+                state.spill_allocated = True
+                state.spill_ready = True
+                self.spill_bytes += state.size_bytes
         for residency in self.schedule.initial_residency:
             state = self.alias_state[residency.alias_group_id]
             if residency.location is MemoryLocation.DEVICE:
@@ -288,10 +288,10 @@ class _Simulator:
                 state.device_ready = True
                 self.device_object_bytes[state.device_id] += state.size_bytes
             else:
-                if not state.host_allocated:
-                    state.host_allocated = True
-                    self.host_bytes += state.size_bytes
-                state.host_ready = True
+                if not state.spill_allocated:
+                    state.spill_allocated = True
+                    self.spill_bytes += state.size_bytes
+                state.spill_ready = True
         if self.admission is None:
             self.device_physical_bytes.update(self.device_object_bytes)
         else:
@@ -309,12 +309,12 @@ class _Simulator:
                     used=used,
                     requested=0,
                 )
-        if self.host_bytes > self.config.host_capacity_bytes:
+        if self.spill_bytes > self.config.spill_capacity_bytes:
             self._raise_capacity(
-                kind="initial-host-capacity",
+                kind="initial-spill-capacity",
                 location="host",
-                capacity=self.config.host_capacity_bytes,
-                used=self.host_bytes,
+                capacity=self.config.spill_capacity_bytes,
+                used=self.spill_bytes,
                 requested=0,
             )
 
@@ -454,7 +454,7 @@ class _Simulator:
                 state.device_ready = False
                 state.fetch_pending = False
                 state.evict_pending = False
-                state.host_ready = False
+                state.spill_ready = False
             self.device_workspace_bytes[device_id] += profile.workspace_bytes
             self._apply_physical_delta(device_id, physical_delta)
             start = self.now_ns
@@ -538,10 +538,10 @@ class _Simulator:
         state.device_allocated = False
         state.device_ready = False
         self.device_object_bytes[state.device_id] -= state.size_bytes
-        if state.host_allocated and not state.retain_spill_copy:
-            state.host_allocated = False
-            state.host_ready = False
-            self.host_bytes -= state.size_bytes
+        if state.spill_allocated and not state.retain_spill_copy:
+            state.spill_allocated = False
+            state.spill_ready = False
+            self.spill_bytes -= state.size_bytes
         self._snapshot()
 
     def _submit_ready_actions(self) -> None:
@@ -584,23 +584,23 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
-                if not state.host_allocated:
+                if not state.spill_allocated:
                     if (
-                        self.host_bytes + state.size_bytes
-                        > self.config.host_capacity_bytes
+                        self.spill_bytes + state.size_bytes
+                        > self.config.spill_capacity_bytes
                     ):
                         self._raise_capacity(
-                            kind="offload-host-capacity",
+                            kind="offload-spill-capacity",
                             location="host",
-                            capacity=self.config.host_capacity_bytes,
-                            used=self.host_bytes,
+                            capacity=self.config.spill_capacity_bytes,
+                            used=self.spill_bytes,
                             requested=state.size_bytes,
                             task_id=action.trigger_task_id,
                             aliases=(action.alias_group_id,),
                         )
-                    state.host_allocated = True
-                    state.host_ready = False
-                    self.host_bytes += state.size_bytes
+                    state.spill_allocated = True
+                    state.spill_ready = False
+                    self.spill_bytes += state.size_bytes
                 self._enqueue_transfer(
                     action_index,
                     action,
@@ -616,7 +616,7 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
-                if not state.host_ready and not state.evict_pending:
+                if not state.spill_ready and not state.evict_pending:
                     raise SimulationInfeasibleError(
                         f"prefetch of {action.alias_group_id!r} lacks a host source",
                         kind="invalid-prefetch",
@@ -650,12 +650,12 @@ class _Simulator:
             state = self.alias_state[alias_id]
             state.device_ready = True
             state.device_version += 1
-            state.host_ready = False
+            state.spill_ready = False
         for mutation in task.mutations:
             alias_id = self.object_alias[mutation.object_id]
             state = self.alias_state[alias_id]
             state.device_version += mutation.version_delta
-            state.host_ready = False
+            state.spill_ready = False
         self.completed[task.task_id] = self.now_ns
         self.task_intervals.append(
             TaskInterval(
@@ -695,7 +695,7 @@ class _Simulator:
             pending.stall_reasons.add("memory-reuse")
             return False
         if direction is TransferDirection.FETCH:
-            if state.evict_pending or not state.host_ready:
+            if state.evict_pending or not state.spill_ready:
                 pending.stall_reasons.add("source-readiness")
                 return False
             if not state.device_allocated:
@@ -704,7 +704,7 @@ class _Simulator:
             if not state.device_ready:
                 pending.stall_reasons.add("source-readiness")
                 return False
-            if not state.host_allocated:
+            if not state.spill_allocated:
                 raise AssertionError("queued EVICT has no trigger-time reservation")
         queue.popleft()
         runtime = self._transfer_runtime_ns(state, direction)
@@ -737,15 +737,15 @@ class _Simulator:
         default_physical_delta = 0
         if direction is TransferDirection.FETCH:
             state.device_ready = True
-            state.device_version = state.host_version
+            state.device_version = state.spill_version
             state.fetch_pending = False
             if not state.retain_spill_copy:
-                state.host_allocated = False
-                state.host_ready = False
-                self.host_bytes -= state.size_bytes
+                state.spill_allocated = False
+                state.spill_ready = False
+                self.spill_bytes -= state.size_bytes
         else:
-            state.host_ready = True
-            state.host_version = state.device_version
+            state.spill_ready = True
+            state.spill_version = state.device_version
             state.evict_pending = False
             state.device_ready = False
             if not state.fetch_pending:
@@ -825,15 +825,15 @@ class _Simulator:
                             aliases=(pending.alias_group_id,),
                         )
                 elif (
-                    not state.host_allocated
-                    and self.host_bytes + state.size_bytes
-                    > self.config.host_capacity_bytes
+                    not state.spill_allocated
+                    and self.spill_bytes + state.size_bytes
+                    > self.config.spill_capacity_bytes
                 ):
                     self._raise_capacity(
-                        kind="offload-host-capacity",
+                        kind="offload-spill-capacity",
                         location="host",
-                        capacity=self.config.host_capacity_bytes,
-                        used=self.host_bytes,
+                        capacity=self.config.spill_capacity_bytes,
+                        used=self.spill_bytes,
                         requested=state.size_bytes,
                         aliases=(pending.alias_group_id,),
                     )
@@ -898,7 +898,7 @@ class _Simulator:
             ready = (
                 state.device_ready
                 if residency.location is MemoryLocation.DEVICE
-                else state.host_ready
+                else state.spill_ready
             )
             if not ready:
                 raise SimulationInfeasibleError(
@@ -959,7 +959,7 @@ class _Simulator:
                 )
             ),
             device_peaks=peaks,
-            host_peak_bytes=self.host_peak_bytes,
+            spill_peak_bytes=self.spill_peak_bytes,
             memory_timeline=tuple(self.memory_timeline),
         )
 

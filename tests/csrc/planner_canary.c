@@ -20,7 +20,7 @@ static ShadowSpillSimulationProgram make_program(
         .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
         .device_count = 1U,
         .task_count = 1U,
-        .host_capacity_bytes = 1U,
+        .spill_capacity_bytes = 1U,
         .devices = device,
         .task_device = task_device,
         .task_resource_kind = task_kind,
@@ -92,7 +92,7 @@ int main(void) {
 
     const uint64_t alias_sizes[] = {64U, 64U};
     const uint32_t alias_devices[] = {0U, 0U};
-    const uint8_t retain_host[] = {1U, 1U};
+    const uint8_t retain_spill[] = {1U, 1U};
     const int8_t initial_locations[] = {0, 1};
     const int8_t final_locations[] = {-1, -1};
     const uint8_t anchors[] = {
@@ -132,7 +132,7 @@ int main(void) {
         .device_count = 1U,
         .alias_size_bytes = alias_sizes,
         .alias_device = alias_devices,
-        .alias_retain_spill_copy = retain_host,
+        .alias_retain_spill_copy = retain_spill,
         .initial_location = initial_locations,
         .final_location = final_locations,
         .anchors = anchors,
@@ -244,7 +244,7 @@ int main(void) {
         .task_count = 1U,
         .initial_count = 1U,
         .input_count = 1U,
-        .host_capacity_bytes = 64U,
+        .spill_capacity_bytes = 64U,
         .devices = &context_device,
         .alias_device = context_alias_device,
         .alias_size_bytes = context_alias_size,

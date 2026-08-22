@@ -695,7 +695,7 @@ class TrainingExecutor:
                 ),
             )
         finally:
-            self._restore_optimizer_host_only(exposed)
+            self._restore_optimizer_spill_only(exposed)
 
     def load_optimizer_state(self, value: Mapping[str, object]) -> bool:
         """Restore optimizer metadata and write tensor bytes into spill storage."""
@@ -730,7 +730,7 @@ class TrainingExecutor:
                     tensors,
                 )
         finally:
-            self._restore_optimizer_host_only(exposed)
+            self._restore_optimizer_spill_only(exposed)
 
         if not initialized:
             aliases = tuple(
@@ -1473,7 +1473,7 @@ class TrainingExecutor:
             exposed.append(_ExposedOptimizerTensor(tensor, cuda_placeholder))
         return tuple(exposed)
 
-    def _restore_optimizer_host_only(
+    def _restore_optimizer_spill_only(
         self, exposed: tuple[_ExposedOptimizerTensor, ...]
     ) -> None:
         # Exposing state never changes the neutral runtime object. Restore the

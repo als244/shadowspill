@@ -16,12 +16,11 @@ NEUTRAL_ROOTS = (
     ROOT / "src" / "shadowspill" / "planner",
     ROOT / "src" / "shadowspill" / "runtime",
     ROOT / "src" / "shadowspill" / "simulator",
-    ROOT / "csrc" / "runtime" / "include",
-    ROOT / "csrc" / "runtime" / "src",
-    ROOT / "csrc" / "planner" / "include",
-    ROOT / "csrc" / "planner" / "src",
-    ROOT / "csrc" / "simulator" / "include",
-    ROOT / "csrc" / "simulator" / "src",
+    ROOT / "csrc" / "include",
+    ROOT / "csrc" / "src" / "common",
+    ROOT / "csrc" / "src" / "planner",
+    ROOT / "csrc" / "src" / "runtime",
+    ROOT / "csrc" / "src" / "simulator",
 )
 TEXT_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp", ".py"}
 FORBIDDEN = {

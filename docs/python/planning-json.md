@@ -173,7 +173,8 @@ shadowspill.pressurefit_program/v1
 | `admission_topology` | Current-schema (`shadowspill.admission_topology/v3`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
 | `pressurefit_options` | Bounded search controls and repair limits. |
 
-Residency entries identify `alias_group_id` and `location` (`device` or `host`
+Residency entries identify `alias_group_id` and `location` (`device` or `host`,
+the schema-v1 spelling of the spill pool
 in the neutral IR). These serialized IR labels should not be confused with
 user-chosen runtime pool names such as `execution` and `spill`.
 

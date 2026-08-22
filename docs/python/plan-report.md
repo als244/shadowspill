@@ -12,7 +12,7 @@ print(report.mode)
 print(report.program.digest)
 print(report.predicted_makespan_ns / 1e9)
 print(report.predicted_device_peak_bytes)
-print(report.predicted_host_peak_bytes)
+print(report.predicted_spill_peak_bytes)
 ```
 
 `PlanReport` is the in-memory report attached to a callable. It is distinct
@@ -39,7 +39,7 @@ The top-level fields are grouped below.
 |---|---|---|
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
 | Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan and optional first-step plan for lazy state. |
-| Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_host_peak_bytes` | Simulator result after physical admission. |
+| Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |

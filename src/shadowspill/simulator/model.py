@@ -51,7 +51,7 @@ class SimulationConfig:
     """Physical capacities and calibrated transfer costs for a replay."""
 
     devices: tuple[DeviceSimulationConfig, ...]
-    host_capacity_bytes: int
+    spill_capacity_bytes: int
 
     def __post_init__(self) -> None:
         if not isinstance(self.devices, tuple) or not self.devices:
@@ -63,7 +63,7 @@ class SimulationConfig:
             if device.device_id in seen:
                 raise ValueError(f"devices[{index}] duplicates {device.device_id!r}")
             seen.add(device.device_id)
-        _require_non_negative(self.host_capacity_bytes, "host_capacity_bytes")
+        _require_non_negative(self.spill_capacity_bytes, "spill_capacity_bytes")
 
     @classmethod
     def single_device(
@@ -71,7 +71,7 @@ class SimulationConfig:
         device_id: str,
         *,
         device_capacity_bytes: int,
-        host_capacity_bytes: int,
+        spill_capacity_bytes: int,
         fetch_bandwidth_bytes_per_second: int,
         evict_bandwidth_bytes_per_second: int,
         fetch_latency_ns: int = 0,
@@ -88,7 +88,7 @@ class SimulationConfig:
                     evict_latency_ns=evict_latency_ns,
                 ),
             ),
-            host_capacity_bytes=host_capacity_bytes,
+            spill_capacity_bytes=spill_capacity_bytes,
         )
 
 
@@ -267,7 +267,7 @@ class MemorySnapshot:
     time_ns: int
     device_object_bytes: tuple[tuple[str, int], ...]
     device_workspace_bytes: tuple[tuple[str, int], ...]
-    host_bytes: int
+    spill_bytes: int
     device_physical_bytes: tuple[tuple[str, int], ...] = ()
 
 
@@ -308,7 +308,7 @@ class SimulationResult:
     task_intervals: tuple[TaskInterval, ...]
     transfer_intervals: tuple[TransferInterval, ...]
     device_peaks: tuple[DeviceMemoryPeak, ...]
-    host_peak_bytes: int
+    spill_peak_bytes: int
     memory_timeline: tuple[MemorySnapshot, ...] = ()
 
     @property

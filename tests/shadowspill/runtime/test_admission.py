@@ -208,11 +208,11 @@ def test_pending_extent_reuse_requires_a_live_size_matched_source() -> None:
 def test_physical_admission_exposes_every_subtraction() -> None:
     admission, replay = admit_physical_budget(
         device_budget_bytes=4 * GIB,
-        host_budget_bytes=3 * GIB,
+        spill_budget_bytes=3 * GIB,
         context_bytes=500 * MIB,
         observed_external_bytes=600 * MIB,
         maximum_task_workspace_bytes=600 * MIB,
-        predicted_host_peak_bytes=1 * GIB,
+        predicted_spill_peak_bytes=1 * GIB,
         allocation_timeline=(
             event(0, "parameter", AllocationOperation.ALLOCATE, 1 * GIB, 256),
             event(1, "parameter", AllocationOperation.FREE, 1 * GIB, 256),
@@ -221,7 +221,7 @@ def test_physical_admission_exposes_every_subtraction() -> None:
     assert admission.provider_headroom_bytes == 1280 * MIB
     assert admission.slab_bytes == 4 * GIB - 500 * MIB - 1280 * MIB
     assert admission.workspace_reserve_bytes == 750 * MIB
-    assert admission.host_reservation_bytes == 1280 * MIB
+    assert admission.spill_reservation_bytes == 1280 * MIB
     assert replay.peak_allocated_bytes == 1 * GIB
 
 
@@ -235,7 +235,7 @@ def test_workspace_reserve_has_explicit_fragmentation_allowance() -> None:
     [
         ({"device_budget_bytes": 1000 * MIB}, "fixed_device_budget"),
         ({"maximum_task_workspace_bytes": 3 * GIB}, "workspace_budget"),
-        ({"host_budget_bytes": 1 * GIB}, "host_budget"),
+        ({"spill_budget_bytes": 1 * GIB}, "spill_budget"),
     ],
 )
 def test_admission_failures_identify_the_physical_category(
@@ -243,11 +243,11 @@ def test_admission_failures_identify_the_physical_category(
 ) -> None:
     arguments = {
         "device_budget_bytes": 4 * GIB,
-        "host_budget_bytes": 3 * GIB,
+        "spill_budget_bytes": 3 * GIB,
         "context_bytes": 500 * MIB,
         "observed_external_bytes": 0,
         "maximum_task_workspace_bytes": 128 * MIB,
-        "predicted_host_peak_bytes": 1 * GIB,
+        "predicted_spill_peak_bytes": 1 * GIB,
     }
     arguments.update(overrides)
     with pytest.raises(AdmissionError) as captured:

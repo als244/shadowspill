@@ -110,8 +110,8 @@ def _schedule() -> MemorySchedule:
     return MemorySchedule(
         initial_residency=(
             ResidencySpec("resident_model_state", MemoryLocation.DEVICE),
-            ResidencySpec("earlier_prefetch", MemoryLocation.HOST),
-            ResidencySpec("future_optimizer_state", MemoryLocation.HOST),
+            ResidencySpec("earlier_prefetch", MemoryLocation.SPILL),
+            ResidencySpec("future_optimizer_state", MemoryLocation.SPILL),
         ),
         actions=(
             MemoryAction(
@@ -140,7 +140,7 @@ def _config(capacity: int) -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=capacity,
-        host_capacity_bytes=80,
+        spill_capacity_bytes=80,
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )

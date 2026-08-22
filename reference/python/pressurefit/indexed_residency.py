@@ -123,13 +123,13 @@ def compile_residency_template(
             [device_index[device_id] for device_id in facts.alias_devices],
         )
     )
-    retain_host = keep(
+    retain_spill = keep(
         _array(ctypes.c_uint8, [int(value) for value in facts.alias_retain_spill_copy])
     )
     location_code = {
         None: -1,
         MemoryLocation.DEVICE: 0,
-        MemoryLocation.HOST: 1,
+        MemoryLocation.SPILL: 1,
     }
     initial = keep(
         _array(
@@ -188,7 +188,7 @@ def compile_residency_template(
         device_count=len(device_ids),
         alias_size_bytes=alias_sizes,
         alias_device=alias_devices,
-        alias_retain_spill_copy=retain_host,
+        alias_retain_spill_copy=retain_spill,
         initial_location=initial,
         final_location=final,
         anchors=anchor_buffer,

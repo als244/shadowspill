@@ -75,23 +75,23 @@ class PhysicalAdmission:
     """
 
     device_budget_bytes: int
-    host_budget_bytes: int
+    spill_budget_bytes: int
     context_bytes: int
     provider_headroom_bytes: int
     slab_bytes: int
     workspace_reserve_bytes: int
-    host_reservation_bytes: int
+    spill_reservation_bytes: int
     predicted_fragmentation_bytes: int = 0
 
     def __post_init__(self) -> None:
         byte_fields = (
             ("device_budget_bytes", self.device_budget_bytes),
-            ("host_budget_bytes", self.host_budget_bytes),
+            ("spill_budget_bytes", self.spill_budget_bytes),
             ("context_bytes", self.context_bytes),
             ("provider_headroom_bytes", self.provider_headroom_bytes),
             ("slab_bytes", self.slab_bytes),
             ("workspace_reserve_bytes", self.workspace_reserve_bytes),
-            ("host_reservation_bytes", self.host_reservation_bytes),
+            ("spill_reservation_bytes", self.spill_reservation_bytes),
             ("predicted_fragmentation_bytes", self.predicted_fragmentation_bytes),
         )
         for name, value in byte_fields:
@@ -113,8 +113,8 @@ class PhysicalAdmission:
             "cannot exceed slab bytes",
         )
         require(
-            self.host_reservation_bytes <= self.host_budget_bytes,
-            "admission.host_reservation_bytes",
+            self.spill_reservation_bytes <= self.spill_budget_bytes,
+            "admission.spill_reservation_bytes",
             "cannot exceed host budget",
         )
 
@@ -122,8 +122,8 @@ class PhysicalAdmission:
         return {
             "context_bytes": self.context_bytes,
             "device_budget_bytes": self.device_budget_bytes,
-            "host_budget_bytes": self.host_budget_bytes,
-            "host_reservation_bytes": self.host_reservation_bytes,
+            "spill_budget_bytes": self.spill_budget_bytes,
+            "spill_reservation_bytes": self.spill_reservation_bytes,
             "predicted_fragmentation_bytes": self.predicted_fragmentation_bytes,
             "provider_headroom_bytes": self.provider_headroom_bytes,
             "slab_bytes": self.slab_bytes,
@@ -139,12 +139,12 @@ class PhysicalAdmission:
 
         return cls(
             device_budget_bytes=integer("device_budget_bytes"),
-            host_budget_bytes=integer("host_budget_bytes"),
+            spill_budget_bytes=integer("spill_budget_bytes"),
             context_bytes=integer("context_bytes"),
             provider_headroom_bytes=integer("provider_headroom_bytes"),
             slab_bytes=integer("slab_bytes"),
             workspace_reserve_bytes=integer("workspace_reserve_bytes"),
-            host_reservation_bytes=integer("host_reservation_bytes"),
+            spill_reservation_bytes=integer("spill_reservation_bytes"),
             predicted_fragmentation_bytes=integer("predicted_fragmentation_bytes"),
         )
 
@@ -152,18 +152,18 @@ class PhysicalAdmission:
 @dataclass(frozen=True, slots=True)
 class PlanPrediction:
     device_peak_bytes: int
-    host_peak_bytes: int
+    spill_peak_bytes: int
     makespan_ns: int
 
     def __post_init__(self) -> None:
         require_non_negative(self.device_peak_bytes, "prediction.device_peak_bytes")
-        require_non_negative(self.host_peak_bytes, "prediction.host_peak_bytes")
+        require_non_negative(self.spill_peak_bytes, "prediction.spill_peak_bytes")
         require_non_negative(self.makespan_ns, "prediction.makespan_ns")
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "device_peak_bytes": self.device_peak_bytes,
-            "host_peak_bytes": self.host_peak_bytes,
+            "spill_peak_bytes": self.spill_peak_bytes,
             "makespan_ns": self.makespan_ns,
         }
 
@@ -175,8 +175,8 @@ class PlanPrediction:
                 field(data, "device_peak_bytes", path),
                 f"{path}.device_peak_bytes",
             ),
-            host_peak_bytes=expect_integer(
-                field(data, "host_peak_bytes", path), f"{path}.host_peak_bytes"
+            spill_peak_bytes=expect_integer(
+                field(data, "spill_peak_bytes", path), f"{path}.spill_peak_bytes"
             ),
             makespan_ns=expect_integer(
                 field(data, "makespan_ns", path), f"{path}.makespan_ns"
@@ -220,8 +220,8 @@ class ExecutionPlan:
             "exceeds physical device budget",
         )
         require(
-            self.prediction.host_peak_bytes <= self.admission.host_budget_bytes,
-            "plan.prediction.host_peak_bytes",
+            self.prediction.spill_peak_bytes <= self.admission.spill_budget_bytes,
+            "plan.prediction.spill_peak_bytes",
             "exceeds host budget",
         )
 

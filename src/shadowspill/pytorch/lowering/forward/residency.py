@@ -41,7 +41,7 @@ def derive_forward_residency(
         and item.alias_group_id not in graph.produced_aliases
         and item.alias_group_id not in shared_aliases
     }
-    final_host = {
+    final_spill = {
         item.alias_group_id
         for item in logical_objects
         if item.persistence is Persistence.CHECKPOINT
@@ -52,17 +52,17 @@ def derive_forward_residency(
         for index, object_id in enumerate(graph.public_outputs)
         if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.DEVICE
     }
-    final_host.update(
+    final_spill.update(
         objects.catalog.alias_id(object_id)
         for index, object_id in enumerate(graph.public_outputs)
-        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.HOST
+        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.SPILL
     )
-    final_host -= final_device
-    final_host -= shared_aliases
+    final_spill -= final_device
+    final_spill -= shared_aliases
     final_device -= shared_aliases
     return (
         tuple(
-            ResidencySpec(group.alias_group_id, MemoryLocation.HOST)
+            ResidencySpec(group.alias_group_id, MemoryLocation.SPILL)
             for group in aliases
             if group.alias_group_id in initial_aliases
         ),
@@ -71,10 +71,10 @@ def derive_forward_residency(
                 group.alias_group_id,
                 MemoryLocation.DEVICE
                 if group.alias_group_id in final_device
-                else MemoryLocation.HOST,
+                else MemoryLocation.SPILL,
             )
             for group in aliases
-            if group.alias_group_id in final_host | final_device
+            if group.alias_group_id in final_spill | final_device
         ),
     )
 

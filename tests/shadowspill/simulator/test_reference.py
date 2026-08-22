@@ -49,7 +49,7 @@ def test_quick_turnaround_waits_for_evict_then_fetch() -> None:
     assert peak.object_bytes == 512
     assert peak.workspace_bytes == 16
     assert peak.total_bytes == 528
-    assert result.host_peak_bytes == 384
+    assert result.spill_peak_bytes == 384
     assert result.memory_timeline
     assert result.transfer_intervals[1].stall_reasons == ("source-readiness",)
     assert result.transfer_intervals[1].stall_ns == 128
@@ -88,7 +88,7 @@ def test_overlap_case_matches_frozen_external_oracle_artifact() -> None:
 
     assert artifact["makespan_ns"] == result.makespan_ns
     assert artifact["device_peak_bytes"] == result.device_peak("cuda_0").total_bytes
-    assert artifact["host_peak_bytes"] == result.host_peak_bytes
+    assert artifact["spill_peak_bytes"] == result.spill_peak_bytes
 
 
 def test_distinct_resource_lanes_execute_concurrently() -> None:

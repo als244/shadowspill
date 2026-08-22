@@ -217,7 +217,7 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         "phase_components": phase_components,
         "tasks": task_rows,
         "transitions": transitions,
-        "largest_host_boundaries": sorted(
+        "largest_spill_boundaries": sorted(
             transitions,
             key=lambda row: cast(float, row["host_boundary_seconds"]),
             reverse=True,
@@ -239,7 +239,7 @@ def _print_summary(result: Mapping[str, Any]) -> None:
         )
     )
     print("largest host boundaries:")
-    for row in result["largest_host_boundaries"][:10]:
+    for row in result["largest_spill_boundaries"][:10]:
         print(
             "  {} -> {}: {:.1f} us host, {:.1f} us stream gap; {}".format(
                 row["previous_execution_task_id"],

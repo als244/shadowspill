@@ -843,7 +843,7 @@ static int valid_transition_paths(void) {
         .initial_pool_id = 1U,
         .initially_resident = 1U,
     };
-    const ShadowSpillObjectDescription temporary_host = {
+    const ShadowSpillObjectDescription temporary_spill = {
         .object_id = 2U,
         .size_bytes = 32U,
         .initial_pool_id = 1U,
@@ -858,7 +858,7 @@ static int valid_transition_paths(void) {
     int result = 0;
     if (shadowspill_register_object(fixture.runtime, &retained) !=
             SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_register_object(fixture.runtime, &temporary_host) !=
+        shadowspill_register_object(fixture.runtime, &temporary_spill) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_register_object(fixture.runtime, &device_created) !=
             SHADOWSPILL_RUNTIME_OK ||
@@ -926,7 +926,7 @@ static int valid_transition_paths(void) {
         goto done;
     }
     const ShadowSpillRuntimeAction prefetch = {
-        .object_id = temporary_host.object_id,
+        .object_id = temporary_spill.object_id,
         .kind = SHADOWSPILL_RUNTIME_PREFETCH,
     };
     if (shadowspill_test_submit_actions(
@@ -934,7 +934,7 @@ static int valid_transition_paths(void) {
         ) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_RUNTIME_OK ||
         shadowspill_object_snapshot(
-            fixture.runtime, temporary_host.object_id, &snapshot
+            fixture.runtime, temporary_spill.object_id, &snapshot
         ) != SHADOWSPILL_RUNTIME_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.has_spill_lease) {

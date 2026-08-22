@@ -29,7 +29,7 @@ SHARED_RESIDENCY_CODE = {
 }
 MEMORY_LOCATION_CODE = {
     MemoryLocation.DEVICE: 0,
-    MemoryLocation.HOST: 1,
+    MemoryLocation.SPILL: 1,
 }
 MEMORY_ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
@@ -113,15 +113,15 @@ class IndexedExecutionPlan:
     entrypoint_executor_ids: tuple[str, ...]
     entrypoint_contract_digests: tuple[str, ...]
     device_budget_bytes: int
-    host_budget_bytes: int
+    spill_budget_bytes: int
     context_bytes: int
     provider_headroom_bytes: int
     slab_bytes: int
     workspace_reserve_bytes: int
-    host_reservation_bytes: int
+    spill_reservation_bytes: int
     predicted_fragmentation_bytes: int
     predicted_device_peak_bytes: int
-    predicted_host_peak_bytes: int
+    predicted_spill_peak_bytes: int
     predicted_makespan_ns: int
 
 
@@ -330,15 +330,15 @@ def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
             item.contract_digest for item in plan.entrypoints
         ),
         device_budget_bytes=admission.device_budget_bytes,
-        host_budget_bytes=admission.host_budget_bytes,
+        spill_budget_bytes=admission.spill_budget_bytes,
         context_bytes=admission.context_bytes,
         provider_headroom_bytes=admission.provider_headroom_bytes,
         slab_bytes=admission.slab_bytes,
         workspace_reserve_bytes=admission.workspace_reserve_bytes,
-        host_reservation_bytes=admission.host_reservation_bytes,
+        spill_reservation_bytes=admission.spill_reservation_bytes,
         predicted_fragmentation_bytes=admission.predicted_fragmentation_bytes,
         predicted_device_peak_bytes=prediction.device_peak_bytes,
-        predicted_host_peak_bytes=prediction.host_peak_bytes,
+        predicted_spill_peak_bytes=prediction.spill_peak_bytes,
         predicted_makespan_ns=prediction.makespan_ns,
     )
 

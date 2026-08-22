@@ -1180,7 +1180,7 @@ int shadowspill_advance_indexed_prefetch_to_release(
     for (uint32_t index = 0U; index < storage->value.initial_count; ++index) {
         if (storage->value.initial_aliases[index] == alias &&
             storage->value.initial_locations[index] ==
-                SHADOWSPILL_MEMORY_HOST) {
+                SHADOWSPILL_MEMORY_SPILL) {
             initial_spill_copy = 1;
             break;
         }
@@ -1429,7 +1429,7 @@ int shadowspill_emit_indexed_schedule(
         if (span_count == 0U) {
             continue;
         }
-        int32_t host_refreshed =
+        int32_t spill_refreshed =
             problem->initial_location[alias] == 1 ||
                 problem->alias_retain_spill_copy[alias] != 0U
             ? -1
@@ -1503,13 +1503,13 @@ int shadowspill_emit_indexed_schedule(
                     !has_write_since(
                         facts,
                         alias,
-                        host_refreshed,
+                        spill_refreshed,
                         end_boundary
                     )) {
                     kind = SHADOWSPILL_MEMORY_RELEASE;
                 } else {
                     kind = SHADOWSPILL_MEMORY_OFFLOAD;
-                    host_refreshed = end_boundary;
+                    spill_refreshed = end_boundary;
                 }
             }
             if (reserve_departures(
@@ -1626,7 +1626,7 @@ int shadowspill_emit_indexed_schedule(
             storage->value.initial_locations[output] =
                 resident[cell(alias, facts->boundary_count, 0U)] != 0U
                 ? SHADOWSPILL_MEMORY_DEVICE
-                : SHADOWSPILL_MEMORY_HOST;
+                : SHADOWSPILL_MEMORY_SPILL;
         }
         if (problem->final_location[alias] >= 0) {
             uint32_t output = storage->value.final_count++;

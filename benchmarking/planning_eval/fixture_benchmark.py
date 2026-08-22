@@ -68,7 +68,7 @@ def _request(value: dict[str, Any]) -> ReplayRequest:
         devices=tuple(
             DeviceSimulationConfig(**device) for device in simulation["devices"]
         ),
-        host_capacity_bytes=simulation["host_capacity_bytes"],
+        spill_capacity_bytes=simulation["spill_capacity_bytes"],
     )
     options_value = request["options"]
     options = PressureFitOptions(

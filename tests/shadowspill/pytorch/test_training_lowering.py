@@ -297,7 +297,7 @@ def test_training_lowering_accepts_arbitrary_graph_pair_portfolios() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=1 << 20,
-        host_capacity_bytes=1 << 20,
+        spill_capacity_bytes=1 << 20,
         fetch_bandwidth_bytes_per_second=10 << 30,
         evict_bandwidth_bytes_per_second=10 << 30,
     )

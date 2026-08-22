@@ -94,23 +94,23 @@ int shadowspill_report_deadlock(
             }
         }
         if (transfer->direction == SHADOWSPILL_TRANSFER_EVICT &&
-            state->host_allocated == 0U) {
+            state->spill_allocated == 0U) {
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
-                    work->host_bytes,
+                    work->spill_bytes,
                     program->alias_size_bytes[alias],
                     &total
-                ) || total > program->host_capacity_bytes) {
+                ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_SIMULATION_OFFLOAD_HOST_CAPACITY,
+                    SHADOWSPILL_SIMULATION_OFFLOAD_SPILL_CAPACITY,
                     work,
                     transfer->trigger_task,
                     alias,
                     device,
-                    SHADOWSPILL_MEMORY_HOST,
-                    program->host_capacity_bytes,
-                    work->host_bytes,
+                    SHADOWSPILL_MEMORY_SPILL,
+                    program->spill_capacity_bytes,
+                    work->spill_bytes,
                     program->alias_size_bytes[alias]
                 );
                 return 0;
@@ -226,7 +226,7 @@ int shadowspill_check_final_residency(
         const ShadowSpillAliasState *state = &work->aliases[alias];
         int ready = program->final_locations[index] == SHADOWSPILL_MEMORY_DEVICE
             ? state->device_ready != 0U
-            : state->host_ready != 0U;
+            : state->spill_ready != 0U;
         if (!ready) {
             shadowspill_set_error(
                 result,

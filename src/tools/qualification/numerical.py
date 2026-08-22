@@ -44,7 +44,7 @@ from .references import (
     reference_inputs_path,
 )
 
-_HOST_BUDGET = 64 << 30
+_SPILL_BUDGET = 64 << 30
 _LOSS_RELATIVE_TOLERANCE = 0.01
 _LOSS_ABSOLUTE_TOLERANCE = 2e-5
 _MINIMUM_COSINE = 0.999
@@ -294,7 +294,7 @@ def _planning_breakdown(
     )
     program_lowering = phase_seconds.get("program_lowering", 0.0)
     pressurefit = phase_seconds.get("pressurefit_simulation", 0.0)
-    admission = phase_seconds.get("host_admission", 0.0) + phase_seconds.get(
+    admission = phase_seconds.get("spill_admission", 0.0) + phase_seconds.get(
         "slab_admission", 0.0
     )
     classified = (
@@ -492,7 +492,7 @@ def _planned_worker(
     runtime = Runtime(
         pools={
             "execution": device(physical_capacity=device_budget),
-            "spill": pinned_host(capacity=_HOST_BUDGET),
+            "spill": pinned_host(capacity=_SPILL_BUDGET),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),
@@ -811,7 +811,7 @@ def _planned_worker(
         "action_count": len(report.transfer_actions),
         "predicted_makespan_seconds": report.predicted_makespan_ns / 1e9,
         "predicted_device_peak_bytes": report.predicted_device_peak_bytes,
-        "predicted_host_peak_bytes": report.predicted_host_peak_bytes,
+        "predicted_spill_peak_bytes": report.predicted_spill_peak_bytes,
         "predicted_fragmentation_bytes": (
             report.execution_plan.admission.predicted_fragmentation_bytes
         ),
@@ -952,7 +952,7 @@ def _planned_worker(
         <= qualification_result["execution_pool_bytes"]
         and qualification_result["spill_peak_allocated_bytes"]
         <= qualification_result["spill_pool_bytes"]
-        <= _HOST_BUDGET
+        <= _SPILL_BUDGET
         and qualification_result["callback_failures"] == 0
         and qualification_result["pointer_lookup_failures"] == 0
         and not qualification_result["allocation_event_overflow"]

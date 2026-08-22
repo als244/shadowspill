@@ -49,7 +49,7 @@ _RESOURCE_CODE = {
 }
 _LOCATION_CODE = {
     MemoryLocation.DEVICE: 0,
-    MemoryLocation.HOST: 1,
+    MemoryLocation.SPILL: 1,
 }
 _ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
@@ -165,10 +165,10 @@ def compile_simulation_template(
                 f"shared residency requires {shared_bytes} bytes on "
                 f"{device_id!r}, exceeding capacity {capacity}"
             )
-    if shared.spill_bytes > config.host_capacity_bytes:
+    if shared.spill_bytes > config.spill_capacity_bytes:
         raise ValueError(
             "shared spill residency exceeds host capacity: "
-            f"shared={shared.spill_bytes}, capacity={config.host_capacity_bytes}"
+            f"shared={shared.spill_bytes}, capacity={config.spill_capacity_bytes}"
         )
     alias_ids = tuple(item.alias_group_id for item in program.alias_groups)
     alias_index = {value: index for index, value in enumerate(alias_ids)}
@@ -249,7 +249,7 @@ def compile_simulation_template(
         )
     )
     alias_version = u64(tuple(item.initial_version for item in program.alias_groups))
-    alias_host = u8(
+    alias_spill = u8(
         tuple(
             int(item.retain_spill_copy and item.shared_residency is None)
             for item in program.alias_groups
@@ -322,12 +322,12 @@ def compile_simulation_template(
         mutation_count=len(mutation_values),
         reuse_dependency_count=0,
         use_admission_accounting=0,
-        host_capacity_bytes=config.host_capacity_bytes - shared.spill_bytes,
+        spill_capacity_bytes=config.spill_capacity_bytes - shared.spill_bytes,
         devices=c_devices,
         alias_device=alias_device,
         alias_size_bytes=alias_size,
         alias_initial_version=alias_version,
-        alias_retain_spill_copy=alias_host,
+        alias_retain_spill_copy=alias_spill,
         task_device=task_device,
         task_resource_kind=task_kind,
         task_resource_lane=task_lane,
@@ -640,8 +640,8 @@ def _raise_error(
             None
             if int(result.error_device) == NO_INDEX and status
             not in (
-                Status.INITIAL_HOST_CAPACITY,
-                Status.OFFLOAD_HOST_CAPACITY,
+                Status.INITIAL_SPILL_CAPACITY,
+                Status.OFFLOAD_SPILL_CAPACITY,
                 Status.FINAL_RESIDENCY,
             )
             else (
@@ -813,7 +813,7 @@ def _simulate_projection(
         task_intervals=task_intervals,
         transfer_intervals=transfer_intervals,
         device_peaks=device_peaks,
-        host_peak_bytes=int(result.host_peak_bytes) + projection.shared_spill_bytes,
+        spill_peak_bytes=int(result.spill_peak_bytes) + projection.shared_spill_bytes,
     )
     simulated.attach_interval_arrays(
         IntervalArrays(

@@ -16,12 +16,12 @@ enum {
 typedef struct ShadowSpillAliasState {
     uint8_t device_allocated;
     uint8_t device_ready;
-    uint8_t host_allocated;
-    uint8_t host_ready;
+    uint8_t spill_allocated;
+    uint8_t spill_ready;
     uint8_t fetch_pending;
     uint8_t evict_pending;
     uint64_t device_version;
-    uint64_t host_version;
+    uint64_t spill_version;
 } ShadowSpillAliasState;
 
 typedef struct ShadowSpillTaskState {
@@ -66,8 +66,8 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t *device_object_peaks;
     uint64_t *device_workspace_peaks;
     uint64_t *device_total_peaks;
-    uint64_t host_bytes;
-    uint64_t host_peak_bytes;
+    uint64_t spill_bytes;
+    uint64_t spill_peak_bytes;
     uint64_t now_ns;
     uint32_t completed_tasks;
     uint32_t submitted_actions;

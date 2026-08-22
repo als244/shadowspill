@@ -276,7 +276,7 @@ def test_after_task_fetch_reserves_task_released_range_causally() -> None:
     schedule = MemorySchedule(
         (
             ResidencySpec("released", MemoryLocation.DEVICE),
-            ResidencySpec("fetched", MemoryLocation.HOST),
+            ResidencySpec("fetched", MemoryLocation.SPILL),
         ),
         (
             MemoryAction("boundary", "released", MemoryActionKind.RELEASE),

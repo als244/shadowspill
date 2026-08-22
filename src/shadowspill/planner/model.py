@@ -192,12 +192,12 @@ class PressureFitResult:
             )
             admission = PhysicalAdmission(
                 device_budget_bytes=device.capacity_bytes,
-                host_budget_bytes=self.simulation_config.host_capacity_bytes,
+                spill_budget_bytes=self.simulation_config.spill_capacity_bytes,
                 context_bytes=0,
                 provider_headroom_bytes=0,
                 slab_bytes=device.capacity_bytes,
                 workspace_reserve_bytes=min(workspace, device.capacity_bytes),
-                host_reservation_bytes=self.simulation.host_peak_bytes,
+                spill_reservation_bytes=self.simulation.spill_peak_bytes,
             )
         logical_peak = sum(peak.total_bytes for peak in self.simulation.device_peaks)
         if logical_peak > admission.slab_bytes:
@@ -205,11 +205,11 @@ class PressureFitResult:
                 "simulated device peak exceeds the admitted slab: "
                 f"{logical_peak} > {admission.slab_bytes}"
             )
-        if self.simulation.host_peak_bytes > admission.host_reservation_bytes:
+        if self.simulation.spill_peak_bytes > admission.spill_reservation_bytes:
             raise ValueError(
                 "simulated host peak exceeds the admitted host reservation: "
-                f"{self.simulation.host_peak_bytes} > "
-                f"{admission.host_reservation_bytes}"
+                f"{self.simulation.spill_peak_bytes} > "
+                f"{admission.spill_reservation_bytes}"
             )
         physical_peak = (
             admission.context_bytes
@@ -224,7 +224,7 @@ class PressureFitResult:
             admission=admission,
             prediction=PlanPrediction(
                 device_peak_bytes=physical_peak,
-                host_peak_bytes=self.simulation.host_peak_bytes,
+                spill_peak_bytes=self.simulation.spill_peak_bytes,
                 makespan_ns=self.simulation.makespan_ns,
             ),
         )

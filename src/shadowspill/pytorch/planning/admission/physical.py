@@ -56,18 +56,18 @@ def physical_admission(
     installed: InstalledAllocator,
     *,
     workspace_reserve: int,
-    predicted_host_peak_bytes: int,
+    predicted_spill_peak_bytes: int,
     predicted_fragmentation_bytes: int,
 ) -> PhysicalAdmission:
     """Describe the callable's admitted resources after spatial replay.
 
     The runtime may own a larger spill pool than this plan is allowed to use.
-    ``host_reservation_bytes`` therefore records this callable's predicted
+    ``spill_reservation_bytes`` therefore records this callable's predicted
     spill peak, not the process-lifetime pool allocation.
     """
 
     reconcile_spill_pool(
-        predicted_peak=predicted_host_peak_bytes,
+        predicted_peak=predicted_spill_peak_bytes,
         budget=memory.spill_budget,
     )
 
@@ -75,12 +75,12 @@ def physical_admission(
         device_budget_bytes=(
             memory.execution.physical_capacity or memory.execution_budget
         ),
-        host_budget_bytes=memory.spill_budget,
+        spill_budget_bytes=memory.spill_budget,
         context_bytes=int(installed.admission.context_bytes),
         provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
         slab_bytes=memory.execution_budget,
         workspace_reserve_bytes=workspace_reserve,
-        host_reservation_bytes=predicted_host_peak_bytes,
+        spill_reservation_bytes=predicted_spill_peak_bytes,
         predicted_fragmentation_bytes=predicted_fragmentation_bytes,
     )
 

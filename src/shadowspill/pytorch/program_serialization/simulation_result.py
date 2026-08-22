@@ -129,8 +129,8 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
             for index, raw in enumerate(peaks)
             for item in (_mapping(raw, f"{path}.device_peaks[{index}]"),)
         ),
-        host_peak_bytes=_integer(
-            data.get("host_peak_bytes"), f"{path}.host_peak_bytes"
+        spill_peak_bytes=_integer(
+            data.get("spill_peak_bytes"), f"{path}.spill_peak_bytes"
         ),
         memory_timeline=tuple(
             MemorySnapshot(
@@ -145,9 +145,9 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
                     item.get("device_workspace_bytes"),
                     f"{path}.memory_timeline[{index}].device_workspace_bytes",
                 ),
-                host_bytes=_integer(
-                    item.get("host_bytes"),
-                    f"{path}.memory_timeline[{index}].host_bytes",
+                spill_bytes=_integer(
+                    item.get("spill_bytes"),
+                    f"{path}.memory_timeline[{index}].spill_bytes",
                 ),
                 device_physical_bytes=_integer_pairs(
                     item.get("device_physical_bytes"),

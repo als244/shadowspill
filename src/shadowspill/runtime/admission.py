@@ -136,16 +136,16 @@ class AdmissionPolicy:
     workspace_numerator: int = 5
     workspace_denominator: int = 4
     workspace_granularity_bytes: int = 2 * MIB
-    minimum_host_leeway_bytes: int = 256 * MIB
-    host_leeway_percent: int = 10
-    host_granularity_bytes: int = 64 << 10
+    minimum_spill_leeway_bytes: int = 256 * MIB
+    spill_leeway_percent: int = 10
+    spill_granularity_bytes: int = 64 << 10
 
     def __post_init__(self) -> None:
         values = (
             self.minimum_provider_headroom_bytes,
             self.provider_growth_margin_bytes,
             self.minimum_workspace_reserve_bytes,
-            self.minimum_host_leeway_bytes,
+            self.minimum_spill_leeway_bytes,
         )
         if any(value < 0 for value in values):
             raise ValueError("admission margins must be non-negative")
@@ -154,11 +154,11 @@ class AdmissionPolicy:
             self.workspace_numerator,
             self.workspace_denominator,
             self.workspace_granularity_bytes,
-            self.host_granularity_bytes,
+            self.spill_granularity_bytes,
         )
         if any(value <= 0 for value in positive):
             raise ValueError("admission ratios and granularities must be positive")
-        if self.host_leeway_percent < 0:
+        if self.spill_leeway_percent < 0:
             raise ValueError("host leeway percent must be non-negative")
 
 
@@ -624,11 +624,11 @@ def _static_free_ranges(
 def admit_physical_budget(
     *,
     device_budget_bytes: int,
-    host_budget_bytes: int,
+    spill_budget_bytes: int,
     context_bytes: int,
     observed_external_bytes: int,
     maximum_task_workspace_bytes: int,
-    predicted_host_peak_bytes: int,
+    predicted_spill_peak_bytes: int,
     allocation_timeline: tuple[AllocationEvent, ...] = (),
     policy: AdmissionPolicy | None = None,
 ) -> tuple[PhysicalAdmission, SlabReplay]:
@@ -637,11 +637,11 @@ def admit_physical_budget(
     policy = policy or AdmissionPolicy()
     inputs = (
         device_budget_bytes,
-        host_budget_bytes,
+        spill_budget_bytes,
         context_bytes,
         observed_external_bytes,
         maximum_task_workspace_bytes,
-        predicted_host_peak_bytes,
+        predicted_spill_peak_bytes,
     )
     if any(value < 0 for value in inputs):
         raise ValueError("physical admission inputs must be non-negative")
@@ -669,30 +669,30 @@ def admit_physical_budget(
             required_bytes=workspace_reserve,
             capacity_bytes=slab_bytes,
         )
-    host_percentage = (
-        predicted_host_peak_bytes * policy.host_leeway_percent + 99
+    spill_percentage = (
+        predicted_spill_peak_bytes * policy.spill_leeway_percent + 99
     ) // 100
-    host_leeway = max(policy.minimum_host_leeway_bytes, host_percentage)
-    host_reservation = _round_up(
-        predicted_host_peak_bytes + host_leeway,
-        policy.host_granularity_bytes,
+    spill_leeway = max(policy.minimum_spill_leeway_bytes, spill_percentage)
+    spill_reservation = _round_up(
+        predicted_spill_peak_bytes + spill_leeway,
+        policy.spill_granularity_bytes,
     )
-    if host_reservation > host_budget_bytes:
+    if spill_reservation > spill_budget_bytes:
         raise AdmissionError(
             "host peak plus explicit leeway exceeds the host budget",
-            kind="host_budget",
-            required_bytes=host_reservation,
-            capacity_bytes=host_budget_bytes,
+            kind="spill_budget",
+            required_bytes=spill_reservation,
+            capacity_bytes=spill_budget_bytes,
         )
     replay = replay_slab_timeline(slab_bytes, allocation_timeline)
     admission = PhysicalAdmission(
         device_budget_bytes=device_budget_bytes,
-        host_budget_bytes=host_budget_bytes,
+        spill_budget_bytes=spill_budget_bytes,
         context_bytes=context_bytes,
         provider_headroom_bytes=provider_headroom,
         slab_bytes=slab_bytes,
         workspace_reserve_bytes=workspace_reserve,
-        host_reservation_bytes=host_reservation,
+        spill_reservation_bytes=spill_reservation,
         predicted_fragmentation_bytes=replay.peak_fragmentation_bytes,
     )
     return admission, replay

@@ -8,11 +8,11 @@ _STATUS_KIND: dict[int, str] = {
     Status.INVALID_ARGUMENT: "invalid-argument",
     Status.INTERNAL_FAILURE: "allocation-failure",
     Status.INITIAL_DEVICE_CAPACITY: "initial-device-capacity",
-    Status.INITIAL_HOST_CAPACITY: "initial-host-capacity",
+    Status.INITIAL_SPILL_CAPACITY: "initial-spill-capacity",
     Status.TASK_INPUT_DEADLOCK: "task-input-deadlock",
     Status.TASK_DEVICE_CAPACITY: "task-device-capacity",
     Status.PREFETCH_DEVICE_CAPACITY: "prefetch-device-capacity",
-    Status.OFFLOAD_HOST_CAPACITY: "offload-host-capacity",
+    Status.OFFLOAD_SPILL_CAPACITY: "offload-spill-capacity",
     Status.TRANSFER_DEADLOCK: "transfer-deadlock",
     Status.INVALID_RELEASE: "invalid-release",
     Status.RELEASE_TRANSFER_CONFLICT: "release-transfer-conflict",
@@ -26,13 +26,13 @@ _STATUS_MESSAGE: dict[int, str] = {
     Status.INVALID_ARGUMENT: "invalid argument",
     Status.INTERNAL_FAILURE: "allocation failure",
     Status.INITIAL_DEVICE_CAPACITY: "initial device capacity exceeded",
-    Status.INITIAL_HOST_CAPACITY: "initial host capacity exceeded",
+    Status.INITIAL_SPILL_CAPACITY: "initial host capacity exceeded",
     Status.TASK_INPUT_DEADLOCK: "task input cannot become resident",
     Status.TASK_DEVICE_CAPACITY: (
         "task output and workspace exceed device capacity"
     ),
     Status.PREFETCH_DEVICE_CAPACITY: "prefetch cannot reserve device capacity",
-    Status.OFFLOAD_HOST_CAPACITY: "offload cannot reserve host capacity",
+    Status.OFFLOAD_SPILL_CAPACITY: "offload cannot reserve host capacity",
     Status.TRANSFER_DEADLOCK: "transfer has no progress source",
     Status.INVALID_RELEASE: "release has no ready device copy",
     Status.RELEASE_TRANSFER_CONFLICT: "release conflicts with a transfer",
@@ -47,10 +47,10 @@ _STATUS_MESSAGE: dict[int, str] = {
 _CAPACITY_STATUSES: frozenset[int] = frozenset(
     (
         Status.INITIAL_DEVICE_CAPACITY,
-        Status.INITIAL_HOST_CAPACITY,
+        Status.INITIAL_SPILL_CAPACITY,
         Status.TASK_DEVICE_CAPACITY,
         Status.PREFETCH_DEVICE_CAPACITY,
-        Status.OFFLOAD_HOST_CAPACITY,
+        Status.OFFLOAD_SPILL_CAPACITY,
     )
 )
 

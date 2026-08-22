@@ -58,7 +58,7 @@ def _config() -> SimulationConfig:
     return SimulationConfig.single_device(
         "device_0",
         device_capacity_bytes=96,
-        host_capacity_bytes=64,
+        spill_capacity_bytes=64,
         fetch_bandwidth_bytes_per_second=1_000_000,
         evict_bandwidth_bytes_per_second=1_000_000,
     )

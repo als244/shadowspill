@@ -350,7 +350,7 @@ static int bind_residency(
     for (uint32_t index = 0U; index < value_count; ++index) {
         uint32_t alias = aliases[index];
         uint8_t location = locations[index];
-        if (alias >= alias_count || location > SHADOWSPILL_MEMORY_HOST ||
+        if (alias >= alias_count || location > SHADOWSPILL_MEMORY_SPILL ||
             destination[alias] >= 0) {
             return -1;
         }
@@ -699,7 +699,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
 ) {
     uint32_t cold_count = 0U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
-        if (prepared->initial_location[alias] == SHADOWSPILL_MEMORY_HOST &&
+        if (prepared->initial_location[alias] == SHADOWSPILL_MEMORY_SPILL &&
             prepared->first_access_task[alias] != UINT32_MAX &&
             prepared->first_access_task[alias] > 0U) {
             ++cold_count;
@@ -721,7 +721,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
     uint32_t next = 0U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         uint32_t first_use = prepared->first_access_task[alias];
-        if (prepared->initial_location[alias] != SHADOWSPILL_MEMORY_HOST ||
+        if (prepared->initial_location[alias] != SHADOWSPILL_MEMORY_SPILL ||
             first_use == UINT32_MAX || first_use == 0U) {
             continue;
         }
