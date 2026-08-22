@@ -46,6 +46,7 @@ add_executable(
 target_include_directories(
   shadowspill_memory_pool_canary
   PRIVATE
+    ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/runtime/src
     ${PROJECT_SOURCE_DIR}/csrc/runtime/include
 )
@@ -115,6 +116,7 @@ add_executable(
 target_include_directories(
   shadowspill_transfer_lane_canary
   PRIVATE
+    ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/runtime/src
     ${PROJECT_SOURCE_DIR}/csrc/runtime/include
 )

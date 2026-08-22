@@ -9,6 +9,7 @@ add_library(
 target_include_directories(
   shadowspill_backend_mock
   PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mock/include>
     $<INSTALL_INTERFACE:shadowspill/include>
@@ -53,6 +54,7 @@ if(SHADOWSPILL_BUILD_CUDA)
     target_include_directories(
       shadowspill_backend_cuda
       PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cuda/include>
         $<INSTALL_INTERFACE:shadowspill/include>

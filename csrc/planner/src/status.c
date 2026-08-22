@@ -7,22 +7,9 @@ uint32_t shadowspill_planner_abi_version(void) {
 }
 
 const char *shadowspill_planner_status_string(ShadowSpillPlannerStatus status) {
-    switch (status) {
-        case SHADOWSPILL_PLANNER_OK:
-            return "ok";
-        case SHADOWSPILL_PLANNER_INVALID_ARGUMENT:
-            return "invalid planner argument";
-        case SHADOWSPILL_PLANNER_ALLOCATION_FAILURE:
-            return "planner allocation failure";
-        case SHADOWSPILL_PLANNER_NO_FEASIBLE_CANDIDATE:
-            return "no simulator-valid candidate";
-        case SHADOWSPILL_PLANNER_INTERNAL_ERROR:
-            return "planner internal error";
-        case SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE:
-            return "analytic residency is infeasible";
-    }
-    return "unknown planner status";
+    return shadowspill_status_string(status);
 }
+
 
 void shadowspill_planner_reset_result(ShadowSpillPlanSelectionResult *result) {
     ShadowSpillCandidateResult *candidate_results = result->candidate_results;

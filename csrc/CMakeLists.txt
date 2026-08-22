@@ -12,6 +12,8 @@
 add_library(
   shadowspill
   SHARED
+  common/src/status.c
+
   simulator/src/admission.c
   simulator/src/diagnostics.c
   simulator/src/events.c
@@ -66,6 +68,7 @@ add_library(
 target_include_directories(
   shadowspill
   PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/simulator/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/planner/include>
@@ -93,6 +96,7 @@ install(
 )
 install(
   FILES
+    include/shadowspill/status.h
     simulator/include/shadowspill/simulator.h
     runtime/include/shadowspill/runtime.h
     runtime/include/shadowspill/admission_replay.h

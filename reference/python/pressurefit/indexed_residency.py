@@ -7,6 +7,7 @@ from array import array
 from dataclasses import dataclass
 from typing import Any
 
+from shadowspill._status import Status
 from shadowspill.ir import MemoryLocation
 from shadowspill.planner._capi import (
     ABI_VERSION,
@@ -302,7 +303,7 @@ def reduce_residency_compiled(
             ctypes.byref(result),
         )
     )
-    if status == 5:
+    if status == Status.ANALYTIC_INFEASIBLE:
         boundary = int(result.error_boundary)
         task_index = boundary + 1
         task_id = (

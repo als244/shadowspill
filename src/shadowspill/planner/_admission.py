@@ -7,6 +7,7 @@ from array import array
 from dataclasses import dataclass
 from typing import Protocol
 
+from shadowspill._status import Status
 from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule
 from shadowspill.simulator import (
     ActionPhysicalDelta,
@@ -362,7 +363,7 @@ def evaluate_schedule_admission(
         )
     )
     if status != 0:
-        if status == 3:
+        if status == Status.NO_FEASIBLE_CANDIDATE:
             raise ValueError(
                 "selected schedule failed dynamic MemoryPool admission: "
                 f"operation={int(result.error_operation_index)}, "

@@ -6,6 +6,8 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
+from shadowspill._status import Status
+
 from ._admission_capi import (
     ABI_VERSION,
     NO_ID,
@@ -161,7 +163,7 @@ def run_admission_replay(
             ctypes.byref(program), ctypes.byref(result)
         )
     )
-    if status == 3:
+    if status == Status.REPLAY_INFEASIBLE:
         raise AdmissionError(
             "production MemoryPool replay cannot satisfy operation "
             f"{int(result.error_operation_index)} for lease "
