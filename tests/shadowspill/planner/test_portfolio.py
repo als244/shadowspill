@@ -55,7 +55,7 @@ def test_native_portfolio_is_deterministic(
     config = training_chain_config(capacity)
     options = PressureFitOptions(initial_placement=placement, workers=1)
 
-    native = pressurefit(
+    compiled = pressurefit(
         program,
         initial_residency=initial,
         config=config,
@@ -69,21 +69,21 @@ def test_native_portfolio_is_deterministic(
         options=options,
     )
 
-    assert native.schedule == repeated.schedule
-    assert native.selections == repeated.selections
-    assert native.simulation == repeated.simulation
-    assert native.diagnostics.selected_candidate_id == (
+    assert compiled.schedule == repeated.schedule
+    assert compiled.selections == repeated.selections
+    assert compiled.simulation == repeated.simulation
+    assert compiled.diagnostics.selected_candidate_id == (
         repeated.diagnostics.selected_candidate_id
     )
-    assert native.diagnostics.selected_selection_id == (
+    assert compiled.diagnostics.selected_selection_id == (
         repeated.diagnostics.selected_selection_id
     )
-    assert native.diagnostics.selected_makespan_ns == (
+    assert compiled.diagnostics.selected_makespan_ns == (
         repeated.diagnostics.selected_makespan_ns
     )
     assert tuple(
         candidate.candidate_id
-        for context in native.diagnostics.recomputation_contexts
+        for context in compiled.diagnostics.recomputation_contexts
         for candidate in context.candidate_evaluations
     ) == tuple(
         candidate.candidate_id

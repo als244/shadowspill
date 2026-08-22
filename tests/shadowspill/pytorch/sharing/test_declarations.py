@@ -33,7 +33,7 @@ class _Owner:
 
 
 def _object(size_bytes: int = 64) -> ObjectRef:
-    return ObjectRef(_Owner(), object_id=7, size_bytes=size_bytes, native_handle=11)
+    return ObjectRef(_Owner(), object_id=7, size_bytes=size_bytes, handle=11)
 
 
 def test_tensor_reference_captures_only_view_metadata() -> None:
@@ -74,7 +74,7 @@ def test_state_reference_is_immutable_mapping() -> None:
 def test_tensor_reference_close_releases_its_runtime_root_once() -> None:
     owner = _Owner()
     object_reference = ObjectRef(
-        owner, object_id=9, size_bytes=16, native_handle=13
+        owner, object_id=9, size_bytes=16, handle=13
     )
     tensor = TensorRef(
         object=object_reference,
@@ -93,7 +93,7 @@ def test_tensor_reference_close_releases_its_runtime_root_once() -> None:
 def test_state_reference_closes_aliased_storage_once() -> None:
     owner = _Owner()
     object_reference = ObjectRef(
-        owner, object_id=9, size_bytes=16, native_handle=13
+        owner, object_id=9, size_bytes=16, handle=13
     )
     first = TensorRef(
         object=object_reference,
@@ -147,7 +147,7 @@ def test_shared_input_defaults_to_causal_consistency() -> None:
 
 def test_shared_inputs_preserve_alias_geometry_and_use_one_cpu_owner() -> None:
     owner = _Owner()
-    root = ObjectRef(owner, object_id=9, size_bytes=32, native_handle=13)
+    root = ObjectRef(owner, object_id=9, size_bytes=32, handle=13)
     first = TensorRef(
         object=root,
         dtype=torch.float32,
@@ -181,7 +181,7 @@ def test_shared_inputs_preserve_alias_geometry_and_use_one_cpu_owner() -> None:
 
 def test_shared_input_requires_guaranteed_pool_and_authentic_control_value() -> None:
     owner = _Owner()
-    root = ObjectRef(owner, object_id=9, size_bytes=8, native_handle=13)
+    root = ObjectRef(owner, object_id=9, size_bytes=8, handle=13)
     floating = TensorRef(
         object=root,
         dtype=torch.float32,

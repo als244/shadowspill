@@ -230,7 +230,7 @@ class _ExecutingStage(nn.Module):
             for alias_id in (item.alias_id,)
             if alias_id in replacement_aliases
         )
-        # Existing frontend views must win for an overwritten object. Native
+        # Existing frontend views must win for an overwritten object. Backend
         # publication rebinds that stable view to the successor generation,
         # then dematerializes it if the plan immediately releases or evicts
         # the object. The compiled replacement tensor is only the temporary

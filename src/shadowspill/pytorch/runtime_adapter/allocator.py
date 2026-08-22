@@ -59,7 +59,7 @@ _installed: InstalledAllocator | None = None
 
 @dataclass(frozen=True, slots=True)
 class PoolBootstrap:
-    """One pool entry passed to the native runtime constructor."""
+    """One pool entry passed to the runtime constructor."""
 
     pool_id: int
     backend_kind: int
@@ -68,7 +68,7 @@ class PoolBootstrap:
 
 @dataclass(frozen=True, slots=True)
 class RouteBootstrap:
-    """One directed route entry passed to the native runtime constructor."""
+    """One directed route entry passed to the runtime constructor."""
 
     route_id: int
     name: str
@@ -415,8 +415,8 @@ def _configure_record_stream(library: Any, allocator: Any) -> None:
     record_stream_pointer = _function_pointer(
         library, "shadowspill_pytorch_cuda_record_stream"
     )
-    native_allocator = allocator.allocator()
-    set_record_stream = getattr(native_allocator, "set_record_stream_fn", None)
+    torch_allocator = allocator.allocator()
+    set_record_stream = getattr(torch_allocator, "set_record_stream_fn", None)
     if set_record_stream is None or not callable(set_record_stream):
         raise AllocatorInstallError(
             "this PyTorch build lacks the required record-stream callback"

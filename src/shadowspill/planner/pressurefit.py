@@ -29,10 +29,10 @@ from ._admission import (
     evaluate_schedule_admission,
 )
 from ._capi import load_planner_library
-from ._native_portfolio import (
-    NativeCandidateDiagnostic,
-    NativeContextResult,
-    NativePreflightResult,
+from ._portfolio import (
+    CCandidateDiagnostic,
+    CContextResult,
+    CPreflightResult,
     decode_candidate_diagnostic,
     decode_schedule,
     evaluate_program_context_compiled,
@@ -75,7 +75,7 @@ def _scheduled_admission_refinement(attempt: int) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class _NativeSelectionContext:
+class _SelectionContext:
     """One recomputation selection projected into the compiled planner ABI."""
 
     selections: tuple[RecomputationSelection, ...]
@@ -149,7 +149,7 @@ def validate_schedule_feasibility(
     )
     load_simulator_library()
     load_planner_library()
-    contexts = _build_native_contexts(
+    contexts = _build_contexts(
         program,
         initial_residency,
         final_residency,
@@ -161,7 +161,7 @@ def validate_schedule_feasibility(
     _preflight_native_contexts(contexts)
 
 
-def _build_native_contexts(
+def _build_contexts(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -170,10 +170,10 @@ def _build_native_contexts(
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
-) -> tuple[_NativeSelectionContext, ...]:
+) -> tuple[_SelectionContext, ...]:
     """Project each recomputation selection without Python residency matrices."""
 
-    contexts: list[_NativeSelectionContext] = []
+    contexts: list[_SelectionContext] = []
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         tasks = program.selected_tasks(selections)
@@ -186,7 +186,7 @@ def _build_native_contexts(
             final_residency=final_residency,
         )
         contexts.append(
-            _NativeSelectionContext(
+            _SelectionContext(
                 selections=selections,
                 selection_id=_selection_id(selections),
                 compiled_template=compiled_template,
@@ -208,8 +208,8 @@ def _build_native_contexts(
 
 
 def _preflight_error(
-    context: _NativeSelectionContext,
-    result: NativePreflightResult,
+    context: _SelectionContext,
+    result: CPreflightResult,
 ) -> ValueError:
     """Decode one compiled preflight failure into the public exception model."""
 
@@ -259,11 +259,11 @@ def _preflight_error(
 
 
 def _preflight_native_contexts(
-    contexts: tuple[_NativeSelectionContext, ...],
-) -> tuple[_NativeSelectionContext, ...]:
+    contexts: tuple[_SelectionContext, ...],
+) -> tuple[_SelectionContext, ...]:
     """Keep selections that satisfy the compiled semantic-capacity preflight."""
 
-    valid: list[_NativeSelectionContext] = []
+    valid: list[_SelectionContext] = []
     failures: list[ValueError] = []
     for context in contexts:
         result = validate_program_context_compiled(
@@ -306,10 +306,10 @@ def _shared_native_pool() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=max(os.cpu_count() or 1, 1))
 
 
-def _run_native_contexts(
-    contexts: tuple[_NativeSelectionContext, ...],
+def _run_contexts(
+    contexts: tuple[_SelectionContext, ...],
     options: PressureFitOptions,
-) -> tuple[NativeContextResult | None, ...]:
+) -> tuple[CContextResult | None, ...]:
     """Evaluate every recomputation selection in the compiled planner.
 
     Each context's portfolio is split by residency strategy into one
@@ -330,7 +330,7 @@ def _run_native_contexts(
 
     def evaluate(
         unit: tuple[int, PressureFitOptions],
-    ) -> NativeContextResult | None:
+    ) -> CContextResult | None:
         context_index, unit_options = unit
         context = contexts[context_index]
         return evaluate_program_context_compiled(
@@ -357,8 +357,8 @@ def _run_native_contexts(
 
 
 def _merge_strategy_results(
-    chunks: list[NativeContextResult | None],
-) -> NativeContextResult | None:
+    chunks: list[CContextResult | None],
+) -> CContextResult | None:
     """Concatenate per-strategy evaluations back into one context result."""
 
     if any(chunk is None for chunk in chunks):
@@ -366,7 +366,7 @@ def _merge_strategy_results(
     merged = [chunk for chunk in chunks if chunk is not None]
     if len(merged) == 1:
         return merged[0]
-    candidates: list[NativeCandidateDiagnostic] = []
+    candidates: list[CCandidateDiagnostic] = []
     selected_index: int | None = None
     selected_makespan: int | None = None
     selected_schedule = None
@@ -384,7 +384,7 @@ def _merge_strategy_results(
             selected_index = offset + chunk.selected_candidate_index
             selected_makespan = chunk.selected_makespan_ns
             selected_schedule = chunk.selected_schedule
-    return NativeContextResult(
+    return CContextResult(
         selected_candidate_index=selected_index,
         selected_makespan_ns=selected_makespan,
         selected_schedule=selected_schedule,
@@ -400,14 +400,14 @@ def _finish_native_pressurefit(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    contexts: tuple[_NativeSelectionContext, ...],
-    results: tuple[NativeContextResult, ...],
+    contexts: tuple[_SelectionContext, ...],
+    results: tuple[CContextResult, ...],
     admission: AdmissionTopology | None,
 ) -> PressureFitResult:
     """Decode the globally best compiled result and its diagnostics."""
 
     recomputation_contexts: list[RecomputationContextDiagnostics] = []
-    selected: tuple[int, int, NativeContextResult] | None = None
+    selected: tuple[int, int, CContextResult] | None = None
     for context_index, (context, result) in enumerate(
         zip(contexts, results, strict=True)
     ):
@@ -578,7 +578,7 @@ def _pressurefit_once(
         )
     started = time.perf_counter_ns()
     contexts = _preflight_native_contexts(
-        _build_native_contexts(
+        _build_contexts(
             program,
             initial_residency,
             final_residency,
@@ -588,10 +588,10 @@ def _pressurefit_once(
             progress=progress,
         )
     )
-    native_results = _run_native_contexts(contexts, selected_options)
+    results = _run_contexts(contexts, selected_options)
     valid_pairs = tuple(
         (context, result)
-        for context, result in zip(contexts, native_results, strict=True)
+        for context, result in zip(contexts, results, strict=True)
         if result is not None
     )
     if progress is not None:

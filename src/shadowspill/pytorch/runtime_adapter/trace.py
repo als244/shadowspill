@@ -119,7 +119,7 @@ class RuntimeTraceEvent:
 
 @dataclass(frozen=True, slots=True)
 class CapturedRuntimeTrace:
-    """Complete bounded native trace copied out after a step becomes idle."""
+    """Complete bounded runtime trace copied out after a step becomes idle."""
 
     step_id: int
     begin_timestamp_ns: int

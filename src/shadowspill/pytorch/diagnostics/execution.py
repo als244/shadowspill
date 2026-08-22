@@ -39,10 +39,10 @@ class TaskExecutionTiming:
     before_readiness_waits_sequence: int
     before_task_compute_sequence: int
     after_task_compute_sequence: int
-    native_before_task_enter_seconds: float | None
-    native_before_task_exit_seconds: float | None
-    native_after_task_enter_seconds: float | None
-    native_after_task_exit_seconds: float | None
+    runtime_before_task_enter_seconds: float | None
+    runtime_before_task_exit_seconds: float | None
+    runtime_after_task_enter_seconds: float | None
+    runtime_after_task_exit_seconds: float | None
     host_before_task_seconds: float
     host_stream_resolution_seconds: float
     host_readiness_marker_seconds: float
@@ -107,10 +107,12 @@ class TaskExecutionTiming:
             "before_readiness_waits_sequence": (self.before_readiness_waits_sequence),
             "before_task_compute_sequence": self.before_task_compute_sequence,
             "after_task_compute_sequence": self.after_task_compute_sequence,
-            "native_before_task_enter_seconds": (self.native_before_task_enter_seconds),
-            "native_before_task_exit_seconds": self.native_before_task_exit_seconds,
-            "native_after_task_enter_seconds": self.native_after_task_enter_seconds,
-            "native_after_task_exit_seconds": self.native_after_task_exit_seconds,
+            "runtime_before_task_enter_seconds": (
+                self.runtime_before_task_enter_seconds
+            ),
+            "runtime_before_task_exit_seconds": self.runtime_before_task_exit_seconds,
+            "runtime_after_task_enter_seconds": self.runtime_after_task_enter_seconds,
+            "runtime_after_task_exit_seconds": self.runtime_after_task_exit_seconds,
             "host_before_task_seconds": self.host_before_task_seconds,
             "host_stream_resolution_seconds": self.host_stream_resolution_seconds,
             "host_readiness_marker_seconds": self.host_readiness_marker_seconds,

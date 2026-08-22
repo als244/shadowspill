@@ -170,7 +170,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         case=case,
         max_attempts=2,
         elapsed_seconds=1.0,
-        error={"type": "NativeCrash", "message": "signal 11"},
+        error={"type": "CompiledCrash", "message": "signal 11"},
     )
     second = begin_point_attempt(directory, request)
     finish_point_attempt(
@@ -179,8 +179,8 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         attempt=second,
         status_name="error",
         elapsed_seconds=1.0,
-        evidence={"error": {"type": "NativeCrash"}},
-        error={"type": "NativeCrash"},
+        evidence={"error": {"type": "CompiledCrash"}},
+        error={"type": "CompiledCrash"},
         final=True,
     )
     assert point_complete(directory, request)

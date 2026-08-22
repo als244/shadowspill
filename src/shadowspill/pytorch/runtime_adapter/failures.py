@@ -83,7 +83,7 @@ class RuntimeFailureDiagnostics:
 
     @property
     def is_recoverable_no_progress(self) -> bool:
-        """Whether synchronized teardown may clear the native failure latch."""
+        """Whether synchronized teardown may clear the runtime failure latch."""
 
         return self.status == _NO_PROGRESS and self.requested_bytes > 0
 
