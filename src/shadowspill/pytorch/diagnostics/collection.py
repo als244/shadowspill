@@ -40,7 +40,7 @@ from .execution import (
 @dataclass(frozen=True, slots=True)
 class _TraceEvidence:
     callbacks: Mapping[str, TaskHostTimestamps]
-    native: CapturedRuntimeTrace
+    runtime_trace: CapturedRuntimeTrace
     statistics_before: AdapterStatistics
     statistics_after: AdapterStatistics
 
@@ -99,13 +99,13 @@ def _resolve_trace_evidence(
         bridge.disable_debug_task_timing()
     # Terminal transfers must be included in the same invocation trace.
     bridge.wait_idle()
-    native = bridge.end_and_read_runtime_trace()
+    runtime_trace = bridge.end_and_read_runtime_trace()
     statistics_before = timing.statistics_before
     if statistics_before is None:
         raise AssertionError("validated execution timing lost initial statistics")
     return _TraceEvidence(
         callbacks=callbacks,
-        native=native,
+        runtime_trace=runtime_trace,
         statistics_before=statistics_before,
         statistics_after=bridge.statistics(),
     )
@@ -124,7 +124,7 @@ def _build_task_timings(
             task_id,
             task,
             evidence.callbacks.get(task_id),
-            evidence.native.begin_timestamp_ns,
+            evidence.runtime_trace.begin_timestamp_ns,
         )
         tasks.append(result)
         phase_seconds[result.phase] = (
@@ -189,19 +189,19 @@ def _build_task_timing(
         before_readiness_waits_sequence=sequence_base + 1,
         before_task_compute_sequence=sequence_base + 2,
         after_task_compute_sequence=sequence_base + 3,
-        native_before_task_enter_seconds=_relative_seconds(
+        runtime_before_task_enter_seconds=_relative_seconds(
             callback.before_task_enter_ns if callback is not None else 0,
             callback_origin_ns,
         ),
-        native_before_task_exit_seconds=_relative_seconds(
+        runtime_before_task_exit_seconds=_relative_seconds(
             callback.before_task_exit_ns if callback is not None else 0,
             callback_origin_ns,
         ),
-        native_after_task_enter_seconds=_relative_seconds(
+        runtime_after_task_enter_seconds=_relative_seconds(
             callback.after_task_enter_ns if callback is not None else 0,
             callback_origin_ns,
         ),
-        native_after_task_exit_seconds=_relative_seconds(
+        runtime_after_task_exit_seconds=_relative_seconds(
             callback.after_task_exit_ns if callback is not None else 0,
             callback_origin_ns,
         ),
@@ -265,7 +265,7 @@ def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:
     before = evidence.statistics_before.runtime
     after = evidence.statistics_after.runtime
     return AllocatorTrace(
-        events=evidence.native.allocation_events,
+        events=evidence.runtime_trace.allocation_events,
         live_allocations_before=int(before.live_allocations),
         live_allocations_after=int(after.live_allocations),
         allocated_bytes_before=int(before.allocated_bytes),
@@ -298,7 +298,7 @@ def _build_transfer_trace(
     }
     initial_dispatches = tuple(
         item
-        for item in evidence.native.events
+        for item in evidence.runtime_trace.events
         if item.kind is RuntimeTraceEventKind.TRANSFER_DISPATCHED
         and item.task_id not in selected_task_numbers
         and item.detail_0 == 0
@@ -312,10 +312,12 @@ def _build_transfer_trace(
         initial_fetch_transfers=len(initial_dispatches),
         initial_bytes_fetched=sum(item.bytes for item in initial_dispatches),
         events=tuple(
-            item for item in evidence.native.events if item.kind in transfer_kinds
+            item
+            for item in evidence.runtime_trace.events
+            if item.kind in transfer_kinds
         ),
         simulator_comparison=_build_transfer_comparison(
-            timing, evidence.native.events, selected_task_numbers, bridge
+            timing, evidence.runtime_trace.events, selected_task_numbers, bridge
         ),
     )
 
@@ -484,7 +486,7 @@ def _build_runtime_trace(evidence: _TraceEvidence) -> RuntimeTrace:
     zero_byte_requests = int(
         after.zero_size_allocation_callbacks - before.zero_size_allocation_callbacks
     )
-    native = evidence.native
+    runtime_trace = evidence.runtime_trace
     return RuntimeTrace(
         wait_events_inserted=int(
             after.runtime.wait_events_inserted - before.runtime.wait_events_inserted
@@ -500,14 +502,14 @@ def _build_runtime_trace(evidence: _TraceEvidence) -> RuntimeTrace:
         queued_actions_after=int(after.runtime.queued_actions),
         pending_retirements_after=int(after.runtime.pending_retirements),
         callback_failures_after=int(after.callback_failures),
-        step_id=native.step_id,
-        begin_timestamp_ns=native.begin_timestamp_ns,
-        end_timestamp_ns=native.end_timestamp_ns,
-        event_capacity=native.event_capacity,
-        allocation_event_capacity=native.allocation_event_capacity,
-        event_overflow=native.event_overflow,
-        allocation_event_overflow=native.allocation_event_overflow,
-        events=native.events,
+        step_id=runtime_trace.step_id,
+        begin_timestamp_ns=runtime_trace.begin_timestamp_ns,
+        end_timestamp_ns=runtime_trace.end_timestamp_ns,
+        event_capacity=runtime_trace.event_capacity,
+        allocation_event_capacity=runtime_trace.allocation_event_capacity,
+        event_overflow=runtime_trace.event_overflow,
+        allocation_event_overflow=runtime_trace.allocation_event_overflow,
+        events=runtime_trace.events,
     )
 
 

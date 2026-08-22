@@ -1,4 +1,4 @@
-"""Fresh-process canary proving bad CUDA kernels retain their native error."""
+"""Fresh-process canary proving bad CUDA kernels retain their backend error."""
 
 from __future__ import annotations
 

@@ -30,7 +30,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TransferRouteKey,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
-    TransferProfile as NativeTransferProfile,
+    TransferProfile as RuntimeTransferProfile,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
@@ -441,13 +441,13 @@ class Runtime:
 
         with self._lock:
             self._require_open()
-            native = ctypes.c_size_t()
+            handle = ctypes.c_size_t()
             status = int(
                 self._installed.library.shadowspill_pytorch_object_handle_acquire(
-                    object_id, ctypes.byref(native)
+                    object_id, ctypes.byref(handle)
                 )
             )
-            if status != 0 or native.value == 0:
+            if status != 0 or handle.value == 0:
                 raise RuntimeExecutionError(
                     "failed to retain runtime object "
                     f"{object_id}: status={status}"
@@ -457,11 +457,11 @@ class Runtime:
                     self,
                     object_id=object_id,
                     size_bytes=size_bytes,
-                    native_handle=int(native.value),
+                    handle=int(handle.value),
                 )
             except BaseException:
                 self._installed.library.shadowspill_pytorch_object_handle_release(
-                    native.value
+                    handle.value
                 )
                 raise
             self._active_object_references += 1
@@ -479,7 +479,7 @@ class Runtime:
                 raise RuntimeError("runtime object reference ownership underflow")
             status = int(
                 self._installed.library.shadowspill_pytorch_object_handle_release(
-                    reference._handle()
+                    reference._require_handle()
                 )
             )
             if status != 0:
@@ -499,13 +499,13 @@ class Runtime:
 
         with self._lock:
             self._require_open()
-            native = ctypes.c_size_t()
+            handle = ctypes.c_size_t()
             status = int(
                 self._installed.library.shadowspill_pytorch_object_handle_acquire(
-                    object_id, ctypes.byref(native)
+                    object_id, ctypes.byref(handle)
                 )
             )
-            if status != 0 or native.value == 0:
+            if status != 0 or handle.value == 0:
                 raise RuntimeExecutionError(
                     "failed to resolve runtime object generation "
                     f"{object_id}: status={status}"
@@ -515,13 +515,13 @@ class Runtime:
                 operation_status = int(
                     self._installed.library.
                     shadowspill_pytorch_object_release_generation(
-                        native.value, expected_generation
+                        handle.value, expected_generation
                     )
                 )
             finally:
                 release_status = int(
                     self._installed.library.
-                    shadowspill_pytorch_object_handle_release(native.value)
+                    shadowspill_pytorch_object_handle_release(handle.value)
                 )
             if operation_status != 0:
                 raise RuntimeExecutionError(
@@ -642,7 +642,7 @@ class Runtime:
             )
             if status != 0 or plan_handle_value.value == 0:
                 raise RuntimeConfigurationError(
-                    "native plan creation failed: "
+                    "handle plan creation failed: "
                     f"status={status}, execution={execution!r}, spill={spill!r}"
                 )
             plan_handle = int(plan_handle_value.value)
@@ -706,7 +706,7 @@ class Runtime:
         )
         if status != 0:
             raise RuntimeConfigurationError(
-                f"native plan close failed with status {status}"
+                f"handle plan close failed with status {status}"
             )
         self._installed.library.shadowspill_pytorch_plan_destroy(plan_handle)
 
@@ -717,7 +717,7 @@ class Runtime:
         operation: str,
         synchronize_unlatched: bool,
     ) -> None:
-        """Record native failure state and safely prepare runtime teardown."""
+        """Record handle failure state and safely prepare runtime teardown."""
 
         if isinstance(error, RuntimeExecutionError) and not error._begin_cleanup():
             return
@@ -821,10 +821,10 @@ class Runtime:
             raise RuntimeConfigurationError(
                 f"transfer-profile size query failed with status {status}"
             )
-        native = (NativeTransferProfile * count.value)()
+        handle = (RuntimeTransferProfile * count.value)()
         status = int(
             self._installed.library.shadowspill_pytorch_transfer_profiles(
-                native,
+                handle,
                 count.value,
                 ctypes.byref(count),
                 ctypes.byref(generation),
@@ -873,7 +873,7 @@ class Runtime:
                 }.get(int(item.calibration_mode), "unknown"),
                 concurrent_route_count=int(item.concurrent_route_count),
             )
-            for item in native
+            for item in handle
         )
         canonical = {
             "generation": int(generation.value),

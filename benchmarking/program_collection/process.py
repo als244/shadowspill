@@ -22,7 +22,7 @@ from .state import utc_now
 
 @dataclass(frozen=True, slots=True)
 class WorkerOutcome:
-    """Normalized completion of a Python exception, timeout, or native exit."""
+    """Normalized completion of a Python exception, timeout, or process exit."""
 
     status: str
     return_code: int | None

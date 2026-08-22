@@ -301,7 +301,7 @@ def read_allocation_telemetry(library: Any) -> tuple[CapturedAllocationEvent, ..
 def decode_allocation_events(
     events: Iterable[CAllocationEvent],
 ) -> tuple[CapturedAllocationEvent, ...]:
-    """Decode one caller-owned sequence of native allocation records."""
+    """Decode one caller-owned sequence of runtime allocation records."""
 
     decoded: list[CapturedAllocationEvent] = []
     for expected_sequence, event in enumerate(events):

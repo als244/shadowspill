@@ -42,7 +42,7 @@ _CAPACITY_STATUSES = frozenset((3, 4, 6, 7, 8))
 
 
 def simulation_status_kind(status: int) -> str:
-    """Return the stable machine-readable kind for one native status."""
+    """Return the stable machine-readable kind for one simulator status."""
 
     return _STATUS_KIND.get(status, "unknown")
 

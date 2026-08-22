@@ -264,8 +264,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     or diagnostics.runtime.event_overflow
                     or diagnostics.runtime.allocation_event_overflow
                 ):
-                    raise AssertionError("native runtime trace is incomplete")
-                native_kinds = {
+                    raise AssertionError("runtime trace is incomplete")
+                kinds = {
                     item.kind.name.lower() for item in diagnostics.runtime.events
                 }
                 if not {
@@ -274,8 +274,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     "before_task",
                     "after_task",
                     "action_queued",
-                }.issubset(native_kinds):
-                    raise AssertionError("native runtime trace omitted core events")
+                }.issubset(kinds):
+                    raise AssertionError("runtime trace omitted core events")
                 if diagnostics.runtime.materialized_allocation_requests != (
                     diagnostics.runtime.allocation_requests
                     - diagnostics.runtime.zero_byte_allocation_requests
@@ -371,10 +371,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         or task_timing.after_task_compute_seconds is None
                         or task_timing.readiness_wait_seconds is None
                         or task_timing.task_compute_seconds is None
-                        or task_timing.native_before_task_enter_seconds is None
-                        or task_timing.native_before_task_exit_seconds is None
-                        or task_timing.native_after_task_enter_seconds is None
-                        or task_timing.native_after_task_exit_seconds is None
+                        or task_timing.runtime_before_task_enter_seconds is None
+                        or task_timing.runtime_before_task_exit_seconds is None
+                        or task_timing.runtime_after_task_enter_seconds is None
+                        or task_timing.runtime_after_task_exit_seconds is None
                     ):
                         raise AssertionError("host callback timing omitted a boundary")
                     if (

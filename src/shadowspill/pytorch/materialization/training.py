@@ -270,7 +270,7 @@ class TrainingMaterializedState:
                     written.add(alias_id)
 
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
-        """Collect persistent views before native task publication begins."""
+        """Collect persistent views before runtime task publication begins."""
 
         tensors: list[torch.Tensor] = []
         representative = self.object_store.get(alias_id)
@@ -289,7 +289,7 @@ class TrainingMaterializedState:
         )
 
     def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
-        """Keep the stable frontend representative rebound by the native boundary."""
+        """Keep the stable frontend representative rebound by the runtime boundary."""
 
         self.object_store[replacement.alias_id] = replacement.tensors[0]
 

@@ -36,8 +36,8 @@ class ObjectRef:
 
     __slots__ = (
         "_closed",
+        "_handle",
         "_lock",
-        "_native_handle",
         "_object_id",
         "_owner",
         "_size_bytes",
@@ -49,18 +49,18 @@ class ObjectRef:
         *,
         object_id: int,
         size_bytes: int,
-        native_handle: int,
+        handle: int,
     ) -> None:
         if object_id < 0:
             raise ValueError("runtime object ID must be non-negative")
         if size_bytes < 0:
             raise ValueError("runtime object size must be non-negative")
-        if native_handle <= 0:
+        if handle <= 0:
             raise ValueError("runtime object handle must be positive")
         self._owner = owner
         self._object_id = object_id
         self._size_bytes = size_bytes
-        self._native_handle = native_handle
+        self._handle = handle
         self._lock = threading.RLock()
         self._closed = False
 
@@ -101,11 +101,11 @@ class ObjectRef:
 
         return self._owner is owner
 
-    def _handle(self) -> int:
-        """Return the private native handle after validating ownership."""
+    def _require_handle(self) -> int:
+        """Return the runtime handle after checking this reference is open."""
 
         self._require_open()
-        return self._native_handle
+        return self._handle
 
     def __enter__(self) -> ObjectRef:
         self._require_open()

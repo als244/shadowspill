@@ -379,7 +379,7 @@ class TrainingExecutor:
         return run
 
     def _begin_armed_runtime_trace(self, timing: _ArmedExecutionTiming) -> None:
-        """Open the current invocation's native trace after prior work is idle."""
+        """Open the current invocation's runtime trace after prior work is idle."""
 
         timing.statistics_before = self._bridge.statistics()
         try:
@@ -520,7 +520,7 @@ class TrainingExecutor:
     def arm_selected_span_timing(self) -> None:
         """Arm a two-event selected-task span without detailed tracing.
 
-        This qualification path does not enable native tracing, callbacks,
+        This qualification path does not enable runtime tracing, callbacks,
         NVTX, per-task events, allocator snapshots, or Python component
         timestamps. The reusable events are materialized before arming so the
         measured call follows the ordinary production path.

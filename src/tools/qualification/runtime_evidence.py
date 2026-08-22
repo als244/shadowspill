@@ -1,4 +1,4 @@
-"""Small helpers for reading native allocator/runtime qualification evidence."""
+"""Small helpers for reading allocator and runtime qualification evidence."""
 
 from __future__ import annotations
 

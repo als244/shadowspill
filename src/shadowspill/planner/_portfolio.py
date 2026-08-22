@@ -62,7 +62,7 @@ _PREFLIGHT_MISSING_INITIAL_RESIDENCY = 3
 
 
 @dataclass(frozen=True, slots=True)
-class NativeCandidateDiagnostic:
+class CCandidateDiagnostic:
     status: int
     strategy: str
     rule: str
@@ -94,7 +94,7 @@ class NativeCandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class NativeIndexedSchedule:
+class CompiledIndexedSchedule:
     """Copied contiguous indices for one context winner.
 
     Keeping the context-local winner indexed avoids constructing and validating
@@ -112,11 +112,11 @@ class NativeIndexedSchedule:
 
 
 @dataclass(frozen=True, slots=True)
-class NativeContextResult:
+class CContextResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
-    selected_schedule: NativeIndexedSchedule | None
-    candidates: tuple[NativeCandidateDiagnostic, ...]
+    selected_schedule: CompiledIndexedSchedule | None
+    candidates: tuple[CCandidateDiagnostic, ...]
     repairs: PressureFitRepairDiagnostics
     work: PressureFitWorkDiagnostics
 
@@ -128,21 +128,21 @@ class NativeContextResult:
             candidate_work += candidate.work
         if repairs != self.repairs:
             raise RuntimeError(
-                "native PressureFit context repair counters do not reconcile"
+                "compiled PressureFit context repair counters do not reconcile"
             )
         for name in candidate_work.__dataclass_fields__:
             if getattr(candidate_work, name) > getattr(self.work, name):
                 raise RuntimeError(
-                    f"native PressureFit candidate work exceeds context work: {name}"
+                    f"compiled PressureFit candidate work exceeds context work: {name}"
                 )
 
 
-class NativeContextPreparationError(RuntimeError):
+class CompiledContextPreparationError(RuntimeError):
     """The compiled topology could not be normalized into planner facts."""
 
 
 @dataclass(frozen=True, slots=True)
-class NativePreflightResult:
+class CPreflightResult:
     """Structured semantic-feasibility result from the compiled planner."""
 
     failure_kind: str | None
@@ -158,7 +158,7 @@ class NativePreflightResult:
 
 
 def decode_candidate_diagnostic(
-    value: NativeCandidateDiagnostic,
+    value: CCandidateDiagnostic,
     *,
     selection_id: str,
     simulation: CompiledSimulationTemplate,
@@ -367,7 +367,7 @@ def _context_options(
     rules = (ctypes.c_uint8 * len(rule_names))(
         *(_RULE_CODE[value] for value in rule_names)
     )
-    native = CPressureFitContextOptions(
+    compiled = CPressureFitContextOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
         prefetch_rules=rules,
@@ -376,14 +376,14 @@ def _context_options(
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
     )
-    return native, strategy_names, rule_names, (strategies, rules)
+    return compiled, strategy_names, rule_names, (strategies, rules)
 
 
 def validate_program_context_compiled(
     simulation: CompiledSimulationTemplate,
     *,
     admission: CompiledAdmissionTopology | None = None,
-) -> NativePreflightResult:
+) -> CPreflightResult:
     """Validate one selected topology using the compiled planner authority."""
 
     context, _buffers = _program_context(simulation, admission)
@@ -400,7 +400,7 @@ def validate_program_context_compiled(
             "compiled PressureFit preflight returned inconsistent status"
         )
     if status == 0:
-        return NativePreflightResult(None, None, None, None, None, None)
+        return CPreflightResult(None, None, None, None, None, None)
     failure_kind = int(result.failure_kind)
     if failure_kind not in {
         _PREFLIGHT_WORKSPACE_CAPACITY,
@@ -409,13 +409,13 @@ def validate_program_context_compiled(
     }:
         encoded = library.shadowspill_planner_status_string(status)
         message = encoded.decode("utf-8") if encoded else f"planner status {status}"
-        raise NativeContextPreparationError(message)
+        raise CompiledContextPreparationError(message)
     failure_names = {
         _PREFLIGHT_WORKSPACE_CAPACITY: "workspace_capacity",
         _PREFLIGHT_REQUIRED_CAPACITY: "required_capacity",
         _PREFLIGHT_MISSING_INITIAL_RESIDENCY: "missing_initial_residency",
     }
-    return NativePreflightResult(
+    return CPreflightResult(
         failure_kind=failure_names[failure_kind],
         error_device=(
             None if int(result.error_device) == NO_INDEX else int(result.error_device)
@@ -433,9 +433,9 @@ def validate_program_context_compiled(
     )
 
 
-def _copy_schedule(result: CPressureFitContextResult) -> NativeIndexedSchedule:
+def _copy_schedule(result: CPressureFitContextResult) -> CompiledIndexedSchedule:
     value = result.selected_schedule
-    return NativeIndexedSchedule(
+    return CompiledIndexedSchedule(
         action_trigger_tasks=tuple(
             int(value.action_trigger_tasks[index])
             for index in range(int(value.action_count))
@@ -464,7 +464,7 @@ def _copy_schedule(result: CPressureFitContextResult) -> NativeIndexedSchedule:
 
 
 def decode_schedule(
-    value: NativeIndexedSchedule,
+    value: CompiledIndexedSchedule,
     simulation: CompiledSimulationTemplate,
 ) -> MemorySchedule:
     return MemorySchedule(
@@ -511,36 +511,36 @@ def _evaluate_native_context(
     options: PressureFitOptions,
     *,
     admission: CompiledAdmissionTopology | None,
-) -> NativeContextResult | None:
+) -> CContextResult | None:
     """Invoke and decode one compiled program-context evaluation."""
 
-    native_options, strategy_names, rule_names, _option_buffers = _context_options(
-        options
+    context_options, strategy_names, rule_names, _option_buffers = (
+        _context_options(options)
     )
-    native_result = CPressureFitContextResult()
+    compiled_result = CPressureFitContextResult()
     library = load_planner_library()
     context, _context_buffers = _program_context(simulation, admission)
     status = int(
         library.shadowspill_evaluate_pressurefit_program_context(
             ctypes.byref(context),
-            ctypes.byref(native_options),
-            ctypes.byref(native_result),
+            ctypes.byref(context_options),
+            ctypes.byref(compiled_result),
         )
     )
     try:
         if status == 5:
             return None
         if status == 1:
-            raise NativeContextPreparationError(
+            raise CompiledContextPreparationError(
                 "compiled PressureFit context rejected the selected topology"
             )
         if status not in (0, 3):
             encoded = library.shadowspill_planner_status_string(status)
             message = encoded.decode("utf-8") if encoded else f"planner status {status}"
             raise RuntimeError(message)
-        candidates: list[NativeCandidateDiagnostic] = []
-        for index in range(int(native_result.candidate_count)):
-            value = native_result.candidates[index]
+        candidates: list[CCandidateDiagnostic] = []
+        for index in range(int(compiled_result.candidate_count)):
+            value = compiled_result.candidates[index]
             variants_per_rule = 2 if options.evaluate_coalesced else 1
             strategy = strategy_names[index // (len(rule_names) * variants_per_rule)]
             within_strategy = index % (
@@ -552,7 +552,7 @@ def _evaluate_native_context(
                 bytes(value.schedule_digest).hex() if int(value.status) == 0 else None
             )
             candidates.append(
-                NativeCandidateDiagnostic(
+                CCandidateDiagnostic(
                     status=int(value.status),
                     strategy=strategy,
                     rule=rule,
@@ -574,24 +574,24 @@ def _evaluate_native_context(
                     error_required_bytes=int(value.error_required_bytes),
                 )
             )
-        selected = int(native_result.selected_candidate_index)
-        return NativeContextResult(
+        selected = int(compiled_result.selected_candidate_index)
+        return CContextResult(
             selected_candidate_index=None if selected == NO_INDEX else selected,
             selected_makespan_ns=(
                 None
                 if selected == NO_INDEX
-                else int(native_result.selected_makespan_ns)
+                else int(compiled_result.selected_makespan_ns)
             ),
             selected_schedule=(
-                None if selected == NO_INDEX else _copy_schedule(native_result)
+                None if selected == NO_INDEX else _copy_schedule(compiled_result)
             ),
             candidates=tuple(candidates),
-            repairs=_decode_repairs(native_result.repairs),
-            work=_decode_work(native_result.work),
+            repairs=_decode_repairs(compiled_result.repairs),
+            work=_decode_work(compiled_result.work),
         )
     finally:
         library.shadowspill_pressurefit_context_result_destroy(
-            ctypes.byref(native_result)
+            ctypes.byref(compiled_result)
         )
 
 
@@ -600,18 +600,18 @@ def evaluate_program_context_compiled(
     options: PressureFitOptions,
     *,
     admission: CompiledAdmissionTopology | None = None,
-) -> NativeContextResult | None:
+) -> CContextResult | None:
     """Derive indexed planning facts and evaluate the portfolio entirely in C."""
 
     return _evaluate_native_context(simulation, options, admission=admission)
 
 
 __all__ = [
-    "NativeCandidateDiagnostic",
-    "NativeContextPreparationError",
-    "NativeContextResult",
-    "NativeIndexedSchedule",
-    "NativePreflightResult",
+    "CCandidateDiagnostic",
+    "CContextResult",
+    "CPreflightResult",
+    "CompiledContextPreparationError",
+    "CompiledIndexedSchedule",
     "decode_candidate_diagnostic",
     "decode_schedule",
     "evaluate_program_context_compiled",
