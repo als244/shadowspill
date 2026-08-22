@@ -580,7 +580,7 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
     ShadowSpillAdmissionOperations *result
 ) {
     if (schedule == NULL || result == NULL || result->lease_ids == NULL ||
-        result->bytes == NULL || result->alignments == NULL ||
+        result->dependency_ids == NULL || result->bytes == NULL || result->alignments == NULL ||
         result->kinds == NULL || result->purposes == NULL ||
         result->boundaries == NULL || result->indices == NULL ||
         result->allocation_offsets == NULL || result->lease_aliases == NULL) {
@@ -617,6 +617,7 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
         const ShadowSpillAdmissionReplayOperation operation =
             workspace.operations[index];
         result->lease_ids[index] = operation.lease_id;
+        result->dependency_ids[index] = operation.dependency_id;
         result->bytes[index] = operation.bytes;
         result->alignments[index] = operation.alignment;
         result->kinds[index] = operation.kind;

@@ -18,6 +18,7 @@ extern "C" {
 #define SHADOWSPILL_PLANNER_ABI_VERSION 12U
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
+#define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX
 
 typedef enum ShadowSpillPlannerStatus {
     SHADOWSPILL_PLANNER_OK = 0,
@@ -420,6 +421,9 @@ typedef struct ShadowSpillAdmissionOperations {
     /* Caller-owned, `operation_capacity` entries each, indexed alike. An
      * operation's sequence is its index. */
     uint64_t *lease_ids;
+    /* The completion a reuse of this lease's address must wait for, or
+     * SHADOWSPILL_ADMISSION_NO_DEPENDENCY where the operation publishes none. */
+    uint64_t *dependency_ids;
     uint64_t *bytes;
     uint64_t *alignments;
     uint8_t *kinds;       /* ShadowSpillAdmissionReplayOperationKind */

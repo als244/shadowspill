@@ -139,6 +139,7 @@ class CAdmissionTopology(ctypes.Structure):
 class CAdmissionOperations(ctypes.Structure):
     _fields_ = [
         ("lease_ids", ctypes.POINTER(ctypes.c_uint64)),
+        ("dependency_ids", ctypes.POINTER(ctypes.c_uint64)),
         ("bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("alignments", ctypes.POINTER(ctypes.c_uint64)),
         ("kinds", ctypes.POINTER(ctypes.c_uint8)),

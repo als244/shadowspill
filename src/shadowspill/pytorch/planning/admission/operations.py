@@ -177,7 +177,7 @@ def identify_operations(
                     kind=kind,
                     bytes=operations.bytes[sequence],
                     alignment=operations.alignments[sequence],
-                    dependency_id=None,
+                    dependency_id=operations.dependency_ids[sequence],
                     dependency_expected=False,
                 ),
                 purpose,

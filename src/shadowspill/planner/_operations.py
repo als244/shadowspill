@@ -23,6 +23,7 @@ class AdmissionOperations:
     """
 
     lease_ids: tuple[int, ...]
+    dependency_ids: tuple[int | None, ...]
     bytes: tuple[int, ...]
     alignments: tuple[int, ...]
     kinds: tuple[int, ...]
@@ -41,6 +42,7 @@ class AdmissionOperations:
 
 
 _NO_INDEX = (1 << 32) - 1
+_NO_DEPENDENCY = (1 << 64) - 1
 
 
 def build_admission_operations(
@@ -81,6 +83,7 @@ def build_admission_operations(
     leases = int(lease_capacity.value)
 
     lease_ids = (ctypes.c_uint64 * operations)()
+    dependency_ids = (ctypes.c_uint64 * operations)()
     sizes = (ctypes.c_uint64 * operations)()
     alignments = (ctypes.c_uint64 * operations)()
     kinds = (ctypes.c_uint8 * operations)()
@@ -91,6 +94,7 @@ def build_admission_operations(
     aliases = (ctypes.c_uint32 * leases)()
     result = CAdmissionOperations(
         lease_ids=lease_ids,
+        dependency_ids=dependency_ids,
         bytes=sizes,
         alignments=alignments,
         kinds=kinds,
@@ -114,6 +118,10 @@ def build_admission_operations(
     live = int(result.lease_count)
     return AdmissionOperations(
         lease_ids=tuple(lease_ids[:count]),
+        dependency_ids=tuple(
+            None if value == _NO_DEPENDENCY else value
+            for value in dependency_ids[:count]
+        ),
         bytes=tuple(sizes[:count]),
         alignments=tuple(alignments[:count]),
         kinds=tuple(kinds[:count]),
