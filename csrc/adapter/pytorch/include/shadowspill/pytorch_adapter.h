@@ -71,18 +71,18 @@ typedef struct ShadowSpillPytorchAdapterCapabilities {
     uint8_t slab_memory_strategy;
     uint8_t record_stream_callback;
     uint8_t storage_rebinding;
-    uint8_t debug_task_host_timing;
+    uint8_t debug_task_dispatch_timing;
     uint8_t runtime_trace;
 } ShadowSpillPytorchAdapterCapabilities;
 
 /*
- * Optional task-boundary host timestamps. The four host fields use
+ * Optional task-boundary dispatch timestamps. The four fields use
  * CLOCK_MONOTONIC. The six compute-stream compatibility fields are reserved
  * and zero; the PyTorch frontend records non-invasive preallocated CUDA events
- * for those boundaries instead of executing host callbacks on the compute
+ * for those boundaries instead of executing dispatch callbacks on the compute
  * stream.
  */
-typedef struct ShadowSpillPytorchTaskHostTiming {
+typedef struct ShadowSpillPytorchTaskDispatchTiming {
     uint64_t task_id;
     uint64_t before_readiness_waits_timestamp_ns;
     uint64_t before_task_compute_timestamp_ns;
@@ -94,7 +94,7 @@ typedef struct ShadowSpillPytorchTaskHostTiming {
     uint64_t before_task_exit_timestamp_ns;
     uint64_t after_task_enter_timestamp_ns;
     uint64_t after_task_exit_timestamp_ns;
-} ShadowSpillPytorchTaskHostTiming;
+} ShadowSpillPytorchTaskDispatchTiming;
 
 typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t allocation_callbacks;
@@ -419,7 +419,7 @@ shadowspill_pytorch_register_object(
     uint64_t source_address
 );
 
-/* Register a logical object without allocating host or device residency. */
+/* Register a logical object without allocating spill or device residency. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_register_placeholder_object(
     uint64_t object_id,
@@ -445,7 +445,7 @@ shadowspill_pytorch_read_object(
     uint64_t destination_address
 );
 
-/* Remove one terminal object and reclaim any retained host range. */
+/* Remove one terminal object and reclaim any retained spill range. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_unregister_object(uint64_t object_id);
 
@@ -505,7 +505,7 @@ shadowspill_pytorch_debug_task_timing_enable(uint32_t task_capacity);
 /* Read completed records after synchronizing the measured compute stream. */
 SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
 shadowspill_pytorch_debug_task_timing_read(
-    ShadowSpillPytorchTaskHostTiming *records,
+    ShadowSpillPytorchTaskDispatchTiming *records,
     uint32_t record_capacity,
     uint32_t *record_count
 );

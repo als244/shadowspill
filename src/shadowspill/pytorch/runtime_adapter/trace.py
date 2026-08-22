@@ -63,7 +63,7 @@ class RuntimeTraceEvent:
             return {"status": self.detail_0, "action_count": self.detail_1}
         if self.kind is RuntimeTraceEventKind.READINESS_WAIT:
             return {
-                "wait_type": "stream_event" if self.detail_0 else "host_condition",
+                "wait_type": "stream_event" if self.detail_0 else "thread_condition",
                 "queue_or_wait_count": self.detail_1,
             }
         if self.kind in {

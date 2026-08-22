@@ -115,7 +115,7 @@ def test_extracts_tasks_optimizer_idle_and_transfers(tmp_path: Path) -> None:
     assert first["semantic_name"] == (
         "microbatch_0000.stage_0000.forward.recompute"
     )
-    assert first["host_segments_ns"] == {
+    assert first["dispatch_segments_ns"] == {
         "before_task": 100,
         "storage_rebind": 100,
         "compiled_call": 400,

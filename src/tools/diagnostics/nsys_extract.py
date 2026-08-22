@@ -212,10 +212,10 @@ def extract_trace(path: Path) -> dict[str, object]:
                     "task_id": task_id,
                     "semantic_name": semantic_name,
                     "phase": phase,
-                    "host_start_ns": int(item["start_ns"]),
-                    "host_end_ns": int(item["end_ns"]),
-                    "host_duration_ns": int(item["end_ns"]) - int(item["start_ns"]),
-                    "host_segments_ns": segments,
+                    "dispatch_start_ns": int(item["start_ns"]),
+                    "dispatch_end_ns": int(item["end_ns"]),
+                    "dispatch_duration_ns": int(item["end_ns"]) - int(item["start_ns"]),
+                    "dispatch_segments_ns": segments,
                     "kernel_count": len(kernels),
                     "kernel_sum_ns": kernel_ns,
                     "gpu_start_ns": min((row[0] for row in kernels), default=None),
@@ -226,17 +226,18 @@ def extract_trace(path: Path) -> dict[str, object]:
 
         tasks.sort(
             key=lambda value: (
-                int(value["host_start_ns"]),
+                int(value["dispatch_start_ns"]),
                 str(value["task_id"]),
             )
         )
         for index, task in enumerate(tasks):
             if index == 0:
-                task["host_gap_from_prior_task_ns"] = 0
+                task["dispatch_gap_from_prior_task_ns"] = 0
             else:
-                task["host_gap_from_prior_task_ns"] = max(
+                task["dispatch_gap_from_prior_task_ns"] = max(
                     0,
-                    int(task["host_start_ns"]) - int(tasks[index - 1]["host_end_ns"]),
+                    int(task["dispatch_start_ns"])
+                    - int(tasks[index - 1]["dispatch_end_ns"]),
                 )
 
         kernels_by_stream: dict[int, list[tuple[int, int]]] = defaultdict(list)

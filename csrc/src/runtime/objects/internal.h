@@ -45,8 +45,8 @@ struct ShadowSpillObject {
     uint8_t residency;
     /*
      * Number of queued fetch generations that have not yet published a
-     * readiness event.  This must be a count rather than a Boolean: host
-     * dispatch can enqueue a later release/fetch cycle while an earlier fetch
+     * readiness event.  This must be a count rather than a Boolean: the
+     * dispatcher can enqueue a later release/fetch cycle while an earlier fetch
      * for the same object is still in flight.
      */
     _Atomic uint32_t unpublished_fetch_count;

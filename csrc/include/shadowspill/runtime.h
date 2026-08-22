@@ -60,8 +60,9 @@ typedef ShadowSpillStatus ShadowSpillRuntimeStatus;
  *
  * The status is the coarse class a caller acts on; the reason names the
  * specific condition, so a report can explain itself. Several of these sit
- * under one status on purpose - a lease that cannot be released and a host
- * that refuses a record are both internal failures, and a caller treats them
+ * under one status on purpose - a lease that cannot be released and a process
+ * allocator that refuses a record are both internal failures, and a caller
+ * treats them
  * alike, but a reader must be able to tell them apart.
  */
 typedef enum ShadowSpillFailureReason {
@@ -607,7 +608,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus shadowspill_runtime_create(
 /*
  * Cold-path capacity reservation for neutral event records. Repeated calls may
  * grow the owner for additional admitted callables at an idle boundary. After
- * the first call, steady execution never falls back to host allocation when
+ * the first call, steady execution never falls back to process allocation when
  * the pool is full.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus
@@ -618,7 +619,7 @@ shadowspill_runtime_reserve_event_leases(
 
 /*
  * Cold-path capacity reservation for immutable retirement queue records.
- * Once reserved, queue publication fails closed instead of allocating host
+ * Once reserved, queue publication fails closed instead of allocating process
  * memory when the inventory is exhausted.
  */
 SHADOWSPILL_RUNTIME_API ShadowSpillRuntimeStatus

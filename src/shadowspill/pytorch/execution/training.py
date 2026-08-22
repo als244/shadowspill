@@ -330,7 +330,7 @@ class TrainingExecutor:
         losses, metrics = self._rebuild_objective_results(ordered)
         self._invocations += 1
         if timing is not None:
-            timing.host_call_finished_ns = time.perf_counter_ns()
+            timing.dispatch_call_finished_ns = time.perf_counter_ns()
         return losses, metrics
 
     def record_invocation_completion(self) -> Callable[[], None]:
@@ -344,7 +344,7 @@ class TrainingExecutor:
         timing: _ArmedExecutionTiming | None,
     ) -> _PlanRun:
         if timing is not None:
-            timing.host_call_started_ns = time.perf_counter_ns()
+            timing.dispatch_call_started_ns = time.perf_counter_ns()
             timing.origin_event.record(torch.cuda.current_stream())
         if self._invocations:
             # V1 plans have a fresh terminal state. Preserve asynchronous
@@ -353,7 +353,7 @@ class TrainingExecutor:
             started_ns = time.perf_counter_ns() if timing is not None else 0
             self._bridge.wait_plan_idle()
             if timing is not None:
-                timing.host_startup_wait_ns = time.perf_counter_ns() - started_ns
+                timing.dispatch_startup_wait_ns = time.perf_counter_ns() - started_ns
         run = (
             self._initial
             if self._initial is not None and not self._optimizer_state_initialized
@@ -405,7 +405,7 @@ class TrainingExecutor:
                 task_number=run.initial_task_id,
             )
         if timing is not None:
-            timing.host_initial_actions_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_initial_actions_ns = time.perf_counter_ns() - started_ns
 
     def _execute_program(
         self,
@@ -616,14 +616,14 @@ class TrainingExecutor:
         if timing is None:
             return None
         task = timing.tasks[entrypoint.task_id]
-        task.host_started_ns = time.perf_counter_ns()
+        task.dispatch_started_ns = time.perf_counter_ns()
         return task
 
     @staticmethod
     def _finish_task_timing(task: _ArmedTaskTiming | None) -> None:
         if task is None:
             return
-        task.host_finished_ns = time.perf_counter_ns()
+        task.dispatch_finished_ns = time.perf_counter_ns()
 
     @staticmethod
     def _record_task_readiness(
@@ -651,7 +651,7 @@ class TrainingExecutor:
             if stream is None:
                 raise AssertionError("task timing omitted its CUDA stream")
             task.end_event.record(stream)
-            task.host_after_started_ns = time.perf_counter_ns()
+            task.dispatch_after_started_ns = time.perf_counter_ns()
 
     def _profile_range(self, name: str) -> AbstractContextManager[None]:
         return self._task_annotations.range(name)
@@ -830,7 +830,9 @@ class TrainingExecutor:
                     runtime_scope_open = True
                     call = self._assemble_task_call(record, timing)
                 if timing is not None:
-                    timing.host_rebind_ns = time.perf_counter_ns() - rebind_started_ns
+                    timing.dispatch_rebind_ns = (
+                        time.perf_counter_ns() - rebind_started_ns
+                    )
                 prepared = _PreparedTask(
                     run=run,
                     record=record,
@@ -843,7 +845,7 @@ class TrainingExecutor:
                 self._record_compute_start(stream)
                 self._record_task_start(timing, stream)
             if timing is not None:
-                timing.host_before_finished_ns = time.perf_counter_ns()
+                timing.dispatch_before_finished_ns = time.perf_counter_ns()
             return prepared
         except BaseException:
             if runtime_scope_open:
@@ -908,7 +910,7 @@ class TrainingExecutor:
         needs_python_stream = timing is not None or self._armed_span_timing is not None
         stream = torch.cuda.current_stream() if needs_python_stream else None
         if timing is not None:
-            timing.host_stream_resolution_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_stream_resolution_ns = time.perf_counter_ns() - started_ns
         return stream
 
     def _mark_task_readiness(
@@ -919,7 +921,7 @@ class TrainingExecutor:
         started_ns = time.perf_counter_ns() if timing is not None else 0
         self._record_task_readiness(timing, stream)
         if timing is not None:
-            timing.host_readiness_marker_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_readiness_marker_ns = time.perf_counter_ns() - started_ns
 
     def _lookup_task_inputs(
         self,
@@ -934,7 +936,7 @@ class TrainingExecutor:
                 raise RuntimeError(f"task input {alias_id!r} has no tensor binding")
             tensors.append(tensor)
         if timing is not None:
-            timing.host_input_lookup_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_input_lookup_ns = time.perf_counter_ns() - started_ns
         return tuple(tensors)
 
     def _acquire_task_inputs(
@@ -952,7 +954,7 @@ class TrainingExecutor:
             detail = "; ".join(states) if states else "all snapshots device-ready"
             raise RuntimeError(f"{error}; input_states=[{detail}]") from error
         if timing is not None:
-            timing.host_runtime_before_task_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_runtime_before_task_ns = time.perf_counter_ns() - started_ns
 
     def _acquire_input_storages(
         self,
@@ -979,7 +981,7 @@ class TrainingExecutor:
         else:
             result = self._assemble_graph_call(record)
         if timing is not None:
-            timing.host_argument_assembly_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_argument_assembly_ns = time.perf_counter_ns() - started_ns
         return result
 
     def _assemble_optimizer_call(self, record: _ExecutionTaskRecord) -> _TaskCall:
@@ -1043,7 +1045,7 @@ class TrainingExecutor:
                     raise AssertionError("compiled task function is unavailable")
                 raw_outputs = prepared.function(*prepared.arguments)
         if prepared.timing is not None:
-            prepared.timing.host_dispatch_ns = time.perf_counter_ns() - started_ns
+            prepared.timing.dispatch_invoke_ns = time.perf_counter_ns() - started_ns
         self._record_task_end(prepared.timing, prepared.stream)
         if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._record_compute_end(prepared.stream)
@@ -1110,7 +1112,9 @@ class TrainingExecutor:
             if annotation_id:
                 self._task_annotations.end(annotation_id)
         if prepared.timing is not None:
-            prepared.timing.host_postprocess_ns = time.perf_counter_ns() - started_ns
+            prepared.timing.dispatch_postprocess_ns = (
+                time.perf_counter_ns() - started_ns
+            )
         return processed, dematerialized
 
     def _publish_task_to_runtime(
@@ -1134,7 +1138,7 @@ class TrainingExecutor:
                 self._task_annotations.end(annotation_id)
         prepared.runtime_scope_open = False
         if prepared.timing is not None:
-            prepared.timing.host_runtime_after_task_ns = (
+            prepared.timing.dispatch_runtime_after_task_ns = (
                 time.perf_counter_ns() - started_ns
             )
 
@@ -1198,7 +1202,7 @@ class TrainingExecutor:
                 self._state.object_tensors[object_id] = tensor
             self._optimizer_state_available = True
         if prepared.timing is not None:
-            prepared.timing.host_output_state_publish_ns = (
+            prepared.timing.dispatch_output_state_publish_ns = (
                 time.perf_counter_ns() - started_ns
             )
 
@@ -1207,7 +1211,7 @@ class TrainingExecutor:
         with self._profile_range(f"shadowspill.cleanup.{prepared.record.trace_label}"):
             self._cleanup_after_task(prepared)
         if prepared.timing is not None:
-            prepared.timing.host_cleanup_ns = time.perf_counter_ns() - started_ns
+            prepared.timing.dispatch_cleanup_ns = time.perf_counter_ns() - started_ns
 
     def _process_task_outputs(
         self,
@@ -1229,7 +1233,7 @@ class TrainingExecutor:
             else:
                 optimizer_bindings = ()
             if timing is not None:
-                timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
+                timing.dispatch_output_publish_ns = time.perf_counter_ns() - started_ns
         else:
             started_ns = time.perf_counter_ns() if timing is not None else 0
             if isinstance(raw_outputs, (tuple, list)):
@@ -1237,7 +1241,7 @@ class TrainingExecutor:
             else:
                 leaves, _ = tree_flatten(raw_outputs)
             if timing is not None:
-                timing.host_output_flatten_ns = time.perf_counter_ns() - started_ns
+                timing.dispatch_output_flatten_ns = time.perf_counter_ns() - started_ns
             started_ns = time.perf_counter_ns() if timing is not None else 0
             if entrypoint.phase == "forward":
                 if not all(isinstance(value, torch.Tensor) for value in leaves):
@@ -1256,7 +1260,7 @@ class TrainingExecutor:
             else:
                 adopted = self._accumulate_gradients(prepared.record, leaves, timing)
             if timing is not None:
-                timing.host_output_publish_ns = time.perf_counter_ns() - started_ns
+                timing.dispatch_output_publish_ns = time.perf_counter_ns() - started_ns
             del leaves
         replacements = (
             tuple(
@@ -1323,7 +1327,9 @@ class TrainingExecutor:
                 self._state.object_store.setdefault(item.alias_id, tensor)
                 self._state.object_tensors[item.object_id] = tensor
         if timing is not None:
-            timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_output_classification_ns = (
+                time.perf_counter_ns() - started_ns
+            )
         return tuple(adopted), frozenset(replacements)
 
     def _accumulate_gradients(
@@ -1364,7 +1370,9 @@ class TrainingExecutor:
                 destinations.append(destination)
                 contributions.append(contribution)
         if timing is not None:
-            timing.host_output_classification_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_output_classification_ns = (
+                time.perf_counter_ns() - started_ns
+            )
         adopted: list[PublishedStorage] = []
         for _object_id, alias_id, contribution, publication_ordinal in first:
             if publication_ordinal is not None:
@@ -1383,12 +1391,14 @@ class TrainingExecutor:
             if parameter is not None:
                 parameter.grad = contribution
         if timing is not None:
-            timing.host_output_state_publish_ns = time.perf_counter_ns() - started_ns
+            timing.dispatch_output_state_publish_ns = (
+                time.perf_counter_ns() - started_ns
+            )
         if destinations:
             started_ns = time.perf_counter_ns() if timing is not None else 0
             torch._foreach_add_(destinations, contributions)
             if timing is not None:
-                timing.host_gradient_accumulation_ns = (
+                timing.dispatch_gradient_accumulation_ns = (
                     time.perf_counter_ns() - started_ns
                 )
         return tuple(adopted)

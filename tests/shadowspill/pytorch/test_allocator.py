@@ -25,7 +25,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     RuntimeFailure,
     RuntimeStatistics,
-    TaskHostTiming,
+    TaskDispatchTiming,
     TraceConfig,
     TraceEvent,
     TraceSummary,
@@ -148,7 +148,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectLocationSnapshot) == 64
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 32
-    assert ctypes.sizeof(TaskHostTiming) == 88
+    assert ctypes.sizeof(TaskDispatchTiming) == 88
     assert ctypes.sizeof(TraceConfig) == 24
     assert ctypes.sizeof(TraceEvent) == 80
     assert ctypes.sizeof(TraceSummary) == 72
@@ -193,7 +193,7 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint32
     ]
     assert library.shadowspill_pytorch_debug_task_timing_read.argtypes == [
-        ctypes.POINTER(TaskHostTiming),
+        ctypes.POINTER(TaskDispatchTiming),
         ctypes.c_uint32,
         ctypes.POINTER(ctypes.c_uint32),
     ]

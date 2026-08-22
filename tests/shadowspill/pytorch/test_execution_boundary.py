@@ -225,8 +225,8 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
         refresh_inputs=lambda _inputs: calls.append("refresh_inputs")
     )
     timing = SimpleNamespace(
-        host_call_started_ns=0,
-        host_startup_wait_ns=0,
+        dispatch_call_started_ns=0,
+        dispatch_startup_wait_ns=0,
         origin_event=SimpleNamespace(record=lambda _stream: calls.append("origin")),
         statistics_before=None,
     )

@@ -37,7 +37,12 @@ NEUTRAL_FORBIDDEN = {
 PRODUCTION_FORBIDDEN = {
     "old secondary-pool role": re.compile(r"\bbacking(?:_[A-Za-z0-9_]+)?\b"),
     "physical transfer direction used as policy": re.compile(
-        r"\b(?:h2d|d2h|host_to_device|device_to_host)\b", re.IGNORECASE
+        r"\b(?:h2d|d2h|dispatch_to_device|device_to_host)\b", re.IGNORECASE
+    ),
+    # "host" survives only where it means the CPU: the pinned-host pool, and
+    # the driver calls that name it.
+    "host used for the spill pool or the dispatcher": re.compile(
+        r"\b(?<!pinned_)host(?!name|s\b)_[a-z0-9_]*\b(?<!host_capacity_bytes)"
     ),
     "old worker terminology": re.compile(
         r"\b(?:progress_thread|progress_main|progress_completions)\b",

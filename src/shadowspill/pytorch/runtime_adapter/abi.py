@@ -79,12 +79,12 @@ class AdapterCapabilities(ctypes.Structure):
         ("slab_memory_strategy", ctypes.c_uint8),
         ("record_stream_callback", ctypes.c_uint8),
         ("storage_rebinding", ctypes.c_uint8),
-        ("debug_task_host_timing", ctypes.c_uint8),
+        ("debug_task_dispatch_timing", ctypes.c_uint8),
         ("runtime_trace", ctypes.c_uint8),
     ]
 
 
-class TaskHostTiming(ctypes.Structure):
+class TaskDispatchTiming(ctypes.Structure):
     _fields_ = [
         ("task_id", ctypes.c_uint64),
         ("before_readiness_waits_timestamp_ns", ctypes.c_uint64),
@@ -626,7 +626,7 @@ def _configure_debug_timing(library: Any) -> None:
         library,
         "shadowspill_pytorch_debug_task_timing_read",
         [
-            ctypes.POINTER(TaskHostTiming),
+            ctypes.POINTER(TaskDispatchTiming),
             ctypes.c_uint32,
             ctypes.POINTER(ctypes.c_uint32),
         ],

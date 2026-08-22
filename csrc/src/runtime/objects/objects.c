@@ -912,7 +912,7 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     /*
      * Acquisition has already inserted a readiness-event wait into the
      * consumer stream.  Snapshot the exact generation without waiting for a
-     * final fetch to complete on the host.
+     * final fetch to complete on the dispatcher.
      */
     ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
     pthread_mutex_lock(&object->lock);

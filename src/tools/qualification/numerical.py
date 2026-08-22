@@ -410,7 +410,7 @@ def _reference_worker(
                     "optimizer_seconds": (
                         float(optimizer_start.elapsed_time(optimizer_end)) / 1e3
                     ),
-                    "host_call_seconds": elapsed,
+                    "dispatch_call_seconds": elapsed,
                     "phase_gpu_seconds": phase_seconds,
                 }
             )

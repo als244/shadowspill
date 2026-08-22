@@ -313,7 +313,7 @@ static int inflight_prefetch_transfers_to_caller(void) {
     return failed ? -1 : 0;
 }
 
-static int offload_window_is_enqueued_without_host_serialization(void) {
+static int offload_window_is_enqueued_without_dispatch_serialization(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -2386,7 +2386,7 @@ int main(void) {
     REQUIRE_CANARY(valid_transition_paths());
     REQUIRE_CANARY(prefetch_window_is_submitted_without_wire_blocking());
     REQUIRE_CANARY(inflight_prefetch_transfers_to_caller());
-    REQUIRE_CANARY(offload_window_is_enqueued_without_host_serialization());
+    REQUIRE_CANARY(offload_window_is_enqueued_without_dispatch_serialization());
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());
     REQUIRE_CANARY(caller_handoff_preserves_recurrent_object_identity());
