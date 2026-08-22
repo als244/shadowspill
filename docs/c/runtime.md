@@ -196,8 +196,11 @@ leases, retirement records, memory-lease records, and lease-use records.
 `shadowspill_runtime_recover_no_progress()` performs the explicit recovery
 operation defined by the header; it does not hide an infeasible request.
 
-`shadowspill_runtime_abi_version()` and
-`shadowspill_runtime_status_string()` support loading and error reporting.
+`shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
+and error reporting for this boundary as for every other; see the
+[C API guide](README.md#abi-use). `shadowspill_runtime_abi_version()` and
+`shadowspill_runtime_status_string()` remain as
+thin aliases of them.
 
 `shadowspill_failure_reason_string()` names the condition behind a status in
 one sentence. The status is the class a caller acts on; the reason is what a
@@ -229,5 +232,7 @@ reservation, reserved acquisition, and release. Results include every
 allocator decision, reuse dependency, peak allocation/reservation/
 fragmentation, and the first infeasible live-lease ledger.
 
-Use `shadowspill_admission_replay_abi_version()` and
-`shadowspill_admission_replay_status_string()` at the boundary.
+Replay statuses occupy 80-89 of the one status vocabulary, so
+`shadowspill_status_string()` names them like any other;
+`shadowspill_admission_replay_abi_version()` and
+`shadowspill_admission_replay_status_string()` remain as thin aliases.
