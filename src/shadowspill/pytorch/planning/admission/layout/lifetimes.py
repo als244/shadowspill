@@ -11,14 +11,14 @@ from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterv
 from ..admission_replay import (
     AdmissionReplayPurpose,
     AdmissionReplayStep,
-    _AdmissionScriptBuilder,
+    _LeaseProvenance,
 )
 from .model import LeaseLifetime
 
 
 def build_lease_lifetimes(
     operations: tuple[AdmissionReplayStep, ...],
-    builder: _AdmissionScriptBuilder,
+    lease_provenance: dict[int, _LeaseProvenance],
     schedule: MemorySchedule,
     simulation: SimulationResult,
 ) -> tuple[LeaseLifetime, ...]:
@@ -48,7 +48,7 @@ def build_lease_lifetimes(
     terminal_boundary = len(operations) + 1
     result: list[LeaseLifetime] = []
     for lease_id, (causal_start, bytes_, alignment) in sorted(starts.items()):
-        provenance = builder.lease_provenance[lease_id]
+        provenance = lease_provenance[lease_id]
         predicted_start = _predicted_start(
             provenance.purpose,
             provenance.task_id,

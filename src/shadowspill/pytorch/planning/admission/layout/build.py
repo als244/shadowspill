@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.planner import AdmissionTopology, PressureFitResult
+from shadowspill.planner._admission import encode_schedule
+from shadowspill.planner._operations import build_admission_operations
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     SimulationAdmission,
@@ -27,11 +29,9 @@ from shadowspill.simulator import (
     simulate,
 )
 
-from ..admission_replay import (
-    AdmissionReplayPurpose,
-    AdmissionReplayStep,
-    _AdmissionScriptBuilder,
-)
+from ..admission_replay import AdmissionReplayPurpose, AdmissionReplayStep
+from ..operations import IdentifiedOperations, identify_operations
+from ..setup import AdmissionSetup, build_admission_setup
 from .dependencies import (
     recover_reuse_dependencies,
     simulator_reuse_dependencies,
@@ -53,8 +53,8 @@ class FixedLayoutMeasurement:
 
     A measurement never rejects: a layout larger than the pool is reported
     through `fits` and `shortfall_bytes` so a caller can act on how far it
-    missed by. `replay_operations` and `script_builder` carry the replay this
-    was derived from, so certification does not repeat it.
+    missed by. `replay_operations` and `identified` carry the operations this
+    was derived from, so certification does not repeat the walk.
     """
 
     required_bytes: int
@@ -65,7 +65,7 @@ class FixedLayoutMeasurement:
     placements: tuple[FixedLayoutPlacement, ...]
     dynamic_lifetimes: tuple[LeaseLifetime, ...]
     replay_operations: tuple[AdmissionReplayStep, ...]
-    script_builder: _AdmissionScriptBuilder
+    identified: IdentifiedOperations
 
     @property
     def fits(self) -> bool:
@@ -90,8 +90,13 @@ def measure_fixed_layout(
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
+    setup: AdmissionSetup | None = None,
 ) -> FixedLayoutMeasurement:
     """Place one schedule's leases and report the bytes it would need.
+
+    `setup` is the schedule-invariant half, which a caller measuring many
+    schedules for one resolved program should build once and pass in. Omitted,
+    it is built here.
 
     Caller-owned outputs are deliberately excluded from the reusable fixed
     slice.  Their leases remain ordinary dynamic pool allocations so a caller
@@ -100,24 +105,35 @@ def measure_fixed_layout(
     caller-owned aliases; all schedule-managed storage remains fixed.
     """
 
-    topology.validate(selected.program)
     if scratch_reserve_bytes < 0:
         raise ValueError("dynamic scratch reserve must be non-negative")
-    builder = _AdmissionScriptBuilder(
-        selected.program,
-        selected.schedule,
-        selected.selections,
-        topology,
+    if setup is None:
+        setup = build_admission_setup(
+            selected.program,
+            selected.selections,
+            selected.simulation_config,
+            topology,
+        )
+    encoded = encode_schedule(selected.schedule, setup.template)
+    identified = identify_operations(
+        build_admission_operations(
+            setup.template, setup.compiled_topology, encoded
+        ),
+        task_ids=setup.task_ids,
+        alias_ids=setup.alias_ids,
+        allocation_steps=setup.allocation_steps,
+        action_trigger_tasks=encoded.action_trigger_tasks,
+        storage_handoffs=setup.storage_handoffs,
     )
-    operations, *_ = builder.build()
+    operations = identified.steps
     lifetimes = build_lease_lifetimes(
         operations,
-        builder,
+        identified.lease_provenance,
         selected.schedule,
         selected.simulation,
     )
     dynamic_lease_ids = _final_dynamic_lease_ids(
-        builder,
+        identified,
         dynamic_alias_group_ids,
     )
     dynamic_lifetimes = tuple(
@@ -140,7 +156,7 @@ def measure_fixed_layout(
         placements=placements,
         dynamic_lifetimes=dynamic_lifetimes,
         replay_operations=operations,
-        script_builder=builder,
+        identified=identified,
     )
 
 
@@ -162,7 +178,7 @@ def certify_fixed_layout(
             measurement.required_bytes,
             measurement.pool_capacity_bytes,
         )
-    builder = measurement.script_builder
+    identified = measurement.identified
     layout = FixedPhysicalLayout(
         program_digest=selected.program.digest,
         schedule_digest=selected.schedule.digest,
@@ -176,15 +192,17 @@ def certify_fixed_layout(
         reuse_dependencies=recover_reuse_dependencies(
             measurement.replay_operations, measurement.placements
         ),
-        initial_alias_leases=tuple(sorted(builder.initial_alias_leases.items())),
+        initial_alias_leases=tuple(
+            sorted(identified.initial_alias_leases.items())
+        ),
         task_allocation_leases=tuple(
             (task_id, ordinal, lease_id)
             for (task_id, ordinal), lease_id in sorted(
-                builder.task_allocation_leases.items()
+                identified.task_allocation_leases.items()
             )
         ),
         action_destination_leases=tuple(
-            sorted(builder.action_destination_leases.items())
+            sorted(identified.action_destination_leases.items())
         ),
         dynamic_lifetimes=tuple(
             sorted(measurement.dynamic_lifetimes, key=lambda item: item.lease_id)
@@ -210,6 +228,7 @@ def build_fixed_layout_admission(
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
+    setup: AdmissionSetup | None = None,
 ) -> FixedLayoutAdmission:
     """Measure and certify one physical layout, or raise if it does not fit."""
 
@@ -221,12 +240,13 @@ def build_fixed_layout_admission(
             topology,
             dynamic_alias_group_ids=dynamic_alias_group_ids,
             scratch_reserve_bytes=scratch_reserve_bytes,
+            setup=setup,
         ),
     )
 
 
 def _final_dynamic_lease_ids(
-    builder: _AdmissionScriptBuilder,
+    identified: IdentifiedOperations,
     alias_group_ids: frozenset[str],
 ) -> frozenset[int]:
     """Resolve caller-owned aliases to their final physical generations.
@@ -236,13 +256,13 @@ def _final_dynamic_lease_ids(
     historical generations remain ordinary fixed lifetimes.
     """
 
-    missing = sorted(alias_group_ids - builder.active_aliases.keys())
+    missing = sorted(alias_group_ids - identified.active_aliases.keys())
     if missing:
         raise ValueError(
             "dynamic terminal aliases lack final execution leases: "
             f"{missing}"
         )
-    return frozenset(builder.active_aliases[item] for item in alias_group_ids)
+    return frozenset(identified.active_aliases[item] for item in alias_group_ids)
 
 
 def _validate_dynamic_lifetimes(lifetimes: tuple[LeaseLifetime, ...]) -> None:
