@@ -22,7 +22,7 @@ A **resolved program** is the Program with every alternative fixed, leaving one
 concrete task set. Recomputation is the frontend alternative that produces
 them, but the core is unaware of that: it plans memory for whatever tasks
 execute. A hand-authored Program with no alternatives resolves to exactly one,
-and nothing downstream can tell the difference.
+and nothing below can tell the difference.
 
 Resolved programs are independent problems. Nothing flows between them; each
 is planned separately and the best result is taken.
@@ -90,7 +90,7 @@ Every `*_offsets` array holds `task_count + 1` entries: task *t*'s rows are
 `task_allocation_offsets` runs 0, 2, 35, 54, … to 3,401 — so 3,401 allocation
 steps across 102 tasks, needing **1,506 slots**. The gap between those two
 numbers is slot reuse, and it is why a lease is tied to its allocation step
-through the slot rather than through the operation stream.
+through the slot rather than through the operation sequence.
 
 **Slots are assigned once, here, not during the walk.** Compiling the
 allocation rows walks each task's steps in order: a step that allocates
@@ -137,7 +137,7 @@ schedule, not reading the operation's index.
 | `TERMINAL_COMPLETION` | the completion of an eviction's retirement |
 
 Purpose is finer than boundary and is **not recoverable from the operation
-stream**: at a task start a lease may be workspace, an output, or a
+sequence**: at a task start a lease may be workspace, an output, or a
 replacement, and the emitted record is identical in all three. It is decided
 where it is known, during the walk, and recorded per operation.
 
@@ -154,12 +154,12 @@ Two rules are easy to get wrong:
 ## Things that happen without an operation
 
 Two transitions move or reuse a lease and emit nothing. Both must be replayed
-from the topology; neither is visible in the stream.
+from the topology; neither is visible in the sequence.
 
 **Slot reuse.** A task may free an allocation slot and reallocate it. The
 second allocation reuses the same lease and emits no operation of its own, so
 a lease is tied to its allocation step through the slot, not through the
-stream. The reusing step also **overwrites the lease's provenance**, so a
+sequence. The reusing step also **overwrites the lease's provenance**, so a
 lease records what it most recently became rather than what it first was. That
 is deliberate: a slot first used as workspace and then retained as an output
 really is an output by the end of the task, and the fixed/dynamic check below
