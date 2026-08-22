@@ -2,7 +2,7 @@
 #define SHADOWSPILL_PLANNER_H
 
 #include <stdint.h>
-#include <shadowspill/status.h>
+#include <shadowspill/shadowspill.h>
 
 #include <shadowspill/simulator.h>
 
@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION 12U
+#define SHADOWSPILL_PLANNER_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 #define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX

@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include <shadowspill/status.h>
+#include <shadowspill/shadowspill.h>
 
 #if defined(_WIN32)
 #define SHADOWSPILL_ADMISSION_REPLAY_API __declspec(dllexport)
@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION 4U
+#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
 /* Replay names for the shared statuses; see <shadowspill/status.h>. */
