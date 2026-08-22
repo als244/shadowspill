@@ -1,10 +1,12 @@
 add_library(
   shadowspill_planner
   SHARED
-  src/admission.c
+  src/admission/candidate.c
+  src/admission/operations.c
+  src/admission/placement.c
+  src/admission/topology.c
   src/context.c
   src/digest.c
-  src/placement.c
   src/portfolio.c
   src/residency.c
   src/schedule.c
