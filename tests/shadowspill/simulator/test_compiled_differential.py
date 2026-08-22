@@ -249,3 +249,41 @@ def test_random_linear_programs_match(
     actual = simulate_compiled(program, schedule, config=config)
 
     assert actual == expected
+
+
+def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
+) -> None:
+    """The compiled simulator attaches its own interval arrays to a result so
+    a compiled consumer can read the timings without re-encoding them. They
+    address library memory, so anything that writes a result out - `asdict`,
+    `pickle`, `torch.save`, `copy.deepcopy` - must not carry them along."""
+
+    import copy
+    import pickle
+    from dataclasses import asdict
+
+    from shadowspill.simulator._capi import CTaskInterval, CTransferInterval
+    from shadowspill.simulator._compiled import IntervalArrays
+    from shadowspill.simulator.model import SimulationResult
+
+    result = SimulationResult(
+        makespan_ns=1,
+        task_intervals=(),
+        transfer_intervals=(),
+        device_peaks=(),
+        host_peak_bytes=0,
+    )
+    result.attach_interval_arrays(
+        IntervalArrays(
+            task_intervals=(CTaskInterval * 3)(),
+            task_interval_count=3,
+            transfer_intervals=(CTransferInterval * 2)(),
+            transfer_interval_count=2,
+        )
+    )
+
+    assert result.interval_arrays is not None
+    assert "interval_arrays" not in asdict(result)
+    assert pickle.loads(pickle.dumps(result)) == result
+    assert pickle.loads(pickle.dumps(result)).interval_arrays is None
+    assert copy.deepcopy(result).interval_arrays is None

@@ -25,6 +25,7 @@ from shadowspill.planner._operations import (
     AdmissionOperations,
     build_admission_operations,
 )
+from shadowspill.planner._placement import place_records
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     SimulationAdmission,
@@ -38,15 +39,13 @@ from .dependencies import (
     recover_reuse_dependencies,
     simulator_reuse_dependencies,
 )
-from .lifetimes import LeaseLayoutInputs, build_lease_layout_inputs
+from .lifetimes import LeaseLayout, resolve_lease_lifetimes
 from .model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
-    FixedLayoutPlacement,
     FixedPhysicalLayout,
     LeaseLifetime,
 )
-from .placement import place_lifetimes
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +54,9 @@ class FixedLayoutMeasurement:
 
     A measurement never rejects: a layout larger than the pool is reported
     through `fits` and `shortfall_bytes` so a caller can act on how far it
-    missed by. `identified` carries the per-lease records this was derived
-    from, so certification does not repeat the walk.
+    missed by. `layout` and `offsets` carry what this was derived from, still
+    as the library's own arrays, so certification neither repeats the walk nor
+    pays to name leases a rejected measurement will discard.
     """
 
     required_bytes: int
@@ -64,9 +64,8 @@ class FixedLayoutMeasurement:
     fixed_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
-    placements: tuple[FixedLayoutPlacement, ...]
-    dynamic_lifetimes: tuple[LeaseLifetime, ...]
-    inputs: LeaseLayoutInputs
+    offsets: tuple[int, ...]
+    layout: LeaseLayout
     operations: AdmissionOperations
     setup: AdmissionSetup
 
@@ -122,23 +121,14 @@ def measure_fixed_layout(
     operations = build_admission_operations(
         setup.template, setup.compiled_topology, encoded
     )
-    inputs = build_lease_layout_inputs(
-        operations, setup, selected.schedule, selected.simulation
+    layout = resolve_lease_lifetimes(
+        operations, setup, selected.simulation, dynamic_alias_group_ids
     )
-    lifetimes = inputs.lifetimes
-    dynamic_lease_ids = _final_dynamic_lease_ids(
-        inputs,
-        dynamic_alias_group_ids,
+    _validate_dynamic_lifetimes(layout.dynamic_lifetimes)
+    offsets, fixed_slice_bytes = place_records(
+        layout.leases.lifetimes, layout.fixed_count
     )
-    dynamic_lifetimes = tuple(
-        item for item in lifetimes if item.lease_id in dynamic_lease_ids
-    )
-    _validate_dynamic_lifetimes(dynamic_lifetimes)
-    fixed_lifetimes = tuple(
-        item for item in lifetimes if item.lease_id not in dynamic_lease_ids
-    )
-    placements, fixed_slice_bytes = place_lifetimes(fixed_lifetimes)
-    dynamic_reserve_bytes = sum(item.bytes for item in dynamic_lifetimes)
+    dynamic_reserve_bytes = sum(item.bytes for item in layout.dynamic_lifetimes)
     return FixedLayoutMeasurement(
         required_bytes=(
             fixed_slice_bytes + dynamic_reserve_bytes + scratch_reserve_bytes
@@ -147,9 +137,8 @@ def measure_fixed_layout(
         fixed_slice_bytes=fixed_slice_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
         scratch_reserve_bytes=scratch_reserve_bytes,
-        placements=placements,
-        dynamic_lifetimes=dynamic_lifetimes,
-        inputs=inputs,
+        offsets=offsets,
+        layout=layout,
         operations=operations,
         setup=setup,
     )
@@ -173,7 +162,8 @@ def certify_fixed_layout(
             measurement.required_bytes,
             measurement.pool_capacity_bytes,
         )
-    inputs = measurement.inputs
+    resolved = measurement.layout
+    placements = resolved.placements(measurement.offsets)
     layout = FixedPhysicalLayout(
         program_digest=selected.program.digest,
         schedule_digest=selected.schedule.digest,
@@ -183,24 +173,22 @@ def certify_fixed_layout(
         dynamic_reserve_bytes=measurement.dynamic_reserve_bytes,
         scratch_reserve_bytes=measurement.scratch_reserve_bytes,
         required_bytes=measurement.required_bytes,
-        placements=measurement.placements,
+        placements=placements,
         reuse_dependencies=recover_reuse_dependencies(
-            measurement.operations, measurement.setup, measurement.placements
+            measurement.operations, measurement.setup, placements
         ),
-        initial_alias_leases=tuple(
-            sorted(inputs.initial_alias_leases.items())
-        ),
+        initial_alias_leases=tuple(sorted(resolved.initial_alias_leases.items())),
         task_allocation_leases=tuple(
             (task_id, ordinal, lease_id)
             for (task_id, ordinal), lease_id in sorted(
-                inputs.task_allocation_leases.items()
+                resolved.task_allocation_leases.items()
             )
         ),
         action_destination_leases=tuple(
-            sorted(inputs.action_destination_leases.items())
+            sorted(resolved.action_destination_leases.items())
         ),
         dynamic_lifetimes=tuple(
-            sorted(measurement.dynamic_lifetimes, key=lambda item: item.lease_id)
+            sorted(resolved.dynamic_lifetimes, key=lambda item: item.lease_id)
         ),
     )
     simulator_input = _simulation_input(selected, layout)
@@ -238,26 +226,6 @@ def build_fixed_layout_admission(
             setup=setup,
         ),
     )
-
-
-def _final_dynamic_lease_ids(
-    inputs: LeaseLayoutInputs,
-    alias_group_ids: frozenset[str],
-) -> frozenset[int]:
-    """Resolve caller-owned aliases to their final physical generations.
-
-    An alias may be produced, evicted, and fetched before caller handoff.  Only
-    the lease active at the final boundary escapes the reusable fixed slice;
-    historical generations remain ordinary fixed lifetimes.
-    """
-
-    missing = sorted(alias_group_ids - inputs.active_aliases.keys())
-    if missing:
-        raise ValueError(
-            "dynamic terminal aliases lack final execution leases: "
-            f"{missing}"
-        )
-    return frozenset(inputs.active_aliases[item] for item in alias_group_ids)
 
 
 def _validate_dynamic_lifetimes(lifetimes: tuple[LeaseLifetime, ...]) -> None:

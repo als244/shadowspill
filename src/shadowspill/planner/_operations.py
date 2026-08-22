@@ -14,6 +14,14 @@ from ._capi import (
 
 
 @dataclass(frozen=True, slots=True)
+class OperationArrays:
+    """The library's own view of one schedule's operations."""
+
+    operations: CAdmissionOperations
+    schedule: CIndexedSchedule
+
+
+@dataclass(frozen=True, slots=True)
 class AdmissionOperations:
     """One schedule's operation sequence, with the provenance a layout needs.
 
@@ -40,6 +48,10 @@ class AdmissionOperations:
     dependency_count: int
     fetch_bytes: int
     evict_bytes: int
+    #: The library's own operation arrays and the schedule it derived them
+    #: from, kept so a later library call can read them straight through
+    #: instead of re-encoding the columns above.
+    arrays: OperationArrays
 
     @property
     def lease_count(self) -> int:
@@ -153,6 +165,7 @@ def build_admission_operations(
         dependency_count=int(result.dependency_count),
         fetch_bytes=int(result.fetch_bytes),
         evict_bytes=int(result.evict_bytes),
+        arrays=OperationArrays(operations=result, schedule=indexed),
     )
 
 
@@ -171,4 +184,8 @@ def _u8(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
     return (ctypes.c_uint8 * max(len(values), 1))(*values)
 
 
-__all__ = ["AdmissionOperations", "build_admission_operations"]
+__all__ = [
+    "AdmissionOperations",
+    "OperationArrays",
+    "build_admission_operations",
+]

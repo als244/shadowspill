@@ -11,25 +11,23 @@ resulting layout is used for.
 
 ## Input
 
-One record per lease, and nothing else:
+Four numbers per lease, and nothing else:
 
 | field | meaning |
 |---|---|
 | `bytes` | how much the lease occupies |
 | `alignment` | the offset must be a multiple of this |
-| `predicted_start_ns`, `predicted_end_ns` | when it is live, half-open |
-| `causal_start`, `causal_end` | its position in the operation order |
-| `lease_id` | identity, used only to break ties |
+| `start_ns`, `end_ns` | when it is live, half-open |
 
 The lifetime is half-open, so leases that merely touch are **not** live at the
 same moment and may share an address.
 
-The two pairs of boundaries do different jobs, and the distinction is what
-makes the result safe under imperfect predictions: the predicted lifetime
-chooses offsets, the causal boundaries decide whether a shared address is
-legal. See [timings choose the offsets](#timings-choose-the-offsets-causality-makes-them-safe)
-below. Everything else about a lease — what it is for, which task owns it,
-whether it is an output — is irrelevant here.
+Placement is not told which lease a record belongs to. Identity would only
+ever break a tie between records equal in every key, and the input index does
+that, so the layout depends on the records and the order they arrive in and on
+nothing else. Everything else a lease carries — what it is for, which task
+owns it, whether it is an output, and the causal boundaries below — belongs to
+the caller and never crosses into the placer.
 
 ## Output
 
@@ -59,10 +57,10 @@ Leases are placed one at a time, in a fixed order, each taking the lowest
 address that clears everything it overlaps in time.
 
 **Order:** largest first; among equal sizes, longest-lived first; then
-earliest; then lowest lease id. The first two are the heuristic — big,
+earliest; then lowest input index. The first two are the heuristic — big,
 long-lived leases are the hardest to fit, so they are placed while the space
-is empty. The last two only break ties, and exist so the result does not
-depend on the order the leases arrived in.
+is empty. The last two only break ties, and exist so that records equal in
+every key still get a defined order.
 
 **Offset:** walk the addresses already taken, in address order, and take the
 first aligned gap wide enough; if none, take the address just past them all.
@@ -76,10 +74,10 @@ its lifetime, and a query gathers the nodes its own lifetime touches.
 
 **The nodes hold merged address ranges, not leases.** The offset depends only
 on the *union* of the addresses in use, never on which lease owns what, and a
-packed layout's union collapses hard — measured at 10 to 17 disjoint ranges
-where 200 to 430 leases overlap. Inserting a range into a union can only merge
-neighbours, never split them, so a node's list stays as short as the layout is
-contiguous.
+packed layout's union collapses hard. Inserting a range into a union can only
+merge neighbours, never split them, so a node's list stays as short as the
+layout is contiguous — and that is what keeps a query cheap, because a query
+pays for the ranges each covering node holds.
 
 Three things were measured rather than assumed, and each ruled out an
 alternative that looked better on paper:
@@ -87,21 +85,82 @@ alternative that looked better on paper:
 - **Sorting the gathered ranges beats sweeping them.** A sweep that jumps past
   the furthest conflicting range rescans everything once per layer, and packed
   leases stack into many layers; it measured slower on every scenario.
-- **Reporting each lease once matters.** A lease is recorded on several
-  covering nodes, so one query can reach it repeatedly — 2.1 to 2.5 times.
-  Sorting those repeats was pure waste.
+- **Merging beats de-duplicating.** An earlier design stored leases on the
+  nodes and skipped the repeats a query reached through several covering nodes
+  at once — 2.1 to 2.5 of them per lease. Merging is strictly better: it
+  collapses neighbours that de-duplication cannot, and it still leaves the
+  same per-node duplication, now cheap enough not to be worth removing. That
+  duplication is why a query can return more ranges than the lease has
+  conflicts, and the [cost section](#cost) shows it losing to merging on every
+  plan above about 8,000 leases.
 - **The comparison is a single load, so an indirect comparator costs more than
   the comparison.** The sort is specialised rather than generic.
 
 ## Cost
 
-`O(n log n + sum_i k_i log k_i)`, where `k_i` is the number of already-placed
-leases overlapping lease `i`. `sum_i k_i` is the number of time-overlapping
-pairs, which is `Theta(n^2)` when everything is live at once, so the worst case
-is quadratic. Real layouts are far sparser — mean `k` about 1.5% of `n` — but
-growth is superlinear.
+Placing one lease is: gather the occupied ranges it could collide with, sort
+them by address, walk them for the first gap, insert the chosen range. Sorting
+is the only superlinear step, so the total is
 
-Measured on real plans: 14.6 ms at 2,543 leases, 68 ms at 17,250.
+```text
+O(n log n  +  sum_i r_i log r_i)
+```
+
+where `r_i` is the number of address ranges the gather returns for lease `i`.
+The `n log n` is the one-off ordering of the leases themselves. Everything
+else lives in `r_i`, so `r_i` is the number that matters.
+
+**Why the sort exists.** Lowest-fit needs the occupied ranges *in address
+order* — it walks them from zero and stops at the first gap wide enough. The
+index is keyed by time, not address, so what it returns is a bag of ranges
+gathered from the tree nodes covering the lease's lifetime, in node order.
+Sorting it is what turns a set of conflicts into a walkable address line.
+
+**What `r_i` is bounded by.** Two things, and neither is `n`:
+
+- Ranges are stored on every node covering their interval, and a query touches
+  `O(log n)` nodes per level of the tree, so `r_i` grows with how many nodes
+  the lease's lifetime spans. Long-lived leases pay the most.
+- Each node holds a *merged* union, so its list is short when the layout is
+  contiguous. This is where the packing pays for itself twice: a tight layout
+  is both smaller and cheaper to extend.
+
+The loose upper bound is `k_i`, the number of already-placed leases that
+overlap lease `i` in time — but `r_i` is not bounded by `k_i` in either
+direction, because merging pushes it down while per-node duplication pushes it
+up.
+
+**Measured on the thirteen captured plans.** `k` is the conflict count, `r` is
+what actually got sorted:
+
+| plan | `n` | peak live | mean `k` | `Σk` | mean `r` | `Σr` |
+|---|---|---|---|---|---|---|
+| olmoe fast | 2,542 | 287 | 198 | 0.50 M | 196 | 0.50 M |
+| llama3 fast | 3,038 | 304 | 128 | 0.39 M | 151 | 0.46 M |
+| olmoe medium | 8,678 | 285 | 199 | 1.73 M | 99 | 0.86 M |
+| llama3 slow | 16,892 | 320 | 238 | 4.01 M | 84 | 1.41 M |
+| qwen35 slow | 27,234 | 388 | 226 | 6.15 M | 104 | 2.82 M |
+
+Three things this shows:
+
+- **The quadratic worst case is nowhere near.** `Σk` is 15.6% of `n²/2` on the
+  smallest plan and 1.7% on the largest; it *falls* as plans grow, because
+  peak live leases stay near 300 no matter how long the step is. Peak live is
+  set by the model's working set, not by the step's length.
+- **Merging is what makes it cheap, and it pays more as plans grow.** `Σr` is
+  the same as `Σk` at 2,542 leases and a third of it at 16,892: there is
+  little to collapse in a small layout and a lot in a large one. Within one
+  family, `Σr` grows *sublinearly* in `n` — llama3 fast to slow is 5.6× the
+  leases for 3.1× the sorted volume.
+- **The distribution is skewed, not flat.** On the largest plan the median
+  lease gathers 27 ranges and the worst gathers 15,407. A handful of
+  long-lived leases — the resident parameters — dominate the total, which is
+  why the sort is specialised rather than generic: most calls are tiny.
+
+The profile agrees with the model. On llama3 slow, `sort_by_address` is 42% of
+the run, the gather 14%, the moves the sort makes 10%, and insertion under 1%.
+
+End to end, one placement call: 14.5 ms at 3,039 leases, 65 ms at 17,250.
 
 ## Timings choose the offsets; causality makes them safe
 

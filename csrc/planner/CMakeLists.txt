@@ -2,6 +2,7 @@ add_library(
   shadowspill_planner
   SHARED
   src/admission/candidate.c
+  src/admission/lifetimes.c
   src/admission/operations.c
   src/admission/placement.c
   src/admission/topology.c
