@@ -357,7 +357,14 @@ static int all_completed_retirements_precede_action_admission(void) {
     return failed ? -1 : 0;
 }
 
-static int overflow_is_failure(void) {
+/*
+ * A full event record stops recording; it does not stop the runtime. Events
+ * describe what happened, so running out of room to describe an allocation
+ * says nothing about whether it succeeded. Latching a failure here used to
+ * make every later allocation in the process fail, reported with the operands
+ * of whichever allocation took the last slot.
+ */
+static int overflow_stops_recording_not_the_runtime(void) {
     ShadowSpillMockBackend *mock = NULL;
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
@@ -365,23 +372,31 @@ static int overflow_is_failure(void) {
         return -1;
     }
     ShadowSpillAllocation allocation = {0};
+    ShadowSpillAllocation second = {0};
+    /* One slot: the allocation fills it and the free overflows. */
     if (shadowspill_allocation_telemetry_start(runtime, 1U) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_memory_pool_allocate(runtime, 0U, 8U, 1U, compute, &allocation) !=
             SHADOWSPILL_RUNTIME_OK ||
         shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
-            SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE) {
+            SHADOWSPILL_RUNTIME_OK) {
         destroy_runtime(mock, runtime, compute);
         return -1;
     }
     ShadowSpillRuntimeFailure failure = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
-    const int failed = shadowspill_runtime_failure(runtime, &failure) !=
-            SHADOWSPILL_RUNTIME_OK ||
-        failure.status != SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE ||
+    const int failed =
+        /* The overflow is reported ... */
         shadowspill_runtime_statistics(runtime, &statistics) !=
             SHADOWSPILL_RUNTIME_OK ||
-        statistics.allocation_event_overflow != 1U;
+        statistics.allocation_event_overflow != 1U ||
+        /* ... and nothing was latched ... */
+        shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_RUNTIME_OK ||
+        failure.status != SHADOWSPILL_RUNTIME_OK ||
+        /* ... so the runtime still serves allocations. */
+        shadowspill_memory_pool_allocate(runtime, 0U, 8U, 1U, compute, &second) !=
+            SHADOWSPILL_RUNTIME_OK;
     destroy_runtime(mock, runtime, compute);
     return failed ? -1 : 0;
 }
@@ -525,6 +540,6 @@ int main(void) {
     REQUIRE_TELEMETRY_CANARY(queued_transfers_survive_retirement_only_task());
     REQUIRE_TELEMETRY_CANARY(all_completed_retirements_precede_action_admission());
     REQUIRE_TELEMETRY_CANARY(bounded_runtime_trace_is_opt_in());
-    REQUIRE_TELEMETRY_CANARY(overflow_is_failure());
+    REQUIRE_TELEMETRY_CANARY(overflow_stops_recording_not_the_runtime());
     return EXIT_SUCCESS;
 }
