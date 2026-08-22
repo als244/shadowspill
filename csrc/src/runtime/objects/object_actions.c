@@ -1,4 +1,4 @@
-#include "../internal.h"
+#include "internal.h"
 
 typedef struct ShadowSpillProjectedObjectState {
     uint64_t version;

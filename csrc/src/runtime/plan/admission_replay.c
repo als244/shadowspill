@@ -1,4 +1,4 @@
-#include "../internal.h"
+#include "internal.h"
 
 #include <shadowspill/admission_replay.h>
 

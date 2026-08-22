@@ -5,7 +5,6 @@
  * price it. The operation sequence it replays comes from `operations.c`.
  */
 
-#define _POSIX_C_SOURCE 200809L
 
 #include "internal.h"
 #include "../portfolio_internal.h"
