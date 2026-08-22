@@ -27,7 +27,9 @@ static int append_operation(
     uint64_t dependency_id,
     uint8_t dependency_expected,
     uint8_t boundary,
-    uint32_t index
+    uint32_t index,
+    uint8_t purpose,
+    uint32_t allocation_offset
 ) {
     if (state->operation_count >= state->workspace->operation_capacity) {
         return -1;
@@ -45,6 +47,8 @@ static int append_operation(
         };
     state->workspace->annotations[operation] =
         (ShadowSpillAdmissionAnnotation){.index = index, .boundary = boundary};
+    state->workspace->purposes[operation] = purpose;
+    state->workspace->allocation_offsets[operation] = allocation_offset;
     return 0;
 }
 
@@ -55,6 +59,7 @@ static int acquire_lease(
     uint8_t boundary,
     uint32_t index,
     uint32_t owner_alias,
+    uint8_t purpose,
     uint64_t *lease_id
 ) {
     if (bytes == 0U || state->lease_count >= state->workspace->lease_capacity) {
@@ -65,12 +70,12 @@ static int acquire_lease(
     if (append_operation(
             state, lease, SHADOWSPILL_ADMISSION_REPLAY_RESERVE,
             bytes, alignment, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
-            boundary, index
+            boundary, index, purpose, SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0 ||
         append_operation(
             state, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED,
             0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
-            boundary, index
+            boundary, index, purpose, SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0) {
         return -1;
     }
@@ -84,6 +89,8 @@ static int acquire_task_lease(
     uint64_t alignment,
     uint32_t task,
     uint32_t owner_alias,
+    uint8_t purpose,
+    uint32_t allocation_offset,
     uint64_t *lease_id
 ) {
     if (bytes == 0U || state->lease_count >= state->workspace->lease_capacity) {
@@ -94,7 +101,8 @@ static int acquire_task_lease(
     if (append_operation(
             state, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE,
             bytes, alignment, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
-            SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task
+            SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task, purpose,
+            allocation_offset
         ) != 0) {
         return -1;
     }
@@ -124,13 +132,15 @@ static int begin_retirement(
     uint8_t completion_boundary,
     uint32_t completion_index,
     uint32_t predecessor_task,
-    uint32_t predecessor_action
+    uint32_t predecessor_action,
+    uint8_t purpose
 ) {
     if (state->pending_count >= state->workspace->lease_capacity ||
         append_operation(
             state, lease_id,
             SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT,
-            0U, 0U, dependency_id, 0U, begin_boundary, begin_index
+            0U, 0U, dependency_id, 0U, begin_boundary, begin_index, purpose,
+            SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0) {
         return -1;
     }
@@ -140,6 +150,12 @@ static int begin_retirement(
             .dependency_id = dependency_id,
             .completion_index = completion_index,
             .completion_boundary = completion_boundary,
+            /* An eviction's begin only starts the copy; by its completion
+             * the copy has landed and the lease is simply gone. */
+            .completion_purpose =
+                purpose == SHADOWSPILL_ADMISSION_PURPOSE_EVICTION
+                    ? SHADOWSPILL_ADMISSION_PURPOSE_TERMINAL_COMPLETION
+                    : purpose,
         };
     state->workspace->predecessor_tasks[lease_id] = predecessor_task;
     state->workspace->predecessor_actions[lease_id] = predecessor_action;
@@ -226,6 +242,7 @@ int shadowspill_admission_build_operations(
                 state, program->alias_size_bytes[alias],
                 topology->minimum_alignment,
                 SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL, 0U, alias,
+                SHADOWSPILL_ADMISSION_PURPOSE_INITIAL_OBJECT,
                 &workspace->active_alias_leases[alias]
             ) != 0) {
             return -1;
@@ -270,6 +287,12 @@ int shadowspill_admission_build_operations(
                             topology->minimum_alignment,
                             task,
                             alias,
+                            alias == SHADOWSPILL_SIMULATOR_NO_INDEX
+                                ? SHADOWSPILL_ADMISSION_PURPOSE_TASK_WORKSPACE
+                                : task_replaces_alias(topology, task, alias)
+                                ? SHADOWSPILL_ADMISSION_PURPOSE_MUTATION_REPLACEMENT
+                                : SHADOWSPILL_ADMISSION_PURPOSE_TASK_OUTPUT,
+                            offset,
                             &workspace->task_allocation_leases[slot]
                         ) != 0) {
                         return -1;
@@ -316,7 +339,8 @@ int shadowspill_admission_build_operations(
                     SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION,
                     task,
                     task,
-                    UINT32_MAX
+                    UINT32_MAX,
+                    SHADOWSPILL_ADMISSION_PURPOSE_TASK_WORKSPACE
                 ) != 0) {
                 return -1;
             }
@@ -362,7 +386,8 @@ int shadowspill_admission_build_operations(
                     SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION,
                     task,
                     task,
-                    UINT32_MAX
+                    UINT32_MAX,
+                    SHADOWSPILL_ADMISSION_PURPOSE_MUTATION_REPLACEMENT
                 ) != 0) {
                 return -1;
             }
@@ -415,7 +440,8 @@ int shadowspill_admission_build_operations(
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_COMPLETION,
                         action,
                         task,
-                        UINT32_MAX
+                        UINT32_MAX,
+                        SHADOWSPILL_ADMISSION_PURPOSE_RELEASE
                     ) != 0) {
                     return -1;
                 }
@@ -439,10 +465,12 @@ int shadowspill_admission_build_operations(
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_COMPLETION,
                         action,
                         UINT32_MAX,
-                        action
+                        action,
+                        SHADOWSPILL_ADMISSION_PURPOSE_EVICTION
                     ) != 0) {
                     return -1;
                 }
+                state->evict_bytes += program->alias_size_bytes[alias];
                 workspace->active_alias_leases[alias] = NO_LEASE;
             } else if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
                 if (program->alias_size_bytes[alias] == 0U) {
@@ -454,10 +482,12 @@ int shadowspill_admission_build_operations(
                         topology->minimum_alignment,
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER, action,
                         alias,
+                        SHADOWSPILL_ADMISSION_PURPOSE_FETCH_DESTINATION,
                         &workspace->active_alias_leases[alias]
                     ) != 0) {
                     return -1;
                 }
+                state->fetch_bytes += program->alias_size_bytes[alias];
             } else {
                 return -1;
             }
@@ -480,7 +510,9 @@ int shadowspill_admission_build_operations(
                 SHADOWSPILL_ADMISSION_REPLAY_COMPLETE_RETIREMENT,
                 0U, 0U, pending.dependency_id, 0U,
                 pending.completion_boundary,
-                pending.completion_index
+                pending.completion_index,
+                pending.completion_purpose,
+                SHADOWSPILL_PLANNER_NO_INDEX
             ) != 0) {
             return -1;
         }
@@ -495,4 +527,112 @@ int shadowspill_admission_build_operations(
         }
     }
     return 0;
+}
+
+/* ---------------------------------------------------------------- public */
+
+/* A context carrying only what operation building reads: the resolved task
+ * set and the physical ownership facts. Residency and seed state belong to
+ * candidate search, not here. */
+static ShadowSpillPressureFitContext operations_context(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission
+) {
+    return (ShadowSpillPressureFitContext){
+        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .simulation = simulation,
+        .admission = admission,
+    };
+}
+
+ShadowSpillPlannerStatus shadowspill_admission_operation_bounds(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    uint64_t *operation_capacity,
+    uint64_t *lease_capacity
+) {
+    if (schedule == NULL || operation_capacity == NULL ||
+        lease_capacity == NULL) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+    const ShadowSpillPressureFitContext context =
+        operations_context(simulation, admission);
+    if (!shadowspill_admission_topology_valid(&context)) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+    ShadowSpillCandidateAdmissionWorkspace workspace = {0};
+    if (shadowspill_admission_reserve_buffers(&context, schedule, &workspace)
+            != 0) {
+        shadowspill_candidate_admission_workspace_destroy(&workspace);
+        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    }
+    *operation_capacity = workspace.operation_capacity;
+    *lease_capacity = workspace.lease_capacity;
+    shadowspill_candidate_admission_workspace_destroy(&workspace);
+    return SHADOWSPILL_PLANNER_OK;
+}
+
+ShadowSpillPlannerStatus shadowspill_build_admission_operations(
+    const ShadowSpillSimulationProgram *simulation,
+    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillIndexedSchedule *schedule,
+    ShadowSpillAdmissionOperations *result
+) {
+    if (schedule == NULL || result == NULL || result->lease_ids == NULL ||
+        result->bytes == NULL || result->alignments == NULL ||
+        result->kinds == NULL || result->purposes == NULL ||
+        result->boundaries == NULL || result->indices == NULL ||
+        result->allocation_offsets == NULL || result->lease_aliases == NULL) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+    const ShadowSpillPressureFitContext context =
+        operations_context(simulation, admission);
+    if (!shadowspill_admission_topology_valid(&context)) {
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+
+    ShadowSpillCandidateAdmissionWorkspace workspace = {0};
+    if (shadowspill_candidate_admission_workspace_create(&context, &workspace)
+            != 0 ||
+        shadowspill_admission_reserve_buffers(&context, schedule, &workspace)
+            != 0) {
+        shadowspill_candidate_admission_workspace_destroy(&workspace);
+        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    }
+    if (workspace.operation_capacity > result->operation_capacity ||
+        workspace.lease_capacity > result->lease_capacity) {
+        shadowspill_candidate_admission_workspace_destroy(&workspace);
+        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    }
+
+    ScriptState state;
+    if (shadowspill_admission_build_operations(
+            &context, schedule, &workspace, &state) != 0) {
+        shadowspill_candidate_admission_workspace_destroy(&workspace);
+        return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+    }
+
+    for (uint64_t index = 0U; index < state.operation_count; ++index) {
+        const ShadowSpillAdmissionReplayOperation operation =
+            workspace.operations[index];
+        result->lease_ids[index] = operation.lease_id;
+        result->bytes[index] = operation.bytes;
+        result->alignments[index] = operation.alignment;
+        result->kinds[index] = operation.kind;
+        result->purposes[index] = workspace.purposes[index];
+        result->boundaries[index] = workspace.annotations[index].boundary;
+        result->indices[index] = workspace.annotations[index].index;
+        result->allocation_offsets[index] = workspace.allocation_offsets[index];
+    }
+    for (uint64_t lease = 0U; lease < state.lease_count; ++lease) {
+        result->lease_aliases[lease] = workspace.lease_aliases[lease];
+    }
+    result->operation_count = state.operation_count;
+    result->lease_count = state.lease_count;
+    result->dependency_count = state.dependency_count;
+    result->fetch_bytes = state.fetch_bytes;
+    result->evict_bytes = state.evict_bytes;
+    shadowspill_candidate_admission_workspace_destroy(&workspace);
+    return SHADOWSPILL_PLANNER_OK;
 }
