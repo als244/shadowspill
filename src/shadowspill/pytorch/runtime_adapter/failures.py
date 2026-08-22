@@ -11,6 +11,24 @@ from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
 _NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = 3
 _NO_PROGRESS = 4
+
+
+def format_bytes(value: int) -> str:
+    """Bytes as a person reads them, with the exact count kept.
+
+    Reports are read by someone deciding what to change, and "16273899520"
+    does not tell them it exceeds a 16 GiB budget.
+    """
+
+    scaled = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if unit == "B":
+            if scaled < 1024.0:
+                return f"{value} B"
+        elif scaled < 1024.0:
+            return f"{scaled:.2f} {unit} ({value} bytes)"
+        scaled /= 1024.0
+    return f"{scaled * 1024.0:.2f} PiB ({value} bytes)"
 _TASK_ALLOCATION_ENVELOPE_EXCEEDED = 10
 _TASK_ALLOCATION_CONTRACT_MISMATCH = 11
 _STATUS_NAMES = {
@@ -255,10 +273,12 @@ def allocator_oom_error(
 
     if not diagnostics.is_allocator_oom:
         raise ValueError("allocator OOM error requires an OOM diagnostic")
+    # Same phrasing as the allocator callback's own message: name what ran
+    # out, and say whether anything could still have been released for it.
     title = (
-        "ShadowSpill no-progress OOM"
+        "ShadowSpill out of memory, with nothing left to release"
         if diagnostics.status == _NO_PROGRESS
-        else "ShadowSpill OOM"
+        else "ShadowSpill out of memory"
     )
     lines = [title]
     task = diagnostics.task
@@ -275,9 +295,10 @@ def allocator_oom_error(
     lines.extend(
         (
             f"device: {diagnostics.device_ordinal}",
-            f"requested: {diagnostics.requested_bytes}",
-            f"free: {diagnostics.free_bytes}",
-            f"largest_free_range: {diagnostics.largest_free_range_bytes}",
+            f"requested: {format_bytes(diagnostics.requested_bytes)}",
+            f"pool free: {format_bytes(diagnostics.free_bytes)}",
+            "largest free range: "
+            f"{format_bytes(diagnostics.largest_free_range_bytes)}",
         )
     )
     if diagnostics.object_id is not None:

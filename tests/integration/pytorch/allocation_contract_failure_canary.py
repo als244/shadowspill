@@ -95,7 +95,7 @@ def main() -> int:
     except RuntimeError as cause:
         message = str(cause)
         for expected_text in (
-            "ShadowSpill allocator callback failed",
+            "task allocation contract mismatch",
             "status: 11 (task allocation contract mismatch)",
             "reason: TASK_ALLOCATION_CONTRACT_MISMATCH",
             "execution_task: execution_000017",

@@ -288,7 +288,9 @@ def main() -> int:
             error = _expect(
                 ProfilingError,
                 lambda: _plan(profiling_oom, [inputs], runtime, cache),
-                text="ShadowSpill no-progress OOM",
+                # The message names the pool it ran out of and why nothing
+                # could be released for the request.
+                text="out of memory in the execution pool",
             )
             if not isinstance(error.__cause__, torch.OutOfMemoryError):
                 raise AssertionError("profiling OOM lost its allocator cause")
