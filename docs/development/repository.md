@@ -132,10 +132,16 @@ The CMake build enables warnings as errors and registers compiled canaries with
 CTest:
 
 ```bash
-cmake -S . -B build/dev -DBUILD_TESTING=ON
+cmake -S . -B build/dev -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build/dev --parallel
 ctest --test-dir build/dev --output-on-failure
 ```
+
+Name the build type. CMake's default is an empty `CMAKE_BUILD_TYPE`, which
+means no `-O` at all, and `pyproject.toml` builds the editable install as
+`RelWithDebInfo`. An unoptimized planner is several times slower, and
+`build/dev` is on the library search path, so an unnamed build type there is
+easy to measure without noticing.
 
 Device integration tests require a matching provider/PyTorch toolchain.
 Accelerator-free runtime tests use the mock backend.
