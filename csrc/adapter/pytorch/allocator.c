@@ -170,7 +170,7 @@ static uint64_t monotonic_nanoseconds(void) {
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
 }
 
-static void record_debug_host_boundary(
+static void record_debug_dispatch_boundary(
     uint64_t task_id,
     uint8_t boundary
 ) {
@@ -791,7 +791,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(
 #else
         .storage_rebinding = 0U,
 #endif
-        .debug_task_host_timing = 1U,
+        .debug_task_dispatch_timing = 1U,
         .runtime_trace = 1U,
     };
     return SHADOWSPILL_RUNTIME_OK;
@@ -1057,7 +1057,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     /* Name the pool: "out of memory" means very different things for the
-     * device execution pool and the host spill pool, and an internal failure
+     * device execution pool and the spill pool, and an internal failure
      * belongs to neither. */
     const char *pool_name = runtime->pool_id == UINT32_MAX
         ? "no pool"
@@ -1865,10 +1865,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
     const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_host_boundary(task_id, 0U);
+    record_debug_dispatch_boundary(task_id, 0U);
     if (task_range_active || task_handle == 0U ||
         task_id == SHADOWSPILL_RUNTIME_NO_ID) {
-        record_debug_host_boundary(task_id, 1U);
+        record_debug_dispatch_boundary(task_id, 1U);
         return SHADOWSPILL_RUNTIME_INVALID_STATE;
     }
     if (atomic_load_explicit(
@@ -1897,7 +1897,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     if (status != SHADOWSPILL_RUNTIME_OK) {
         end_task_range();
     }
-    record_debug_host_boundary(task_id, 1U);
+    record_debug_dispatch_boundary(task_id, 1U);
     return status;
 }
 
@@ -1908,7 +1908,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
     const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_host_boundary(task_id, 2U);
+    record_debug_dispatch_boundary(task_id, 2U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
@@ -1921,7 +1921,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
             shadowspill_cuda_wrap_stream(compute_stream_address)
         );
     end_task_range();
-    record_debug_host_boundary(task_id, 3U);
+    record_debug_dispatch_boundary(task_id, 3U);
     return status;
 }
 
@@ -2077,7 +2077,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
 }
 
 ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
-    ShadowSpillPytorchTaskHostTiming *records,
+    ShadowSpillPytorchTaskDispatchTiming *records,
     uint32_t record_capacity,
     uint32_t *record_count
 ) {
@@ -2097,7 +2097,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
             continue;
         }
         if (records != NULL && required < record_capacity) {
-            records[required] = (ShadowSpillPytorchTaskHostTiming){
+            records[required] = (ShadowSpillPytorchTaskDispatchTiming){
                 .task_id = record->task_id,
                 .before_readiness_waits_timestamp_ns = 0U,
                 .before_task_compute_timestamp_ns = 0U,
@@ -2147,7 +2147,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_abort_task_handle(
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
     const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_host_boundary(task_id, 3U);
+    record_debug_dispatch_boundary(task_id, 3U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;

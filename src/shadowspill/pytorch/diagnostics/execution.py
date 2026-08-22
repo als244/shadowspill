@@ -43,27 +43,27 @@ class TaskExecutionTiming:
     runtime_before_task_exit_seconds: float | None
     runtime_after_task_enter_seconds: float | None
     runtime_after_task_exit_seconds: float | None
-    host_before_task_seconds: float
-    host_stream_resolution_seconds: float
-    host_readiness_marker_seconds: float
-    host_runtime_before_task_seconds: float
-    host_input_lookup_seconds: float
-    host_storage_rebind_seconds: float
-    host_argument_assembly_seconds: float
-    host_rebind_seconds: float
-    host_dispatch_seconds: float
-    host_output_flatten_seconds: float
-    host_output_classification_seconds: float
-    host_output_adoption_seconds: float
-    host_output_state_publish_seconds: float
-    host_gradient_accumulation_seconds: float
-    host_output_publish_seconds: float
-    host_dematerialize_seconds: float
-    host_postprocess_seconds: float
-    host_runtime_after_task_seconds: float
-    host_cleanup_seconds: float
-    host_after_task_seconds: float
-    host_total_seconds: float
+    dispatch_before_task_seconds: float
+    dispatch_stream_resolution_seconds: float
+    dispatch_readiness_marker_seconds: float
+    dispatch_runtime_before_task_seconds: float
+    dispatch_input_lookup_seconds: float
+    dispatch_storage_rebind_seconds: float
+    dispatch_argument_assembly_seconds: float
+    dispatch_rebind_seconds: float
+    dispatch_invoke_seconds: float
+    dispatch_output_flatten_seconds: float
+    dispatch_output_classification_seconds: float
+    dispatch_output_adoption_seconds: float
+    dispatch_output_state_publish_seconds: float
+    dispatch_gradient_accumulation_seconds: float
+    dispatch_output_publish_seconds: float
+    dispatch_dematerialize_seconds: float
+    dispatch_postprocess_seconds: float
+    dispatch_runtime_after_task_seconds: float
+    dispatch_cleanup_seconds: float
+    dispatch_after_task_seconds: float
+    dispatch_total_seconds: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -113,33 +113,41 @@ class TaskExecutionTiming:
             "runtime_before_task_exit_seconds": self.runtime_before_task_exit_seconds,
             "runtime_after_task_enter_seconds": self.runtime_after_task_enter_seconds,
             "runtime_after_task_exit_seconds": self.runtime_after_task_exit_seconds,
-            "host_before_task_seconds": self.host_before_task_seconds,
-            "host_stream_resolution_seconds": self.host_stream_resolution_seconds,
-            "host_readiness_marker_seconds": self.host_readiness_marker_seconds,
-            "host_runtime_before_task_seconds": (self.host_runtime_before_task_seconds),
-            "host_input_lookup_seconds": self.host_input_lookup_seconds,
-            "host_storage_rebind_seconds": self.host_storage_rebind_seconds,
-            "host_argument_assembly_seconds": self.host_argument_assembly_seconds,
-            "host_rebind_seconds": self.host_rebind_seconds,
-            "host_dispatch_seconds": self.host_dispatch_seconds,
-            "host_output_flatten_seconds": self.host_output_flatten_seconds,
-            "host_output_classification_seconds": (
-                self.host_output_classification_seconds
+            "dispatch_before_task_seconds": self.dispatch_before_task_seconds,
+            "dispatch_stream_resolution_seconds": (
+                self.dispatch_stream_resolution_seconds
             ),
-            "host_output_adoption_seconds": self.host_output_adoption_seconds,
-            "host_output_state_publish_seconds": (
-                self.host_output_state_publish_seconds
+            "dispatch_readiness_marker_seconds": self.dispatch_readiness_marker_seconds,
+            "dispatch_runtime_before_task_seconds": (
+                self.dispatch_runtime_before_task_seconds
             ),
-            "host_gradient_accumulation_seconds": (
-                self.host_gradient_accumulation_seconds
+            "dispatch_input_lookup_seconds": self.dispatch_input_lookup_seconds,
+            "dispatch_storage_rebind_seconds": self.dispatch_storage_rebind_seconds,
+            "dispatch_argument_assembly_seconds": (
+                self.dispatch_argument_assembly_seconds
             ),
-            "host_output_publish_seconds": self.host_output_publish_seconds,
-            "host_dematerialize_seconds": self.host_dematerialize_seconds,
-            "host_postprocess_seconds": self.host_postprocess_seconds,
-            "host_runtime_after_task_seconds": self.host_runtime_after_task_seconds,
-            "host_cleanup_seconds": self.host_cleanup_seconds,
-            "host_after_task_seconds": self.host_after_task_seconds,
-            "host_total_seconds": self.host_total_seconds,
+            "dispatch_rebind_seconds": self.dispatch_rebind_seconds,
+            "dispatch_invoke_seconds": self.dispatch_invoke_seconds,
+            "dispatch_output_flatten_seconds": self.dispatch_output_flatten_seconds,
+            "dispatch_output_classification_seconds": (
+                self.dispatch_output_classification_seconds
+            ),
+            "dispatch_output_adoption_seconds": self.dispatch_output_adoption_seconds,
+            "dispatch_output_state_publish_seconds": (
+                self.dispatch_output_state_publish_seconds
+            ),
+            "dispatch_gradient_accumulation_seconds": (
+                self.dispatch_gradient_accumulation_seconds
+            ),
+            "dispatch_output_publish_seconds": self.dispatch_output_publish_seconds,
+            "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
+            "dispatch_postprocess_seconds": self.dispatch_postprocess_seconds,
+            "dispatch_runtime_after_task_seconds": (
+                self.dispatch_runtime_after_task_seconds
+            ),
+            "dispatch_cleanup_seconds": self.dispatch_cleanup_seconds,
+            "dispatch_after_task_seconds": self.dispatch_after_task_seconds,
+            "dispatch_total_seconds": self.dispatch_total_seconds,
         }
 
 
@@ -149,9 +157,9 @@ class ExecutionTiming:
 
     compute_seconds: float
     optimizer_seconds: float
-    host_call_seconds: float
-    host_startup_wait_seconds: float
-    host_initial_actions_seconds: float
+    dispatch_call_seconds: float
+    dispatch_startup_wait_seconds: float
+    dispatch_initial_actions_seconds: float
     trace_setup_seconds: float
     phase_gpu_seconds: tuple[tuple[str, float], ...]
     tasks: Mapping[str, TaskExecutionTiming]
@@ -160,9 +168,9 @@ class ExecutionTiming:
         result: dict[str, object] = {
             "compute_seconds": self.compute_seconds,
             "optimizer_seconds": self.optimizer_seconds,
-            "host_call_seconds": self.host_call_seconds,
-            "host_startup_wait_seconds": self.host_startup_wait_seconds,
-            "host_initial_actions_seconds": self.host_initial_actions_seconds,
+            "dispatch_call_seconds": self.dispatch_call_seconds,
+            "dispatch_startup_wait_seconds": self.dispatch_startup_wait_seconds,
+            "dispatch_initial_actions_seconds": self.dispatch_initial_actions_seconds,
             "trace_setup_seconds": self.trace_setup_seconds,
             "phase_gpu_seconds": dict(self.phase_gpu_seconds),
         }
@@ -370,7 +378,7 @@ class SimulatorTransferComparison:
             "alias_group_id": self.alias_group_id,
             "bytes": self.bytes,
             "timing_basis": (
-                "simulator_lane_interval_vs_host_worker_frontier; "
+                "simulator_lane_interval_vs_dispatch_worker_frontier; "
                 "aligned_to_first_scheduled_transfer"
             ),
             "simulated_ready_seconds": self.simulated_ready_seconds,
@@ -431,9 +439,7 @@ class StepTimingSummary:
             "profiled_task_seconds": self.profiled_task_seconds,
             "real_task_event_seconds": self.real_task_event_seconds,
             "task_event_delta_seconds": self.task_event_delta_seconds,
-            "simulated_inter_task_gap_seconds": (
-                self.simulated_inter_task_gap_seconds
-            ),
+            "simulated_inter_task_gap_seconds": (self.simulated_inter_task_gap_seconds),
             "real_inter_task_gap_seconds": self.real_inter_task_gap_seconds,
             "inter_task_gap_delta_seconds": self.inter_task_gap_delta_seconds,
             "simulated_selected_span_seconds": self.simulated_selected_span_seconds,

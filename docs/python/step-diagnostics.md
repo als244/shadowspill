@@ -121,12 +121,12 @@ host:                                                output/runtime work -- exit
 
 Useful derived values are:
 
-- `host_before_task_seconds`: complete frontend `before_task` wall time;
+- `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
 - `readiness_wait_seconds`: compute-stream delay introduced by unfinished
   readiness dependencies;
 - `task_compute_seconds`: real compute-stream task interval;
-- `host_after_task_seconds`: complete frontend `after_task` wall time;
-- `host_total_seconds`: before + dispatch + after host work;
+- `dispatch_after_task_seconds`: complete frontend `after_task` wall time;
+- `dispatch_total_seconds`: before + dispatch + after host work;
 - `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: aligned task
   interval used in cross-execution analysis.
 
@@ -141,32 +141,32 @@ capacity wait.
 
 | Field | Work |
 |---|---|
-| `host_stream_resolution_seconds` | Resolve the current compute stream. |
-| `host_readiness_marker_seconds` | Record the pre-readiness timing marker. |
-| `host_runtime_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
-| `host_input_lookup_seconds` | Resolve frontend tensor/object bindings. |
-| `host_storage_rebind_seconds` | Rebind changed PyTorch storages. |
-| `host_argument_assembly_seconds` | Assemble predecoded callable arguments. |
-| `host_rebind_seconds` | Aggregate rebinding path retained for qualification. |
+| `dispatch_stream_resolution_seconds` | Resolve the current compute stream. |
+| `dispatch_readiness_marker_seconds` | Record the pre-readiness timing marker. |
+| `dispatch_runtime_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
+| `dispatch_input_lookup_seconds` | Resolve frontend tensor/object bindings. |
+| `dispatch_storage_rebind_seconds` | Rebind changed PyTorch storages. |
+| `dispatch_argument_assembly_seconds` | Assemble predecoded callable arguments. |
+| `dispatch_rebind_seconds` | Aggregate rebinding path retained for qualification. |
 
-The callable portion is `host_dispatch_seconds`.
+The callable portion is `dispatch_invoke_seconds`.
 
 `after_task` includes:
 
 | Field | Work |
 |---|---|
-| `host_output_flatten_seconds` | Flatten the callable output pytree. |
-| `host_output_classification_seconds` | Match leaves with output/mutation contracts. |
-| `host_output_adoption_seconds` | Adopt returned allocations into logical objects. |
-| `host_output_state_publish_seconds` | Publish output state and bindings. |
-| `host_gradient_accumulation_seconds` | Accumulate explicit gradient contributions. |
-| `host_output_publish_seconds` | Publish public outputs. |
-| `host_dematerialize_seconds` | Drop frontend bindings selected for release. |
-| `host_postprocess_seconds` | Aggregate mode-specific postprocessing. |
-| `host_runtime_after_task_seconds` | Record completion and submit planned actions. |
-| `host_cleanup_seconds` | Remove released bindings and terminal state. |
+| `dispatch_output_flatten_seconds` | Flatten the callable output pytree. |
+| `dispatch_output_classification_seconds` | Match leaves with output/mutation contracts. |
+| `dispatch_output_adoption_seconds` | Adopt returned allocations into logical objects. |
+| `dispatch_output_state_publish_seconds` | Publish output state and bindings. |
+| `dispatch_gradient_accumulation_seconds` | Accumulate explicit gradient contributions. |
+| `dispatch_output_publish_seconds` | Publish public outputs. |
+| `dispatch_dematerialize_seconds` | Drop frontend bindings selected for release. |
+| `dispatch_postprocess_seconds` | Aggregate mode-specific postprocessing. |
+| `dispatch_runtime_after_task_seconds` | Record completion and submit planned actions. |
+| `dispatch_cleanup_seconds` | Remove released bindings and terminal state. |
 
-The enclosing `host_before_task_seconds` and `host_after_task_seconds` are the
+The enclosing `dispatch_before_task_seconds` and `dispatch_after_task_seconds` are the
 authoritative complete boundaries. Nested fields are explanatory and may
 include aggregate views; do not assume every named subfield is additive.
 
@@ -176,7 +176,7 @@ tasks:
 ```python
 rows = sorted(
     diagnostics.tasks.values(),
-    key=lambda task: task.host_before_task_seconds + task.host_after_task_seconds,
+    key=lambda task: task.dispatch_before_task_seconds + task.dispatch_after_task_seconds,
     reverse=True,
 )
 
@@ -185,8 +185,8 @@ for task in rows[:10]:
         task.execution_task_id,
         task.semantic_name,
         task.phase,
-        task.host_before_task_seconds,
-        task.host_after_task_seconds,
+        task.dispatch_before_task_seconds,
+        task.dispatch_after_task_seconds,
     )
 ```
 

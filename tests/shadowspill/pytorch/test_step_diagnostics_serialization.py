@@ -19,9 +19,9 @@ def _diagnostics() -> StepDiagnostics:
     timing = ExecutionTiming(
         compute_seconds=1.0,
         optimizer_seconds=0.1,
-        host_call_seconds=1.1,
-        host_startup_wait_seconds=0.0,
-        host_initial_actions_seconds=0.0,
+        dispatch_call_seconds=1.1,
+        dispatch_startup_wait_seconds=0.0,
+        dispatch_initial_actions_seconds=0.0,
         trace_setup_seconds=0.0,
         phase_gpu_seconds=(("forward", 1.0),),
         tasks=FrozenMapping({}),

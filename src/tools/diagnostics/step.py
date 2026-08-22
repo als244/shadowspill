@@ -19,27 +19,27 @@ from pathlib import Path
 from typing import Any, cast
 
 _BEFORE_COMPONENTS = (
-    "host_stream_resolution_seconds",
-    "host_readiness_marker_seconds",
-    "host_runtime_before_task_seconds",
-    "host_input_lookup_seconds",
-    "host_storage_rebind_seconds",
-    "host_argument_assembly_seconds",
+    "dispatch_stream_resolution_seconds",
+    "dispatch_readiness_marker_seconds",
+    "dispatch_runtime_before_task_seconds",
+    "dispatch_input_lookup_seconds",
+    "dispatch_storage_rebind_seconds",
+    "dispatch_argument_assembly_seconds",
 )
 _AFTER_COMPONENTS = (
-    "host_output_flatten_seconds",
-    "host_output_publish_seconds",
-    "host_dematerialize_seconds",
-    "host_runtime_after_task_seconds",
-    "host_cleanup_seconds",
+    "dispatch_output_flatten_seconds",
+    "dispatch_output_publish_seconds",
+    "dispatch_dematerialize_seconds",
+    "dispatch_runtime_after_task_seconds",
+    "dispatch_cleanup_seconds",
 )
 _OUTPUT_SUBCOMPONENTS = (
-    "host_output_classification_seconds",
-    "host_output_adoption_seconds",
-    "host_output_state_publish_seconds",
-    "host_gradient_accumulation_seconds",
+    "dispatch_output_classification_seconds",
+    "dispatch_output_adoption_seconds",
+    "dispatch_output_state_publish_seconds",
+    "dispatch_gradient_accumulation_seconds",
 )
-_ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "host_dispatch_seconds", *_AFTER_COMPONENTS)
+_ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "dispatch_invoke_seconds", *_AFTER_COMPONENTS)
 
 
 def _diagnostics(payload: Mapping[str, Any], sample: int) -> Mapping[str, Any]:
@@ -85,7 +85,7 @@ def _summary(values: Iterable[float]) -> dict[str, float | int]:
     }
 
 
-def _host_timestamp(task: Mapping[str, Any], boundary: str, edge: str) -> int:
+def _dispatch_timestamp(task: Mapping[str, Any], boundary: str, edge: str) -> int:
     timestamps = task["boundary_timestamps"]
     return int(timestamps["host"][boundary][edge])
 
@@ -109,10 +109,10 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         phase: {
             key: _summary(_seconds(task, key) for task in selected)
             for key in (
-                "host_before_task_seconds",
+                "dispatch_before_task_seconds",
                 *_BEFORE_COMPONENTS,
-                "host_dispatch_seconds",
-                "host_after_task_seconds",
+                "dispatch_invoke_seconds",
+                "dispatch_after_task_seconds",
                 *_AFTER_COMPONENTS,
                 *_OUTPUT_SUBCOMPONENTS,
             )
@@ -132,18 +132,18 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                 "microbatch": task.get("microbatch"),
                 "expected_profile_seconds": task["expected_profile_seconds"],
                 "task_compute_seconds": task["task_compute_seconds"],
-                "host_before_task_seconds": task["host_before_task_seconds"],
-                "host_before_accounted_seconds": before_accounted,
-                "host_before_unattributed_seconds": max(
+                "dispatch_before_task_seconds": task["dispatch_before_task_seconds"],
+                "dispatch_before_accounted_seconds": before_accounted,
+                "dispatch_before_unattributed_seconds": max(
                     0.0,
-                    _seconds(task, "host_before_task_seconds") - before_accounted,
+                    _seconds(task, "dispatch_before_task_seconds") - before_accounted,
                 ),
-                "host_dispatch_seconds": task["host_dispatch_seconds"],
-                "host_after_task_seconds": task["host_after_task_seconds"],
-                "host_after_accounted_seconds": after_accounted,
-                "host_after_unattributed_seconds": max(
+                "dispatch_invoke_seconds": task["dispatch_invoke_seconds"],
+                "dispatch_after_task_seconds": task["dispatch_after_task_seconds"],
+                "dispatch_after_accounted_seconds": after_accounted,
+                "dispatch_after_unattributed_seconds": max(
                     0.0,
-                    _seconds(task, "host_after_task_seconds") - after_accounted,
+                    _seconds(task, "dispatch_after_task_seconds") - after_accounted,
                 ),
                 "components": {
                     key: _seconds(task, key)
@@ -157,14 +157,14 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         outer_gap = (
             max(
                 0,
-                _host_timestamp(current, "before_task", "enter")
-                - _host_timestamp(previous, "after_task", "exit"),
+                _dispatch_timestamp(current, "before_task", "enter")
+                - _dispatch_timestamp(previous, "after_task", "exit"),
             )
             / 1e9
         )
-        prior_after = _seconds(previous, "host_after_task_seconds")
-        next_before = _seconds(current, "host_before_task_seconds")
-        host_boundary = prior_after + outer_gap + next_before
+        prior_after = _seconds(previous, "dispatch_after_task_seconds")
+        next_before = _seconds(current, "dispatch_before_task_seconds")
+        dispatch_boundary = prior_after + outer_gap + next_before
         compute_gap = max(
             0.0,
             _seconds(current, "before_task_compute_seconds")
@@ -183,10 +183,12 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                 "next_execution_task_id": current["execution_task_id"],
                 "next_semantic_name": current["semantic_name"],
                 "next_phase": current["phase"],
-                "host_boundary_seconds": host_boundary,
-                "host_accounted_seconds": accounted,
-                "host_unattributed_seconds": max(0.0, host_boundary - accounted),
-                "host_outer_loop_gap_seconds": outer_gap,
+                "dispatch_boundary_seconds": dispatch_boundary,
+                "dispatch_accounted_seconds": accounted,
+                "dispatch_unattributed_seconds": max(
+                    0.0, dispatch_boundary - accounted
+                ),
+                "dispatch_outer_loop_gap_seconds": outer_gap,
                 "compute_stream_gap_seconds": compute_gap,
                 "next_readiness_wait_seconds": _seconds(
                     current, "readiness_wait_seconds"
@@ -209,9 +211,9 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         "task_interval_sum_seconds": sum(
             _seconds(task, "task_compute_seconds") for task in tasks
         ),
-        "host_boundary_sum_seconds": sum(
-            _seconds(task, "host_before_task_seconds")
-            + _seconds(task, "host_after_task_seconds")
+        "dispatch_boundary_sum_seconds": sum(
+            _seconds(task, "dispatch_before_task_seconds")
+            + _seconds(task, "dispatch_after_task_seconds")
             for task in tasks
         ),
         "phase_components": phase_components,
@@ -219,7 +221,7 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         "transitions": transitions,
         "largest_spill_boundaries": sorted(
             transitions,
-            key=lambda row: cast(float, row["host_boundary_seconds"]),
+            key=lambda row: cast(float, row["dispatch_boundary_seconds"]),
             reverse=True,
         )[:20],
         "largest_compute_stream_gaps": sorted(
@@ -235,7 +237,7 @@ def _print_summary(result: Mapping[str, Any]) -> None:
         "task span={:.3f} ms, task sum={:.3f} ms, host boundaries={:.3f} ms".format(
             1e3 * float(result["selected_task_span_seconds"]),
             1e3 * float(result["task_interval_sum_seconds"]),
-            1e3 * float(result["host_boundary_sum_seconds"]),
+            1e3 * float(result["dispatch_boundary_sum_seconds"]),
         )
     )
     print("largest host boundaries:")
@@ -244,7 +246,7 @@ def _print_summary(result: Mapping[str, Any]) -> None:
             "  {} -> {}: {:.1f} us host, {:.1f} us stream gap; {}".format(
                 row["previous_execution_task_id"],
                 row["next_execution_task_id"],
-                1e6 * float(row["host_boundary_seconds"]),
+                1e6 * float(row["dispatch_boundary_seconds"]),
                 1e6 * float(row["compute_stream_gap_seconds"]),
                 row["next_semantic_name"],
             )

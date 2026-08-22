@@ -13,7 +13,7 @@ from shadowspill.pytorch.diagnostics.timing import (
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
-    TaskHostTimestamps,
+    TaskDispatchTimestamps,
 )
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
@@ -39,7 +39,7 @@ from .execution import (
 
 @dataclass(frozen=True, slots=True)
 class _TraceEvidence:
-    callbacks: Mapping[str, TaskHostTimestamps]
+    callbacks: Mapping[str, TaskDispatchTimestamps]
     runtime_trace: CapturedRuntimeTrace
     statistics_before: AdapterStatistics
     statistics_after: AdapterStatistics
@@ -137,7 +137,7 @@ def _build_task_timing(
     execution: ArmedExecutionTiming,
     task_id: str,
     task: ArmedTaskTiming,
-    callback: TaskHostTimestamps | None,
+    callback: TaskDispatchTimestamps | None,
     callback_origin_ns: int,
 ) -> TaskExecutionTiming:
     gpu_start = float(execution.start_event.elapsed_time(task.start_event)) / 1_000.0
@@ -205,29 +205,38 @@ def _build_task_timing(
             callback.after_task_exit_ns if callback is not None else 0,
             callback_origin_ns,
         ),
-        host_before_task_seconds=(task.host_before_finished_ns - task.host_started_ns)
+        dispatch_before_task_seconds=(
+            task.dispatch_before_finished_ns - task.dispatch_started_ns
+        )
         / 1e9,
-        host_stream_resolution_seconds=task.host_stream_resolution_ns / 1e9,
-        host_readiness_marker_seconds=task.host_readiness_marker_ns / 1e9,
-        host_runtime_before_task_seconds=task.host_runtime_before_task_ns / 1e9,
-        host_input_lookup_seconds=task.host_input_lookup_ns / 1e9,
-        host_storage_rebind_seconds=task.host_storage_rebind_ns / 1e9,
-        host_argument_assembly_seconds=task.host_argument_assembly_ns / 1e9,
-        host_rebind_seconds=task.host_rebind_ns / 1e9,
-        host_dispatch_seconds=task.host_dispatch_ns / 1e9,
-        host_output_flatten_seconds=task.host_output_flatten_ns / 1e9,
-        host_output_classification_seconds=task.host_output_classification_ns / 1e9,
-        host_output_adoption_seconds=task.host_output_adoption_ns / 1e9,
-        host_output_state_publish_seconds=task.host_output_state_publish_ns / 1e9,
-        host_gradient_accumulation_seconds=(task.host_gradient_accumulation_ns / 1e9),
-        host_output_publish_seconds=task.host_output_publish_ns / 1e9,
-        host_dematerialize_seconds=task.host_dematerialize_ns / 1e9,
-        host_postprocess_seconds=task.host_postprocess_ns / 1e9,
-        host_runtime_after_task_seconds=task.host_runtime_after_task_ns / 1e9,
-        host_cleanup_seconds=task.host_cleanup_ns / 1e9,
-        host_after_task_seconds=(task.host_finished_ns - task.host_after_started_ns)
+        dispatch_stream_resolution_seconds=task.dispatch_stream_resolution_ns / 1e9,
+        dispatch_readiness_marker_seconds=task.dispatch_readiness_marker_ns / 1e9,
+        dispatch_runtime_before_task_seconds=task.dispatch_runtime_before_task_ns / 1e9,
+        dispatch_input_lookup_seconds=task.dispatch_input_lookup_ns / 1e9,
+        dispatch_storage_rebind_seconds=task.dispatch_storage_rebind_ns / 1e9,
+        dispatch_argument_assembly_seconds=task.dispatch_argument_assembly_ns / 1e9,
+        dispatch_rebind_seconds=task.dispatch_rebind_ns / 1e9,
+        dispatch_invoke_seconds=task.dispatch_invoke_ns / 1e9,
+        dispatch_output_flatten_seconds=task.dispatch_output_flatten_ns / 1e9,
+        dispatch_output_classification_seconds=task.dispatch_output_classification_ns
         / 1e9,
-        host_total_seconds=(task.host_finished_ns - task.host_started_ns) / 1e9,
+        dispatch_output_adoption_seconds=task.dispatch_output_adoption_ns / 1e9,
+        dispatch_output_state_publish_seconds=task.dispatch_output_state_publish_ns
+        / 1e9,
+        dispatch_gradient_accumulation_seconds=(
+            task.dispatch_gradient_accumulation_ns / 1e9
+        ),
+        dispatch_output_publish_seconds=task.dispatch_output_publish_ns / 1e9,
+        dispatch_dematerialize_seconds=task.dispatch_dematerialize_ns / 1e9,
+        dispatch_postprocess_seconds=task.dispatch_postprocess_ns / 1e9,
+        dispatch_runtime_after_task_seconds=task.dispatch_runtime_after_task_ns / 1e9,
+        dispatch_cleanup_seconds=task.dispatch_cleanup_ns / 1e9,
+        dispatch_after_task_seconds=(
+            task.dispatch_finished_ns - task.dispatch_after_started_ns
+        )
+        / 1e9,
+        dispatch_total_seconds=(task.dispatch_finished_ns - task.dispatch_started_ns)
+        / 1e9,
     )
 
 
@@ -251,10 +260,12 @@ def _build_execution_timing(
         compute_seconds=float(timing.start_event.elapsed_time(timing.end_event))
         / 1_000.0,
         optimizer_seconds=optimizer_seconds,
-        host_call_seconds=(timing.host_call_finished_ns - timing.host_call_started_ns)
+        dispatch_call_seconds=(
+            timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns
+        )
         / 1e9,
-        host_startup_wait_seconds=timing.host_startup_wait_ns / 1e9,
-        host_initial_actions_seconds=timing.host_initial_actions_ns / 1e9,
+        dispatch_startup_wait_seconds=timing.dispatch_startup_wait_ns / 1e9,
+        dispatch_initial_actions_seconds=timing.dispatch_initial_actions_ns / 1e9,
         trace_setup_seconds=timing.trace_setup_ns / 1e9,
         phase_gpu_seconds=tuple(sorted(phase_seconds.items())),
         tasks=FrozenMapping({item.execution_task_id: item for item in tasks}),

@@ -34,6 +34,11 @@ provider spelling required by the framework hook.
 - `backing` for the secondary pool role; use `spill`.
 - `progress` for the runtime thread; use `worker`.
 - `native` as a synonym for compiled C or C++ code.
+- `host` for the secondary pool, which is generic; use `spill`. Keep it only
+  where it means the CPU a backend runs on - `pinned_host()` names a pool
+  that really is host memory, and a driver call that synchronizes the host
+  really does.
+- `host` for the dispatching thread's own work; use `dispatch`.
 - `h2d`/`d2h` for schedule or lane policy; use `fetch`/`evict`.
 - model-family or provider names in framework-neutral policy.
 - `utils`, `helpers`, or `common` modules without one precise domain.

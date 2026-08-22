@@ -23,28 +23,28 @@ class ArmedTaskTiming:
     readiness_event: torch.cuda.Event
     start_event: torch.cuda.Event
     end_event: torch.cuda.Event
-    host_started_ns: int = 0
-    host_finished_ns: int = 0
-    host_before_finished_ns: int = 0
-    host_after_started_ns: int = 0
-    host_stream_resolution_ns: int = 0
-    host_readiness_marker_ns: int = 0
-    host_runtime_before_task_ns: int = 0
-    host_input_lookup_ns: int = 0
-    host_storage_rebind_ns: int = 0
-    host_argument_assembly_ns: int = 0
-    host_rebind_ns: int = 0
-    host_dispatch_ns: int = 0
-    host_output_flatten_ns: int = 0
-    host_output_classification_ns: int = 0
-    host_output_adoption_ns: int = 0
-    host_output_state_publish_ns: int = 0
-    host_gradient_accumulation_ns: int = 0
-    host_output_publish_ns: int = 0
-    host_dematerialize_ns: int = 0
-    host_postprocess_ns: int = 0
-    host_runtime_after_task_ns: int = 0
-    host_cleanup_ns: int = 0
+    dispatch_started_ns: int = 0
+    dispatch_finished_ns: int = 0
+    dispatch_before_finished_ns: int = 0
+    dispatch_after_started_ns: int = 0
+    dispatch_stream_resolution_ns: int = 0
+    dispatch_readiness_marker_ns: int = 0
+    dispatch_runtime_before_task_ns: int = 0
+    dispatch_input_lookup_ns: int = 0
+    dispatch_storage_rebind_ns: int = 0
+    dispatch_argument_assembly_ns: int = 0
+    dispatch_rebind_ns: int = 0
+    dispatch_invoke_ns: int = 0
+    dispatch_output_flatten_ns: int = 0
+    dispatch_output_classification_ns: int = 0
+    dispatch_output_adoption_ns: int = 0
+    dispatch_output_state_publish_ns: int = 0
+    dispatch_gradient_accumulation_ns: int = 0
+    dispatch_output_publish_ns: int = 0
+    dispatch_dematerialize_ns: int = 0
+    dispatch_postprocess_ns: int = 0
+    dispatch_runtime_after_task_ns: int = 0
+    dispatch_cleanup_ns: int = 0
 
 
 @dataclass(slots=True)
@@ -58,10 +58,10 @@ class ArmedExecutionTiming:
     task_order: tuple[str, ...]
     started: bool = False
     finished: bool = False
-    host_call_started_ns: int = 0
-    host_call_finished_ns: int = 0
-    host_startup_wait_ns: int = 0
-    host_initial_actions_ns: int = 0
+    dispatch_call_started_ns: int = 0
+    dispatch_call_finished_ns: int = 0
+    dispatch_startup_wait_ns: int = 0
+    dispatch_initial_actions_ns: int = 0
     stream: torch.cuda.Stream | None = None
     statistics_before: AdapterStatistics | None = None
     actions: tuple[MemoryAction, ...] = ()

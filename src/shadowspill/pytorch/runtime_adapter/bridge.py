@@ -28,7 +28,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectUpdate,
     RuntimeAction,
     TaskDescription,
-    TaskHostTiming,
+    TaskDispatchTiming,
     TaskPublicationDescription,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
@@ -111,7 +111,7 @@ class TaskMemoryEnvelope:
 
 
 @dataclass(frozen=True, slots=True)
-class TaskHostTimestamps:
+class TaskDispatchTimestamps:
     before_task_enter_ns: int
     before_task_exit_ns: int
     after_task_enter_ns: int
@@ -714,13 +714,13 @@ class RuntimeBridge:
 
     def read_debug_task_timing(
         self,
-    ) -> dict[str, TaskHostTimestamps]:
+    ) -> dict[str, TaskDispatchTimestamps]:
         """Read host-callback timestamps after the compute stream is idle."""
 
         capacity = self._debug_task_timing_capacity
         if capacity <= 0:
             return {}
-        records = (TaskHostTiming * capacity)()
+        records = (TaskDispatchTiming * capacity)()
         count = ctypes.c_uint32()
         self._require(
             self.library.shadowspill_pytorch_debug_task_timing_read(
@@ -729,7 +729,7 @@ class RuntimeBridge:
             "read debug task timing",
         )
         return {
-            f"task_{int(item.task_id):06d}": TaskHostTimestamps(
+            f"task_{int(item.task_id):06d}": TaskDispatchTimestamps(
                 before_task_enter_ns=int(item.before_task_enter_timestamp_ns),
                 before_task_exit_ns=int(item.before_task_exit_timestamp_ns),
                 after_task_enter_ns=int(item.after_task_enter_timestamp_ns),

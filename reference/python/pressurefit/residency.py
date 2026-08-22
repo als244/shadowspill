@@ -247,7 +247,7 @@ def seed_residency(
     *,
     initial_capacity_by_device: dict[str, int] | None = None,
 ) -> ResidencyPlan:
-    """Build the anchor hull and optionally preplace fitting host objects."""
+    """Build the anchor hull and optionally preplace fitting spill objects."""
 
     seed = _seed_from_anchors(facts.anchors)
     if placement is InitialPlacement.REQUIRED:
@@ -372,7 +372,7 @@ def legal_cuts(
                 )
                 if required and boundary < required[0]:
                     # Greedy preplacement is provisional.  Removing this
-                    # prefix means "leave it in host memory initially" and
+                    # prefix means "leave it in the spill pool initially" and
                     # needs no device-side departure action.
                     cuts.append(Cut(alias, span_index, -1, required[0] - 1))
                     continue

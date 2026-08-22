@@ -34,8 +34,8 @@ for timing in largest[:10]:
         comparison.expected_profile_seconds,
         comparison.observed_gpu_seconds,
         comparison.duration_delta_seconds,
-        timing.host_before_task_seconds,
-        timing.host_after_task_seconds,
+        timing.dispatch_before_task_seconds,
+        timing.dispatch_after_task_seconds,
     )
 ```
 

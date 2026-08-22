@@ -618,7 +618,7 @@ class _Simulator:
                     )
                 if not state.spill_ready and not state.evict_pending:
                     raise SimulationInfeasibleError(
-                        f"prefetch of {action.alias_group_id!r} lacks a host source",
+                        f"prefetch of {action.alias_group_id!r} lacks a spill source",
                         kind="invalid-prefetch",
                         time_ns=self.now_ns,
                         task_id=action.trigger_task_id,
