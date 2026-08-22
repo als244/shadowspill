@@ -46,7 +46,7 @@ class TaskExecutionTiming:
     host_before_task_seconds: float
     host_stream_resolution_seconds: float
     host_readiness_marker_seconds: float
-    host_native_before_task_seconds: float
+    host_runtime_before_task_seconds: float
     host_input_lookup_seconds: float
     host_storage_rebind_seconds: float
     host_argument_assembly_seconds: float
@@ -60,7 +60,7 @@ class TaskExecutionTiming:
     host_output_publish_seconds: float
     host_dematerialize_seconds: float
     host_postprocess_seconds: float
-    host_native_after_task_seconds: float
+    host_runtime_after_task_seconds: float
     host_cleanup_seconds: float
     host_after_task_seconds: float
     host_total_seconds: float
@@ -116,7 +116,7 @@ class TaskExecutionTiming:
             "host_before_task_seconds": self.host_before_task_seconds,
             "host_stream_resolution_seconds": self.host_stream_resolution_seconds,
             "host_readiness_marker_seconds": self.host_readiness_marker_seconds,
-            "host_native_before_task_seconds": (self.host_native_before_task_seconds),
+            "host_runtime_before_task_seconds": (self.host_runtime_before_task_seconds),
             "host_input_lookup_seconds": self.host_input_lookup_seconds,
             "host_storage_rebind_seconds": self.host_storage_rebind_seconds,
             "host_argument_assembly_seconds": self.host_argument_assembly_seconds,
@@ -136,7 +136,7 @@ class TaskExecutionTiming:
             "host_output_publish_seconds": self.host_output_publish_seconds,
             "host_dematerialize_seconds": self.host_dematerialize_seconds,
             "host_postprocess_seconds": self.host_postprocess_seconds,
-            "host_native_after_task_seconds": self.host_native_after_task_seconds,
+            "host_runtime_after_task_seconds": self.host_runtime_after_task_seconds,
             "host_cleanup_seconds": self.host_cleanup_seconds,
             "host_after_task_seconds": self.host_after_task_seconds,
             "host_total_seconds": self.host_total_seconds,

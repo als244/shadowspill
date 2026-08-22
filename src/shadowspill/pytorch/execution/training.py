@@ -952,7 +952,7 @@ class TrainingExecutor:
             detail = "; ".join(states) if states else "all snapshots device-ready"
             raise RuntimeError(f"{error}; input_states=[{detail}]") from error
         if timing is not None:
-            timing.host_native_before_task_ns = time.perf_counter_ns() - started_ns
+            timing.host_runtime_before_task_ns = time.perf_counter_ns() - started_ns
 
     def _acquire_input_storages(
         self,
@@ -1134,7 +1134,7 @@ class TrainingExecutor:
                 self._task_annotations.end(annotation_id)
         prepared.runtime_scope_open = False
         if prepared.timing is not None:
-            prepared.timing.host_native_after_task_ns = (
+            prepared.timing.host_runtime_after_task_ns = (
                 time.perf_counter_ns() - started_ns
             )
 

@@ -43,7 +43,7 @@ def test_dynamic_scratch_reserve_is_an_optional_bounded_minimum() -> None:
         _resolve_dynamic_scratch_reserve(budget + 1, execution_budget=budget)
 
 
-def test_runtime_object_reference_owns_and_releases_one_native_handle() -> None:
+def test_runtime_object_reference_owns_and_releases_one_runtime_handle() -> None:
     class _Library:
         def __init__(self) -> None:
             self.released: list[int] = []

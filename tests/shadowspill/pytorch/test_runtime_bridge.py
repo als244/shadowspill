@@ -45,7 +45,7 @@ class _Runtime:
         return self._reserve_persistent_object_ids(count)
 
 
-def test_abort_task_only_closes_the_native_scope() -> None:
+def test_abort_task_only_closes_the_runtime_scope() -> None:
     library = _AbortLibrary()
     bridge = RuntimeBridge(  # type: ignore[arg-type]
         _Runtime(library),

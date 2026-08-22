@@ -38,6 +38,17 @@ def test_production_does_not_import_reference_implementations() -> None:
     assert offenders == []
 
 
+def test_avoided_vocabulary_stays_out_of_production_sources() -> None:
+    """The words docs/development/naming.md tells us not to use."""
+    avoided = re.compile(r"\bnative\b", re.IGNORECASE)
+    offenders = [
+        f"{path.relative_to(ROOT)}: {match}"
+        for path in _production_sources()
+        for match in set(avoided.findall(path.read_text(encoding="utf-8")))
+    ]
+    assert offenders == []
+
+
 def test_removed_compatibility_names_do_not_return() -> None:
     forbidden = (
         "shadowspill_before_task(",

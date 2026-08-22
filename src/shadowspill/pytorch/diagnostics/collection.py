@@ -209,7 +209,7 @@ def _build_task_timing(
         / 1e9,
         host_stream_resolution_seconds=task.host_stream_resolution_ns / 1e9,
         host_readiness_marker_seconds=task.host_readiness_marker_ns / 1e9,
-        host_native_before_task_seconds=task.host_native_before_task_ns / 1e9,
+        host_runtime_before_task_seconds=task.host_runtime_before_task_ns / 1e9,
         host_input_lookup_seconds=task.host_input_lookup_ns / 1e9,
         host_storage_rebind_seconds=task.host_storage_rebind_ns / 1e9,
         host_argument_assembly_seconds=task.host_argument_assembly_ns / 1e9,
@@ -223,7 +223,7 @@ def _build_task_timing(
         host_output_publish_seconds=task.host_output_publish_ns / 1e9,
         host_dematerialize_seconds=task.host_dematerialize_ns / 1e9,
         host_postprocess_seconds=task.host_postprocess_ns / 1e9,
-        host_native_after_task_seconds=task.host_native_after_task_ns / 1e9,
+        host_runtime_after_task_seconds=task.host_runtime_after_task_ns / 1e9,
         host_cleanup_seconds=task.host_cleanup_ns / 1e9,
         host_after_task_seconds=(task.host_finished_ns - task.host_after_started_ns)
         / 1e9,

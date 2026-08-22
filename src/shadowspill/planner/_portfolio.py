@@ -507,7 +507,7 @@ def decode_schedule(
     )
 
 
-def _evaluate_native_context(
+def _evaluate_context(
     simulation: CompiledSimulationTemplate,
     options: PressureFitOptions,
     *,
@@ -604,7 +604,7 @@ def evaluate_program_context_compiled(
 ) -> CContextResult | None:
     """Derive indexed planning facts and evaluate the portfolio entirely in C."""
 
-    return _evaluate_native_context(simulation, options, admission=admission)
+    return _evaluate_context(simulation, options, admission=admission)
 
 
 __all__ = [

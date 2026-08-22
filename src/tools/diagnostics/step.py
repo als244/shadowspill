@@ -21,7 +21,7 @@ from typing import Any, cast
 _BEFORE_COMPONENTS = (
     "host_stream_resolution_seconds",
     "host_readiness_marker_seconds",
-    "host_native_before_task_seconds",
+    "host_runtime_before_task_seconds",
     "host_input_lookup_seconds",
     "host_storage_rebind_seconds",
     "host_argument_assembly_seconds",
@@ -30,7 +30,7 @@ _AFTER_COMPONENTS = (
     "host_output_flatten_seconds",
     "host_output_publish_seconds",
     "host_dematerialize_seconds",
-    "host_native_after_task_seconds",
+    "host_runtime_after_task_seconds",
     "host_cleanup_seconds",
 )
 _OUTPUT_SUBCOMPONENTS = (
