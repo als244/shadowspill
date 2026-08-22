@@ -61,6 +61,11 @@ An action trigger is a task boundary. Triggering a fetch reserves destination
 capacity immediately; reaching the fetch lane head later submits the copy.
 This distinction is part of both physical admission and simulation.
 
+A memory action is a planning decision, not an allocator call. Executing one
+implies several *pool operations* - reserve, acquire, retire - which are a
+separate vocabulary belonging to physical admission
+([physical admission](physical-admission.md#two-vocabularies-actions-and-operations)).
+
 ## Execution plan
 
 An `ExecutionPlan` resolves a selected schedule into immutable execution

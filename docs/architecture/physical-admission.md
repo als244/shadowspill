@@ -173,6 +173,35 @@ rejected rather than migrated.
 
 ## From a schedule to physical lifetimes
 
+### Two vocabularies: actions and operations
+
+Two different things are ordered in causal order here, and keeping them apart
+matters when reading anything below.
+
+A **memory action** is a decision the *plan* makes about moving an object:
+`prefetch`, `offload`, or `release`, each triggered at a task boundary. Actions
+belong to the `MemorySchedule` and are what PressureFit chooses
+([IR](ir.md#memory-schedule)).
+
+A **pool operation** is an allocator call that *executing* the plan implies:
+`RESERVE`, `ACQUIRE`, `ACQUIRE_RESERVED`, `BEGIN_RETIREMENT`,
+`COMPLETE_RETIREMENT`, `RELEASE`, `PUBLISH_DEPENDENCY`. Operations belong to the
+admission script and are what the production `MemoryPool` policy replays.
+
+The relationship is one-to-many and the two vocabularies share no kind names.
+One llama3 step measured 3,248 actions against 10,648 operations - about 3.3
+operations per action - because a single fetch reserves its destination,
+acquires the reserved range, and later begins and completes a retirement, while
+a task also acquires and retires leases without any action at all.
+
+Everything downstream keeps the distinction: `action_index` always identifies a
+memory action, a lease is created and retired by operations, and the reuse
+diagnostics report an operation's `purpose` beside the `action_kind` that
+triggered it. `csrc/planner/src/admission/operations.c` derives the operations;
+`candidate.c` replays them.
+
+### The script
+
 The admission script applies the complete selected step in causal order:
 
 ```text
