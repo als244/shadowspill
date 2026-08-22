@@ -45,11 +45,32 @@ Every array is caller-owned and sized from
 caller must release. The result also reports how many operations, leases and
 dependencies were produced, and the bytes each transfer lane must move.
 
-`ShadowSpillPlacementProblem` is independent of the rest of the data model:
-it is five parallel arrays describing one lease each — size, alignment,
-predicted lifetime, and lease id — and `ShadowSpillPlacementResult` receives
-one offset per lease plus the total bytes the slice requires. The offsets
-array is caller-owned, so placement allocates nothing the caller must release.
+`ShadowSpillLeaseLifetimeProblem` joins the two: the operations say which
+lease each one creates and retires, and the simulated task and transfer
+intervals say when. The result is caller-owned columns, one entry per lease:
+the four numbers placement reads in `ShadowSpillLeaseLifetime`, and beside
+them the `ShadowSpillLeaseIdentity` a certificate needs - lease id, causal
+boundaries, purpose, and task, alias and action indices.
+
+Two things about that result are deliberate. **The identity columns are
+written on every call and read on almost none**: a measurement wants the bytes
+a schedule needs and reads one scalar, so only a certified layout decodes an
+identity, and only for the leases it keeps. And **the records come back
+partitioned**: fixed leases occupy `[0, fixed_count)` with the caller-owned
+dynamic ones after, so placement runs on the prefix without a copy and neither
+function has to know about the other.
+
+`ShadowSpillPlacementProblem` is independent of the rest of the data model. It
+is one array of `ShadowSpillLeaseLifetime`, each holding the four numbers
+placement reads — size, alignment, and the half-open interval the lease is
+live over — and `ShadowSpillPlacementResult` receives one offset per lease, in
+input order, plus the total bytes the slice requires. The offsets array is
+caller-owned, so placement allocates nothing the caller must release.
+
+Placement is never told which lease a record belongs to. It has no use for
+identity beyond breaking ties between records that are equal in every key, and
+the input index does that, so the result is a function of the records and the
+order they arrive in.
 
 ## Functions
 
@@ -77,14 +98,22 @@ array is caller-owned, so placement allocates nothing the caller must release.
   it. It also reports the bytes each transfer lane must move, which bound the
   schedule's makespan without simulating. The rules it follows are specified
   in [from a resolved program to leases](../architecture/admission-leases.md).
+- `shadowspill_build_lease_lifetimes()` resolves every lease a schedule
+  creates to the interval it is live over and the identity it carries, and
+  moves the caller-owned terminal aliases named in `dynamic_aliases` out of
+  the fixed prefix. It also reports the lease each allocation step used and
+  the lease each alias ends the step holding, which are what a certificate's
+  lookup tables are built from. It allocates only scratch it frees before
+  returning. The rules it follows are specified in
+  [from a resolved program to leases](../architecture/admission-leases.md).
 - `shadowspill_place_lifetimes()` assigns each lease a fixed offset within
   one execution-pool slice and reports the bytes required. Leases are placed
   largest first, longest-lived first among equals, and each takes the lowest
   aligned offset clearing every lease it overlaps in time; lifetimes are
-  half-open, so leases that merely touch may share an offset. The result is a
-  function of the lease set alone, independent of input order. The assignment
-  and the structure behind it are specified in
-  [fixed-offset placement](../architecture/fixed-placement.md).
+  half-open, so leases that merely touch may share an offset. Where no two
+  records tie, the layout depends on the records alone and not on the order
+  they were listed in. The assignment and the structure behind it are
+  specified in [fixed-offset placement](../architecture/fixed-placement.md).
 - `shadowspill_planner_abi_version()` and
   `shadowspill_planner_status_string()` support loading and diagnostics.
 

@@ -689,6 +689,20 @@ def simulate_compiled_template_summary(
     return CompiledSimulationSummary(int(result.makespan_ns))
 
 
+@dataclass(frozen=True, slots=True)
+class IntervalArrays:
+    """The simulator's own interval arrays, borrowed by compiled consumers.
+
+    Handing these on costs nothing and saves a consumer working in index space
+    from re-encoding the decoded intervals it would otherwise be given.
+    """
+
+    task_intervals: ctypes.Array[CTaskInterval]
+    task_interval_count: int
+    transfer_intervals: ctypes.Array[CTransferInterval]
+    transfer_interval_count: int
+
+
 def _run_projection(
     projection: _Projection,
     schedule: MemorySchedule,
@@ -788,18 +802,28 @@ def _simulate_projection(
         )
         for index, device_id in enumerate(projection.device_ids)
     )
-    return SimulationResult(
+    simulated = SimulationResult(
         makespan_ns=int(result.makespan_ns),
         task_intervals=task_intervals,
         transfer_intervals=transfer_intervals,
         device_peaks=device_peaks,
         host_peak_bytes=int(result.host_peak_bytes) + projection.shared_spill_bytes,
     )
+    simulated.attach_interval_arrays(
+        IntervalArrays(
+            task_intervals=task_buffer,
+            task_interval_count=int(result.task_interval_count),
+            transfer_intervals=transfer_buffer,
+            transfer_interval_count=int(result.transfer_interval_count),
+        )
+    )
+    return simulated
 
 
 __all__ = [
     "CompiledSimulationSummary",
     "CompiledSimulationTemplate",
+    "IntervalArrays",
     "compile_simulation_template",
     "simulate_compiled",
     "simulate_compiled_template",

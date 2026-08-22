@@ -20,6 +20,7 @@ extern "C" {
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 #define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX
 #define SHADOWSPILL_ADMISSION_NO_OPERATION UINT64_MAX
+#define SHADOWSPILL_ADMISSION_NO_LEASE UINT64_MAX
 
 typedef enum ShadowSpillPlannerStatus {
     SHADOWSPILL_PLANNER_OK = 0,
@@ -477,23 +478,97 @@ shadowspill_build_admission_operations(
     ShadowSpillAdmissionOperations *result
 );
 
-/* Fixed-offset placement of lease lifetimes within one execution-pool slice.
+/* One lease to place: how much space it needs, how that space must be
+ * aligned, and the half-open interval over which it is live. Two leases
+ * conflict when their intervals intersect, so leases whose intervals merely
+ * touch may share an offset.
  *
- * Every array below holds `lifetime_count` entries indexed alike. Lifetimes
- * are half-open in time: two leases conflict when their intervals intersect,
- * so a lease may reuse an offset whose previous owner has already ended.
+ * Placement is told nothing else. It never sees lease identity: offsets come
+ * back in input order, and the input index breaks every tie, so the result
+ * depends only on the records and the order they arrive in.
  */
+typedef struct ShadowSpillLeaseLifetime {
+    uint64_t bytes;
+    uint64_t alignment;
+    uint64_t start_ns;
+    uint64_t end_ns;
+} ShadowSpillLeaseLifetime;
+
+/* Everything about a lease except when it is live: why it exists, what it
+ * belongs to, and where it sits in the operation order. Every identifier is an
+ * index into the caller's own tables — no strings enter the planner.
+ *
+ * `causal_start` and `causal_end` are operation sequence numbers, not times.
+ * They are what makes a shared offset safe: a layout may only reuse an address
+ * when the predecessor's `causal_end` precedes the successor's `causal_start`,
+ * which no amount of timing drift can change.
+ */
+typedef struct ShadowSpillLeaseIdentity {
+    uint64_t lease_id;
+    uint64_t causal_start;
+    uint64_t causal_end;
+    uint32_t task;    /* SHADOWSPILL_PLANNER_NO_INDEX where it names no task */
+    uint32_t alias;   /* SHADOWSPILL_PLANNER_NO_INDEX for anonymous workspace */
+    uint32_t action;  /* SHADOWSPILL_PLANNER_NO_INDEX unless an action made it */
+    uint8_t purpose;  /* ShadowSpillAdmissionPurpose */
+} ShadowSpillLeaseIdentity;
+
+/* Resolving one schedule's operations into the lifetimes a layout places.
+ *
+ * The operations say which lease each one creates and retires; the simulated
+ * intervals say when. Joining them is all this does. `dynamic_aliases` names
+ * the caller-owned terminal aliases whose final lease must stay out of the
+ * reusable fixed slice.
+ */
+typedef struct ShadowSpillLeaseLifetimeProblem {
+    uint32_t abi_version;
+    const ShadowSpillAdmissionOperations *operations;
+    const ShadowSpillAdmissionTopology *admission;
+    const ShadowSpillIndexedSchedule *schedule;
+    const ShadowSpillTaskInterval *task_intervals;
+    uint32_t task_interval_count;
+    const ShadowSpillTransferInterval *transfer_intervals;
+    uint32_t transfer_interval_count;
+    uint64_t makespan_ns;
+    const uint32_t *dynamic_aliases;
+    uint32_t dynamic_alias_count;
+} ShadowSpillLeaseLifetimeProblem;
+
+/* Caller-owned throughout; the builder allocates nothing the caller frees.
+ *
+ * `lifetimes` and `identities` hold `operations->lease_count` entries and are
+ * indexed alike. Fixed leases occupy `[0, fixed_count)` and dynamic ones
+ * follow, so placement runs on the prefix without a copy. Lease order is
+ * preserved within each part.
+ *
+ * `allocation_step_leases` has one entry per flattened allocation step and
+ * `alias_leases` one per alias: the lease each names when the step ends, or
+ * SHADOWSPILL_ADMISSION_NO_LEASE. They are what a certificate's lookup tables
+ * are built from.
+ */
+typedef struct ShadowSpillLeaseLifetimeResult {
+    ShadowSpillLeaseLifetime *lifetimes;
+    ShadowSpillLeaseIdentity *identities;
+    uint64_t *allocation_step_leases;
+    uint64_t *alias_leases;
+    uint64_t lifetime_count;
+    uint64_t fixed_count;
+} ShadowSpillLeaseLifetimeResult;
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
+    const ShadowSpillLeaseLifetimeProblem *problem,
+    ShadowSpillLeaseLifetimeResult *result
+);
+
+/* Fixed-offset placement of lease lifetimes within one execution-pool slice. */
 typedef struct ShadowSpillPlacementProblem {
     uint32_t abi_version;
     uint32_t lifetime_count;
-    const uint64_t *bytes;
-    const uint64_t *alignment;
-    const uint64_t *predicted_start_ns;
-    const uint64_t *predicted_end_ns;
-    const uint64_t *lease_id;
+    const ShadowSpillLeaseLifetime *lifetimes;
 } ShadowSpillPlacementProblem;
 
-/* `offsets` is caller-owned and must hold `lifetime_count` entries. */
+/* `offsets` is caller-owned and must hold `lifetime_count` entries, written in
+ * input order. `required_bytes` is the span the assignment covers. */
 typedef struct ShadowSpillPlacementResult {
     uint64_t required_bytes;
     uint64_t *offsets;

@@ -67,7 +67,7 @@ class CompiledAdmissionTopology:
 
 
 class IndexedSchedule(Protocol):
-    """Structural interface shared with the native PressureFit winner."""
+    """Structural interface shared with the compiled PressureFit winner."""
 
     @property
     def action_trigger_tasks(self) -> tuple[int, ...]: ...

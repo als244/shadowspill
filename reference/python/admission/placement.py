@@ -11,8 +11,23 @@ against.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Protocol
 
-PlacementItem = tuple[int, int, int, int, int]
+
+class Lifetime(Protocol):
+    """The four numbers placement reads from one lease."""
+
+    @property
+    def bytes(self) -> int: ...
+
+    @property
+    def alignment(self) -> int: ...
+
+    @property
+    def predicted_start_ns(self) -> int: ...
+
+    @property
+    def predicted_end_ns(self) -> int: ...
 
 
 class _TemporalIndex:
@@ -68,17 +83,16 @@ def _align_up(value: int, alignment: int) -> int:
 
 
 def place_lifetimes(
-    items: Sequence[PlacementItem],
+    items: Sequence[Lifetime],
 ) -> tuple[tuple[int, ...], int]:
     """Return each lease's offset, in input order, and the bytes required."""
 
     if not items:
         return (), 0
-    sizes = [item[0] for item in items]
-    alignments = [item[1] for item in items]
-    starts = [item[2] for item in items]
-    ends = [item[3] for item in items]
-    lease_ids = [item[4] for item in items]
+    sizes = [item.bytes for item in items]
+    alignments = [item.alignment for item in items]
+    starts = [item.predicted_start_ns for item in items]
+    ends = [item.predicted_end_ns for item in items]
 
     times = sorted({value for value in (*starts, *ends)})
     rank = {value: index for index, value in enumerate(times)}
@@ -90,7 +104,7 @@ def place_lifetimes(
             -sizes[item],
             -(rank[ends[item]] - rank[starts[item]]),
             starts[item],
-            lease_ids[item],
+            item,
         ),
     )
     required = 0
@@ -112,10 +126,8 @@ def place_lifetimes(
         offset = _align_up(cursor, alignments[interval_id])
         offsets[interval_id] = offset
         required = max(required, offset + sizes[interval_id])
-        index.add(
-            rank[starts[interval_id]], rank[ends[interval_id]], interval_id
-        )
+        index.add(rank[starts[interval_id]], rank[ends[interval_id]], interval_id)
     return tuple(offsets), required
 
 
-__all__ = ["place_lifetimes"]
+__all__ = ["Lifetime", "place_lifetimes"]

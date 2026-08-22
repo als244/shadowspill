@@ -167,8 +167,8 @@ static int time_axis_build(
         return -1;
     }
     for (uint32_t index = 0U; index < count; ++index) {
-        axis->times[index * 2U] = problem->predicted_start_ns[index];
-        axis->times[index * 2U + 1U] = problem->predicted_end_ns[index];
+        axis->times[index * 2U] = problem->lifetimes[index].start_ns;
+        axis->times[index * 2U + 1U] = problem->lifetimes[index].end_ns;
     }
     qsort(axis->times, (size_t)count * 2U, sizeof(*axis->times), compare_time);
 
@@ -183,9 +183,9 @@ static int time_axis_build(
     /* Rank each endpoint once here rather than on every query below. */
     for (uint32_t index = 0U; index < count; ++index) {
         axis->start_rank[index] =
-            time_axis_rank(axis, problem->predicted_start_ns[index]);
+            time_axis_rank(axis, problem->lifetimes[index].start_ns);
         axis->end_rank[index] =
-            time_axis_rank(axis, problem->predicted_end_ns[index]);
+            time_axis_rank(axis, problem->lifetimes[index].end_ns);
     }
     return 0;
 }
@@ -286,14 +286,13 @@ static int occupancy_index_collect(
 
 /* ------------------------------------------------------------ placing order */
 
-/* Largest first, then longest-lived, then earliest, then lowest lease id. The
- * last two keys only break ties, but they make the result independent of the
- * input order. */
+/* Largest first, then longest-lived, then earliest, then lowest index. The
+ * last two keys only break ties; they exist so that equal records placed in
+ * either order give the same answer. */
 typedef struct {
     uint64_t bytes;
-    uint32_t span;
     uint64_t start_ns;
-    uint64_t lease_id;
+    uint32_t span;
     uint32_t lifetime;
 } OrderKey;
 
@@ -310,8 +309,8 @@ static int compare_order(const void *left, const void *right)
     if (first->start_ns != second->start_ns) {
         return first->start_ns < second->start_ns ? -1 : 1;
     }
-    if (first->lease_id != second->lease_id) {
-        return first->lease_id < second->lease_id ? -1 : 1;
+    if (first->lifetime != second->lifetime) {
+        return first->lifetime < second->lifetime ? -1 : 1;
     }
     return 0;
 }
@@ -328,10 +327,9 @@ static OrderKey *placing_order(
     }
     for (uint32_t index = 0U; index < count; ++index) {
         order[index] = (OrderKey){
-            .bytes = problem->bytes[index],
+            .bytes = problem->lifetimes[index].bytes,
+            .start_ns = problem->lifetimes[index].start_ns,
             .span = axis->end_rank[index] - axis->start_rank[index],
-            .start_ns = problem->predicted_start_ns[index],
-            .lease_id = problem->lease_id[index],
             .lifetime = index,
         };
     }
@@ -433,10 +431,7 @@ ShadowSpillPlannerStatus shadowspill_place_lifetimes(
     if (count == 0U) {
         return SHADOWSPILL_PLANNER_OK;
     }
-    if (problem->bytes == NULL || problem->alignment == NULL ||
-        problem->predicted_start_ns == NULL ||
-        problem->predicted_end_ns == NULL || problem->lease_id == NULL ||
-        result->offsets == NULL) {
+    if (problem->lifetimes == NULL || result->offsets == NULL) {
         return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
     }
 
@@ -457,7 +452,7 @@ ShadowSpillPlannerStatus shadowspill_place_lifetimes(
         const uint32_t lifetime = placer.order[position].lifetime;
         const uint32_t start = placer.axis.start_rank[lifetime];
         const uint32_t end = placer.axis.end_rank[lifetime];
-        const uint64_t bytes = problem->bytes[lifetime];
+        const ShadowSpillLeaseLifetime record = problem->lifetimes[lifetime];
 
         placer.found.count = 0U;
         if (occupancy_index_collect(
@@ -468,17 +463,14 @@ ShadowSpillPlannerStatus shadowspill_place_lifetimes(
         sort_by_address(placer.found.data, placer.found.count, placer.scratch.data);
 
         const uint64_t offset = lowest_fit(
-            placer.found.data,
-            placer.found.count,
-            bytes,
-            problem->alignment[lifetime]
+            placer.found.data, placer.found.count, record.bytes, record.alignment
         );
         result->offsets[lifetime] = offset;
-        if (offset + bytes > result->required_bytes) {
-            result->required_bytes = offset + bytes;
+        if (offset + record.bytes > result->required_bytes) {
+            result->required_bytes = offset + record.bytes;
         }
         if (occupancy_index_insert(
-                &placer.index, 1U, 0U, length, start, end, offset, bytes
+                &placer.index, 1U, 0U, length, start, end, offset, record.bytes
             ) != 0) {
             goto done;
         }

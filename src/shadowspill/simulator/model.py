@@ -298,7 +298,11 @@ class SimulationInfeasibleError(ValueError):
         self.requested_bytes = requested_bytes
 
 
-@dataclass(frozen=True, slots=True)
+# Not slotted, so the compiled simulator can attach its own interval arrays
+# without declaring a field. They are not data - `asdict` and every other
+# field walk must not see them, or writing a result out would fail and its
+# digest would change.
+@dataclass(frozen=True)
 class SimulationResult:
     makespan_ns: int
     task_intervals: tuple[TaskInterval, ...]
@@ -306,6 +310,32 @@ class SimulationResult:
     device_peaks: tuple[DeviceMemoryPeak, ...]
     host_peak_bytes: int
     memory_timeline: tuple[MemorySnapshot, ...] = ()
+
+    @property
+    def interval_arrays(self) -> object | None:
+        """The compiled simulator's own interval arrays, when it produced this.
+
+        A consumer working in index space reads these instead of re-encoding
+        the decoded intervals above; they carry nothing the decoded intervals
+        do not. `None` for any result the compiled simulator did not build,
+        and for copies made by `dataclasses.replace`.
+        """
+
+        return self.__dict__.get("_interval_arrays")
+
+    def attach_interval_arrays(self, value: object) -> None:
+        """Record the arrays this result was decoded from."""
+
+        object.__setattr__(self, "_interval_arrays", value)
+
+    def __getstate__(self) -> dict[str, object]:
+        """Leave the arrays behind: they address library memory, so they mean
+        nothing once this result is written out or moved to another process.
+        A restored result reports `None`, exactly as an uncompiled one does."""
+
+        state = dict(self.__dict__)
+        state.pop("_interval_arrays", None)
+        return state
 
     def device_peak(self, device_id: str) -> DeviceMemoryPeak:
         for peak in self.device_peaks:

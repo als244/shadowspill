@@ -7,7 +7,11 @@ from functools import cache
 from pathlib import Path
 
 from shadowspill._libraries import resolve_library
-from shadowspill.simulator._capi import CProgram
+from shadowspill.simulator._capi import (
+    CProgram,
+    CTaskInterval,
+    CTransferInterval,
+)
 
 ABI_VERSION = 12
 NO_INDEX = (1 << 32) - 1
@@ -160,15 +164,63 @@ class CAdmissionOperations(ctypes.Structure):
     ]
 
 
+class CLeaseLifetime(ctypes.Structure):
+    """One lease to place. The interval is half-open."""
+
+    _fields_ = [
+        ("bytes", ctypes.c_uint64),
+        ("alignment", ctypes.c_uint64),
+        ("start_ns", ctypes.c_uint64),
+        ("end_ns", ctypes.c_uint64),
+    ]
+
+
+class CLeaseIdentity(ctypes.Structure):
+    """Everything about a lease except when it is live, all as indices."""
+
+    _fields_ = [
+        ("lease_id", ctypes.c_uint64),
+        ("causal_start", ctypes.c_uint64),
+        ("causal_end", ctypes.c_uint64),
+        ("task", ctypes.c_uint32),
+        ("alias", ctypes.c_uint32),
+        ("action", ctypes.c_uint32),
+        ("purpose", ctypes.c_uint8),
+    ]
+
+
+class CLeaseLifetimeProblem(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("operations", ctypes.POINTER(CAdmissionOperations)),
+        ("admission", ctypes.POINTER(CAdmissionTopology)),
+        ("schedule", ctypes.POINTER(CIndexedSchedule)),
+        ("task_intervals", ctypes.POINTER(CTaskInterval)),
+        ("task_interval_count", ctypes.c_uint32),
+        ("transfer_intervals", ctypes.POINTER(CTransferInterval)),
+        ("transfer_interval_count", ctypes.c_uint32),
+        ("makespan_ns", ctypes.c_uint64),
+        ("dynamic_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("dynamic_alias_count", ctypes.c_uint32),
+    ]
+
+
+class CLeaseLifetimeResult(ctypes.Structure):
+    _fields_ = [
+        ("lifetimes", ctypes.POINTER(CLeaseLifetime)),
+        ("identities", ctypes.POINTER(CLeaseIdentity)),
+        ("allocation_step_leases", ctypes.POINTER(ctypes.c_uint64)),
+        ("alias_leases", ctypes.POINTER(ctypes.c_uint64)),
+        ("lifetime_count", ctypes.c_uint64),
+        ("fixed_count", ctypes.c_uint64),
+    ]
+
+
 class CPlacementProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("lifetime_count", ctypes.c_uint32),
-        ("bytes", ctypes.POINTER(ctypes.c_uint64)),
-        ("alignment", ctypes.POINTER(ctypes.c_uint64)),
-        ("predicted_start_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("predicted_end_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("lease_id", ctypes.POINTER(ctypes.c_uint64)),
+        ("lifetimes", ctypes.POINTER(CLeaseLifetime)),
     ]
 
 
@@ -404,6 +456,11 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPlacementResult),
     ]
     library.shadowspill_place_lifetimes.restype = ctypes.c_uint32
+    library.shadowspill_build_lease_lifetimes.argtypes = [
+        ctypes.POINTER(CLeaseLifetimeProblem),
+        ctypes.POINTER(CLeaseLifetimeResult),
+    ]
+    library.shadowspill_build_lease_lifetimes.restype = ctypes.c_uint32
     library.shadowspill_planner_status_string.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_status_string.restype = ctypes.c_char_p
     return library
@@ -416,6 +473,10 @@ __all__ = [
     "CAdmissionTopology",
     "CCandidateResult",
     "CIndexedSchedule",
+    "CLeaseIdentity",
+    "CLeaseLifetime",
+    "CLeaseLifetimeProblem",
+    "CLeaseLifetimeResult",
     "CPlacementProblem",
     "CPlacementResult",
     "CPlanCandidate",
