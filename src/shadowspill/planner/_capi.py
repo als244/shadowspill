@@ -136,6 +136,25 @@ class CAdmissionTopology(ctypes.Structure):
     ]
 
 
+class CPlacementProblem(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("lifetime_count", ctypes.c_uint32),
+        ("bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("alignment", ctypes.POINTER(ctypes.c_uint64)),
+        ("predicted_start_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("predicted_end_ns", ctypes.POINTER(ctypes.c_uint64)),
+        ("lease_id", ctypes.POINTER(ctypes.c_uint64)),
+    ]
+
+
+class CPlacementResult(ctypes.Structure):
+    _fields_ = [
+        ("required_bytes", ctypes.c_uint64),
+        ("offsets", ctypes.POINTER(ctypes.c_uint64)),
+    ]
+
+
 class CPressureFitContext(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
@@ -341,6 +360,11 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitContextResult),
     ]
     library.shadowspill_pressurefit_context_result_destroy.restype = None
+    library.shadowspill_place_lifetimes.argtypes = [
+        ctypes.POINTER(CPlacementProblem),
+        ctypes.POINTER(CPlacementResult),
+    ]
+    library.shadowspill_place_lifetimes.restype = ctypes.c_uint32
     library.shadowspill_planner_status_string.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_status_string.restype = ctypes.c_char_p
     return library
@@ -352,6 +376,8 @@ __all__ = [
     "CAdmissionTopology",
     "CCandidateResult",
     "CIndexedSchedule",
+    "CPlacementProblem",
+    "CPlacementResult",
     "CPlanCandidate",
     "CPressureFitCandidateDiagnostic",
     "CPressureFitContext",

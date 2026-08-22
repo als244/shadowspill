@@ -29,6 +29,12 @@ limit, and initial placement. Results contain the selected indexed schedule,
 every candidate status, exact repair counters, component work counters,
 timings, and failure boundary.
 
+`ShadowSpillPlacementProblem` is independent of the rest of the data model:
+it is five parallel arrays describing one lease each — size, alignment,
+predicted lifetime, and lease id — and `ShadowSpillPlacementResult` receives
+one offset per lease plus the total bytes the slice requires. The offsets
+array is caller-owned, so placement allocates nothing the caller must release.
+
 ## Functions
 
 - `shadowspill_select_plan()` selects from an explicitly supplied candidate
@@ -45,6 +51,12 @@ timings, and failure boundary.
   against the exact admission topology.
 - `shadowspill_pressurefit_context_result_destroy()` releases arrays owned by
   a context result.
+- `shadowspill_place_lifetimes()` assigns each lease a fixed offset within
+  one execution-pool slice and reports the bytes required. Leases are placed
+  largest first, longest-lived first among equals, and each takes the lowest
+  aligned offset clearing every lease it overlaps in time; lifetimes are
+  half-open, so leases that merely touch may share an offset. The result is a
+  function of the lease set alone, independent of input order.
 - `shadowspill_planner_abi_version()` and
   `shadowspill_planner_status_string()` support loading and diagnostics.
 
@@ -65,3 +77,8 @@ All context input arrays are borrowed. Each context result owns its selected
 schedule and candidate array until destroyed. Calls with distinct inputs and
 results are independent; the API performs no I/O and does not own global
 mutable planning state.
+
+`shadowspill_place_lifetimes()` follows the same rules: it borrows the problem
+arrays, writes only the caller's offsets array, and keeps all scratch state on
+the stack or in allocations it frees before returning. Concurrent calls on
+distinct problems and results are safe.

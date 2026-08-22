@@ -8,7 +8,8 @@ orders their dependencies.
 csrc/
 ├── simulator/          deterministic schedule evaluator
 ├── runtime/            pools, leases, objects, transfers, worker, and backends
-├── planner/            PressureFit candidate selection over the simulator
+├── planner/            PressureFit candidate selection over the simulator,
+│                       and fixed-offset placement (src/placement.c)
 └── pytorch_adapter/    narrow allocator/storage bridge into PyTorch
 ```
 
