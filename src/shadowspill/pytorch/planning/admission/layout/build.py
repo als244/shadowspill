@@ -1,6 +1,23 @@
-"""Readable orchestration for fixed execution-pool layout admission."""
+"""Readable orchestration for fixed execution-pool layout admission.
+
+Admission answers two different questions, and they cost very different
+amounts:
+
+* *how many bytes would this schedule need?* — replay the schedule into
+  leases, give each a lifetime, and place them. This is `measure_fixed_layout`.
+* *is the resulting layout safe to run?* — recover the reuse dependencies that
+  make shared offsets causally sound, and re-simulate against them. This is
+  `certify_fixed_layout`.
+
+A caller searching for a schedule that fits asks the first question many times
+and the second once, on whatever it settles on, so the two are separate entry
+points. `build_fixed_layout_admission` composes them for callers that only
+want an admitted layout or an error.
+"""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from shadowspill.planner import AdmissionTopology, PressureFitResult
 from shadowspill.simulator import (
@@ -10,7 +27,11 @@ from shadowspill.simulator import (
     simulate,
 )
 
-from ..admission_replay import AdmissionReplayPurpose, _AdmissionScriptBuilder
+from ..admission_replay import (
+    AdmissionReplayPurpose,
+    AdmissionReplayStep,
+    _AdmissionScriptBuilder,
+)
 from .dependencies import (
     recover_reuse_dependencies,
     simulator_reuse_dependencies,
@@ -19,20 +40,58 @@ from .lifetimes import build_lease_lifetimes
 from .model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
+    FixedLayoutPlacement,
     FixedPhysicalLayout,
     LeaseLifetime,
 )
 from .placement import place_lifetimes
 
 
-def build_fixed_layout_admission(
+@dataclass(frozen=True, slots=True)
+class FixedLayoutMeasurement:
+    """What one schedule's layout would need, before it is certified.
+
+    A measurement never rejects: a layout larger than the pool is reported
+    through `fits` and `shortfall_bytes` so a caller can act on how far it
+    missed by. `replay_operations` and `script_builder` carry the replay this
+    was derived from, so certification does not repeat it.
+    """
+
+    required_bytes: int
+    pool_capacity_bytes: int
+    fixed_slice_bytes: int
+    dynamic_reserve_bytes: int
+    scratch_reserve_bytes: int
+    placements: tuple[FixedLayoutPlacement, ...]
+    dynamic_lifetimes: tuple[LeaseLifetime, ...]
+    replay_operations: tuple[AdmissionReplayStep, ...]
+    script_builder: _AdmissionScriptBuilder
+
+    @property
+    def fits(self) -> bool:
+        return self.required_bytes <= self.pool_capacity_bytes
+
+    @property
+    def slack_bytes(self) -> int:
+        """Pool bytes left unused. Negative when the layout does not fit."""
+
+        return self.pool_capacity_bytes - self.required_bytes
+
+    @property
+    def shortfall_bytes(self) -> int:
+        """Bytes by which the layout exceeds the pool, or zero when it fits."""
+
+        return max(0, self.required_bytes - self.pool_capacity_bytes)
+
+
+def measure_fixed_layout(
     selected: PressureFitResult,
     topology: AdmissionTopology,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
-) -> FixedLayoutAdmission:
-    """Build, causally certify, and re-simulate one physical layout.
+) -> FixedLayoutMeasurement:
+    """Place one schedule's leases and report the bytes it would need.
 
     Caller-owned outputs are deliberately excluded from the reusable fixed
     slice.  Their leases remain ordinary dynamic pool allocations so a caller
@@ -70,26 +129,53 @@ def build_fixed_layout_admission(
     )
     placements, fixed_slice_bytes = place_lifetimes(fixed_lifetimes)
     dynamic_reserve_bytes = sum(item.bytes for item in dynamic_lifetimes)
-    required_bytes = (
-        fixed_slice_bytes + dynamic_reserve_bytes + scratch_reserve_bytes
-    )
-    if required_bytes > topology.pool_capacity_bytes:
-        raise FixedLayoutInfeasibleError(
-            required_bytes,
-            topology.pool_capacity_bytes,
-        )
-    dependencies = recover_reuse_dependencies(operations, placements)
-    layout = FixedPhysicalLayout(
-        program_digest=selected.program.digest,
-        schedule_digest=selected.schedule.digest,
-        topology_digest=topology.digest,
+    return FixedLayoutMeasurement(
+        required_bytes=(
+            fixed_slice_bytes + dynamic_reserve_bytes + scratch_reserve_bytes
+        ),
         pool_capacity_bytes=topology.pool_capacity_bytes,
         fixed_slice_bytes=fixed_slice_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
         scratch_reserve_bytes=scratch_reserve_bytes,
-        required_bytes=required_bytes,
         placements=placements,
-        reuse_dependencies=dependencies,
+        dynamic_lifetimes=dynamic_lifetimes,
+        replay_operations=operations,
+        script_builder=builder,
+    )
+
+
+def certify_fixed_layout(
+    selected: PressureFitResult,
+    topology: AdmissionTopology,
+    measurement: FixedLayoutMeasurement,
+) -> FixedLayoutAdmission:
+    """Prove a measured layout is safe to run, and re-simulate against it.
+
+    Two leases sharing an offset are only sound if the second cannot begin
+    before the first has released it. Recovering those reuse dependencies and
+    re-simulating under them is what turns a set of offsets into a certificate,
+    and it is the half a search does not need until it has chosen.
+    """
+
+    if not measurement.fits:
+        raise FixedLayoutInfeasibleError(
+            measurement.required_bytes,
+            measurement.pool_capacity_bytes,
+        )
+    builder = measurement.script_builder
+    layout = FixedPhysicalLayout(
+        program_digest=selected.program.digest,
+        schedule_digest=selected.schedule.digest,
+        topology_digest=topology.digest,
+        pool_capacity_bytes=measurement.pool_capacity_bytes,
+        fixed_slice_bytes=measurement.fixed_slice_bytes,
+        dynamic_reserve_bytes=measurement.dynamic_reserve_bytes,
+        scratch_reserve_bytes=measurement.scratch_reserve_bytes,
+        required_bytes=measurement.required_bytes,
+        placements=measurement.placements,
+        reuse_dependencies=recover_reuse_dependencies(
+            measurement.replay_operations, measurement.placements
+        ),
         initial_alias_leases=tuple(sorted(builder.initial_alias_leases.items())),
         task_allocation_leases=tuple(
             (task_id, ordinal, lease_id)
@@ -101,7 +187,7 @@ def build_fixed_layout_admission(
             sorted(builder.action_destination_leases.items())
         ),
         dynamic_lifetimes=tuple(
-            sorted(dynamic_lifetimes, key=lambda item: item.lease_id)
+            sorted(measurement.dynamic_lifetimes, key=lambda item: item.lease_id)
         ),
     )
     simulator_input = _simulation_input(selected, layout)
@@ -114,6 +200,27 @@ def build_fixed_layout_admission(
             selections=selected.selections,
             config=selected.simulation_config,
             admission=simulator_input,
+        ),
+    )
+
+
+def build_fixed_layout_admission(
+    selected: PressureFitResult,
+    topology: AdmissionTopology,
+    *,
+    dynamic_alias_group_ids: frozenset[str] = frozenset(),
+    scratch_reserve_bytes: int = 0,
+) -> FixedLayoutAdmission:
+    """Measure and certify one physical layout, or raise if it does not fit."""
+
+    return certify_fixed_layout(
+        selected,
+        topology,
+        measure_fixed_layout(
+            selected,
+            topology,
+            dynamic_alias_group_ids=dynamic_alias_group_ids,
+            scratch_reserve_bytes=scratch_reserve_bytes,
         ),
     )
 
@@ -171,4 +278,9 @@ def _simulation_input(
     )
 
 
-__all__ = ["build_fixed_layout_admission"]
+__all__ = [
+    "FixedLayoutMeasurement",
+    "build_fixed_layout_admission",
+    "certify_fixed_layout",
+    "measure_fixed_layout",
+]
