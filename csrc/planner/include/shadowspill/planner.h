@@ -408,6 +408,33 @@ shadowspill_pressurefit_context_result_destroy(
     ShadowSpillPressureFitContextResult *result
 );
 
+/* Fixed-offset placement of lease lifetimes within one execution-pool slice.
+ *
+ * Every array below holds `lifetime_count` entries indexed alike. Lifetimes
+ * are half-open in time: two leases conflict when their intervals intersect,
+ * so a lease may reuse an offset whose previous owner has already ended.
+ */
+typedef struct ShadowSpillPlacementProblem {
+    uint32_t abi_version;
+    uint32_t lifetime_count;
+    const uint64_t *bytes;
+    const uint64_t *alignment;
+    const uint64_t *predicted_start_ns;
+    const uint64_t *predicted_end_ns;
+    const uint64_t *lease_id;
+} ShadowSpillPlacementProblem;
+
+/* `offsets` is caller-owned and must hold `lifetime_count` entries. */
+typedef struct ShadowSpillPlacementResult {
+    uint64_t required_bytes;
+    uint64_t *offsets;
+} ShadowSpillPlacementResult;
+
+SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_place_lifetimes(
+    const ShadowSpillPlacementProblem *problem,
+    ShadowSpillPlacementResult *result
+);
+
 SHADOWSPILL_PLANNER_API uint32_t shadowspill_planner_abi_version(void);
 
 SHADOWSPILL_PLANNER_API const char *shadowspill_planner_status_string(

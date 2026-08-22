@@ -4,6 +4,7 @@ add_library(
   src/admission.c
   src/context.c
   src/digest.c
+  src/placement.c
   src/portfolio.c
   src/residency.c
   src/schedule.c
