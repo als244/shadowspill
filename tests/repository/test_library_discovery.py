@@ -37,8 +37,11 @@ def test_editable_build_libraries_are_discovered_without_environment() -> None:
     if planner is None or simulator is None:
         pytest.skip("compiled editable libraries have not been built")
 
-    assert planner.name.startswith("libshadowspill_planner.so")
-    assert simulator.name.startswith("libshadowspill_simulator.so")
+    # Planning, simulation and execution ship as one library, so both
+    # lookups resolve to it.
+    assert planner.name.startswith("libshadowspill.so")
+    assert simulator.name.startswith("libshadowspill.so")
+    assert planner == simulator
     try:
         adapter = _adapter_path(None)
     except RuntimeError:

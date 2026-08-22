@@ -99,10 +99,10 @@ class CAdmissionReplayResult(ctypes.Structure):
 
 @cache
 def load_admission_replay_library() -> ctypes.CDLL:
-    path = resolve_library("libshadowspill_runtime.so")
+    path = resolve_library("libshadowspill.so")
     if path is None:
         raise RuntimeError(
-            "libshadowspill_runtime.so was not found; install ShadowSpill or "
+            "libshadowspill.so was not found; install ShadowSpill or "
             "build the editable checkout at its configured build location"
         )
     library = ctypes.CDLL(str(path))

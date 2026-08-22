@@ -658,7 +658,7 @@ def simulate_compiled(
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
-    """Replay through `libshadowspill_simulator.so`."""
+    """Replay through `libshadowspill.so`."""
 
     projection = _project(program, schedule, selections, config, admission)
     return _simulate_projection(projection, schedule)

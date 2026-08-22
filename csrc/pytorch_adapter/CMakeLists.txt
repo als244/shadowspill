@@ -23,7 +23,7 @@ target_include_directories(
 target_link_libraries(
   shadowspill_pytorch
   PRIVATE
-    shadowspill_runtime
+    shadowspill
     shadowspill_backend_cuda
     CUDA::cuda_driver
     Threads::Threads

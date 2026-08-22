@@ -5,14 +5,14 @@ add_test(NAME shadowspill_build_canary COMMAND shadowspill_build_canary)
 add_executable(shadowspill_simulator_canary simulator_canary.c)
 target_link_libraries(
   shadowspill_simulator_canary
-  PRIVATE shadowspill_simulator shadowspill_build_options
+  PRIVATE shadowspill shadowspill_build_options
 )
 add_test(NAME shadowspill_simulator_canary COMMAND shadowspill_simulator_canary)
 
 add_executable(shadowspill_planner_canary planner_canary.c)
 target_link_libraries(
   shadowspill_planner_canary
-  PRIVATE shadowspill_planner shadowspill_build_options
+  PRIVATE shadowspill shadowspill_build_options
 )
 add_test(NAME shadowspill_planner_canary COMMAND shadowspill_planner_canary)
 
@@ -20,7 +20,7 @@ add_executable(shadowspill_runtime_canary runtime/runtime_canary.c)
 target_link_libraries(
   shadowspill_runtime_canary
   PRIVATE
-    shadowspill_runtime
+    shadowspill
     shadowspill_backend_mock
     shadowspill_build_options
 )
@@ -30,7 +30,7 @@ add_executable(shadowspill_runtime_plan_canary runtime/runtime_plan_canary.c)
 target_link_libraries(
   shadowspill_runtime_plan_canary
   PRIVATE
-    shadowspill_runtime
+    shadowspill
     shadowspill_backend_mock
     shadowspill_build_options
     Threads::Threads
@@ -59,7 +59,7 @@ add_executable(shadowspill_fixed_layout_canary runtime/fixed_layout_canary.c)
 target_link_libraries(
   shadowspill_fixed_layout_canary
   PRIVATE
-    shadowspill_runtime
+    shadowspill
     shadowspill_backend_mock
     shadowspill_build_options
     Threads::Threads
@@ -77,7 +77,7 @@ target_include_directories(
 )
 target_link_libraries(
   shadowspill_admission_replay_canary
-  PRIVATE shadowspill_runtime shadowspill_build_options
+  PRIVATE shadowspill shadowspill_build_options
 )
 add_test(
   NAME shadowspill_admission_replay_canary
@@ -92,7 +92,7 @@ foreach(runtime_test IN ITEMS blocking calibration completion failure telemetry 
   target_link_libraries(
     shadowspill_runtime_${runtime_test}_canary
     PRIVATE
-      shadowspill_runtime
+      shadowspill
       shadowspill_backend_mock
       shadowspill_build_options
       Threads::Threads
@@ -134,7 +134,7 @@ if(TARGET shadowspill_backend_cuda)
   target_link_libraries(
     shadowspill_cuda_backend_canary
     PRIVATE
-      shadowspill_runtime
+      shadowspill
       shadowspill_backend_cuda
       shadowspill_build_options
   )
