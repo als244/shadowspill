@@ -148,7 +148,7 @@ runtime may grow these inventories only at the same cold boundary.
 Generation-tagged leases return records and handles to their respective
 owners; the worker queries only FIFO heads and calls the backend outside
 data-structure locks. Steady-state execution performs no host allocation and
-creates or destroys no backend-native event.
+creates or destroys no backend event.
 
 ## Dispatcher, streams, and worker timeline
 
@@ -220,7 +220,8 @@ condition wait, sleep, or scheduler yield.
 
 Nonzero allocation failures become typed exceptions in the PyTorch adapter;
 they are never returned as a null pointer to a kernel. Runtime failures retain
-the execution ID, semantic task, request, pool state, and first native cause.
+the execution ID, semantic task, request, pool state, and first cause in
+the library.
 No-progress OOM, allocation-contract mismatch, worker failure, and backend failure
 remain distinguishable.
 

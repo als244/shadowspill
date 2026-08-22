@@ -20,7 +20,7 @@ accumulation rounds**. The schema-v1 internal field name `accumulation_steps`
 is accepted only to read the existing immutable dataset.
 
 Every Program runs in a fresh subprocess. Python exceptions, timeouts, signals,
-and native exits are attributed to one case, recorded, and do not prevent later
+and process exits are attributed to one case, recorded, and do not prevent later
 cases from running. Successful artifacts are atomically published immediately.
 
 Resume and validate an existing dataset without rebuilding completed Programs:

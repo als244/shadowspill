@@ -132,7 +132,7 @@ def test_aliased_input_views_may_have_different_dtypes() -> None:
     )
 
 
-def test_native_multi_result_operation_has_distinct_fresh_roots() -> None:
+def test_multi_result_operation_has_distinct_fresh_roots() -> None:
     def function(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         return torch.max(value, dim=1)
 
@@ -264,7 +264,7 @@ def test_list_valued_alias_schema_controls_every_element_root() -> None:
     assert tuple(view.offset_bytes for view in contract.output_views) == (0, 16)
 
 
-def test_native_split_elements_alias_the_input_root() -> None:
+def test_split_elements_alias_the_input_root() -> None:
     def function(value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         left, right = torch.split(value, 4)
         return left, right

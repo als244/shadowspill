@@ -143,7 +143,7 @@ capacity wait.
 |---|---|
 | `host_stream_resolution_seconds` | Resolve the current compute stream. |
 | `host_readiness_marker_seconds` | Record the pre-readiness timing marker. |
-| `host_native_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
+| `host_runtime_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
 | `host_input_lookup_seconds` | Resolve frontend tensor/object bindings. |
 | `host_storage_rebind_seconds` | Rebind changed PyTorch storages. |
 | `host_argument_assembly_seconds` | Assemble predecoded callable arguments. |
@@ -163,7 +163,7 @@ The callable portion is `host_dispatch_seconds`.
 | `host_output_publish_seconds` | Publish public outputs. |
 | `host_dematerialize_seconds` | Drop frontend bindings selected for release. |
 | `host_postprocess_seconds` | Aggregate mode-specific postprocessing. |
-| `host_native_after_task_seconds` | Record completion and submit planned actions. |
+| `host_runtime_after_task_seconds` | Record completion and submit planned actions. |
 | `host_cleanup_seconds` | Remove released bindings and terminal state. |
 
 The enclosing `host_before_task_seconds` and `host_after_task_seconds` are the

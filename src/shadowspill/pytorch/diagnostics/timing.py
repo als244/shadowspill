@@ -29,7 +29,7 @@ class ArmedTaskTiming:
     host_after_started_ns: int = 0
     host_stream_resolution_ns: int = 0
     host_readiness_marker_ns: int = 0
-    host_native_before_task_ns: int = 0
+    host_runtime_before_task_ns: int = 0
     host_input_lookup_ns: int = 0
     host_storage_rebind_ns: int = 0
     host_argument_assembly_ns: int = 0
@@ -43,7 +43,7 @@ class ArmedTaskTiming:
     host_output_publish_ns: int = 0
     host_dematerialize_ns: int = 0
     host_postprocess_ns: int = 0
-    host_native_after_task_ns: int = 0
+    host_runtime_after_task_ns: int = 0
     host_cleanup_ns: int = 0
 
 

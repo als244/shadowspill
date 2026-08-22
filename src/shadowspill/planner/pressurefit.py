@@ -158,7 +158,7 @@ def validate_schedule_feasibility(
         portfolio=build_recomputation_portfolio(program),
         progress=None,
     )
-    _preflight_native_contexts(contexts)
+    _preflight_contexts(contexts)
 
 
 def _build_contexts(
@@ -258,7 +258,7 @@ def _preflight_error(
     )
 
 
-def _preflight_native_contexts(
+def _preflight_contexts(
     contexts: tuple[_SelectionContext, ...],
 ) -> tuple[_SelectionContext, ...]:
     """Keep selections that satisfy the compiled semantic-capacity preflight."""
@@ -284,7 +284,7 @@ def _preflight_native_contexts(
     )
 
 
-def _native_worker_count(options: PressureFitOptions, count: int) -> int:
+def _worker_count(options: PressureFitOptions, count: int) -> int:
     if count <= 1 or options.workers == 1:
         return 1
     if options.workers > 1:
@@ -293,7 +293,7 @@ def _native_worker_count(options: PressureFitOptions, count: int) -> int:
 
 
 @cache
-def _shared_native_pool() -> ThreadPoolExecutor:
+def _shared_worker_pool() -> ThreadPoolExecutor:
     """One process-wide pool for all compiled evaluation units.
 
     Concurrent plans — the speculative capacity-ladder rungs above
@@ -339,14 +339,14 @@ def _run_contexts(
             admission=context.compiled_admission,
         )
 
-    workers = _native_worker_count(options, len(units))
+    workers = _worker_count(options, len(units))
     if workers == 1:
         chunk_results = [evaluate(unit) for unit in units]
     elif options.workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             chunk_results = list(executor.map(evaluate, units))
     else:
-        chunk_results = list(_shared_native_pool().map(evaluate, units))
+        chunk_results = list(_shared_worker_pool().map(evaluate, units))
     per_context = len(strategies)
     return tuple(
         _merge_strategy_results(
@@ -394,7 +394,7 @@ def _merge_strategy_results(
     )
 
 
-def _finish_native_pressurefit(
+def _finish_pressurefit(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -577,7 +577,7 @@ def _pressurefit_once(
             f"selections={len(portfolio)}"
         )
     started = time.perf_counter_ns()
-    contexts = _preflight_native_contexts(
+    contexts = _preflight_contexts(
         _build_contexts(
             program,
             initial_residency,
@@ -600,7 +600,7 @@ def _pressurefit_once(
             f"valid={len(valid_pairs)}/{len(contexts)}, "
             "candidates="
             f"{sum(len(result.candidates) for _context, result in valid_pairs)}, "
-            f"workers={_native_worker_count(selected_options, len(contexts))}, "
+            f"workers={_worker_count(selected_options, len(contexts))}, "
             f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
         )
     if not valid_pairs:
@@ -608,7 +608,7 @@ def _pressurefit_once(
             "compiled PressureFit rejected every selection after semantic "
             "feasibility validation succeeded"
         )
-    return _finish_native_pressurefit(
+    return _finish_pressurefit(
         program,
         initial_residency,
         final_residency,

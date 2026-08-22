@@ -45,7 +45,7 @@ def test_pressurefit_fails_closed_without_compiled_planner(
     "placement",
     (InitialPlacement.REQUIRED, InitialPlacement.GREEDY),
 )
-def test_native_portfolio_is_deterministic(
+def test_portfolio_is_deterministic(
     layers: int,
     capacity: int,
     placement: InitialPlacement,
