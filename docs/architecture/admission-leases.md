@@ -181,9 +181,15 @@ meaning:
 | `action_destination_leases` | action index | binding a fetch's destination to its planned offset |
 | `active_aliases` | alias | which lease currently owns each alias |
 
-`active_aliases` is the live state, not a history: acquisitions add,
-retirements remove, handoffs move. At the end of the walk it is exactly the
-final residency.
+`active_aliases` is the live state, not a history, and at the end of the walk
+it is exactly the final residency. It cannot be tracked as membership while
+walking, though: a task may reuse one allocation slot for two different
+aliases, which moves a lease from one alias to another **without retiring
+it**, so adding on acquisition and removing on retirement leaves the old alias
+behind. Derive it instead — a lease owns an alias at the end exactly when it
+was acquired, never retired, and its provenance still names that alias — and
+then apply the handoffs, which move ownership with no operation of their
+own.
 
 ## Fixed and dynamic
 
