@@ -851,8 +851,8 @@ class PlanReport:
         return self.execution_plan.prediction.device_peak_bytes
 
     @property
-    def predicted_host_peak_bytes(self) -> int:
-        return self.execution_plan.prediction.host_peak_bytes
+    def predicted_spill_peak_bytes(self) -> int:
+        return self.execution_plan.prediction.spill_peak_bytes
 
     @property
     def predicted_makespan_ns(self) -> int:

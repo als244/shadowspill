@@ -268,7 +268,7 @@ def build_simulation_config(
             profiles.measurements,
             fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
-        host_capacity_bytes=memory.spill_budget,
+        spill_capacity_bytes=memory.spill_budget,
         fetch_bandwidth_bytes_per_second=memory.transfers.route(
             memory.spill.name,
             memory.execution.name,

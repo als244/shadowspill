@@ -139,8 +139,8 @@ void shadowspill_update_peaks(
             work->device_total_peaks[device] = total;
         }
     }
-    if (work->host_bytes > work->host_peak_bytes) {
-        work->host_peak_bytes = work->host_bytes;
+    if (work->spill_bytes > work->spill_peak_bytes) {
+        work->spill_peak_bytes = work->spill_bytes;
     }
 }
 
@@ -152,7 +152,7 @@ int shadowspill_initialize_memory(
     for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
         ShadowSpillAliasState *state = &work->aliases[alias];
         state->device_version = program->alias_initial_version[alias];
-        state->host_version = program->alias_initial_version[alias];
+        state->spill_version = program->alias_initial_version[alias];
         if (program->alias_size_bytes[alias] == 0U) {
             /* Zero-length values carry dependencies but require no residency. */
             state->device_allocated = 1U;
@@ -160,12 +160,12 @@ int shadowspill_initialize_memory(
             continue;
         }
         if (program->alias_retain_spill_copy[alias] != 0U) {
-            state->host_allocated = 1U;
-            state->host_ready = 1U;
+            state->spill_allocated = 1U;
+            state->spill_ready = 1U;
             if (shadowspill_add_overflow_u64(
-                    work->host_bytes,
+                    work->spill_bytes,
                     program->alias_size_bytes[alias],
-                    &work->host_bytes
+                    &work->spill_bytes
                 )) {
                 shadowspill_set_error(
                     result,
@@ -202,12 +202,12 @@ int shadowspill_initialize_memory(
                 return 0;
             }
         } else {
-            if (state->host_allocated == 0U) {
-                state->host_allocated = 1U;
+            if (state->spill_allocated == 0U) {
+                state->spill_allocated = 1U;
                 if (shadowspill_add_overflow_u64(
-                        work->host_bytes,
+                        work->spill_bytes,
                         program->alias_size_bytes[alias],
-                        &work->host_bytes
+                        &work->spill_bytes
                     )) {
                     shadowspill_set_error(
                         result,
@@ -220,7 +220,7 @@ int shadowspill_initialize_memory(
                     return 0;
                 }
             }
-            state->host_ready = 1U;
+            state->spill_ready = 1U;
         }
     }
     if (program->use_admission_accounting != 0U) {
@@ -254,17 +254,17 @@ int shadowspill_initialize_memory(
             return 0;
         }
     }
-    if (work->host_bytes > program->host_capacity_bytes) {
+    if (work->spill_bytes > program->spill_capacity_bytes) {
         shadowspill_set_capacity_error(
             result,
-            SHADOWSPILL_SIMULATION_INITIAL_HOST_CAPACITY,
+            SHADOWSPILL_SIMULATION_INITIAL_SPILL_CAPACITY,
             work,
             SHADOWSPILL_SIMULATOR_NO_INDEX,
             SHADOWSPILL_SIMULATOR_NO_INDEX,
             SHADOWSPILL_SIMULATOR_NO_INDEX,
-            SHADOWSPILL_MEMORY_HOST,
-            program->host_capacity_bytes,
-            work->host_bytes,
+            SHADOWSPILL_MEMORY_SPILL,
+            program->spill_capacity_bytes,
+            work->spill_bytes,
             0U
         );
         return 0;

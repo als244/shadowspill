@@ -64,7 +64,7 @@ def test_schedule_reaches_declared_final_residency() -> None:
     )
 
 
-def _retained_host_output_program() -> Program:
+def _retained_spill_output_program() -> Program:
     return Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
@@ -83,19 +83,19 @@ def _retained_host_output_program() -> Program:
     )
 
 
-def test_offload_refreshes_a_retained_host_copy() -> None:
-    program = _retained_host_output_program()
+def test_offload_refreshes_a_retained_spill_copy() -> None:
+    program = _retained_spill_output_program()
     schedule = MemorySchedule(
         initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
         actions=(MemoryAction("update", "state_storage", MemoryActionKind.OFFLOAD),),
-        final_residency=(ResidencySpec("state_storage", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("state_storage", MemoryLocation.SPILL),),
     )
 
     schedule.validate(program)
 
 
-def test_release_leaves_an_unchanged_retained_host_copy_current() -> None:
-    output_program = _retained_host_output_program()
+def test_release_leaves_an_unchanged_retained_spill_copy_current() -> None:
+    output_program = _retained_spill_output_program()
     program = replace(
         output_program,
         tasks=(replace(output_program.tasks[0], inputs=("state",), outputs=()),),
@@ -103,18 +103,18 @@ def test_release_leaves_an_unchanged_retained_host_copy_current() -> None:
     schedule = MemorySchedule(
         initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
         actions=(MemoryAction("update", "state_storage", MemoryActionKind.RELEASE),),
-        final_residency=(ResidencySpec("state_storage", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("state_storage", MemoryLocation.SPILL),),
     )
 
     schedule.validate(program)
 
 
-def test_output_invalidates_a_retained_host_copy() -> None:
-    program = _retained_host_output_program()
+def test_output_invalidates_a_retained_spill_copy() -> None:
+    program = _retained_spill_output_program()
     stale = MemorySchedule(
         initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
         actions=(MemoryAction("update", "state_storage", MemoryActionKind.RELEASE),),
-        final_residency=(ResidencySpec("state_storage", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("state_storage", MemoryLocation.SPILL),),
     )
 
     with pytest.raises(ValidationError, match="current host residency"):

@@ -156,13 +156,13 @@ int shadowspill_validate_program(
     }
     for (uint32_t index = 0; index < program->initial_count; ++index) {
         if (program->initial_aliases[index] >= program->alias_count ||
-            program->initial_locations[index] > SHADOWSPILL_MEMORY_HOST) {
+            program->initial_locations[index] > SHADOWSPILL_MEMORY_SPILL) {
             return 0;
         }
     }
     for (uint32_t index = 0; index < program->final_count; ++index) {
         if (program->final_aliases[index] >= program->alias_count ||
-            program->final_locations[index] > SHADOWSPILL_MEMORY_HOST) {
+            program->final_locations[index] > SHADOWSPILL_MEMORY_SPILL) {
             return 0;
         }
     }

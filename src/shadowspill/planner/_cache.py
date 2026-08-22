@@ -164,7 +164,7 @@ class PressureFitCache:
             "final_residency": [item.to_dict() for item in final_residency],
             "simulation": {
                 "devices": [asdict(item) for item in config.devices],
-                "host_capacity_bytes": config.host_capacity_bytes,
+                "spill_capacity_bytes": config.spill_capacity_bytes,
             },
             "options": _options_identity(options),
             "admission_digest": admission.digest if admission is not None else None,
@@ -244,7 +244,7 @@ class PressureFitCache:
             "final_residency": [item.to_dict() for item in result.final_residency],
             "simulation": {
                 "devices": [asdict(item) for item in result.simulation_config.devices],
-                "host_capacity_bytes": result.simulation_config.host_capacity_bytes,
+                "spill_capacity_bytes": result.simulation_config.spill_capacity_bytes,
             },
             "options": _options_identity(result.options),
             "admission_digest": admission.digest if admission is not None else None,
@@ -325,7 +325,7 @@ def _key(
         "final_residency": [item.to_dict() for item in final_residency],
         "simulation": {
             "devices": [asdict(device) for device in config.devices],
-            "host_capacity_bytes": config.host_capacity_bytes,
+            "spill_capacity_bytes": config.spill_capacity_bytes,
         },
         "options": _options_identity(options),
         "admission_digest": admission.digest if admission is not None else None,

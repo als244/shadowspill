@@ -58,7 +58,7 @@ def _config() -> SimulationConfig:
     return SimulationConfig.single_device(
         "device_0",
         device_capacity_bytes=96,
-        host_capacity_bytes=64,
+        spill_capacity_bytes=64,
         fetch_bandwidth_bytes_per_second=1_000_000,
         evict_bandwidth_bytes_per_second=1_000_000,
     )
@@ -80,7 +80,7 @@ def test_shared_footprint_is_charged_once_outside_movable_aliases() -> None:
     assert footprint.alias_group_ids == ("shared_storage",)
     assert result.device_peak("device_0").object_bytes == 96
     assert result.device_peak("device_0").total_bytes == 96
-    assert result.host_peak_bytes == 64
+    assert result.spill_peak_bytes == 64
     assert result.transfer_intervals == ()
 
 
@@ -103,14 +103,14 @@ def test_shared_footprint_must_fit_physical_execution_and_spill_budgets() -> Non
     too_small_device = SimulationConfig.single_device(
         "device_0",
         device_capacity_bytes=63,
-        host_capacity_bytes=64,
+        spill_capacity_bytes=64,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
     too_small_spill = SimulationConfig.single_device(
         "device_0",
         device_capacity_bytes=64,
-        host_capacity_bytes=63,
+        spill_capacity_bytes=63,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )

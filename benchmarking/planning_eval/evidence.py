@@ -119,7 +119,7 @@ def successful_point_evidence(
                 ),
                 "transfers": transfer_summary,
                 "device_peak": asdict(peak),
-                "host_peak_bytes": simulation.host_peak_bytes,
+                "spill_peak_bytes": simulation.spill_peak_bytes,
             },
             "selection": {
                 "selection_digest": selection_digest,

@@ -106,7 +106,7 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=64,
-        host_capacity_bytes=128,
+        spill_capacity_bytes=128,
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )
@@ -142,7 +142,7 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=32,
-        host_capacity_bytes=0,
+        spill_capacity_bytes=0,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -211,7 +211,7 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=8,
-        host_capacity_bytes=0,
+        spill_capacity_bytes=0,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -317,7 +317,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=16,
-        host_capacity_bytes=16,
+        spill_capacity_bytes=16,
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )
@@ -437,7 +437,7 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=64,
-        host_capacity_bytes=128,
+        spill_capacity_bytes=128,
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )

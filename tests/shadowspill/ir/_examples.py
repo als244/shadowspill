@@ -174,17 +174,17 @@ def representative_plan() -> ExecutionPlan:
         ),
         admission=PhysicalAdmission(
             device_budget_bytes=1024,
-            host_budget_bytes=1024,
+            spill_budget_bytes=1024,
             context_bytes=64,
             provider_headroom_bytes=64,
             slab_bytes=896,
             workspace_reserve_bytes=128,
-            host_reservation_bytes=256,
+            spill_reservation_bytes=256,
             predicted_fragmentation_bytes=32,
         ),
         prediction=PlanPrediction(
             device_peak_bytes=900,
-            host_peak_bytes=128,
+            spill_peak_bytes=128,
             makespan_ns=38,
         ),
     )

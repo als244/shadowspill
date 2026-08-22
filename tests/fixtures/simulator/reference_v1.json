@@ -3,7 +3,7 @@
   "case": "single-device overlapped offload and prefetch",
   "configuration": {
     "device_capacity_bytes": 512,
-    "host_capacity_bytes": 1024,
+    "spill_capacity_bytes": 1024,
     "h2d_bytes_per_nanosecond": 1,
     "d2h_bytes_per_nanosecond": 1
   },
@@ -16,7 +16,7 @@
     ["consume", 800, 900, "compute"]
   ],
   "device_peak_bytes": 272,
-  "host_peak_bytes": 128,
+  "spill_peak_bytes": 128,
   "makespan_ns": 900,
   "legacy_oracle_match": true
 }

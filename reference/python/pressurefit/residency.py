@@ -256,7 +256,7 @@ def seed_residency(
     cold_aliases = tuple(
         alias
         for alias, location in enumerate(facts.initial_locations)
-        if location is MemoryLocation.HOST
+        if location is MemoryLocation.SPILL
         and facts.access_events[alias]
         and min(task for _boundary, task in facts.access_events[alias]) > 0
     )
@@ -364,7 +364,7 @@ def legal_cuts(
         for span_index, span in enumerate(spans):
             if (
                 span.start == -1
-                and facts.initial_locations[alias] is MemoryLocation.HOST
+                and facts.initial_locations[alias] is MemoryLocation.SPILL
                 and -1 not in facts.anchors[alias]
             ):
                 required = sorted(

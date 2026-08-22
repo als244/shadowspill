@@ -202,7 +202,7 @@ operation defined by the header; it does not hide an infeasible request.
 `shadowspill_failure_reason_string()` names the condition behind a status in
 one sentence. The status is the class a caller acts on; the reason is what a
 reader needs. Several reasons share one status on purpose - a lease that
-cannot be released and a host that refuses an internal record are both
+cannot be released and a process allocator that refuses a record are both
 internal failures a caller treats alike, but a reader must be able to tell
 them apart.
 

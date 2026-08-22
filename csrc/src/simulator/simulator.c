@@ -70,7 +70,7 @@ ShadowSpillSimulationStatus shadowspill_simulate(
         return finish_failure(&work, result);
     }
     result->makespan_ns = work.now_ns;
-    result->host_peak_bytes = work.host_peak_bytes;
+    result->spill_peak_bytes = work.spill_peak_bytes;
     for (uint32_t device = 0; device < program->device_count; ++device) {
         result->device_peaks[device] = (ShadowSpillDevicePeak){
             .object_bytes = work.device_object_peaks[device],

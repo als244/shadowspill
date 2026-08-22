@@ -55,7 +55,7 @@ _ACTION_KIND = {
     1: MemoryActionKind.OFFLOAD,
     2: MemoryActionKind.PREFETCH,
 }
-_LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.HOST}
+_LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.SPILL}
 _INITIAL_PLACEMENT = {"required": 0, "greedy": 1}
 _PREFLIGHT_WORKSPACE_CAPACITY = 1
 _PREFLIGHT_REQUIRED_CAPACITY = 2

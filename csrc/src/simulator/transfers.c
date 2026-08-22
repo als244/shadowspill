@@ -94,7 +94,7 @@ static int try_start_direction(
         uint32_t alias = transfer->alias;
         ShadowSpillAliasState *state = &work->aliases[alias];
         if (direction == SHADOWSPILL_TRANSFER_FETCH) {
-            if (state->evict_pending != 0U || state->host_ready == 0U) {
+            if (state->evict_pending != 0U || state->spill_ready == 0U) {
                 transfer->stall_mask |= SHADOWSPILL_STALL_SOURCE_READINESS;
                 return 0;
             }
@@ -107,7 +107,7 @@ static int try_start_direction(
                 transfer->stall_mask |= SHADOWSPILL_STALL_SOURCE_READINESS;
                 return 0;
             }
-            if (state->host_allocated == 0U) {
+            if (state->spill_allocated == 0U) {
                 return 0;
             }
         }
@@ -236,11 +236,11 @@ static int submit_action(
         state->device_allocated = 0U;
         state->device_ready = 0U;
         work->device_object_bytes[device] -= program->alias_size_bytes[alias];
-        if (state->host_allocated != 0U &&
+        if (state->spill_allocated != 0U &&
             program->alias_retain_spill_copy[alias] == 0U) {
-            state->host_allocated = 0U;
-            state->host_ready = 0U;
-            work->host_bytes -= program->alias_size_bytes[alias];
+            state->spill_allocated = 0U;
+            state->spill_ready = 0U;
+            work->spill_bytes -= program->alias_size_bytes[alias];
         }
         if (program->use_admission_accounting != 0U &&
             !shadowspill_apply_physical_delta(
@@ -278,35 +278,35 @@ static int submit_action(
         }
         transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
         transfer->sequence = work->evict_sequence[device]++;
-        if (state->host_allocated == 0U) {
+        if (state->spill_allocated == 0U) {
             uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
-                    work->host_bytes,
+                    work->spill_bytes,
                     program->alias_size_bytes[alias],
                     &total
-                ) || total > program->host_capacity_bytes) {
+                ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_SIMULATION_OFFLOAD_HOST_CAPACITY,
+                    SHADOWSPILL_SIMULATION_OFFLOAD_SPILL_CAPACITY,
                     work,
                     task,
                     alias,
                     device,
-                    SHADOWSPILL_MEMORY_HOST,
-                    program->host_capacity_bytes,
-                    work->host_bytes,
+                    SHADOWSPILL_MEMORY_SPILL,
+                    program->spill_capacity_bytes,
+                    work->spill_bytes,
                     program->alias_size_bytes[alias]
                 );
                 return 0;
             }
-            state->host_allocated = 1U;
-            state->host_ready = 0U;
-            work->host_bytes = total;
+            state->spill_allocated = 1U;
+            state->spill_ready = 0U;
+            work->spill_bytes = total;
         }
         state->evict_pending = 1U;
     } else {
         if ((state->device_allocated != 0U && state->evict_pending == 0U) ||
-            (state->host_ready == 0U && state->evict_pending == 0U)) {
+            (state->spill_ready == 0U && state->evict_pending == 0U)) {
             shadowspill_set_error(
                 result,
                 SHADOWSPILL_SIMULATION_INVALID_PREFETCH,
@@ -465,16 +465,16 @@ int shadowspill_complete_transfer(
     }
     if (direction == SHADOWSPILL_TRANSFER_FETCH) {
         state->device_ready = 1U;
-        state->device_version = state->host_version;
+        state->device_version = state->spill_version;
         state->fetch_pending = 0U;
         if (program->alias_retain_spill_copy[transfer->alias] == 0U) {
-            state->host_allocated = 0U;
-            state->host_ready = 0U;
-            work->host_bytes -= program->alias_size_bytes[transfer->alias];
+            state->spill_allocated = 0U;
+            state->spill_ready = 0U;
+            work->spill_bytes -= program->alias_size_bytes[transfer->alias];
         }
     } else {
-        state->host_ready = 1U;
-        state->host_version = state->device_version;
+        state->spill_ready = 1U;
+        state->spill_version = state->device_version;
         state->evict_pending = 0U;
         state->device_ready = 0U;
         if (state->fetch_pending == 0U) {

@@ -296,7 +296,7 @@ def _initial_schedule(
         if location is None or facts.alias_sizes[alias] == 0:
             continue
         selected = (
-            MemoryLocation.DEVICE if plan.resident(alias, -1) else MemoryLocation.HOST
+            MemoryLocation.DEVICE if plan.resident(alias, -1) else MemoryLocation.SPILL
         )
         values.append(ResidencySpec(facts.alias_ids[alias], selected))
     return tuple(values)
@@ -318,10 +318,10 @@ def emit_schedule(
     for alias, spans in enumerate(plan.spans):
         if not spans or facts.alias_sizes[alias] == 0:
             continue
-        host_refreshed = (
+        spill_refreshed = (
             -1
             if (
-                facts.initial_locations[alias] is MemoryLocation.HOST
+                facts.initial_locations[alias] is MemoryLocation.SPILL
                 or facts.alias_retain_spill_copy[alias]
             )
             else -2
@@ -353,19 +353,19 @@ def emit_schedule(
             final = facts.final_locations[alias]
             if has_later_span:
                 if facts.alias_retain_spill_copy[alias] and not _has_write_since(
-                    facts, alias, host_refreshed, span.end
+                    facts, alias, spill_refreshed, span.end
                 ):
                     kind = MemoryActionKind.RELEASE
                 else:
                     kind = MemoryActionKind.OFFLOAD
-                    host_refreshed = span.end
+                    spill_refreshed = span.end
                 previous_departure = Departure(alias, departure_task, kind)
                 departures.append(previous_departure)
             elif final is MemoryLocation.DEVICE:
                 continue
-            elif final is MemoryLocation.HOST:
+            elif final is MemoryLocation.SPILL:
                 if facts.alias_retain_spill_copy[alias] and not _has_write_since(
-                    facts, alias, host_refreshed, span.end
+                    facts, alias, spill_refreshed, span.end
                 ):
                     kind = MemoryActionKind.RELEASE
                 else:

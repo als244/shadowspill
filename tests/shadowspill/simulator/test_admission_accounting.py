@@ -94,7 +94,7 @@ def _schedule() -> MemorySchedule:
     return MemorySchedule(
         initial_residency=(
             ResidencySpec("evicted_activation", MemoryLocation.DEVICE),
-            ResidencySpec("fetched_activation", MemoryLocation.HOST),
+            ResidencySpec("fetched_activation", MemoryLocation.SPILL),
         ),
         actions=(
             MemoryAction(
@@ -109,7 +109,7 @@ def _schedule() -> MemorySchedule:
             ),
         ),
         final_residency=(
-            ResidencySpec("evicted_activation", MemoryLocation.HOST),
+            ResidencySpec("evicted_activation", MemoryLocation.SPILL),
             ResidencySpec("fetched_activation", MemoryLocation.DEVICE),
         ),
     )
@@ -119,7 +119,7 @@ def _config() -> SimulationConfig:
     return SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=96,
-        host_capacity_bytes=192,
+        spill_capacity_bytes=192,
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )

@@ -500,9 +500,9 @@ def admit_forward_plan(
     """Physically admit a selection and publish the executable callable/report."""
 
     selected = selection.result
-    with timer.measure("host_admission"):
+    with timer.measure("spill_admission"):
         reconcile_spill_pool(
-            predicted_peak=selected.simulation.host_peak_bytes,
+            predicted_peak=selected.simulation.spill_peak_bytes,
             budget=memory.spill_budget,
         )
     selected_admission = _build_forward_admission(
@@ -514,7 +514,7 @@ def admit_forward_plan(
         memory,
         captured.installed,
         workspace_reserve=program.workspace_reserve,
-        predicted_host_peak_bytes=selected.simulation.host_peak_bytes,
+        predicted_spill_peak_bytes=selected.simulation.spill_peak_bytes,
         predicted_fragmentation_bytes=(
             selected_admission.predicted_fragmentation_bytes
         ),
@@ -816,7 +816,7 @@ def _shared_output_locations(
         if pool == memory.execution.name:
             location = MemoryLocation.DEVICE
         elif pool == memory.spill.name:
-            location = MemoryLocation.HOST
+            location = MemoryLocation.SPILL
         else:
             raise PlanningError(
                 f"shared output pool {pool!r} is not the selected execution "

@@ -64,11 +64,11 @@ def _pressurefit_program() -> PressureFitProgram:
         role="recurrent",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
-        final_residency=(ResidencySpec("state", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("state", MemoryLocation.SPILL),),
         simulation_config=SimulationConfig.single_device(
             "cuda_0",
             device_capacity_bytes=96,
-            host_capacity_bytes=1_024,
+            spill_capacity_bytes=1_024,
             fetch_bandwidth_bytes_per_second=1_000_000,
             evict_bandwidth_bytes_per_second=2_000_000,
         ),

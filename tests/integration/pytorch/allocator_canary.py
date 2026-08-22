@@ -366,53 +366,53 @@ def main() -> int:
     ):
         raise AssertionError("storage import caused an allocator callback failure")
 
-    host_source = torch.arange(4096, dtype=torch.uint8)
+    spill_source = torch.arange(4096, dtype=torch.uint8)
     status = int(
         library.shadowspill_pytorch_register_object(
             1,
             3001,
-            host_source.untyped_storage().nbytes(),
+            spill_source.untyped_storage().nbytes(),
             1,
-            host_source.untyped_storage().data_ptr(),
+            spill_source.untyped_storage().data_ptr(),
         )
     )
     if status != 0:
         raise AssertionError(f"direct host registration failed with status {status}")
-    host_tensor = torch.empty_like(host_source, device="cuda")
+    spill_tensor = torch.empty_like(spill_source, device="cuda")
     _publish_initial(
-        library, plan, host_tensor, 3001, already_registered=True
+        library, plan, spill_tensor, 3001, already_registered=True
     )
-    host_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
-    _submit_actions(library, plan, 300, compute_stream, tuple(host_release))
-    torch.ops.shadowspill._dematerialize_storages([host_tensor])
+    spill_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
+    _submit_actions(library, plan, 300, compute_stream, tuple(spill_release))
+    torch.ops.shadowspill._dematerialize_storages([spill_tensor])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("host placeholder release did not drain")
-    host_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
-    _submit_actions(library, plan, 301, compute_stream, tuple(host_prefetch))
-    host_consumer = _admit_task(
-        library, plan, 302, (3001,), tuple(host_release)
+    spill_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
+    _submit_actions(library, plan, 301, compute_stream, tuple(spill_prefetch))
+    spill_consumer = _admit_task(
+        library, plan, 302, (3001,), tuple(spill_release)
     )
-    host_rebound = begin_task(
+    spill_rebound = begin_task(
         library,
-        host_consumer,
+        spill_consumer,
         302,
         compute_stream,
         expected_bindings=1,
     )
     torch.ops.shadowspill._acquire_storages(
-        [host_tensor], [host_rebound[0].pointer]
+        [spill_tensor], [spill_rebound[0].pointer]
     )
-    torch.testing.assert_close(host_tensor.cpu(), host_source)
+    torch.testing.assert_close(spill_tensor.cpu(), spill_source)
     if (
         int(
             library.shadowspill_pytorch_after_task_handle(
-                host_consumer, compute_stream
+                spill_consumer, compute_stream
             )
         )
         != 0
     ):
         raise AssertionError("direct host final release failed")
-    torch.ops.shadowspill._dematerialize_storages([host_tensor])
+    torch.ops.shadowspill._dematerialize_storages([spill_tensor])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("direct host final release did not drain")
 
@@ -463,7 +463,7 @@ def main() -> int:
         raise AssertionError("output ownership transfer failed")
     if caller_allocation.pointer != caller_output.untyped_storage().data_ptr():
         raise AssertionError("caller output changed allocation during transfer")
-    del caller_output, host_tensor
+    del caller_output, spill_tensor
     gc.collect()
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("caller-owned output did not free normally")

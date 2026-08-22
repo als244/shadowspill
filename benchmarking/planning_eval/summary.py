@@ -37,7 +37,7 @@ _CSV_FIELDS = (
     "fetch_bytes",
     "evict_bytes",
     "device_peak_bytes",
-    "host_peak_bytes",
+    "spill_peak_bytes",
     "recomputation_context_count",
     "valid_recomputation_context_count",
     "candidate_policy_count",
@@ -213,7 +213,7 @@ def _csv_row(
         "device_peak_bytes": _mapping(simulation.get("device_peak")).get(
             "total_bytes"
         ),
-        "host_peak_bytes": simulation.get("host_peak_bytes"),
+        "spill_peak_bytes": simulation.get("spill_peak_bytes"),
         "recomputation_context_count": pressurefit_summary.get(
             "recomputation_context_count"
         ),

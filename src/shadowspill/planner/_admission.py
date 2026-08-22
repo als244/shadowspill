@@ -121,7 +121,7 @@ _ACTION_KIND = {
     MemoryActionKind.OFFLOAD: 1,
     MemoryActionKind.PREFETCH: 2,
 }
-_LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.HOST: 1}
+_LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.SPILL: 1}
 _ALLOCATION_KIND = {
     TaskAllocationStepKind.ALLOCATE: 0,
     TaskAllocationStepKind.RELEASE: 1,

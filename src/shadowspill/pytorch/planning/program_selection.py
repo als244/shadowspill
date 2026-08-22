@@ -69,7 +69,7 @@ def select_program(
                 else execution_budget_bytes
             ),
             spill_bytes=(
-                program.simulation_config.host_capacity_bytes
+                program.simulation_config.spill_capacity_bytes
                 if spill_budget_bytes is None
                 else spill_budget_bytes
             ),

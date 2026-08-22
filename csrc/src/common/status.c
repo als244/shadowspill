@@ -18,7 +18,7 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
 
         case SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY:
             return "initial residency exceeds device capacity";
-        case SHADOWSPILL_STATUS_INITIAL_HOST_CAPACITY:
+        case SHADOWSPILL_STATUS_INITIAL_SPILL_CAPACITY:
             return "initial residency exceeds spill capacity";
         case SHADOWSPILL_STATUS_TASK_INPUT_DEADLOCK:
             return "task input deadlock";
@@ -26,7 +26,7 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
             return "task exceeds device capacity";
         case SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY:
             return "prefetch exceeds device capacity";
-        case SHADOWSPILL_STATUS_OFFLOAD_HOST_CAPACITY:
+        case SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY:
             return "offload exceeds spill capacity";
         case SHADOWSPILL_STATUS_TRANSFER_DEADLOCK:
             return "transfer deadlock";

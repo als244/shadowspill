@@ -146,7 +146,8 @@ class PressureFitProgram:
             raise ValueError("source execution budget must be positive")
         if self.maximum_execution_budget_bytes < self.source_execution_budget_bytes:
             raise ValueError("maximum execution budget is below the source budget")
-        if self.maximum_spill_budget_bytes < self.simulation_config.host_capacity_bytes:
+        source_spill = self.simulation_config.spill_capacity_bytes
+        if self.maximum_spill_budget_bytes < source_spill:
             raise ValueError("maximum spill budget is below the source budget")
         if self.fixed_execution_bytes < 0 or self.object_reserve_bytes < 0:
             raise ValueError("capacity deductions must be non-negative")
@@ -200,7 +201,7 @@ class PressureFitProgram:
             else execution_budget_bytes
         )
         spill_budget = (
-            self.simulation_config.host_capacity_bytes
+            self.simulation_config.spill_capacity_bytes
             if spill_budget_bytes is None
             else spill_budget_bytes
         )

@@ -241,7 +241,7 @@ int shadowspill_admission_build_operations(
     for (uint32_t index = 0U; index < schedule->initial_count; ++index) {
         const uint32_t alias = schedule->initial_aliases[index];
         if (alias >= program->alias_count ||
-            schedule->initial_locations[index] > SHADOWSPILL_MEMORY_HOST) {
+            schedule->initial_locations[index] > SHADOWSPILL_MEMORY_SPILL) {
             return -1;
         }
         if (schedule->initial_locations[index] != SHADOWSPILL_MEMORY_DEVICE ||

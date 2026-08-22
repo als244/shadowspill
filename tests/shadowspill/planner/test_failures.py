@@ -138,7 +138,7 @@ def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
             ),
         ),
     )
-    initial = (ResidencySpec("state_storage", MemoryLocation.HOST),)
+    initial = (ResidencySpec("state_storage", MemoryLocation.SPILL),)
     selected_config = config(100)
 
     validate_schedule_feasibility(

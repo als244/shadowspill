@@ -166,7 +166,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
     schedule = MemorySchedule(
         initial_residency=(
             ResidencySpec("released", MemoryLocation.DEVICE),
-            ResidencySpec("fetched", MemoryLocation.HOST),
+            ResidencySpec("fetched", MemoryLocation.SPILL),
         ),
         actions=(
             MemoryAction("boundary", "released", MemoryActionKind.RELEASE),
@@ -177,7 +177,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=64,
-        host_capacity_bytes=128,
+        spill_capacity_bytes=128,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -293,7 +293,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=128,
-        host_capacity_bytes=1,
+        spill_capacity_bytes=1,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -363,7 +363,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=24,
-        host_capacity_bytes=1,
+        spill_capacity_bytes=1,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -442,7 +442,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=20,
-        host_capacity_bytes=1,
+        spill_capacity_bytes=1,
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
@@ -588,12 +588,12 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         ResidencySpec("a", MemoryLocation.DEVICE),
         ResidencySpec("b", MemoryLocation.DEVICE),
         ResidencySpec("c", MemoryLocation.DEVICE),
-        ResidencySpec("d", MemoryLocation.HOST),
+        ResidencySpec("d", MemoryLocation.SPILL),
     )
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=160,
-        host_capacity_bytes=1_000,
+        spill_capacity_bytes=1_000,
         fetch_bandwidth_bytes_per_second=1_000_000,
         evict_bandwidth_bytes_per_second=1_000_000,
     )

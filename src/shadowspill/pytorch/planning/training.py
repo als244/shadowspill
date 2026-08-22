@@ -946,13 +946,13 @@ def _admit_training_execution_plans(
 ) -> TrainingAdmissionArtifacts:
     recurrent = selections.recurrent.result
     initial = None if selections.initial is None else selections.initial.result
-    predicted_host_peak = max(
-        recurrent.simulation.host_peak_bytes,
-        0 if initial is None else initial.simulation.host_peak_bytes,
+    predicted_spill_peak = max(
+        recurrent.simulation.spill_peak_bytes,
+        0 if initial is None else initial.simulation.spill_peak_bytes,
     )
-    with timer.measure("host_admission"):
+    with timer.measure("spill_admission"):
         reconcile_spill_pool(
-            predicted_peak=predicted_host_peak,
+            predicted_peak=predicted_spill_peak,
             budget=memory.spill_budget,
         )
     admissions = _build_training_admissions(
@@ -967,7 +967,7 @@ def _admit_training_execution_plans(
         memory,
         captured.installed,
         workspace_reserve=programs.workspace_reserve,
-        predicted_host_peak_bytes=predicted_host_peak,
+        predicted_spill_peak_bytes=predicted_spill_peak,
         predicted_fragmentation_bytes=max(
             item.predicted_fragmentation_bytes for item in admissions
         ),

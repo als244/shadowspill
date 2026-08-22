@@ -10,7 +10,7 @@ const char *shadowspill_failure_reason_string(
     switch (reason) {
         case SHADOWSPILL_FAILURE_REASON_UNSPECIFIED:
             return "unspecified";
-        case SHADOWSPILL_FAILURE_REASON_HOST_ALLOCATION_REFUSED:
+        case SHADOWSPILL_FAILURE_REASON_PROCESS_ALLOCATION_REFUSED:
             return "the process allocator refused memory for an internal "
                    "record (anonymous memory; neither pool)";
         case SHADOWSPILL_FAILURE_REASON_RECORD_CAPACITY_EXHAUSTED:

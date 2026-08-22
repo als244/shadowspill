@@ -108,7 +108,7 @@ def test_forward_lowering_is_indexed_alias_aware_and_plannable() -> None:
     config = SimulationConfig.single_device(
         "cuda_0",
         device_capacity_bytes=1 << 20,
-        host_capacity_bytes=1 << 20,
+        spill_capacity_bytes=1 << 20,
         fetch_bandwidth_bytes_per_second=10 << 30,
         evict_bandwidth_bytes_per_second=10 << 30,
     )
@@ -175,7 +175,7 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
             for item in lowered.final_residency
             if item.alias_group_id == buffer_alias
         )
-        is MemoryLocation.HOST
+        is MemoryLocation.SPILL
     )
 
 

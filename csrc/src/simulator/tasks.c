@@ -144,7 +144,7 @@ int shadowspill_try_launch_tasks(
                 alias_state->device_ready = 0U;
                 alias_state->fetch_pending = 0U;
                 alias_state->evict_pending = 0U;
-                alias_state->host_ready = 0U;
+                alias_state->spill_ready = 0U;
             }
             work->device_workspace_bytes[device] +=
                 program->task_workspace_bytes[task];
@@ -250,7 +250,7 @@ int shadowspill_complete_task(
         uint32_t alias = program->output_aliases[index];
         work->aliases[alias].device_ready = 1U;
         work->aliases[alias].device_version += 1U;
-        work->aliases[alias].host_ready = 0U;
+        work->aliases[alias].spill_ready = 0U;
     }
     uint32_t mutation_begin = program->mutation_offsets[task];
     uint32_t mutation_end = program->mutation_offsets[task + 1U];
@@ -258,7 +258,7 @@ int shadowspill_complete_task(
         uint32_t alias = program->mutation_aliases[index];
         work->aliases[alias].device_version +=
             program->mutation_version_deltas[index];
-        work->aliases[alias].host_ready = 0U;
+        work->aliases[alias].spill_ready = 0U;
     }
     task_state->state = SHADOWSPILL_TASK_COMPLETE;
     uint32_t word = task >> 6U;

@@ -68,7 +68,7 @@ typedef enum ShadowSpillFailureReason {
     SHADOWSPILL_FAILURE_REASON_UNSPECIFIED = 0,
     /* The process allocator refused memory for an internal record. This is
      * anonymous memory, and is neither the device pool nor the spill pool. */
-    SHADOWSPILL_FAILURE_REASON_HOST_ALLOCATION_REFUSED = 1,
+    SHADOWSPILL_FAILURE_REASON_PROCESS_ALLOCATION_REFUSED = 1,
     /* A sealed bookkeeping table had no free record. The reserve was sized
      * too small for what this workload allocates; the pool has bytes. */
     SHADOWSPILL_FAILURE_REASON_RECORD_CAPACITY_EXHAUSTED = 2,

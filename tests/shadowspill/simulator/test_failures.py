@@ -70,44 +70,46 @@ def test_initial_device_capacity_failure_is_structured() -> None:
     assert error.requested_bytes == 0
 
 
-def test_initial_host_capacity_failure_is_structured() -> None:
+def test_initial_spill_capacity_failure_is_structured() -> None:
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
-        alias_groups=(AliasGroupSpec("host_storage", "cuda_0", 128),),
-        objects=(ObjectSpec("host_object", "host_storage", 0, 128, ObjectRole.INPUT),),
+        alias_groups=(AliasGroupSpec("spill_storage", "cuda_0", 128),),
+        objects=(
+            ObjectSpec("spill_object", "spill_storage", 0, 128, ObjectRole.INPUT),
+        ),
         profiles=(),
         tasks=(),
     )
     schedule = MemorySchedule(
-        initial_residency=(ResidencySpec("host_storage", MemoryLocation.HOST),),
+        initial_residency=(ResidencySpec("spill_storage", MemoryLocation.SPILL),),
         actions=(),
-        final_residency=(ResidencySpec("host_storage", MemoryLocation.HOST),),
+        final_residency=(ResidencySpec("spill_storage", MemoryLocation.SPILL),),
     )
 
     with pytest.raises(SimulationInfeasibleError) as caught:
         simulate(
             program,
             schedule,
-            config=calibrated_config(host_capacity_bytes=127),
+            config=calibrated_config(spill_capacity_bytes=127),
         )
 
-    assert caught.value.kind == "initial-host-capacity"
+    assert caught.value.kind == "initial-spill-capacity"
     assert caught.value.used_bytes == 128
 
 
-def test_pending_offload_reports_host_capacity_root_cause() -> None:
+def test_pending_offload_reports_spill_capacity_root_cause() -> None:
     with pytest.raises(SimulationInfeasibleError) as caught:
         simulate(
             overlap_program(),
             overlap_schedule(),
             config=calibrated_config(
                 device_capacity_bytes=512,
-                host_capacity_bytes=127,
+                spill_capacity_bytes=127,
             ),
         )
 
     error = caught.value
-    assert error.kind == "offload-host-capacity"
+    assert error.kind == "offload-spill-capacity"
     assert error.alias_group_ids == ("activation_storage",)
     assert error.capacity_bytes == 127
     assert error.requested_bytes == 128
@@ -119,11 +121,11 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),
-            AliasGroupSpec("host_storage", "cuda_0", 128),
+            AliasGroupSpec("spill_storage", "cuda_0", 128),
         ),
         objects=(
             ObjectSpec("resident", "resident_storage", 0, 64, ObjectRole.INPUT),
-            ObjectSpec("host_object", "host_storage", 0, 128, ObjectRole.INPUT),
+            ObjectSpec("spill_object", "spill_storage", 0, 128, ObjectRole.INPUT),
         ),
         profiles=(TaskProfile("trigger_profile", 10, 0, "trigger_abi"),),
         tasks=(
@@ -138,10 +140,10 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
     schedule = MemorySchedule(
         initial_residency=(
             ResidencySpec("resident_storage", MemoryLocation.DEVICE),
-            ResidencySpec("host_storage", MemoryLocation.HOST),
+            ResidencySpec("spill_storage", MemoryLocation.SPILL),
         ),
-        actions=(MemoryAction("trigger", "host_storage", MemoryActionKind.PREFETCH),),
-        final_residency=(ResidencySpec("host_storage", MemoryLocation.DEVICE),),
+        actions=(MemoryAction("trigger", "spill_storage", MemoryActionKind.PREFETCH),),
+        final_residency=(ResidencySpec("spill_storage", MemoryLocation.DEVICE),),
     )
 
     with pytest.raises(SimulationInfeasibleError) as caught:
@@ -163,13 +165,13 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),
-            AliasGroupSpec("first_host_storage", "cuda_0", 64),
-            AliasGroupSpec("second_host_storage", "cuda_0", 64),
+            AliasGroupSpec("first_spill_storage", "cuda_0", 64),
+            AliasGroupSpec("second_spill_storage", "cuda_0", 64),
         ),
         objects=(
             ObjectSpec("resident", "resident_storage", 0, 64, ObjectRole.INPUT),
-            ObjectSpec("first", "first_host_storage", 0, 64, ObjectRole.INPUT),
-            ObjectSpec("second", "second_host_storage", 0, 64, ObjectRole.INPUT),
+            ObjectSpec("first", "first_spill_storage", 0, 64, ObjectRole.INPUT),
+            ObjectSpec("second", "second_spill_storage", 0, 64, ObjectRole.INPUT),
         ),
         profiles=(TaskProfile("trigger_profile", 10, 0, "trigger_abi"),),
         tasks=(
@@ -191,15 +193,15 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     schedule = MemorySchedule(
         initial_residency=(
             ResidencySpec("resident_storage", MemoryLocation.DEVICE),
-            ResidencySpec("first_host_storage", MemoryLocation.HOST),
-            ResidencySpec("second_host_storage", MemoryLocation.HOST),
+            ResidencySpec("first_spill_storage", MemoryLocation.SPILL),
+            ResidencySpec("second_spill_storage", MemoryLocation.SPILL),
         ),
         actions=(
             MemoryAction(
-                "first_trigger", "first_host_storage", MemoryActionKind.PREFETCH
+                "first_trigger", "first_spill_storage", MemoryActionKind.PREFETCH
             ),
             MemoryAction(
-                "second_trigger", "second_host_storage", MemoryActionKind.PREFETCH
+                "second_trigger", "second_spill_storage", MemoryActionKind.PREFETCH
             ),
         ),
     )
@@ -215,7 +217,7 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     assert error.kind == "prefetch-device-capacity"
     assert error.time_ns == 20
     assert error.task_id == "second_trigger"
-    assert error.alias_group_ids == ("second_host_storage",)
+    assert error.alias_group_ids == ("second_spill_storage",)
     assert error.used_bytes == 128
     assert error.requested_bytes == 64
 
@@ -247,7 +249,7 @@ def test_configuration_must_cover_program_devices_exactly() -> None:
                 1_000_000_000,
             ),
         ),
-        host_capacity_bytes=1024,
+        spill_capacity_bytes=1024,
     )
 
     with pytest.raises(ValueError, match="exactly match"):

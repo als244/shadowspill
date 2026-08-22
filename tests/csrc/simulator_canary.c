@@ -14,7 +14,7 @@ int main(void) {
     const uint32_t alias_device[] = {0U, 0U};
     const uint64_t alias_size[] = {64U, 128U};
     const uint64_t alias_version[] = {0U, 0U};
-    const uint8_t alias_host[] = {0U, 0U};
+    const uint8_t alias_spill[] = {0U, 0U};
     const uint32_t task_device[] = {0U};
     const uint8_t task_kind[] = {0U};
     const uint32_t task_lane[] = {0U};
@@ -38,12 +38,12 @@ int main(void) {
         .final_count = 1U,
         .input_count = 1U,
         .output_count = 1U,
-        .host_capacity_bytes = 512U,
+        .spill_capacity_bytes = 512U,
         .devices = devices,
         .alias_device = alias_device,
         .alias_size_bytes = alias_size,
         .alias_initial_version = alias_version,
-        .alias_retain_spill_copy = alias_host,
+        .alias_retain_spill_copy = alias_spill,
         .task_device = task_device,
         .task_resource_kind = task_kind,
         .task_resource_lane = task_lane,
@@ -90,7 +90,7 @@ int main(void) {
     const uint32_t one_alias_device[] = {0U};
     const uint64_t one_alias_size[] = {64U};
     const uint64_t one_alias_version[] = {0U};
-    const uint8_t retained_host[] = {1U};
+    const uint8_t retained_spill[] = {1U};
     const uint32_t no_inputs_offsets[] = {0U, 0U};
     const uint32_t one_output_offsets[] = {0U, 1U};
     const uint32_t one_output[] = {0U};
@@ -100,8 +100,8 @@ int main(void) {
     const uint32_t release_alias[] = {0U};
     const uint8_t release_kind[] = {SHADOWSPILL_MEMORY_RELEASE};
     const uint32_t one_final_alias[] = {0U};
-    const uint8_t one_final_host[] = {SHADOWSPILL_MEMORY_HOST};
-    const ShadowSpillSimulationProgram stale_host_program = {
+    const uint8_t one_final_spill[] = {SHADOWSPILL_MEMORY_SPILL};
+    const ShadowSpillSimulationProgram stale_spill_program = {
         .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 1U,
@@ -110,12 +110,12 @@ int main(void) {
         .initial_count = 1U,
         .final_count = 1U,
         .output_count = 1U,
-        .host_capacity_bytes = 512U,
+        .spill_capacity_bytes = 512U,
         .devices = devices,
         .alias_device = one_alias_device,
         .alias_size_bytes = one_alias_size,
         .alias_initial_version = one_alias_version,
-        .alias_retain_spill_copy = retained_host,
+        .alias_retain_spill_copy = retained_spill,
         .task_device = task_device,
         .task_resource_kind = task_kind,
         .task_resource_lane = task_lane,
@@ -132,11 +132,11 @@ int main(void) {
         .initial_aliases = one_initial_alias,
         .initial_locations = one_initial_device,
         .final_aliases = one_final_alias,
-        .final_locations = one_final_host,
+        .final_locations = one_final_spill,
     };
     result.task_interval_count = 0U;
     result.transfer_interval_count = 0U;
-    if (shadowspill_simulate(&stale_host_program, &result) !=
+    if (shadowspill_simulate(&stale_spill_program, &result) !=
         SHADOWSPILL_SIMULATION_FINAL_RESIDENCY) {
         return EXIT_FAILURE;
     }

@@ -193,7 +193,7 @@ The required seed for alias $a$ is the inclusive hull of its anchors:
 R_a^0=\operatorname{Hull}(H_a).
 \]
 
-Greedy initial placement may additionally extend selected host-origin aliases
+Greedy initial placement may additionally extend selected spill-origin aliases
 to boundary $-1$ when capacity permits and doing so is likely to hide an
 early fetch. A legal cut removes an anchor-free subinterval from one current
 span, possibly splitting it in two. Therefore every generated plan satisfies
@@ -280,7 +280,7 @@ projected into indexed task, alias, simulation, and optional admission arrays.
 ### 3. Seed residency
 
 `InitialPlacement.REQUIRED` uses only the anchor hull. The default
-`InitialPlacement.GREEDY` also considers host-origin aliases first consumed
+`InitialPlacement.GREEDY` also considers spill-origin aliases first consumed
 after task 0. It orders them deterministically using first-use time, estimated
 fetch deadline miss, transfer cost, size, and alias order, then preplaces each
 one that fits initial capacity.
@@ -371,7 +371,7 @@ PressureFit(program, initial, final, machine, options, admission):
         outcomes = evaluate contexts independently:
             seed = required_anchor_hulls(context)
             if options.initial_placement == GREEDY:
-                seed = preplace_fitting_host_objects(seed)
+                seed = preplace_fitting_spill_objects(seed)
 
             for strategy in options.residency_strategies:
                 base = reduce_until_analytic_capacity_fits(seed, strategy)

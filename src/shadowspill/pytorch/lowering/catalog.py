@@ -150,7 +150,7 @@ class ObjectCatalog:
         self._tensor_keepalive: list[torch.Tensor] = []
         self._alias_by_storage: dict[int, str] = {}
         self._alias_sizes: dict[str, int] = {}
-        self._retain_host: set[str] = set()
+        self._retain_spill: set[str] = set()
         self._shared_residency: dict[str, SharedResidencyPolicy] = {}
         self._object_by_key: dict[_TensorKey, str] = {}
         self._objects: list[_ObjectRecord] = []
@@ -324,7 +324,7 @@ class ObjectCatalog:
         elif self._alias_sizes[alias_id] != storage_bytes:
             raise CaptureError("one capture storage reported inconsistent byte extents")
         if retain_spill_copy:
-            self._retain_host.add(alias_id)
+            self._retain_spill.add(alias_id)
         return self._new_object(
             key,
             alias_id=alias_id,
@@ -418,7 +418,7 @@ class ObjectCatalog:
             record.role = role
             changed = True
         if retain_spill_copy:
-            self._retain_host.add(record.alias_group_id)
+            self._retain_spill.add(record.alias_group_id)
         if changed:
             self._object_specs = None
 
@@ -455,7 +455,7 @@ class ObjectCatalog:
             )
         self._shared_residency[record.alias_group_id] = policy
         if retain_spill_copy:
-            self._retain_host.add(record.alias_group_id)
+            self._retain_spill.add(record.alias_group_id)
 
     def finalize_shared_writes(self, written_object_ids: Iterable[str]) -> None:
         """Downgrade proven non-writing shared roots to read-only residency."""
@@ -483,7 +483,7 @@ class ObjectCatalog:
                 alias_group_id,
                 self._device_id,
                 size_bytes,
-                retain_spill_copy=alias_group_id in self._retain_host,
+                retain_spill_copy=alias_group_id in self._retain_spill,
                 shared_residency=self._shared_residency.get(alias_group_id),
             )
             for alias_group_id, size_bytes in self._alias_sizes.items()
