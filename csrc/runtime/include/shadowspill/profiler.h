@@ -9,6 +9,9 @@
 extern "C" {
 #endif
 
+/* A backend supplies this struct and the runtime checks it, so this is a
+ * plugin contract like the ones in <shadowspill/backend.h> and versions on its
+ * own rather than with the library. */
 #define SHADOWSPILL_PROFILER_ABI_VERSION 2U
 
 typedef uint64_t ShadowSpillProfilerRange;

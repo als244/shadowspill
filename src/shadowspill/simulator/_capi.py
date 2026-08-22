@@ -7,8 +7,9 @@ from functools import cache
 from pathlib import Path
 
 from shadowspill._libraries import resolve_library
+from shadowspill._status import ABI_VERSION as _ABI_VERSION
 
-ABI_VERSION = 3
+ABI_VERSION = _ABI_VERSION
 NO_INDEX = (1 << 32) - 1
 
 

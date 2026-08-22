@@ -1,4 +1,4 @@
-"""The library's status vocabulary, mirroring `<shadowspill/status.h>`.
+"""The library's ABI version and status vocabulary, mirroring the C headers.
 
 Every compiled entry point returns one of these. The three shared codes mean
 the same thing wherever they come from; each component's own codes occupy a
@@ -11,6 +11,12 @@ Keep this in step with the C header. The values are the contract.
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import Final
+
+#: Everything in libshadowspill ships together and versions together; see
+#: `<shadowspill/shadowspill.h>`. Backends and the PyTorch adapter are
+#: compiled separately and keep their own.
+ABI_VERSION: Final = 48
 
 
 class Status(IntEnum):
@@ -58,4 +64,4 @@ class Status(IntEnum):
     INVALID_OPERATIONS = 81
 
 
-__all__ = ["Status"]
+__all__ = ["ABI_VERSION", "Status"]
