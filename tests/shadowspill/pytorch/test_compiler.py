@@ -350,6 +350,12 @@ class _TaskLibrary:
         return 0
 
     @staticmethod
+    def shadowspill_pytorch_allocator_statistics(*arguments: object) -> int:
+        # The caller passes zeroed storage, so reporting success leaves the
+        # allocation-event overflow flag clear: this double records nothing.
+        return 0
+
+    @staticmethod
     def shadowspill_pytorch_allocator_failure(*arguments: object) -> int:
         del arguments
         return 0
@@ -392,7 +398,9 @@ def test_workspace_boundary_always_stops_telemetry(
     artifact = _artifact()
     executable = _compiled_task(artifact, lambda *args: torch.ones(1))
     assert profiler._measure_workspace(executable, _Stream()) is sentinel  # type: ignore[arg-type]
-    assert calls == ["start:65536", "stop"]
+    # The capacity is a tuning choice; what this pins is that telemetry starts
+    # at the configured size and is always stopped.
+    assert calls == [f"start:{profiler._telemetry_capacity}", "stop"]
 
     failing_library = _TaskLibrary(before_status=5)
     failing = CudaTaskProfiler(
@@ -403,7 +411,9 @@ def test_workspace_boundary_always_stops_telemetry(
     )
     with pytest.raises(CaptureError, match="allocation scope begin"):
         failing._measure_workspace(executable, _Stream())  # type: ignore[arg-type]
-    assert calls[-2:] == ["start:65536", "stop"]
+    # The capacity is a tuning choice; what this pins is that telemetry
+    # starts at the configured size and is always stopped.
+    assert calls[-2:] == [f"start:{profiler._telemetry_capacity}", "stop"]
 
 
 def test_workspace_releases_disposable_results_before_scope_end(
