@@ -27,7 +27,22 @@ from shadowspill.simulator._compiled import (
 )
 
 from .admission_replay import AdmissionReplayPurpose
-from .operations import AllocationStep
+
+
+@dataclass(frozen=True, slots=True)
+class AllocationStep:
+    """One task allocation step, in the order the topology flattens them.
+
+    `slot` is the lease it uses: a step that reallocates an earlier ordinal's
+    slot shares its lease and emits no operation of its own.
+    """
+
+    task_id: str
+    ordinal: int
+    slot: int
+    allocates: bool
+    purpose: AdmissionReplayPurpose
+    alias_group_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +53,7 @@ class AdmissionSetup:
     compiled_topology: CompiledAdmissionTopology
     allocation_steps: tuple[AllocationStep, ...]
     storage_handoffs: tuple[tuple[str, str], ...]
+    action_trigger_tasks: tuple[int, ...] = ()
 
     @property
     def task_ids(self) -> tuple[str, ...]:
@@ -121,4 +137,4 @@ def _purpose(
     return AdmissionReplayPurpose.TASK_OUTPUT
 
 
-__all__ = ["AdmissionSetup", "build_admission_setup"]
+__all__ = ["AdmissionSetup", "AllocationStep", "build_admission_setup"]

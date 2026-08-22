@@ -263,12 +263,10 @@ and
 0 \le o_l, \qquad o_l+s_l \le L.
 \]
 
-`shadowspill_place_lifetimes` in the planner library solves this, placing
-larger and longer-lived leases first and giving each the lowest aligned offset
-that clears every lease it overlaps in time. Only the union of the addresses
-already in use decides that offset, never the individual leases, so the index
-it walks stores merged address ranges: a packed layout's union collapses to
-10-17 disjoint ranges where 200-430 leases overlap.
+`shadowspill_place_lifetimes` in the planner library solves this. The
+assignment, the structure that chooses each offset, and the two numbers that
+judge the result are specified in
+[fixed-offset placement](fixed-placement.md).
 
 If two predicted lifetimes overlap, their byte ranges must be disjoint:
 

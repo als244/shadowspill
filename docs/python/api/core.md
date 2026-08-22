@@ -37,7 +37,16 @@ selection satisfies the required task-by-task residency floor. Use
 formulation and algorithm](../../architecture/pressurefit.md) and the separate
 [recomputation selector](../../architecture/recomputation-selection.md). The
 task-allocation topology and exact range certificate are described in
-[physical admission](../../architecture/physical-admission.md).
+[physical admission](../../architecture/physical-admission.md), and how a
+schedule becomes leases in [from a resolved program to
+leases](../../architecture/admission-leases.md).
+
+Every step of physical admission runs in the compiled planner library:
+`pressurefit()` selects candidates there, the operations a schedule implies
+are derived there, and each lease is placed at a fixed offset there. Missing
+or ABI-incompatible compiled libraries fail immediately rather than falling
+back, and the readable Python equivalents live outside the package in
+`reference/python/`, where production never imports them.
 
 Configuration and results:
 

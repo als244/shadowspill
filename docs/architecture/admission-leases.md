@@ -4,8 +4,9 @@ Physical admission turns a schedule into a set of **leases** — one per object
 generation that occupies execution memory — and then places them at fixed
 addresses. This page is the contract for that derivation: what is fixed before
 it starts, what the walk produces, and the rules that decide a lease's
-identity. [Physical admission](physical-admission.md) covers what happens to
-the leases afterwards.
+identity. [Physical admission](physical-admission.md) covers what happens to the leases
+afterwards, and [fixed-offset placement](fixed-placement.md) covers how each
+one is given an address.
 
 ## What is fixed, and at which level
 
@@ -170,6 +171,12 @@ without allocating. The active-alias map has to follow it or it ends holding
 aliases that no longer own anything.
 
 ## What the walk produces
+
+Operations, reported as indexed columns, plus two per-lease columns naming the
+operation that creates each lease and the one that retires it. Those two are
+what let a reader work lease by lease: a lease's lifetime is decided by
+exactly those operations, and most operations decide nothing. On one llama3
+step that is 17,250 leases against 57,776 operations.
 
 Besides the operations, four maps, each the subset of the walk with one
 meaning:
