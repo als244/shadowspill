@@ -14,6 +14,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     RuntimeExecutionError,
     allocator_oom_error,
+    format_bytes,
     read_allocator_failure,
 )
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
@@ -81,11 +82,11 @@ def main() -> int:
     except torch.OutOfMemoryError as error:
         message = str(error)
         for expected in (
-            "ShadowSpill no-progress OOM",
+            "out of memory",
             "execution_task: execution_000017",
             "semantic_task: dummy_model.stage_0003.forward",
             "canonical_task: task_000017",
-            f"requested: {REQUEST_BYTES}",
+            f"requested: {format_bytes(REQUEST_BYTES)}",
         ):
             if expected not in message:
                 raise AssertionError(
@@ -127,11 +128,11 @@ def main() -> int:
     except RuntimeExecutionError as error:
         message = str(error)
         for expected in (
-            "ShadowSpill no-progress OOM",
+            "out of memory",
             "execution_task: execution_000017",
             "semantic_task: dummy_model.stage_0003.forward",
             "canonical_task: task_000017",
-            f"requested: {REQUEST_BYTES}",
+            f"requested: {format_bytes(REQUEST_BYTES)}",
         ):
             if expected not in message:
                 raise AssertionError(
