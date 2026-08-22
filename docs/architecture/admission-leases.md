@@ -211,3 +211,36 @@ backwards:
 
 The caller supplies which aliases are caller-owned; the walk resolves each to
 the lease that owns it at the end, through `active_aliases`.
+
+### Two things called dynamic
+
+"Dynamic" never means transient. It means **an allocation whose lifetime the
+plan does not own**, and there are two such cases, reaching the runtime by
+different routes and drawing on different budgets.
+
+**Caller-owned outputs.** The frontend declares them in `final_residency`;
+admission resolves each to its final lease, excludes it from the fixed slice,
+and counts it in `dynamic_reserve_bytes`. Measured on this corpus that is one
+four-byte scalar per accumulation round - the loss the training loop reads -
+so 4 to 16 bytes per plan.
+
+**Provider-owned persistent allocations.** Profiling classifies an allocation
+as provider state when it outlives its task and is not a returned tensor
+(`persistent_after_task and not output_leaf_indices`). Those are cuBLAS
+handles, kernel caches, RNG state: memory the provider keeps across calls,
+which the plan cannot place because it does not control when it is freed.
+They never enter the layout at all; their budget is `provider_headroom_bytes`,
+subtracted before the pool exists.
+
+Both reach the runtime as offset-free placements, and the projection rejects
+an allocation that claims both policies at once. The complete partition:
+
+```text
+device budget
+|-- context_bytes            the device context itself
+|-- provider_headroom_bytes  provider-owned persistent allocations
+`-- slab (pool)
+    |-- fixed slice          objects and task workspace, planned offsets
+    |-- dynamic_reserve      caller-owned outputs
+    `-- scratch_reserve      unplanned allocator traffic
+```
