@@ -12,71 +12,64 @@
 add_library(
   shadowspill
   SHARED
-  common/src/status.c
+  src/common/status.c
 
-  simulator/src/admission.c
-  simulator/src/diagnostics.c
-  simulator/src/events.c
-  simulator/src/memory.c
-  simulator/src/simulator.c
-  simulator/src/status.c
-  simulator/src/tasks.c
-  simulator/src/transfers.c
-  simulator/src/validation.c
+  src/simulator/admission.c
+  src/simulator/diagnostics.c
+  src/simulator/events.c
+  src/simulator/memory.c
+  src/simulator/simulator.c
+  src/simulator/status.c
+  src/simulator/tasks.c
+  src/simulator/transfers.c
+  src/simulator/validation.c
 
-  runtime/src/admission_replay.c
-  runtime/src/allocation_scope.c
-  runtime/src/allocations.c
-  runtime/src/completion_tracker.c
-  runtime/src/event_pool.c
-  runtime/src/failure_state.c
-  runtime/src/fixed_layout.c
-  runtime/src/idle_wakeup.c
-  runtime/src/memory_pool.c
-  runtime/src/object_acquisition.c
-  runtime/src/object_actions.c
-  runtime/src/object_table.c
-  runtime/src/objects.c
-  runtime/src/plan.c
-  runtime/src/plan_object_bindings.c
-  runtime/src/profiler.c
-  runtime/src/ranges.c
-  runtime/src/retirement_queue.c
-  runtime/src/runtime.c
-  runtime/src/status.c
-  runtime/src/task_boundaries.c
-  runtime/src/task_table.c
-  runtime/src/telemetry.c
-  runtime/src/trace.c
-  runtime/src/transfer_lane.c
-  runtime/src/transfer_profiles.c
-  runtime/src/worker.c
+  src/planner/admission/candidate.c
+  src/planner/admission/lifetimes.c
+  src/planner/admission/operations.c
+  src/planner/admission/placement.c
+  src/planner/admission/topology.c
+  src/planner/context.c
+  src/planner/digest.c
+  src/planner/portfolio.c
+  src/planner/residency.c
+  src/planner/schedule.c
+  src/planner/selector.c
+  src/planner/status.c
 
-  planner/src/admission/candidate.c
-  planner/src/admission/lifetimes.c
-  planner/src/admission/operations.c
-  planner/src/admission/placement.c
-  planner/src/admission/topology.c
-  planner/src/context.c
-  planner/src/digest.c
-  planner/src/portfolio.c
-  planner/src/residency.c
-  planner/src/schedule.c
-  planner/src/selector.c
-  planner/src/status.c
+  src/runtime/failure_state.c
+  src/runtime/runtime.c
+  src/runtime/status.c
+  src/runtime/worker.c
+  src/runtime/memory/allocation_scope.c
+  src/runtime/memory/allocations.c
+  src/runtime/memory/memory_pool.c
+  src/runtime/memory/ranges.c
+  src/runtime/memory/retirement_queue.c
+  src/runtime/objects/object_acquisition.c
+  src/runtime/objects/object_actions.c
+  src/runtime/objects/object_table.c
+  src/runtime/objects/objects.c
+  src/runtime/plan/admission_replay.c
+  src/runtime/plan/fixed_layout.c
+  src/runtime/plan/plan.c
+  src/runtime/plan/plan_object_bindings.c
+  src/runtime/sync/completion_tracker.c
+  src/runtime/sync/event_pool.c
+  src/runtime/sync/idle_wakeup.c
+  src/runtime/tasks/task_boundaries.c
+  src/runtime/tasks/task_table.c
+  src/runtime/telemetry/profiler.c
+  src/runtime/telemetry/telemetry.c
+  src/runtime/telemetry/trace.c
+  src/runtime/transfers/transfer_lane.c
+  src/runtime/transfers/transfer_profiles.c
 )
 target_include_directories(
   shadowspill
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/simulator/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/planner/include>
     $<INSTALL_INTERFACE:shadowspill/include>
-  PRIVATE
-    simulator/src
-    runtime/src
-    planner/src
 )
 target_link_libraries(
   shadowspill
@@ -95,16 +88,9 @@ install(
   RUNTIME DESTINATION shadowspill/lib
 )
 install(
-  FILES
-    include/shadowspill/status.h
-    simulator/include/shadowspill/simulator.h
-    runtime/include/shadowspill/runtime.h
-    runtime/include/shadowspill/admission_replay.h
-    runtime/include/shadowspill/backend.h
-    runtime/include/shadowspill/profiler.h
-    planner/include/shadowspill/planner.h
-  DESTINATION shadowspill/include/shadowspill
+  DIRECTORY include/shadowspill
+  DESTINATION shadowspill/include
 )
 
-add_subdirectory(runtime/backends)
-add_subdirectory(pytorch_adapter)
+add_subdirectory(backends)
+add_subdirectory(adapter/pytorch)

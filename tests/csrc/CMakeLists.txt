@@ -40,15 +40,14 @@ add_test(NAME shadowspill_runtime_plan_canary COMMAND shadowspill_runtime_plan_c
 add_executable(
   shadowspill_memory_pool_canary
   runtime/memory_pool_canary.c
-  ${PROJECT_SOURCE_DIR}/csrc/runtime/src/memory_pool.c
-  ${PROJECT_SOURCE_DIR}/csrc/runtime/src/ranges.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/ranges.c
 )
 target_include_directories(
   shadowspill_memory_pool_canary
   PRIVATE
     ${PROJECT_SOURCE_DIR}/csrc/include
-    ${PROJECT_SOURCE_DIR}/csrc/runtime/src
-    ${PROJECT_SOURCE_DIR}/csrc/runtime/include
+    ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
 target_link_libraries(
   shadowspill_memory_pool_canary
@@ -74,7 +73,7 @@ add_executable(
 )
 target_include_directories(
   shadowspill_admission_replay_canary
-  PRIVATE ${PROJECT_SOURCE_DIR}/csrc/runtime/include
+  PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include
 )
 target_link_libraries(
   shadowspill_admission_replay_canary
@@ -105,20 +104,19 @@ foreach(runtime_test IN ITEMS blocking calibration completion failure telemetry 
 endforeach()
 target_include_directories(
   shadowspill_runtime_transitions_canary
-  PRIVATE ${PROJECT_SOURCE_DIR}/csrc/runtime/src
+  PRIVATE ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
 
 add_executable(
   shadowspill_transfer_lane_canary
   runtime/transfer_lane_canary.c
-  ${PROJECT_SOURCE_DIR}/csrc/runtime/src/transfer_lane.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/transfers/transfer_lane.c
 )
 target_include_directories(
   shadowspill_transfer_lane_canary
   PRIVATE
     ${PROJECT_SOURCE_DIR}/csrc/include
-    ${PROJECT_SOURCE_DIR}/csrc/runtime/src
-    ${PROJECT_SOURCE_DIR}/csrc/runtime/include
+    ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
 target_link_libraries(
   shadowspill_transfer_lane_canary

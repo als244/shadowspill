@@ -10,13 +10,13 @@ reference index.
 
 | Component | Header | Reference |
 |---|---|---|
-| Runtime | [`runtime.h`](../../csrc/runtime/include/shadowspill/runtime.h) | [Runtime API](runtime.md) |
-| Admission replay | [`admission_replay.h`](../../csrc/runtime/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) |
-| Backend | [`backend.h`](../../csrc/runtime/include/shadowspill/backend.h) | [Backends](backends.md) |
-| Profiler | [`profiler.h`](../../csrc/runtime/include/shadowspill/profiler.h) | [Backends](backends.md#profiler) |
-| Planner | [`planner.h`](../../csrc/planner/include/shadowspill/planner.h) | [Planner API](planner.md) |
-| Simulator | [`simulator.h`](../../csrc/simulator/include/shadowspill/simulator.h) | [Simulator API](simulator.md) |
-| PyTorch adapter | [`pytorch_adapter.h`](../../csrc/pytorch_adapter/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) |
+| Runtime | [`runtime.h`](../../csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) |
+| Admission replay | [`admission_replay.h`](../../csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) |
+| Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) |
+| Profiler | [`profiler.h`](../../csrc/include/shadowspill/profiler.h) | [Backends](backends.md#profiler) |
+| Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) |
+| Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) |
+| PyTorch adapter | [`pytorch_adapter.h`](../../csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) |
 
 ## ABI use
 

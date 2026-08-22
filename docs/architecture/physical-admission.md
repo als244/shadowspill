@@ -197,7 +197,7 @@ a task also acquires and retires leases without any action at all.
 Everything downstream keeps the distinction: `action_index` always identifies a
 memory action, a lease is created and retired by operations, and the reuse
 diagnostics report an operation's `purpose` beside the `action_kind` that
-triggered it. `csrc/planner/src/admission/operations.c` derives the operations;
+triggered it. `csrc/src/planner/admission/operations.c` derives the operations;
 `candidate.c` replays them.
 
 ### The script
@@ -542,8 +542,8 @@ supported contract.
 | `shadowspill.pytorch.planning.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
 | `shadowspill.pytorch.planning.admission.refinement` | Rerun PressureFit at monotonically lower logical capacity until a layout fits. |
 | `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to indexed runtime identities. |
-| `csrc/runtime/src/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
-| `csrc/runtime/src/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
+| `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
+| `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 
 Previous: [PressureFit](pressurefit.md). Next:
 [Planning orchestration](planning.md).

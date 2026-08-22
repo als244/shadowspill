@@ -64,9 +64,7 @@ def test_removed_compatibility_names_do_not_return() -> None:
 
 
 def test_worker_hot_loop_has_no_sleeping_wait_primitive() -> None:
-    worker = (C_ROOT / "runtime" / "src" / "worker.c").read_text(
-        encoding="utf-8"
-    )
+    worker = (C_ROOT / "src" / "runtime" / "worker.c").read_text(encoding="utf-8")
     forbidden = ("pthread_cond", "futex", "nanosleep", "sched_yield", "usleep")
     assert [token for token in forbidden if token in worker] == []
 

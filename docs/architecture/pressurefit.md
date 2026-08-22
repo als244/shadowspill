@@ -503,10 +503,10 @@ infeasibility was not established.
 | Layer | Responsibility |
 |---|---|
 | `shadowspill.planner.pressurefit()` | Input validation, context concurrency, winner materialization, and outer physical-capacity refinement. |
-| `csrc/planner/src/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
-| `csrc/planner/src/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/planner/src/portfolio.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |
-| `csrc/planner/src/admission.c` | Physical allocation and causal-reuse admission. |
+| `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
+| `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
+| `csrc/src/planner/portfolio.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |
+| `csrc/src/planner/admission.c` | Physical allocation and causal-reuse admission. |
 | `shadowspill.simulator` / `csrc/simulator` | Independent schedule replay and makespan authority. |
 
 The production path requires the compiled planner and simulator. Readable
