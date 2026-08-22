@@ -505,8 +505,6 @@ class CudaTaskProfiler:
         previous = self._requested_allocated_bytes()
         for _ in range(16):
             self._invoke_profile_task(executable, stream)
-            stream.synchronize()
-            self._library.shadowspill_pytorch_allocator_wait_idle()
             current = self._requested_allocated_bytes()
             high_water = max(high_water, current)
             if current == previous:
@@ -682,6 +680,12 @@ class CudaTaskProfiler:
         except BaseException:
             self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
+        # Drain before the next invocation. Retirement is asynchronous, so
+        # without this a warmup loop runs every iteration while the previous
+        # ones still hold their ranges - measured at 4,271 leases and 7.4 GiB
+        # outstanding, against a pool that has to fit the task being measured.
+        stream.synchronize()
+        self._library.shadowspill_pytorch_allocator_wait_idle()
 
     def _measure_task_once(
         self,
@@ -1087,7 +1091,6 @@ class CudaTaskProfiler:
         try:
             for _ in range(self._warmups):
                 self._invoke_profile_task(executable, stream)
-            stream.synchronize()
             self._diagnose_allocator_idle(context=f"compiled entrypoint {digest}")
         except ProfilingError:
             raise
