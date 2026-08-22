@@ -39,7 +39,7 @@ static int project_result(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
-    const ScriptState *state,
+    const OperationTally *tally,
     const ShadowSpillAdmissionReplayResult *result
 ) {
     const uint32_t tasks = context->simulation->task_count;
@@ -55,7 +55,7 @@ static int project_result(
     );
     workspace->initial_physical_bytes = 0U;
     workspace->projected_reuse_count = 0U;
-    for (uint64_t operation = 0U; operation < state->operation_count; ++operation) {
+    for (uint64_t operation = 0U; operation < tally->operation_count; ++operation) {
         const ShadowSpillAdmissionAnnotation annotation =
             workspace->annotations[operation];
         const int64_t delta = workspace->decisions[operation].physical_bytes_delta;
@@ -107,8 +107,8 @@ static int project_result(
     for (uint64_t index = 0U; index < result->dependency_result_count; ++index) {
         const ShadowSpillAdmissionReuseDependency dependency =
             workspace->dependencies[index];
-        if (dependency.predecessor_lease_id >= state->lease_count ||
-            dependency.consumer_operation_index >= state->operation_count) {
+        if (dependency.predecessor_lease_id >= tally->lease_count ||
+            dependency.consumer_operation_index >= tally->operation_count) {
             return -1;
         }
         const uint32_t predecessor_action =
@@ -175,19 +175,19 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
         return SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE;
     }
     const uint64_t started = monotonic_time_ns();
-    ScriptState script = {0};
-    if (shadowspill_admission_build_operations(context, schedule, workspace, &script) != 0) {
-        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+    OperationTally tally = {0};
+    if (shadowspill_admission_build_operations(context, schedule, workspace, &tally) != 0) {
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     const ShadowSpillAdmissionReplayProgram replay_program = {
         .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
         .capacity_bytes = context->admission->pool_capacity_bytes,
         .minimum_alignment = context->admission->minimum_alignment,
         .large_request_threshold_bytes = 0U,
-        .lease_count = script.lease_count,
-        .dependency_count = script.dependency_count,
+        .lease_count = tally.lease_count,
+        .dependency_count = tally.dependency_count,
         .operations = workspace->operations,
-        .operation_count = script.operation_count,
+        .operation_count = tally.operation_count,
     };
     *replay_result = (ShadowSpillAdmissionReplayResult){
         .decisions = workspace->decisions,
@@ -207,9 +207,9 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
         return status;
     }
     if (project_result(
-            context, schedule, workspace, &script, replay_result
+            context, schedule, workspace, &tally, replay_result
         ) != 0) {
-        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     shadowspill_bind_indexed_schedule(context->simulation, schedule, program);
     workspace->physical_device = context->simulation->devices[0];

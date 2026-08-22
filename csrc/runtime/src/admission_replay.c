@@ -382,7 +382,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
     if (operation->lease_id >= program->lease_count ||
         (operation_index != 0U && operation->sequence <
             program->operations[operation_index - 1U].sequence)) {
-        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     ShadowSpillMemoryLease *lease = &state->leases[operation->lease_id];
     const uint64_t allocated_before = state->pool.ranges.allocated;
@@ -395,7 +395,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
     switch ((ShadowSpillAdmissionReplayOperationKind)operation->kind) {
         case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE:
             if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
             }
             status = shadowspill_memory_pool_reserve_lease_locked(
                 &state->pool,
@@ -421,7 +421,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
             }
             if (operation->dependency_expected != 0U) {
                 state->expected_dependency_ids[operation->lease_id] =
@@ -438,7 +438,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
             }
             status = shadowspill_memory_pool_publish_retirement_dependency_locked(
                 lease, event
@@ -451,7 +451,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
         }
         case SHADOWSPILL_ADMISSION_REPLAY_RESERVE:
             if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
             }
             status = shadowspill_memory_pool_reserve_lease_locked(
                 &state->pool,
@@ -503,7 +503,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                     shadowspill_memory_pool_publish_retirement_dependency_locked(
                         predecessor_lease, event
                     ) != 0) {
-                    return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                    return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
                 }
                 state->expected_dependency_ids[predecessor] =
                     SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
@@ -537,7 +537,7 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
                 program, state, operation->dependency_id
             );
             if (event == NULL) {
-                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+                return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
             }
             atomic_store_explicit(
                 &event->backend_complete, 1U, memory_order_release
@@ -554,13 +554,13 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
             status = shadowspill_memory_pool_release_lease_locked(lease);
             break;
         default:
-            return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+            return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     if (status == 1) {
         return SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE;
     }
     if (status != 0) {
-        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT;
+        return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     const uint64_t allocated_after = state->pool.ranges.allocated;
     const int64_t delta = allocated_after >= allocated_before
@@ -783,8 +783,8 @@ const char *shadowspill_admission_replay_status_string(
             return "allocation failure";
         case SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE:
             return "infeasible";
-        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_SCRIPT:
-            return "invalid replay script";
+        case SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS:
+            return "invalid operation sequence";
     }
     return "unknown AdmissionReplay status";
 }

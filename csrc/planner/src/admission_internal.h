@@ -108,9 +108,11 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
     ShadowSpillAdmissionReplayResult *replay_result
 );
 
-/* Running totals while `operations.c` derives a schedule's operations.
- * `candidate.c` owns one so it can replay and project what was produced. */
-typedef struct ScriptState {
+/* A running count of everything one schedule has produced so far, and the
+ * workspace it is being written into. Each count is also the index the next
+ * entry takes, so the tally is both the total and the cursor. `operations.c`
+ * fills one; `candidate.c` owns it so it can replay and project the result. */
+typedef struct OperationTally {
     ShadowSpillCandidateAdmissionWorkspace *workspace;
     uint64_t operation_count;
     uint64_t lease_count;
@@ -120,7 +122,7 @@ typedef struct ScriptState {
      * than its busiest lane, so these bound the makespan without simulating. */
     uint64_t fetch_bytes;
     uint64_t evict_bytes;
-} ScriptState;
+} OperationTally;
 
 /* topology.c */
 int shadowspill_admission_counts(
@@ -143,7 +145,7 @@ int shadowspill_admission_build_operations(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
-    ScriptState *state
+    OperationTally *tally
 );
 
 

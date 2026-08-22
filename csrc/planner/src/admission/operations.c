@@ -14,12 +14,12 @@
 #include <stdint.h>
 #include <string.h>
 
-#define NO_LEASE UINT64_MAX
+#define NO_LEASE SHADOWSPILL_ADMISSION_NO_LEASE
 #define TASK_ALLOCATION_ALLOCATE 0U
 #define TASK_ALLOCATION_RELEASE 1U
 
 static int append_operation(
-    ScriptState *state,
+    OperationTally *tally,
     uint64_t lease_id,
     uint8_t kind,
     uint64_t bytes,
@@ -31,11 +31,11 @@ static int append_operation(
     uint8_t purpose,
     uint32_t allocation_offset
 ) {
-    if (state->operation_count >= state->workspace->operation_capacity) {
+    if (tally->operation_count >= tally->workspace->operation_capacity) {
         return -1;
     }
-    const uint64_t operation = state->operation_count++;
-    state->workspace->operations[operation] =
+    const uint64_t operation = tally->operation_count++;
+    tally->workspace->operations[operation] =
         (ShadowSpillAdmissionReplayOperation){
             .sequence = operation,
             .lease_id = lease_id,
@@ -45,15 +45,15 @@ static int append_operation(
             .kind = kind,
             .dependency_expected = dependency_expected,
         };
-    state->workspace->annotations[operation] =
+    tally->workspace->annotations[operation] =
         (ShadowSpillAdmissionAnnotation){.index = index, .boundary = boundary};
-    state->workspace->purposes[operation] = purpose;
-    state->workspace->allocation_offsets[operation] = allocation_offset;
+    tally->workspace->purposes[operation] = purpose;
+    tally->workspace->allocation_offsets[operation] = allocation_offset;
     return 0;
 }
 
 static int acquire_lease(
-    ScriptState *state,
+    OperationTally *tally,
     uint64_t bytes,
     uint64_t alignment,
     uint8_t boundary,
@@ -62,21 +62,21 @@ static int acquire_lease(
     uint8_t purpose,
     uint64_t *lease_id
 ) {
-    if (bytes == 0U || state->lease_count >= state->workspace->lease_capacity) {
+    if (bytes == 0U || tally->lease_count >= tally->workspace->lease_capacity) {
         return -1;
     }
-    const uint64_t lease = state->lease_count++;
-    state->workspace->lease_aliases[lease] = owner_alias;
-    state->workspace->lease_start_operations[lease] = state->operation_count;
-    state->workspace->lease_retire_operations[lease] =
+    const uint64_t lease = tally->lease_count++;
+    tally->workspace->lease_aliases[lease] = owner_alias;
+    tally->workspace->lease_start_operations[lease] = tally->operation_count;
+    tally->workspace->lease_retire_operations[lease] =
         SHADOWSPILL_ADMISSION_NO_OPERATION;
     if (append_operation(
-            state, lease, SHADOWSPILL_ADMISSION_REPLAY_RESERVE,
+            tally, lease, SHADOWSPILL_ADMISSION_REPLAY_RESERVE,
             bytes, alignment, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
             boundary, index, purpose, SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0 ||
         append_operation(
-            state, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED,
+            tally, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED,
             0U, 0U, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
             boundary, index, purpose, SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0) {
@@ -87,7 +87,7 @@ static int acquire_lease(
 }
 
 static int acquire_task_lease(
-    ScriptState *state,
+    OperationTally *tally,
     uint64_t bytes,
     uint64_t alignment,
     uint32_t task,
@@ -96,16 +96,16 @@ static int acquire_task_lease(
     uint32_t allocation_offset,
     uint64_t *lease_id
 ) {
-    if (bytes == 0U || state->lease_count >= state->workspace->lease_capacity) {
+    if (bytes == 0U || tally->lease_count >= tally->workspace->lease_capacity) {
         return -1;
     }
-    const uint64_t lease = state->lease_count++;
-    state->workspace->lease_aliases[lease] = owner_alias;
-    state->workspace->lease_start_operations[lease] = state->operation_count;
-    state->workspace->lease_retire_operations[lease] =
+    const uint64_t lease = tally->lease_count++;
+    tally->workspace->lease_aliases[lease] = owner_alias;
+    tally->workspace->lease_start_operations[lease] = tally->operation_count;
+    tally->workspace->lease_retire_operations[lease] =
         SHADOWSPILL_ADMISSION_NO_OPERATION;
     if (append_operation(
-            state, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE,
+            tally, lease, SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE,
             bytes, alignment, SHADOWSPILL_ADMISSION_REPLAY_NO_ID, 0U,
             SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START, task, purpose,
             allocation_offset
@@ -117,20 +117,20 @@ static int acquire_task_lease(
 }
 
 static uint64_t task_completion_dependency(
-    ScriptState *state,
+    OperationTally *tally,
     uint64_t *dependency
 ) {
     if (*dependency == SHADOWSPILL_ADMISSION_REPLAY_NO_ID) {
-        if (state->dependency_count >= state->workspace->dependency_capacity) {
+        if (tally->dependency_count >= tally->workspace->dependency_capacity) {
             return SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
         }
-        *dependency = state->dependency_count++;
+        *dependency = tally->dependency_count++;
     }
     return *dependency;
 }
 
 static int begin_retirement(
-    ScriptState *state,
+    OperationTally *tally,
     uint64_t lease_id,
     uint64_t dependency_id,
     uint8_t begin_boundary,
@@ -141,21 +141,21 @@ static int begin_retirement(
     uint32_t predecessor_action,
     uint8_t purpose
 ) {
-    if (state->workspace->lease_retire_operations[lease_id] ==
+    if (tally->workspace->lease_retire_operations[lease_id] ==
         SHADOWSPILL_ADMISSION_NO_OPERATION) {
-        state->workspace->lease_retire_operations[lease_id] =
-            state->operation_count;
+        tally->workspace->lease_retire_operations[lease_id] =
+            tally->operation_count;
     }
-    if (state->pending_count >= state->workspace->lease_capacity ||
+    if (tally->pending_count >= tally->workspace->lease_capacity ||
         append_operation(
-            state, lease_id,
+            tally, lease_id,
             SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT,
             0U, 0U, dependency_id, 0U, begin_boundary, begin_index, purpose,
             SHADOWSPILL_PLANNER_NO_INDEX
         ) != 0) {
         return -1;
     }
-    state->workspace->pending_retirements[state->pending_count++] =
+    tally->workspace->pending_retirements[tally->pending_count++] =
         (ShadowSpillPendingRetirement){
             .lease_id = lease_id,
             .dependency_id = dependency_id,
@@ -168,8 +168,8 @@ static int begin_retirement(
                     ? SHADOWSPILL_ADMISSION_PURPOSE_TERMINAL_COMPLETION
                     : purpose,
         };
-    state->workspace->predecessor_tasks[lease_id] = predecessor_task;
-    state->workspace->predecessor_actions[lease_id] = predecessor_action;
+    tally->workspace->predecessor_tasks[lease_id] = predecessor_task;
+    tally->workspace->predecessor_actions[lease_id] = predecessor_action;
     return 0;
 }
 
@@ -218,12 +218,12 @@ int shadowspill_admission_build_operations(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
-    ScriptState *state
+    OperationTally *tally
 ) {
     const ShadowSpillSimulationProgram *program = context->simulation;
     const ShadowSpillAdmissionTopology *topology = context->admission;
-    memset(state, 0, sizeof(*state));
-    state->workspace = workspace;
+    memset(tally, 0, sizeof(*tally));
+    tally->workspace = workspace;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         workspace->active_alias_leases[alias] = NO_LEASE;
         workspace->new_alias_leases[alias] = NO_LEASE;
@@ -250,7 +250,7 @@ int shadowspill_admission_build_operations(
         }
         if (workspace->active_alias_leases[alias] != NO_LEASE ||
             acquire_lease(
-                state, program->alias_size_bytes[alias],
+                tally, program->alias_size_bytes[alias],
                 topology->minimum_alignment,
                 SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL, 0U, alias,
                 SHADOWSPILL_ADMISSION_PURPOSE_INITIAL_OBJECT,
@@ -293,7 +293,7 @@ int shadowspill_admission_build_operations(
                 }
                 if (workspace->task_allocation_leases[slot] == NO_LEASE) {
                     if (acquire_task_lease(
-                            state,
+                            tally,
                             topology->task_allocation_bytes[offset],
                             topology->minimum_alignment,
                             task,
@@ -336,13 +336,13 @@ int shadowspill_admission_build_operations(
                 continue;
             }
             const uint64_t dependency = task_completion_dependency(
-                state, &task_dependency
+                tally, &task_dependency
             );
             const uint64_t lease = workspace->task_allocation_leases[slot];
             if (lease == NO_LEASE ||
                 dependency == SHADOWSPILL_ADMISSION_REPLAY_NO_ID ||
                 begin_retirement(
-                    state,
+                    tally,
                     lease,
                     dependency,
                     SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION,
@@ -383,13 +383,13 @@ int shadowspill_admission_build_operations(
                 continue;
             }
             const uint64_t dependency = task_completion_dependency(
-                state, &task_dependency
+                tally, &task_dependency
             );
             if (workspace->active_alias_leases[alias] == NO_LEASE ||
                 workspace->new_alias_leases[alias] == NO_LEASE ||
                 dependency == SHADOWSPILL_ADMISSION_REPLAY_NO_ID ||
                 begin_retirement(
-                    state,
+                    tally,
                     workspace->active_alias_leases[alias],
                     dependency,
                     SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION,
@@ -438,12 +438,12 @@ int shadowspill_admission_build_operations(
                 }
                 const uint64_t lease = workspace->active_alias_leases[alias];
                 const uint64_t dependency = task_completion_dependency(
-                    state, &task_dependency
+                    tally, &task_dependency
                 );
                 if (lease == NO_LEASE ||
                     dependency == SHADOWSPILL_ADMISSION_REPLAY_NO_ID ||
                     begin_retirement(
-                        state,
+                        tally,
                         lease,
                         dependency,
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER,
@@ -463,12 +463,12 @@ int shadowspill_admission_build_operations(
                     continue;
                 }
                 if (lease == NO_LEASE ||
-                    state->dependency_count >= workspace->dependency_capacity) {
+                    tally->dependency_count >= workspace->dependency_capacity) {
                     return -1;
                 }
-                const uint64_t dependency = state->dependency_count++;
+                const uint64_t dependency = tally->dependency_count++;
                 if (begin_retirement(
-                        state,
+                        tally,
                         lease,
                         dependency,
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER,
@@ -481,7 +481,7 @@ int shadowspill_admission_build_operations(
                     ) != 0) {
                     return -1;
                 }
-                state->evict_bytes += program->alias_size_bytes[alias];
+                tally->evict_bytes += program->alias_size_bytes[alias];
                 workspace->active_alias_leases[alias] = NO_LEASE;
             } else if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
                 if (program->alias_size_bytes[alias] == 0U) {
@@ -489,7 +489,7 @@ int shadowspill_admission_build_operations(
                 }
                 if (workspace->active_alias_leases[alias] != NO_LEASE ||
                     acquire_lease(
-                        state, program->alias_size_bytes[alias],
+                        tally, program->alias_size_bytes[alias],
                         topology->minimum_alignment,
                         SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER, action,
                         alias,
@@ -498,7 +498,7 @@ int shadowspill_admission_build_operations(
                     ) != 0) {
                     return -1;
                 }
-                state->fetch_bytes += program->alias_size_bytes[alias];
+                tally->fetch_bytes += program->alias_size_bytes[alias];
             } else {
                 return -1;
             }
@@ -513,11 +513,11 @@ int shadowspill_admission_build_operations(
     if (action_cursor != schedule->action_count) {
         return -1;
     }
-    for (uint64_t index = 0U; index < state->pending_count; ++index) {
+    for (uint64_t index = 0U; index < tally->pending_count; ++index) {
         const ShadowSpillPendingRetirement pending =
             workspace->pending_retirements[index];
         if (append_operation(
-                state, pending.lease_id,
+                tally, pending.lease_id,
                 SHADOWSPILL_ADMISSION_REPLAY_COMPLETE_RETIREMENT,
                 0U, 0U, pending.dependency_id, 0U,
                 pending.completion_boundary,
@@ -543,7 +543,7 @@ int shadowspill_admission_build_operations(
 /* ---------------------------------------------------------------- public */
 
 /* A context carrying only what operation building reads: the resolved task
- * set and the physical ownership facts. Residency and seed state belong to
+ * set and the physical ownership facts. Residency and seed tally belong to
  * candidate search, not here. */
 static ShadowSpillPressureFitContext operations_context(
     const ShadowSpillSimulationProgram *simulation,
@@ -613,14 +613,14 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
         return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
     }
 
-    ScriptState state;
+    OperationTally tally;
     if (shadowspill_admission_build_operations(
-            &context, schedule, &workspace, &state) != 0) {
+            &context, schedule, &workspace, &tally) != 0) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
         return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
     }
 
-    for (uint64_t index = 0U; index < state.operation_count; ++index) {
+    for (uint64_t index = 0U; index < tally.operation_count; ++index) {
         const ShadowSpillAdmissionReplayOperation operation =
             workspace.operations[index];
         result->lease_ids[index] = operation.lease_id;
@@ -633,16 +633,16 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
         result->indices[index] = workspace.annotations[index].index;
         result->allocation_offsets[index] = workspace.allocation_offsets[index];
     }
-    for (uint64_t lease = 0U; lease < state.lease_count; ++lease) {
+    for (uint64_t lease = 0U; lease < tally.lease_count; ++lease) {
         result->lease_aliases[lease] = workspace.lease_aliases[lease];
         result->lease_starts[lease] = workspace.lease_start_operations[lease];
         result->lease_retires[lease] = workspace.lease_retire_operations[lease];
     }
-    result->operation_count = state.operation_count;
-    result->lease_count = state.lease_count;
-    result->dependency_count = state.dependency_count;
-    result->fetch_bytes = state.fetch_bytes;
-    result->evict_bytes = state.evict_bytes;
+    result->operation_count = tally.operation_count;
+    result->lease_count = tally.lease_count;
+    result->dependency_count = tally.dependency_count;
+    result->fetch_bytes = tally.fetch_bytes;
+    result->evict_bytes = tally.evict_bytes;
     shadowspill_candidate_admission_workspace_destroy(&workspace);
     return SHADOWSPILL_PLANNER_OK;
 }
