@@ -2,7 +2,7 @@
 
 The neutral runtime depends on opaque pool, route, stream, event, and profiler
 operations. Provider implementations live under
-`csrc/runtime/backends/<provider>/`; they do not change object or schedule
+`csrc/backends/<provider>/`; they do not change object or schedule
 policy.
 
 ## Memory pools

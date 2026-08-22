@@ -38,28 +38,19 @@ _PUBLIC_PYTHON_MODULES = (
     _PYTORCH_MODULE,
 )
 
+_PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
+
 _PUBLIC_C_REFERENCES = {
-    ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "runtime.h": (
-        DOCS / "c" / "runtime.md"
-    ),
-    ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "admission_replay.h": DOCS
-    / "c"
-    / "runtime.md",
-    ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "backend.h": (
-        DOCS / "c" / "backends.md"
-    ),
-    ROOT / "csrc" / "runtime" / "include" / "shadowspill" / "profiler.h": (
-        DOCS / "c" / "backends.md"
-    ),
-    ROOT / "csrc" / "planner" / "include" / "shadowspill" / "planner.h": (
-        DOCS / "c" / "planner.md"
-    ),
-    ROOT / "csrc" / "simulator" / "include" / "shadowspill" / "simulator.h": (
-        DOCS / "c" / "simulator.md"
-    ),
+    _PUBLIC_HEADERS / "runtime.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "admission_replay.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "backend.h": DOCS / "c" / "backends.md",
+    _PUBLIC_HEADERS / "profiler.h": DOCS / "c" / "backends.md",
+    _PUBLIC_HEADERS / "planner.h": DOCS / "c" / "planner.md",
+    _PUBLIC_HEADERS / "simulator.h": DOCS / "c" / "simulator.md",
     ROOT
     / "csrc"
-    / "pytorch_adapter"
+    / "adapter"
+    / "pytorch"
     / "include"
     / "shadowspill"
     / "pytorch_adapter.h": DOCS / "c" / "pytorch-adapter.md",

@@ -79,7 +79,7 @@ tracing, forward-only planning, and complete state lifecycle handling.
 | Path | Purpose |
 |---|---|
 | `src/shadowspill/` | Installed Python package and PyTorch frontend |
-| `csrc/` | C planner, simulator, runtime, backends, and PyTorch adapter |
+| `csrc/` | The C library — planner, simulator, runtime — plus backends and the PyTorch adapter |
 | `tests/` | Tests mirroring Python, C, integration, and tooling boundaries |
 | `workloads/` | Model and data clients used by benchmarks and qualification |
 | `benchmarking/` | Reusable Program collection and planning evaluation |

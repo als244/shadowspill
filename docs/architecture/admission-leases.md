@@ -108,7 +108,7 @@ memory *actions* — see [that distinction](physical-admission.md#two-vocabulari
 one action implies about three operations, and a task acquires and retires
 leases with no action at all.
 
-`csrc/planner/src/admission/operations.c` derives the sequence in causal
+`csrc/src/planner/admission/operations.c` derives the sequence in causal
 order. Each operation records where it sits and why the lease exists.
 
 ### Where an operation sits

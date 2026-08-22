@@ -7,7 +7,7 @@ shadowspill/
 ├── src/
 │   ├── shadowspill/       installed Python package
 │   └── tools/             reusable source-tree diagnostics and qualification tools
-├── csrc/                  compiled component implementations and public C headers
+├── csrc/                  the compiled library, its backends, and public C headers
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── benchmarking/          reusable Program datasets and planning evaluation
@@ -59,24 +59,28 @@ modules are avoided.
 
 ```text
 csrc/
-├── simulator/
-│   ├── include/shadowspill/simulator.h
-│   └── src/
-├── runtime/
-│   ├── include/shadowspill/{runtime,admission_replay,backend,profiler}.h
-│   ├── src/internal/
-│   └── backends/{mock,<provider>}/
-├── planner/
-│   ├── include/shadowspill/planner.h
-│   └── src/
-└── pytorch_adapter/
-    ├── include/shadowspill/pytorch_adapter.h
-    └── allocator/storage/profiler bridge sources
+├── include/shadowspill/   public headers: shadowspill.h, status.h, simulator.h,
+│                          planner.h, runtime.h, admission_replay.h, backend.h,
+│                          profiler.h
+├── src/
+│   ├── common/            shared by all three components
+│   ├── simulator/
+│   ├── planner/           and planner/admission/
+│   └── runtime/           and memory/ objects/ tasks/ transfers/ sync/ plan/
+│                          telemetry/, each with its own internal.h
+├── backends/{mock,<provider>}/
+└── adapter/pytorch/       include/shadowspill/pytorch_adapter.h and the
+                           allocator/storage/profiler bridge sources
 ```
 
-Each component owns one `CMakeLists.txt`, public include directory, and private
-implementation. The repository build file only orders component dependencies.
-Provider dependencies stay inside backend or framework-adapter boundaries.
+Everything under `src/` builds into one library. Backends and the PyTorch
+adapter are separate targets with their own `CMakeLists.txt`, because each is
+compiled elsewhere against a toolchain the rest of the tree must not require.
+Provider dependencies stay inside those boundaries.
+
+A private header named `internal.h` belongs to the directory holding it and is
+included by path from anywhere else, so `"internal.h"` always means this
+directory's.
 
 ## Tests
 
