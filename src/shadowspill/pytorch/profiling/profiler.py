@@ -98,7 +98,7 @@ class CudaTaskProfiler:
         device_ordinal: int,
         warmup_iterations: int = 3,
         sample_iterations: int = 5,
-        telemetry_capacity: int = 65_536,
+        telemetry_capacity: int = 1_048_576,
         allocation_probe_seeds: int = 1,
         allocation_probe_repetitions: int = 2,
     ) -> None:
@@ -1110,6 +1110,35 @@ class CudaTaskProfiler:
         return self._executables.with_arguments(executable)
 
     def _measure_workspace(
+        self, executable: Callable[[], object], stream: torch.cuda.Stream
+    ) -> Any:
+        """Measure one task, refusing a measurement the record cannot describe.
+
+        The allocation contract is derived from the recorded events, so a
+        truncated record does not describe the task that ran - it describes a
+        prefix of it. Re-running the task is not a way out: its scope has
+        closed and its outputs have been released. So the only honest
+        outcomes are a complete record or an error naming the limit.
+        """
+
+        profile = self._measure_workspace_once(executable, stream)
+        if self._allocation_events_overflowed():
+            raise CaptureError(
+                "allocation telemetry overflowed at "
+                f"{self._telemetry_capacity} events, so the recorded "
+                "allocations describe only part of this task; raise "
+                "telemetry_capacity to profile it"
+            )
+        return profile
+
+    def _allocation_events_overflowed(self) -> bool:
+        """Whether the last measurement filled the event record."""
+
+        return bool(
+            self._allocator_statistics().runtime.allocation_event_overflow
+        )
+
+    def _measure_workspace_once(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
     ) -> Any:
         task_id = self._next_scope_id
