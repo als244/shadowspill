@@ -47,6 +47,57 @@ wasteful — template and topology compilation cost tens of milliseconds against
 calls of a few milliseconds — but the reason to hold it once is that it says
 plainly what a repair can and cannot change.
 
+### How the setup is built
+
+Two compilations, in order. Figures below are one llama3 step, 102 tasks and
+1,978 aliases, for scale.
+
+**1. Resolve the task set.** `selected_tasks(selections)` picks one variant per
+alternative, yielding the concrete tasks. Alternatives are *not* fewer or more
+tasks — the count is the same across resolved programs — but different tasks,
+with different runtimes and workspace.
+
+**2. Compile the simulation template** from the resolved tasks and the
+simulation config. It fixes the index space everything below uses:
+
+| field | is |
+|---|---|
+| `task_ids`, `alias_ids` | index to identifier, in the order the compiled side uses |
+| `task_index`, `alias_index` | the inverse, for encoding a schedule |
+| `program` | the compiled program the simulator and planner read |
+| `device_ids`, `task_resources` | device identity and each task's resource lane |
+| `shared_device_bytes`, `shared_spill_bytes` | memory held by runtime-global objects, outside this step's budget |
+
+Every index in an operation — a task, an alias, an action — is an index into
+this space. Identifiers exist only here.
+
+**3. Compile the admission topology** against that template, flattening the
+per-task physical facts into arrays the walk indexes directly:
+
+| field | is |
+|---|---|
+| `pool_capacity_bytes`, `object_capacity_bytes` | the execution pool, and the occupancy limit presented to the planner |
+| `minimum_alignment` | the alignment every offset must satisfy (256 B here) |
+| `task_workspace_offsets`, `task_workspace_extent_bytes` | each task's simultaneously-live anonymous allocations |
+| `fresh_output_offsets`, `fresh_output_aliases` | the aliases each task produces |
+| `replacement_offsets`, `replacement_aliases` | the aliases each task mutates in place |
+| `handoff_offsets`, `handoff_source_aliases`, `handoff_destination_aliases` | zero-copy ownership transfers |
+| `task_allocation_offsets`, `task_allocation_slots`, `task_allocation_bytes`, `task_allocation_aliases`, `task_allocation_kinds` | each task's allocation steps |
+| `allocation_slot_count` | how many distinct leases the allocation steps need |
+
+Every `*_offsets` array holds `task_count + 1` entries: task *t*'s rows are
+`[offsets[t], offsets[t + 1])` of the flattened arrays. On the example step
+`task_allocation_offsets` runs 0, 2, 35, 54, … to 3,401 — so 3,401 allocation
+steps across 102 tasks, needing **1,506 slots**. The gap between those two
+numbers is slot reuse, and it is why a lease is tied to its allocation step
+through the slot rather than through the operation stream.
+
+**Slots are assigned once, here, not during the walk.** Compiling the
+allocation rows walks each task's steps in order: a step that allocates
+without reusing takes the next free slot; a step that reuses an earlier
+ordinal takes that ordinal's slot; a release step takes the slot of the
+ordinal it releases. The walk then only has to fill slots with leases.
+
 ## The walk
 
 Executing a schedule implies a sequence of **pool operations**: `RESERVE`,
