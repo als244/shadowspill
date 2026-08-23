@@ -189,7 +189,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
 def test_profile_identity_ignores_control_contents(
     tmp_path: Path,
 ) -> None:
-    """One profile per (compiled contract, declared metadata).
+    """One profile per (indexed contract, declared metadata).
 
     Input values are never inspected: artifacts sharing a contract and
     metadata share one representative measurement even when their

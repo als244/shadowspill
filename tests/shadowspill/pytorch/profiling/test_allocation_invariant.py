@@ -8,7 +8,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
-    derive_core_allocation_path,
+    derive_invariant_allocation_path,
 )
 
 
@@ -34,9 +34,9 @@ def _contract(*sizes: int) -> TaskAllocationContract:
     return TaskAllocationContract.capture(events)
 
 
-def test_identical_probe_matrix_keeps_exact_core() -> None:
+def test_identical_probe_matrix_keeps_the_exact_invariant() -> None:
     reference = _contract(64, 128)
-    derived = derive_core_allocation_path(
+    derived = derive_invariant_allocation_path(
         reference,
         (
             AllocationPathProbe(0, 0, reference),
@@ -49,10 +49,10 @@ def test_identical_probe_matrix_keeps_exact_core() -> None:
     assert all(item.scratch_allocation_count == 0 for item in derived.observations)
 
 
-def test_one_time_insertion_is_scratch_around_warmed_core() -> None:
+def test_one_time_insertion_is_scratch_around_the_warmed_invariant() -> None:
     reference = _contract(64, 128)
     cold = _contract(24, 64, 128)
-    derived = derive_core_allocation_path(
+    derived = derive_invariant_allocation_path(
         reference,
         (
             AllocationPathProbe(0, 0, cold),
@@ -72,7 +72,7 @@ def test_same_geometry_insertion_is_rejected_as_ambiguous() -> None:
     ambiguous = _contract(64, 64)
 
     with pytest.raises(AmbiguousAllocationPathError, match="multiple minimum-edit"):
-        derive_core_allocation_path(
+        derive_invariant_allocation_path(
             reference,
             (
                 AllocationPathProbe(0, 0, ambiguous),

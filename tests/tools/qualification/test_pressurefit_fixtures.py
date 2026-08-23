@@ -16,7 +16,7 @@ from tests.shadowspill.planner._examples import (
     exact_capacity_program,
     exact_capacity_residency,
 )
-from tests.shadowspill.planner.test_compiled_admission import _causal_facts
+from tests.shadowspill.planner.test_admission import _causal_facts
 from tests.shadowspill.simulator.test_admission_accounting import (
     _config as causal_config,
 )

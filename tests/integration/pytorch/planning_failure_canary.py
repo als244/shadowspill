@@ -272,7 +272,7 @@ def main() -> int:
                 "compiler_manifest" in note or "structural_profiling" in note
                 for note in error.__notes__
             ):
-                raise AssertionError("compiled-task failure omitted its phase")
+                raise AssertionError("indexed-task failure omitted its phase")
             if not any("structural contract" in note for note in error.__notes__) and (
                 not isinstance(error, ProfilingError)
                 or error.structural_contract is None

@@ -1,4 +1,4 @@
-"""Fresh-process compiled task profiling through the production allocator."""
+"""Fresh-process indexed task profiling through the production allocator."""
 
 from __future__ import annotations
 

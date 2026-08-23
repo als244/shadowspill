@@ -401,7 +401,7 @@ def compare_allocation_path(
     repetition: int,
     operation_alignment: Sequence[tuple[int, int]] | None = None,
 ) -> TaskAllocationPathObservation:
-    """Reconcile one observed path against an optional fixed-core contract."""
+    """Reconcile one observed path against an optional fixed-invariant contract."""
 
     if operation_alignment is not None:
         return _compare_aligned_allocation_path(
@@ -412,8 +412,8 @@ def compare_allocation_path(
             operation_alignment=operation_alignment,
         )
 
-    core_states = [0] * _allocation_count(reference.steps)
-    actual_to_core: dict[int, int | None] = {}
+    invariant_states = [0] * _allocation_count(reference.steps)
+    actual_to_invariant: dict[int, int | None] = {}
     scratch_live: dict[int, tuple[int, int]] = {}
     scratch_live_requested = 0
     scratch_live_charged = 0
@@ -422,32 +422,34 @@ def compare_allocation_path(
     scratch_maximum_requested = 0
     scratch_maximum_charged = 0
     scratch_count = 0
-    core_index = 0
+    invariant_index = 0
 
     for actual in observed.steps:
         if actual.operation is TaskAllocationOperation.ALLOCATE:
-            match, skipped = _find_core_allocation(
+            match, skipped = _find_invariant_allocation(
                 reference.steps,
-                core_states,
-                start=core_index,
+                invariant_states,
+                start=invariant_index,
                 actual=actual,
             )
             if match is not None:
                 for ordinal in skipped:
-                    core_states[ordinal] = 2
-                core_states[match.allocation_ordinal] = 1
-                actual_to_core[actual.allocation_ordinal] = match.allocation_ordinal
-                core_index = match.operation_index + 1
+                    invariant_states[ordinal] = 2
+                invariant_states[match.allocation_ordinal] = 1
+                actual_to_invariant[actual.allocation_ordinal] = (
+                    match.allocation_ordinal
+                )
+                invariant_index = match.operation_index + 1
                 continue
             if actual.required:
                 raise ValueError(
-                    "framework-visible allocation is absent from the fixed core: "
+                    "framework-visible allocation is absent from the invariant: "
                     f"probe={probe_index}, repetition={repetition}, "
                     f"operation={actual.operation_index}, "
                     f"requested={actual.requested_bytes}, "
                     f"charged={actual.charged_bytes}"
                 )
-            actual_to_core[actual.allocation_ordinal] = None
+            actual_to_invariant[actual.allocation_ordinal] = None
             scratch_live[actual.allocation_ordinal] = (
                 actual.requested_bytes,
                 actual.charged_bytes,
@@ -463,45 +465,49 @@ def compare_allocation_path(
             scratch_count += 1
             continue
 
-        mapped = actual_to_core.get(actual.allocation_ordinal)
-        if actual.allocation_ordinal not in actual_to_core:
+        mapped = actual_to_invariant.get(actual.allocation_ordinal)
+        if actual.allocation_ordinal not in actual_to_invariant:
             raise ValueError("observed allocation path frees an unknown allocation")
         if mapped is None:
             requested, charged = scratch_live.pop(actual.allocation_ordinal)
             scratch_live_requested -= requested
             scratch_live_charged -= charged
             continue
-        core_index = _skip_omitted_core_frees(reference.steps, core_states, core_index)
-        if core_index >= len(reference.steps):
-            raise ValueError("observed allocation path has an extra core free")
-        expected = reference.steps[core_index]
+        invariant_index = _skip_omitted_invariant_frees(
+            reference.steps, invariant_states, invariant_index
+        )
+        if invariant_index >= len(reference.steps):
+            raise ValueError("observed allocation path has an extra invariant free")
+        expected = reference.steps[invariant_index]
         if (
             expected.operation is not TaskAllocationOperation.FREE
             or expected.allocation_ordinal != mapped
             or not _same_geometry(expected, actual)
         ):
             raise ValueError(
-                "observed allocation path changes fixed-core free ordering: "
+                "observed allocation path changes fixed-invariant free ordering: "
                 f"probe={probe_index}, repetition={repetition}, "
                 f"operation={actual.operation_index}, "
-                f"mapped_core_ordinal={mapped}, "
-                f"expected_core_operation={expected.operation_index}, "
-                f"expected_core_ordinal={expected.allocation_ordinal}, "
+                f"mapped_invariant_ordinal={mapped}, "
+                f"expected_invariant_operation={expected.operation_index}, "
+                f"expected_invariant_ordinal={expected.allocation_ordinal}, "
                 f"actual_ordinal={actual.allocation_ordinal}, "
                 f"expected_geometry=({expected.requested_bytes},"
                 f"{expected.charged_bytes},{expected.alignment_bytes}), "
                 f"actual_geometry=({actual.requested_bytes},"
                 f"{actual.charged_bytes},{actual.alignment_bytes})"
             )
-        core_index += 1
+        invariant_index += 1
 
-    core_index = _finish_optional_core(reference.steps, core_states, core_index)
-    if core_index != len(reference.steps):
-        expected = reference.steps[core_index]
+    invariant_index = _finish_optional_invariant(
+        reference.steps, invariant_states, invariant_index
+    )
+    if invariant_index != len(reference.steps):
+        expected = reference.steps[invariant_index]
         raise ValueError(
             "observed allocation path omits required fixed-core behavior: "
             f"probe={probe_index}, repetition={repetition}, "
-            f"core_operation={expected.operation_index}"
+            f"invariant_operation={expected.operation_index}"
         )
     return TaskAllocationPathObservation(
         probe_index=probe_index,
@@ -572,7 +578,7 @@ def _compare_aligned_allocation_path(
                 raise ValueError(
                     "observed allocation path omits required fixed-core behavior: "
                     f"probe={probe_index}, repetition={repetition}, "
-                    f"core_operation={allocation_index}"
+                    f"invariant_operation={allocation_index}"
                 )
             if matched_free is not None:
                 raise ValueError(
@@ -589,7 +595,7 @@ def _compare_aligned_allocation_path(
             raise ValueError(
                 "observed allocation path changes fixed-core lifetime ordering: "
                 f"probe={probe_index}, repetition={repetition}, "
-                f"core_ordinal={ordinal}, observed_ordinal="
+                f"invariant_ordinal={ordinal}, observed_ordinal="
                 f"{actual_allocation.allocation_ordinal}"
             )
 
@@ -608,7 +614,7 @@ def _compare_aligned_allocation_path(
             continue
         if allocation.required:
             raise ValueError(
-                "framework-visible allocation is absent from the fixed core: "
+                "framework-visible allocation is absent from the invariant: "
                 f"probe={probe_index}, repetition={repetition}, "
                 f"operation={allocation.operation_index}, "
                 f"requested={allocation.requested_bytes}, "
@@ -704,7 +710,7 @@ def _same_geometry(
     )
 
 
-def _find_core_allocation(
+def _find_invariant_allocation(
     steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     *,
@@ -733,7 +739,7 @@ def _find_core_allocation(
     return None, ()
 
 
-def _skip_omitted_core_frees(
+def _skip_omitted_invariant_frees(
     steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     start: int,
@@ -751,14 +757,14 @@ def _skip_omitted_core_frees(
     return index
 
 
-def _finish_optional_core(
+def _finish_optional_invariant(
     steps: Sequence[TaskAllocationContractStep],
     states: list[int],
     start: int,
 ) -> int:
     index = start
     while index < len(steps):
-        index = _skip_omitted_core_frees(steps, states, index)
+        index = _skip_omitted_invariant_frees(steps, states, index)
         if index >= len(steps):
             return index
         step = steps[index]

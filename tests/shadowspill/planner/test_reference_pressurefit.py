@@ -15,13 +15,13 @@ def test_compiled_pressurefit_matches_readable_reference() -> None:
     config = training_chain_config(256)
     initial = training_chain_initial(3)
 
-    compiled = pressurefit(program, initial_residency=initial, config=config)
+    indexed = pressurefit(program, initial_residency=initial, config=config)
     reference = pressurefit_reference(
         program,
         initial_residency=initial,
         config=config,
     )
 
-    assert compiled.schedule == reference.schedule
-    assert compiled.selections == reference.selections
-    assert compiled.simulation == reference.simulation
+    assert indexed.schedule == reference.schedule
+    assert indexed.selections == reference.selections
+    assert indexed.simulation == reference.simulation

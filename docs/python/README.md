@@ -23,7 +23,7 @@ The directory is intentionally split between task-oriented guides and the
 - [Frontend and lifecycle](api/frontend.md)
 - [Reusable planning artifacts](api/artifacts.md)
 - [Planning and step diagnostics](api/diagnostics.md)
-- [Framework-neutral Python APIs](api/core.md)
+- [Framework-neutral Python APIs](api/neutral.md)
 
 The supported user entrypoints are imported from `shadowspill.memory` and
 `shadowspill.pytorch`. The lower-level modules `shadowspill.ir`,

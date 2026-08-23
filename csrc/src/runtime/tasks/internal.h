@@ -106,7 +106,7 @@ uint64_t shadowspill_current_task_allocation_ordinal(
     ShadowSpillRuntime *runtime
 );
 
-uint64_t shadowspill_current_task_core_allocation_ordinal(
+uint64_t shadowspill_current_task_invariant_allocation_ordinal(
     ShadowSpillRuntime *runtime
 );
 

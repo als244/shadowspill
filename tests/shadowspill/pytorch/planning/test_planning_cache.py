@@ -113,10 +113,10 @@ def test_force_fresh_publishes_a_write_enabled_isolated_pytorch_cache(
         assert not cache.inductor.exists()
         marker = active / "fxgraph" / "test" / "artifact"
         marker.parent.mkdir(parents=True)
-        marker.write_text("compiled")
+        marker.write_text("indexed")
 
     assert (cache.inductor / "fxgraph" / "test" / "artifact").read_text() == (
-        "compiled"
+        "indexed"
     )
     assert os.environ.get("TORCHINDUCTOR_CACHE_DIR") == previous
     assert any(
@@ -132,7 +132,7 @@ def test_inductor_cache_publish_crosses_filesystems_atomically(
     destination = tmp_path / "published"
     artifact = source / "triton" / "kernel"
     artifact.parent.mkdir(parents=True)
-    artifact.write_text("compiled")
+    artifact.write_text("indexed")
     replace = os.replace
     calls = 0
 
@@ -146,5 +146,5 @@ def test_inductor_cache_publish_crosses_filesystems_atomically(
     monkeypatch.setattr(cache_module.os, "replace", cross_device_once)
     cache_module._publish_cache_tree(source, destination, overwrite=False)
 
-    assert (destination / "triton" / "kernel").read_text() == "compiled"
+    assert (destination / "triton" / "kernel").read_text() == "indexed"
     assert source.is_dir()
