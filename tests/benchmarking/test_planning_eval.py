@@ -23,6 +23,7 @@ from benchmarking.planning_eval.matrix import (
 from benchmarking.planning_eval.process import execute_case_worker
 from benchmarking.planning_eval.provenance import (
     RepositoryProvenance,
+    capture_repository_provenance,
 )
 from benchmarking.planning_eval.source import (
     CorpusProgramCase,
@@ -47,6 +48,9 @@ from benchmarking.program_collection.corpus import (
 from tests.benchmarking._fixtures import _fixture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
+#: An older revision of this repository, used to prove that resume does not
+#: care which one a baseline started on.
+_REPOSITORY_HEAD = "487de0b355365d7ce84911630c96216e5bc9794b"
 _CONFIG = (
     _REPOSITORY
     / "benchmarking"
@@ -162,7 +166,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         saved.artifact_digest,
     )
     directory = initialize_point(paths, case, request)
-    first = begin_point_attempt(directory, request)
+    first = begin_point_attempt(directory, request, revision="0" * 40)
     assert first == 1
     assert not recover_running_attempt(
         directory,
@@ -172,7 +176,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         elapsed_seconds=1.0,
         error={"type": "CompiledCrash", "message": "signal 11"},
     )
-    second = begin_point_attempt(directory, request)
+    second = begin_point_attempt(directory, request, revision="0" * 40)
     finish_point_attempt(
         directory,
         request,
@@ -242,7 +246,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         transfer_baseline=config.transfer_bandwidths,
     )[0]
     directory = initialize_point(paths, case, request)
-    assert begin_point_attempt(directory, request) == 1
+    assert begin_point_attempt(directory, request, revision="0" * 40) == 1
     assert point_attempt_count(directory, request) == 1
 
     atomic_json(
@@ -251,7 +255,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
     )
     assert _recover_interrupted_points(paths, (case,)) == 1
     assert point_attempt_count(directory, request) == 0
-    assert begin_point_attempt(directory, request) == 2
+    assert begin_point_attempt(directory, request, revision="0" * 40) == 2
 
 
 def test_timeout_recovery_writes_summarizable_canonical_evidence(
@@ -314,7 +318,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         transfer_baseline=config.transfer_bandwidths,
     )[0]
     directory = initialize_point(paths, case, request)
-    begin_point_attempt(directory, request)
+    begin_point_attempt(directory, request, revision="0" * 40)
     assert recover_running_attempt(
         directory,
         request,
@@ -399,6 +403,73 @@ def test_worker_output_is_streamed_to_worker_main_log_and_stdout(
     assert "\n\n[1/1] example | POINT SUCCESS point=one" in captured.out
 
 
+def test_resume_continues_across_a_planner_affecting_revision(
+    tmp_path: Path,
+) -> None:
+    """Resume is about finishing a run, not about proving the source matched."""
+
+    output = tmp_path / "results"
+    prior = output / "frontier__old__clean__cfg-config"
+    prior.mkdir(parents=True)
+    atomic_json(
+        prior / "manifest.json",
+        {
+            "config_digest": "config",
+            "corpus": {"manifest_digest": "corpus"},
+            "repository": {"head": _REPOSITORY_HEAD, "dirty": False},
+        },
+    )
+    atomic_json(prior / "summary.json", {"pending_points": 10})
+    provenance = capture_repository_provenance(_REPOSITORY)
+
+    path, relationship = _find_resume_baseline(
+        output,
+        baseline_id="frontier__new__clean__cfg-config",
+        config_digest="config",
+        corpus_digest="corpus",
+        provenance=provenance,
+        enabled=True,
+    )
+
+    assert path == prior
+    assert relationship is not None
+    assert relationship["recorded_head"] == _REPOSITORY_HEAD
+    assert relationship["resume_head"] == provenance.head
+    # Planner sources changed between the two, and resume says so rather than
+    # refusing over it.
+    assert relationship["spans_revisions"] is True
+    assert relationship["classification"] != "exact_source"
+
+
+def test_resume_still_refuses_a_different_corpus(tmp_path: Path) -> None:
+    """What is being measured has to match, even though the source need not."""
+
+    output = tmp_path / "results"
+    prior = output / "frontier__old__clean__cfg-config"
+    prior.mkdir(parents=True)
+    atomic_json(
+        prior / "manifest.json",
+        {
+            "config_digest": "config",
+            "corpus": {"manifest_digest": "a-different-corpus"},
+            "repository": {"head": _REPOSITORY_HEAD, "dirty": False},
+        },
+    )
+    atomic_json(prior / "summary.json", {"pending_points": 10})
+
+    path, relationship = _find_resume_baseline(
+        output,
+        baseline_id="frontier__new__clean__cfg-config",
+        config_digest="config",
+        corpus_digest="corpus",
+        provenance=capture_repository_provenance(_REPOSITORY),
+        enabled=True,
+    )
+
+    assert path is None
+    assert relationship is None
+
+
 def test_resume_discovers_one_compatible_incomplete_baseline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -422,7 +493,7 @@ def test_resume_discovers_one_compatible_incomplete_baseline(
         "classification": "harness_only",
     }
     monkeypatch.setattr(
-        "benchmarking.planning_eval.cli.compatible_resume_provenance",
+        "benchmarking.planning_eval.cli.resume_provenance_relationship",
         lambda _current, _recorded: expected,
     )
     provenance = RepositoryProvenance(

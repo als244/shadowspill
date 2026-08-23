@@ -33,6 +33,8 @@ class ControllerOptions:
     planning_cache: Path
     resume: bool
     verbose_pressurefit: bool
+    #: The revision every point started under this run records.
+    revision: str
 
 
 def run_frontier_collection(
@@ -189,6 +191,7 @@ def _run_case_until_complete(
             verbose_pressurefit=options.verbose_pressurefit,
             global_point_base=global_point_base,
             global_point_count=global_point_count,
+            revision=options.revision,
         )
         log_path = case_directory / "logs" / f"worker-{restart:04d}.log"
         _log(
@@ -317,6 +320,7 @@ def _worker_command(
     verbose_pressurefit: bool,
     global_point_base: int,
     global_point_count: int,
+    revision: str,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -334,6 +338,8 @@ def _worker_command(
         str(global_point_base),
         "--global-point-count",
         str(global_point_count),
+        "--revision",
+        revision,
     ]
     if verbose_pressurefit:
         command.append("--verbose-pressurefit")
