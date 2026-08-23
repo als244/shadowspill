@@ -60,6 +60,7 @@ def evaluate_case(
     verbose_pressurefit: bool,
     global_point_base: int,
     global_point_count: int,
+    revision: str,
 ) -> dict[str, object]:
     """Load one Program once, then independently persist every point."""
 
@@ -119,6 +120,7 @@ def evaluate_case(
                 point_count=len(requests),
                 global_ordinal=global_point_base + ordinal,
                 global_point_count=global_point_count,
+                revision=revision,
             )
         status = _point_status(directory)
         counts[status] = counts.get(status, 0) + 1
@@ -166,6 +168,7 @@ def _evaluate_point(
         point_count=point_count,
         global_ordinal=global_ordinal,
         global_point_count=global_point_count,
+        revision=revision,
     )
     try:
         plan = pressurefit_program(
