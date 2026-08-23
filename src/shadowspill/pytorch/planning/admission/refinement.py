@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from shadowspill.ir import MemoryLocation
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     PressureFitDiagnostics,
     PressureFitResult,
 )
@@ -49,7 +49,7 @@ class FixedLayoutSelection:
     """One PressureFit selection and the exact physical certificate it passed."""
 
     pressurefit: CachedPressureFitResult
-    topology: AdmissionTopology
+    topology: AdmissionFacts
     admission: FixedLayoutAdmission
     attempts: tuple[FixedLayoutAttempt, ...]
     original_object_capacity_bytes: int
@@ -84,7 +84,7 @@ class FixedLayoutSelection:
 
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
     resolve: Callable[[SimulationConfig], CachedPressureFitResult],
     *,
     scratch_reserve_bytes: int = 0,
@@ -142,7 +142,7 @@ def resolve_fixed_layout_selection(
         requested_capacity: int,
         resolved: tuple[CachedPressureFitResult, int] | None = None,
     ) -> tuple[
-        CachedPressureFitResult, AdmissionTopology, FixedLayoutAdmission
+        CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
     ] | None:
         """Plan (unless already resolved) and admit one capacity."""
 
@@ -151,7 +151,7 @@ def resolve_fixed_layout_selection(
             timed_resolve(requested_capacity) if resolved is None else resolved
         )
         admission_started = time.perf_counter_ns()
-        effective_topology = replace(
+        effective_facts = replace(
             topology,
             object_capacity_bytes=_effective_object_capacity(
                 selected,
@@ -166,7 +166,7 @@ def resolve_fixed_layout_selection(
         try:
             admitted = build_fixed_layout_admission(
                 selected.result,
-                effective_topology,
+                effective_facts,
                 dynamic_alias_group_ids=dynamic_aliases,
                 scratch_reserve_bytes=scratch_reserve_bytes,
             )
@@ -175,7 +175,7 @@ def resolve_fixed_layout_selection(
             attempts.append(
                 FixedLayoutAttempt(
                     requested_capacity,
-                    effective_topology.object_capacity_bytes,
+                    effective_facts.object_capacity_bytes,
                     error.required_bytes,
                     error.capacity_bytes,
                     False,
@@ -187,7 +187,7 @@ def resolve_fixed_layout_selection(
             if progress is not None:
                 progress(
                     "fixed layout rejected PressureFit capacity "
-                    f"{effective_topology.object_capacity_bytes}: "
+                    f"{effective_facts.object_capacity_bytes}: "
                     f"required={error.required_bytes}, "
                     f"physical_pool={error.capacity_bytes}, "
                     f"requested_reduction="
@@ -197,7 +197,7 @@ def resolve_fixed_layout_selection(
         attempts.append(
             FixedLayoutAttempt(
                 requested_capacity,
-                effective_topology.object_capacity_bytes,
+                effective_facts.object_capacity_bytes,
                 admitted.layout.required_bytes,
                 admitted.layout.pool_capacity_bytes,
                 True,
@@ -209,25 +209,25 @@ def resolve_fixed_layout_selection(
         if progress is not None:
             progress(
                 "fixed layout accepted PressureFit capacity "
-                f"{effective_topology.object_capacity_bytes}: "
+                f"{effective_facts.object_capacity_bytes}: "
                 f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
                 f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
                 f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
                 f"slack={admitted.layout.slack_bytes}, "
                 f"total_reduction="
-                f"{original_capacity - effective_topology.object_capacity_bytes}"
+                f"{original_capacity - effective_facts.object_capacity_bytes}"
             )
-        return selected, effective_topology, admitted
+        return selected, effective_facts, admitted
 
     def selection_of(
         outcome: tuple[
-            CachedPressureFitResult, AdmissionTopology, FixedLayoutAdmission
+            CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
         ],
     ) -> FixedLayoutSelection:
-        selected, effective_topology, admitted = outcome
+        selected, effective_facts, admitted = outcome
         return FixedLayoutSelection(
             selected,
-            effective_topology,
+            effective_facts,
             admitted,
             tuple(attempts),
             original_capacity,

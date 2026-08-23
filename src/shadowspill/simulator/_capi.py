@@ -7,7 +7,6 @@ from functools import cache
 
 from shadowspill._libraries import (
     load_shadowspill_library,
-    shadowspill_library_path,
 )
 
 NO_INDEX = (1 << 32) - 1
@@ -134,11 +133,8 @@ class CResult(ctypes.Structure):
     ]
 
 
-simulator_library_path = shadowspill_library_path
-
-
 @cache
-def load_simulator_library() -> ctypes.CDLL:
+def simulator_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_simulate.argtypes = [
         ctypes.POINTER(CProgram),
@@ -158,6 +154,5 @@ __all__ = [
     "CResult",
     "CTaskInterval",
     "CTransferInterval",
-    "load_simulator_library",
-    "simulator_library_path",
+    "simulator_api",
 ]

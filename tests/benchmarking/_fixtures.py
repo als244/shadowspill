@@ -15,7 +15,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     PressureFitOptions,
     TaskAdmissionSpec,
 )
@@ -55,7 +55,7 @@ def _fixture() -> StepProgram:
             fetch_bandwidth_bytes_per_second=1_000_000,
             evict_bandwidth_bytes_per_second=2_000_000,
         ),
-        admission_topology=AdmissionTopology(
+        admission_facts=AdmissionFacts(
             "cuda_0",
             192,
             96,

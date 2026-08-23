@@ -210,7 +210,7 @@ def resolve_lease_lifetimes(
     try:
         leases = build_lease_lifetimes(
             operations,
-            setup.compiled_topology,
+            setup.indexed_facts,
             simulation,
             dynamic_aliases=dynamic,
         )
@@ -219,7 +219,7 @@ def resolve_lease_lifetimes(
         # that never reached a final lease. Resolve without them to name it.
         layout = LeaseLayout(
             leases=build_lease_lifetimes(
-                operations, setup.compiled_topology, simulation
+                operations, setup.indexed_facts, simulation
             ),
             setup=setup,
         )

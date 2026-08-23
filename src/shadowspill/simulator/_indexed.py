@@ -27,7 +27,7 @@ from ._capi import (
     CResult,
     CTaskInterval,
     CTransferInterval,
-    load_simulator_library,
+    simulator_api,
 )
 from ._diagnostics import simulation_failure_detail, simulation_status_kind
 from .model import (
@@ -728,7 +728,7 @@ def _run_projection(
         device_peaks=peak_buffer,
         device_peak_capacity=len(peak_buffer),
     )
-    library = load_simulator_library()
+    library = simulator_api()
     status = int(
         library.shadowspill_simulate(
             ctypes.byref(projection.program),

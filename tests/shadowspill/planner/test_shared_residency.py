@@ -16,7 +16,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.pytorch.planning.admission import build_admission_topology
+from shadowspill.pytorch.planning.admission import build_admission_facts
 from shadowspill.pytorch.planning.admission.bindings import TaskOutputBinding
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
@@ -82,8 +82,8 @@ def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
     assert result.simulation.device_peak("device_0").total_bytes == 96
 
 
-def test_admission_topology_excludes_shared_execution_footprint() -> None:
-    topology = build_admission_topology(
+def test_admission_facts_exclude_shared_execution_footprint() -> None:
+    topology = build_admission_facts(
         _program(),
         execution_pool_bytes=128,
         object_capacity_bytes=96,
@@ -108,9 +108,9 @@ def test_admission_topology_excludes_shared_execution_footprint() -> None:
     assert topology.object_capacity_bytes == 32
 
 
-def test_admission_topology_requires_explicit_physical_evidence() -> None:
+def test_admission_facts_require_explicit_physical_evidence() -> None:
     with pytest.raises(ValueError, match="lacks explicit physical allocation"):
-        build_admission_topology(
+        build_admission_facts(
             _program(),
             execution_pool_bytes=128,
             object_capacity_bytes=96,

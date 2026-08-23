@@ -16,7 +16,7 @@ from tests.shadowspill.planner._examples import (
     exact_capacity_program,
     exact_capacity_residency,
 )
-from tests.shadowspill.planner.test_compiled_admission import _causal_topology
+from tests.shadowspill.planner.test_compiled_admission import _causal_facts
 from tests.shadowspill.simulator.test_admission_accounting import (
     _config as causal_config,
 )
@@ -68,7 +68,7 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
     program = causal_program()
     schedule = causal_schedule()
     simulation = causal_config()
-    admission = _causal_topology()
+    admission = _causal_facts()
     result = pressurefit(
         program,
         initial_residency=schedule.initial_residency,

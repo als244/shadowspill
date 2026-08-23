@@ -19,7 +19,7 @@ from ._capi import (
     CLeaseLifetime,
     CPlacementProblem,
     CPlacementResult,
-    load_planner_library,
+    planner_api,
 )
 
 
@@ -61,7 +61,7 @@ def place_records(
     )
     result = CPlacementResult(required_bytes=0, offsets=offsets)
     _check(
-        load_planner_library().shadowspill_place_lifetimes(
+        planner_api().shadowspill_place_lifetimes(
             ctypes.byref(problem), ctypes.byref(result)
         )
     )

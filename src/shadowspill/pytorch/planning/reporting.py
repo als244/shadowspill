@@ -484,7 +484,7 @@ def fixed_layout_diagnostic(
         layout_digest=layout.digest,
         program_digest=layout.program_digest,
         schedule_digest=layout.schedule_digest,
-        topology_digest=layout.topology_digest,
+        facts_digest=layout.facts_digest,
         pool_capacity_bytes=layout.pool_capacity_bytes,
         original_object_capacity_bytes=selection.original_object_capacity_bytes,
         effective_object_capacity_bytes=selection.topology.object_capacity_bytes,

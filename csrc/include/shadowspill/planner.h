@@ -118,7 +118,7 @@ typedef struct ShadowSpillIndexedSchedule {
  * Storage handoffs transfer a live lease from source to destination without
  * allocating. The arrays are borrowed for evaluation.
  */
-typedef struct ShadowSpillAdmissionTopology {
+typedef struct ShadowSpillAdmissionFacts {
     uint32_t abi_version;
     uint32_t task_count;
     uint32_t alias_count;
@@ -140,7 +140,7 @@ typedef struct ShadowSpillAdmissionTopology {
     const uint64_t *task_allocation_bytes;
     const uint32_t *task_allocation_aliases;
     const uint8_t *task_allocation_kinds;
-} ShadowSpillAdmissionTopology;
+} ShadowSpillAdmissionFacts;
 
 typedef struct ShadowSpillPressureFitContext {
     uint32_t abi_version;
@@ -148,7 +148,7 @@ typedef struct ShadowSpillPressureFitContext {
     const ShadowSpillSimulationProgram *simulation;
     const uint8_t *seed_resident;
     const uint8_t *seed_breaks;
-    const ShadowSpillAdmissionTopology *admission;
+    const ShadowSpillAdmissionFacts *admission;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -176,7 +176,7 @@ typedef struct ShadowSpillPressureFitProgramContext {
     uint32_t abi_version;
     const ShadowSpillSimulationProgram *simulation;
     const uint32_t *device_priority;
-    const ShadowSpillAdmissionTopology *admission;
+    const ShadowSpillAdmissionFacts *admission;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -394,7 +394,7 @@ shadowspill_validate_pressurefit_program_context(
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_evaluate_schedule_admission(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillScheduleAdmissionResult *result
 );
@@ -457,7 +457,7 @@ typedef struct ShadowSpillAdmissionOperations {
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_admission_operation_bounds(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     uint64_t *operation_capacity,
     uint64_t *lease_capacity
@@ -466,7 +466,7 @@ shadowspill_admission_operation_bounds(
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_build_admission_operations(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillAdmissionOperations *result
 );
@@ -516,7 +516,7 @@ typedef struct ShadowSpillLeaseIdentity {
 typedef struct ShadowSpillLeaseLifetimeProblem {
     uint32_t abi_version;
     const ShadowSpillAdmissionOperations *operations;
-    const ShadowSpillAdmissionTopology *admission;
+    const ShadowSpillAdmissionFacts *admission;
     const ShadowSpillIndexedSchedule *schedule;
     const ShadowSpillTaskInterval *task_intervals;
     uint32_t task_interval_count;

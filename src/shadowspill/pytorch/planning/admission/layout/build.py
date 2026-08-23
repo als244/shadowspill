@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from shadowspill.planner import AdmissionTopology, PressureFitResult
+from shadowspill.planner import AdmissionFacts, PressureFitResult
 from shadowspill.planner._admission import encode_schedule
 from shadowspill.planner._operations import (
     AdmissionOperations,
@@ -88,7 +88,7 @@ class FixedLayoutMeasurement:
 
 def measure_fixed_layout(
     selected: PressureFitResult,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
@@ -119,7 +119,7 @@ def measure_fixed_layout(
     encoded = encode_schedule(selected.schedule, setup.template)
     setup = replace(setup, action_trigger_tasks=encoded.action_trigger_tasks)
     operations = build_admission_operations(
-        setup.template, setup.compiled_topology, encoded
+        setup.template, setup.indexed_facts, encoded
     )
     layout = resolve_lease_lifetimes(
         operations, setup, selected.simulation, dynamic_alias_group_ids
@@ -146,7 +146,7 @@ def measure_fixed_layout(
 
 def certify_fixed_layout(
     selected: PressureFitResult,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
     measurement: FixedLayoutMeasurement,
 ) -> FixedLayoutAdmission:
     """Prove a measured layout is safe to run, and re-simulate against it.
@@ -167,7 +167,7 @@ def certify_fixed_layout(
     layout = FixedPhysicalLayout(
         program_digest=selected.program.digest,
         schedule_digest=selected.schedule.digest,
-        topology_digest=topology.digest,
+        facts_digest=topology.digest,
         pool_capacity_bytes=measurement.pool_capacity_bytes,
         fixed_slice_bytes=measurement.fixed_slice_bytes,
         dynamic_reserve_bytes=measurement.dynamic_reserve_bytes,
@@ -207,7 +207,7 @@ def certify_fixed_layout(
 
 def build_fixed_layout_admission(
     selected: PressureFitResult,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,

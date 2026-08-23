@@ -15,7 +15,7 @@ from typing import Any
 import torch
 
 from shadowspill._libraries import resolve_library
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 from shadowspill.memory import (
     DevicePool,
     MemoryPoolConfig,
@@ -26,7 +26,6 @@ from shadowspill.memory import (
 )
 from shadowspill.pytorch.contracts import AdmissionError
 from shadowspill.pytorch.runtime_adapter.abi import (
-    TRANSFER_PROFILE_ABI_VERSION,
     TransferCalibrationConfig,
     TransferRouteKey,
 )
@@ -792,7 +791,7 @@ class Runtime:
                 count = len(encoded)
                 keys = (TransferRouteKey * count)(*encoded) if count else None
             config = TransferCalibrationConfig(
-                abi_version=TRANSFER_PROFILE_ABI_VERSION,
+                abi_version=ABI_VERSION,
                 small_copy_bytes=small_copy_bytes,
                 large_copy_bytes=large_copy_bytes,
                 warmup_copies=warmup_copies,

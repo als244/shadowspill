@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from shadowspill.ir import Program, TaskSpec, shared_residency_footprint
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     StorageHandoff,
     TaskAdmissionSpec,
     TaskAllocationStep,
@@ -92,7 +92,7 @@ def output_bindings_for_entrypoints(
     return result
 
 
-def build_admission_topology(
+def build_admission_facts(
     program: Program,
     *,
     execution_pool_bytes: int,
@@ -101,7 +101,7 @@ def build_admission_topology(
     allocation_traces_by_compatibility: Mapping[str, tuple[TaskAllocationEvent, ...]]
     | None = None,
     alignment: int = 256,
-) -> AdmissionTopology:
+) -> AdmissionFacts:
     """Normalize executable output ownership into planner admission facts."""
 
     if len(program.devices) != 1:
@@ -194,7 +194,7 @@ def build_admission_topology(
                 allocation_steps=allocation_steps,
             )
         )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         device_id=program.devices[0].device_id,
         pool_capacity_bytes=movable_pool_bytes,
         object_capacity_bytes=movable_object_bytes,
@@ -312,6 +312,6 @@ def _workspace_peak_extents(
 
 __all__ = [
     "TaskOutputBinding",
-    "build_admission_topology",
+    "build_admission_facts",
     "output_bindings_for_entrypoints",
 ]

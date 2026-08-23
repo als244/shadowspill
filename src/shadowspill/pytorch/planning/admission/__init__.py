@@ -8,7 +8,7 @@ from .admission_replay import (
     OwnershipTransition,
     OwnershipTransitionKind,
 )
-from .bindings import TaskOutputBinding, build_admission_topology
+from .bindings import TaskOutputBinding, build_admission_facts
 from .layout import (
     DynamicTaskAllocationPolicy,
     FixedLayoutAdmission,
@@ -54,7 +54,7 @@ __all__ = [
     "OwnershipTransitionKind",
     "SelectedAdmission",
     "TaskOutputBinding",
-    "build_admission_topology",
+    "build_admission_facts",
     "build_fixed_layout_admission",
     "build_fixed_selected_admission",
     "certify_fixed_layout",

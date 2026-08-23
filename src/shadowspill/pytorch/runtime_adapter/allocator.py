@@ -9,9 +9,9 @@ from typing import Any
 
 import torch
 
+from shadowspill._status import ABI_VERSION
 from shadowspill.pytorch.runtime_adapter.abi import (
     ADAPTER_ABI_VERSION,
-    RUNTIME_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
     AdapterStatistics,
@@ -395,7 +395,7 @@ def _load_adapter(path: Path) -> Any:
     if (
         status != 0
         or capabilities.abi_version != ADAPTER_ABI_VERSION
-        or capabilities.runtime_abi_version != RUNTIME_ABI_VERSION
+        or capabilities.runtime_abi_version != ABI_VERSION
         or capabilities.debug_task_dispatch_timing != 1
         or capabilities.runtime_trace != 1
     ):

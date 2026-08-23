@@ -536,7 +536,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Pseudocode",
         "PressureFitOptions",
         "PressureFitResult",
-        "AdmissionTopology",
+        "AdmissionFacts",
         "PressureFitInfeasibleError",
         "PressureFitSearchExhaustedError",
     ):
@@ -575,7 +575,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Runtime adoption and validation",
         "FixedPhysicalLayout",
         "TaskAllocationContract",
-        "AdmissionTopology",
+        "AdmissionFacts",
     ):
         assert required in admission
 

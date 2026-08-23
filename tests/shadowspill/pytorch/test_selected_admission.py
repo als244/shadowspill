@@ -12,7 +12,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     PressureFitOptions,
     TaskAdmissionSpec,
     TaskAllocationStep,
@@ -21,7 +21,7 @@ from shadowspill.planner import (
 )
 from shadowspill.pytorch.planning.admission.bindings import (
     TaskOutputBinding,
-    build_admission_topology,
+    build_admission_facts,
 )
 from shadowspill.pytorch.planning.admission.physical import _runtime_record_reserve
 from shadowspill.pytorch.planning.admission.selection import (
@@ -57,8 +57,8 @@ def _selected():  # type: ignore[no-untyped-def]
     )
 
 
-def _selected_topology() -> AdmissionTopology:
-    return AdmissionTopology(
+def _selected_facts() -> AdmissionFacts:
+    return AdmissionFacts(
         "cuda_0",
         122,
         122,
@@ -112,7 +112,7 @@ def test_selected_schedule_replays_only_task_boundary_state() -> None:
         selected.program,
         selected.schedule,
         selections=selected.selections,
-        topology=_selected_topology(),
+        topology=_selected_facts(),
     )
 
     assert replay.pool.peak_allocated_bytes == 122
@@ -124,7 +124,7 @@ def test_selected_schedule_replays_only_task_boundary_state() -> None:
     )
 
 
-def test_admission_topology_preserves_workspace_extent_multiset() -> None:
+def test_admission_facts_preserve_workspace_extent_multiset() -> None:
     program = exact_capacity_program()
     program = replace(
         program,
@@ -132,7 +132,7 @@ def test_admission_topology_preserves_workspace_extent_multiset() -> None:
         tasks=tuple(replace(task, outputs=()) for task in program.tasks),
     )
 
-    topology = build_admission_topology(
+    topology = build_admission_facts(
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=160,
@@ -147,7 +147,7 @@ def test_admission_topology_preserves_workspace_extent_multiset() -> None:
     )
 
 
-def test_admission_topology_derives_gradient_contribution_extents_from_trace() -> None:
+def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> None:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(
@@ -174,7 +174,7 @@ def test_admission_topology_derives_gradient_contribution_extents_from_trace() -
         ),
     )
 
-    topology = build_admission_topology(
+    topology = build_admission_facts(
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=128,
@@ -212,7 +212,7 @@ def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
         output_view_offsets=(0,),
     )
 
-    topology = build_admission_topology(
+    topology = build_admission_facts(
         program,
         execution_pool_bytes=16_384,
         object_capacity_bytes=12_288,

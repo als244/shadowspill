@@ -294,7 +294,7 @@ class TaskAdmissionSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class AdmissionTopology:
+class AdmissionFacts:
     """Immutable physical topology reused by every PressureFit candidate.
 
     ``pool_capacity_bytes`` is the complete execution-pool capacity certified
@@ -338,7 +338,7 @@ class AdmissionTopology:
             "minimum_alignment": self.minimum_alignment,
             "object_capacity_bytes": self.object_capacity_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
-            "schema": "shadowspill.admission_topology/v3",
+            "schema": "shadowspill.admission_facts/v3",
             "tasks": [item.to_dict() for item in self.tasks],
         }
 
@@ -346,10 +346,10 @@ class AdmissionTopology:
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
     @classmethod
-    def from_dict(cls, value: object) -> AdmissionTopology:
+    def from_dict(cls, value: object) -> AdmissionFacts:
         data = _mapping(value, "admission")
         schema = _string(data.get("schema"), "admission.schema")
-        if schema != "shadowspill.admission_topology/v3":
+        if schema != "shadowspill.admission_facts/v3":
             raise ValueError(f"admission.schema: unsupported schema {schema!r}")
         return cls(
             device_id=_string(data.get("device_id"), "admission.device_id"),
@@ -372,7 +372,7 @@ class AdmissionTopology:
         )
 
     @classmethod
-    def from_json(cls, payload: str) -> AdmissionTopology:
+    def from_json(cls, payload: str) -> AdmissionFacts:
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as exc:
@@ -389,7 +389,7 @@ class AdmissionTopology:
             )
         if len(program.devices) != 1:
             raise ValueError(
-                "one AdmissionTopology currently describes exactly one execution "
+                "one AdmissionFacts currently describes exactly one execution "
                 f"pool; Program has {len(program.devices)} devices"
             )
         expected_tasks = tuple(item.task_id for item in program.tasks)
@@ -476,7 +476,7 @@ def _enum(
 
 
 __all__ = [
-    "AdmissionTopology",
+    "AdmissionFacts",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

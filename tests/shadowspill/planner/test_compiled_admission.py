@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from reference.python.admission import replay_admission
+from shadowspill._libraries import shadowspill_library_path
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -19,7 +20,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     PressureFitOptions,
     PressureFitSearchExhaustedError,
     TaskAdmissionSpec,
@@ -30,9 +31,8 @@ from shadowspill.planner import (
 from shadowspill.planner._admission import (
     encode_schedule,
     evaluate_schedule_admission,
-    index_admission_topology,
+    index_admission_facts,
 )
-from shadowspill.planner._capi import planner_library_path
 from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
@@ -54,7 +54,7 @@ from tests.shadowspill.simulator.test_admission_accounting import (
 )
 
 pytestmark = pytest.mark.skipif(
-    planner_library_path() is None,
+    shadowspill_library_path() is None,
     reason="the library is not installed",
 )
 
@@ -100,9 +100,9 @@ def _task_admission(
     )
 
 
-def _causal_topology() -> AdmissionTopology:
+def _causal_facts() -> AdmissionFacts:
     program = causal_program()
-    return AdmissionTopology(
+    return AdmissionFacts(
         "cuda_0",
         96,
         96,
@@ -114,12 +114,12 @@ def _causal_topology() -> AdmissionTopology:
 def test_compiled_selected_admission_matches_python_oracle() -> None:
     program = causal_program()
     schedule = causal_schedule()
-    topology = _causal_topology()
+    topology = _causal_facts()
     template = index_simulation_template(program, (), causal_config())
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_topology(topology, template),
+        index_admission_facts(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -182,7 +182,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         evict_bandwidth_bytes_per_second=1,
     )
     template = index_simulation_template(program, (), config)
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         64,
         64,
@@ -192,7 +192,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_topology(topology, template),
+        index_admission_facts(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -217,7 +217,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
     program = training_chain_program(2)
     object_alias = {item.object_id: item.alias_group_id for item in program.objects}
     profiles = {item.profile_id: item for item in program.profiles}
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         512,
         224,
@@ -300,7 +300,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     template = index_simulation_template(program, (), config)
 
     def evaluate(extents: tuple[int, ...]):
-        topology = AdmissionTopology(
+        topology = AdmissionFacts(
             "cuda_0",
             128,
             128,
@@ -312,7 +312,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            index_admission_topology(topology, template),
+            index_admission_facts(topology, template),
             encode_schedule(schedule, template),
         )
 
@@ -367,7 +367,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         24,
         24,
@@ -381,7 +381,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_topology(topology, template),
+        index_admission_facts(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -466,7 +466,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     )
 
     def evaluate(task: TaskAdmissionSpec):
-        topology = AdmissionTopology(
+        topology = AdmissionFacts(
             "cuda_0",
             20,
             20,
@@ -475,12 +475,12 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            index_admission_topology(topology, template),
+            index_admission_facts(topology, template),
             encode_schedule(schedule, template),
         )
 
     admitted = evaluate(ordered)
-    ordered_topology = AdmissionTopology(
+    ordered_facts = AdmissionFacts(
         "cuda_0",
         20,
         20,
@@ -490,7 +490,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=ordered_topology,
+        topology=ordered_facts,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -521,16 +521,16 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         )
 
 
-def test_admission_topology_uses_only_the_current_physical_schema() -> None:
-    topology = _causal_topology()
+def test_admission_facts_use_only_the_current_physical_schema() -> None:
+    topology = _causal_facts()
     payload = topology.to_dict()
 
-    assert payload["schema"] == "shadowspill.admission_topology/v3"
-    assert AdmissionTopology.from_json(topology.to_json()) == topology
+    assert payload["schema"] == "shadowspill.admission_facts/v3"
+    assert AdmissionFacts.from_json(topology.to_json()) == topology
 
-    payload["schema"] = "shadowspill.admission_topology/v2"
+    payload["schema"] = "shadowspill.admission_facts/v2"
     with pytest.raises(ValueError, match="unsupported schema"):
-        AdmissionTopology.from_dict(payload)
+        AdmissionFacts.from_dict(payload)
 
 
 def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
@@ -597,7 +597,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         fetch_bandwidth_bytes_per_second=1_000_000,
         evict_bandwidth_bytes_per_second=1_000_000,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         160,
         160,

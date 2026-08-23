@@ -122,7 +122,7 @@ static int index_allocation_steps(
 )
 {
     const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionTopology *topology = problem->admission;
+    const ShadowSpillAdmissionFacts *topology = problem->admission;
     const uint32_t slots = topology->allocation_slot_count;
     const uint64_t leases = operations->lease_count;
     index->latest_step = malloc((slots ? slots : 1U) * sizeof(*index->latest_step));
@@ -162,7 +162,7 @@ static int index_allocation_steps(
 /* The task an allocation step belongs to. Steps are flattened per task, so
  * the owning task is the range containing the step. */
 static uint32_t task_of_step(
-    const ShadowSpillAdmissionTopology *topology, uint32_t step
+    const ShadowSpillAdmissionFacts *topology, uint32_t step
 )
 {
     uint32_t low = 0U;
@@ -180,7 +180,7 @@ static uint32_t task_of_step(
 
 /* Anonymous scratch, a fresh output, or the generation one supersedes. */
 static uint8_t allocation_purpose(
-    const ShadowSpillAdmissionTopology *topology, uint32_t task, uint32_t alias
+    const ShadowSpillAdmissionFacts *topology, uint32_t task, uint32_t alias
 )
 {
     if (alias == NO_INDEX) {
@@ -212,7 +212,7 @@ static void lease_identity(
 )
 {
     const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionTopology *topology = problem->admission;
+    const ShadowSpillAdmissionFacts *topology = problem->admission;
     const uint64_t start = operations->lease_starts[lease];
     const uint32_t own_step = index->step_of_lease[lease];
 
@@ -382,7 +382,7 @@ static ShadowSpillStatus build_lifetimes(
 )
 {
     const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionTopology *topology = problem->admission;
+    const ShadowSpillAdmissionFacts *topology = problem->admission;
     const uint64_t count = operations->lease_count;
     const uint64_t terminal_time = problem->makespan_ns + 1U;
     const uint64_t terminal_boundary = operations->operation_count + 1U;

@@ -174,7 +174,7 @@ static int begin_retirement(
 }
 
 static int task_slot_reused_after(
-    const ShadowSpillAdmissionTopology *topology,
+    const ShadowSpillAdmissionFacts *topology,
     uint32_t task,
     uint32_t operation,
     uint32_t slot
@@ -201,7 +201,7 @@ static int require_alias(
 }
 
 static int task_replaces_alias(
-    const ShadowSpillAdmissionTopology *topology,
+    const ShadowSpillAdmissionFacts *topology,
     uint32_t task,
     uint32_t alias
 ) {
@@ -221,7 +221,7 @@ int shadowspill_admission_build_operations(
     OperationTally *tally
 ) {
     const ShadowSpillSimulationProgram *program = context->simulation;
-    const ShadowSpillAdmissionTopology *topology = context->admission;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     memset(tally, 0, sizeof(*tally));
     tally->workspace = workspace;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -547,7 +547,7 @@ int shadowspill_admission_build_operations(
  * candidate search, not here. */
 static ShadowSpillPressureFitContext operations_context(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission
+    const ShadowSpillAdmissionFacts *admission
 ) {
     return (ShadowSpillPressureFitContext){
         .abi_version = SHADOWSPILL_ABI_VERSION,
@@ -558,7 +558,7 @@ static ShadowSpillPressureFitContext operations_context(
 
 ShadowSpillStatus shadowspill_admission_operation_bounds(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     uint64_t *operation_capacity,
     uint64_t *lease_capacity
@@ -569,7 +569,7 @@ ShadowSpillStatus shadowspill_admission_operation_bounds(
     }
     const ShadowSpillPressureFitContext context =
         operations_context(simulation, admission);
-    if (!shadowspill_admission_topology_valid(&context)) {
+    if (!shadowspill_admission_facts_valid(&context)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (shadowspill_admission_counts(
@@ -581,7 +581,7 @@ ShadowSpillStatus shadowspill_admission_operation_bounds(
 
 ShadowSpillStatus shadowspill_build_admission_operations(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillAdmissionOperations *result
 ) {
@@ -595,7 +595,7 @@ ShadowSpillStatus shadowspill_build_admission_operations(
     }
     const ShadowSpillPressureFitContext context =
         operations_context(simulation, admission);
-    if (!shadowspill_admission_topology_valid(&context)) {
+    if (!shadowspill_admission_facts_valid(&context)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 

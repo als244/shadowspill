@@ -2,7 +2,7 @@
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
 
-from ._capi import load_simulator_library
+from ._capi import simulator_api
 from ._indexed import simulate_program
 from .model import (
     ActionPhysicalDelta,
@@ -31,7 +31,7 @@ def simulate(
 ) -> SimulationResult:
     """Replay an explicit schedule through the simulator."""
 
-    load_simulator_library()
+    simulator_api()
     return simulate_program(
         program,
         schedule,

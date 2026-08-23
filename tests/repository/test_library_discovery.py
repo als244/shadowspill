@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill._libraries import LIBRARY_DIRECTORY_ENVIRONMENT, library_candidates
-from shadowspill.planner._capi import planner_library_path
+from shadowspill._libraries import (
+    LIBRARY_DIRECTORY_ENVIRONMENT,
+    library_candidates,
+    shadowspill_library_path,
+)
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
-from shadowspill.simulator._capi import simulator_library_path
 
 
 def _editable_checkout(tmp_path: Path) -> Path:
@@ -71,16 +73,11 @@ def test_a_named_directory_is_searched_first(
 
 
 def test_editable_build_libraries_are_discovered_without_environment() -> None:
-    planner = planner_library_path()
-    simulator = simulator_library_path()
-    if planner is None or simulator is None:
-        pytest.skip("compiled editable libraries have not been built")
+    library = shadowspill_library_path()
+    if library is None:
+        pytest.skip("the editable library has not been built")
 
-    # Planning, simulation and execution ship as one library, so both
-    # lookups resolve to it.
-    assert planner.name.startswith("libshadowspill.so")
-    assert simulator.name.startswith("libshadowspill.so")
-    assert planner == simulator
+    assert library.name.startswith("libshadowspill.so")
     try:
         adapter = _adapter_path(None)
     except RuntimeError:

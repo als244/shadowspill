@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from shadowspill.ir import MemorySchedule, Program, TaskProfile, TaskSpec
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
@@ -83,8 +83,8 @@ def _config(capacity: int) -> SimulationConfig:
     )
 
 
-def _topology(capacity: int) -> AdmissionTopology:
-    return AdmissionTopology(
+def _topology(capacity: int) -> AdmissionFacts:
+    return AdmissionFacts(
         "cuda_0",
         capacity,
         capacity,

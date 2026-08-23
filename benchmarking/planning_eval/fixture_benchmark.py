@@ -13,7 +13,7 @@ from typing import Any
 
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     InitialPlacement,
     PressureFitOptions,
     PressureFitResult,
@@ -49,7 +49,7 @@ class ReplayRequest:
     final_residency: tuple[ResidencySpec, ...]
     config: SimulationConfig
     options: PressureFitOptions
-    admission: AdmissionTopology | None
+    admission: AdmissionFacts | None
 
 
 def _request(value: dict[str, Any]) -> ReplayRequest:
@@ -83,7 +83,7 @@ def _request(value: dict[str, Any]) -> ReplayRequest:
     admission = (
         None
         if admission_value is None
-        else AdmissionTopology.from_dict(admission_value)
+        else AdmissionFacts.from_dict(admission_value)
     )
     return ReplayRequest(program, initial, final, config, options, admission)
 

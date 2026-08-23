@@ -19,13 +19,13 @@ from shadowspill._status import ABI_VERSION
 from shadowspill.simulator import SimulationResult
 from shadowspill.simulator._indexed import IntervalArrays
 
-from ._admission import IndexedAdmissionTopology
+from ._admission import IndexedAdmissionFacts
 from ._capi import (
     CLeaseIdentity,
     CLeaseLifetime,
     CLeaseLifetimeProblem,
     CLeaseLifetimeResult,
-    load_planner_library,
+    planner_api,
 )
 from ._operations import AdmissionOperations
 
@@ -49,7 +49,7 @@ class LeaseLifetimes:
 
 def build_lease_lifetimes(
     operations: AdmissionOperations,
-    admission: IndexedAdmissionTopology,
+    admission: IndexedAdmissionFacts,
     simulation: SimulationResult,
     *,
     dynamic_aliases: tuple[int, ...] = (),
@@ -100,7 +100,7 @@ def build_lease_lifetimes(
         dynamic_alias_count=len(dynamic_aliases),
     )
     status = int(
-        load_planner_library().shadowspill_build_lease_lifetimes(
+        planner_api().shadowspill_build_lease_lifetimes(
             ctypes.byref(problem), ctypes.byref(result)
         )
     )

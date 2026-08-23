@@ -34,7 +34,7 @@ Physical admission consumes:
 | Input | Purpose |
 |---|---|
 | `PressureFitResult` | Selected tasks, residency, ordered actions, and logical simulation. |
-| `AdmissionTopology` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
+| `AdmissionFacts` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
 | `TaskAllocationContract` values | Stable task-local core allocation/free identities and geometry. |
 | Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the strict core. |
 | Terminal caller-owned aliases | Final execution leases that may outlive a later callable invocation. |
@@ -86,7 +86,7 @@ Let:
 - $C$ be the logical object capacity presented to PressureFit;
 - $B_s$ be the public spill-memory budget.
 
-The `AdmissionTopology` records both $P$ and $C$. The difference $P-C$ is
+The `AdmissionFacts` records both $P$ and $C$. The difference $P-C$ is
 capacity leeway (`pytorch.planning.common.capacity_leeway`). PressureFit
 subtracts each selected task's actual workspace only at that task boundary; it
 does not reserve a monolithic workspace partition at every boundary, and the
@@ -142,7 +142,7 @@ check the selected spill traffic and residency.
 
 ## Admission topology
 
-`AdmissionTopology` is the framework-neutral, immutable physical description
+`AdmissionFacts` is the framework-neutral, immutable physical description
 shared by candidate evaluation and layout construction. Each
 `TaskAdmissionSpec` describes:
 
@@ -166,9 +166,9 @@ workspace for their real lifetime. A nonempty workspace, fresh output, or
 replacement without corresponding allocation steps fails before PressureFit.
 
 A hand-authored logical `Program` can still use PressureFit and the simulator
-without an `AdmissionTopology`. It becomes executable only after a frontend
+without an `AdmissionFacts`. It becomes executable only after a frontend
 provides complete physical evidence. The serialized topology uses only the
-current `shadowspill.admission_topology/v3` schema; older synthetic forms are
+current `shadowspill.admission_facts/v3` schema; older synthetic forms are
 rejected rather than migrated.
 
 ## From a schedule to physical lifetimes
@@ -443,7 +443,7 @@ re-simulation is no worse, which recovers stranded capacity without ever
 choosing a worse plan than the coarse ladder would have.
 
 The framework-neutral `pressurefit()` API can alternatively receive an
-`AdmissionTopology` and evaluate the production dynamic-pool policy inside
+`AdmissionFacts` and evaluate the production dynamic-pool policy inside
 each candidate. The current PyTorch callable path deliberately uses the fixed
 layout builder as its final physical authority: a dynamic best-fit rejection
 must not discard a schedule that has a valid dependency-certified fixed

@@ -131,7 +131,7 @@ int shadowspill_admission_counts(
     uint64_t *lease_count,
     uint64_t *operation_count
 );
-int shadowspill_admission_topology_valid(
+int shadowspill_admission_facts_valid(
     const ShadowSpillPressureFitContext *context
 );
 int shadowspill_admission_reserve_buffers(

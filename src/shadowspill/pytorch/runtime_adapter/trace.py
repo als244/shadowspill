@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
+from shadowspill._status import ABI_VERSION
 from shadowspill.pytorch.runtime_adapter.abi import (
-    TRACE_ABI_VERSION,
     AllocationEvent,
     TraceConfig,
     TraceEvent,
@@ -138,7 +138,7 @@ def prepare_runtime_trace(
     if event_capacity <= 0 or allocation_event_capacity <= 0:
         raise ValueError("trace capacities must be positive")
     config = TraceConfig(
-        abi_version=TRACE_ABI_VERSION,
+        abi_version=ABI_VERSION,
         event_capacity=event_capacity,
         allocation_event_capacity=allocation_event_capacity,
     )
@@ -164,7 +164,7 @@ def read_runtime_trace(library: Any) -> CapturedRuntimeTrace:
     status = int(
         library.shadowspill_pytorch_trace_read(ctypes.byref(summary), None, 0, None, 0)
     )
-    if status != 0 or int(summary.abi_version) != TRACE_ABI_VERSION:
+    if status != 0 or int(summary.abi_version) != ABI_VERSION:
         raise RuntimeError(f"runtime trace query failed with status {status}")
     event_buffer = (TraceEvent * int(summary.event_count))()
     allocation_buffer = (AllocationEvent * int(summary.allocation_event_count))()

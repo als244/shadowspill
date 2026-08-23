@@ -158,7 +158,7 @@ def successful_point_evidence(
                 "action_bytes": dict(sorted(action_bytes.items())),
             },
             "physical_admission": {
-                "topology_digest": plan.effective_topology.digest,
+                "facts_digest": plan.effective_facts.digest,
                 "layout_digest": plan.fixed_layout.digest,
                 "pool_capacity_bytes": plan.fixed_layout.pool_capacity_bytes,
                 "required_bytes": plan.fixed_layout.required_bytes,

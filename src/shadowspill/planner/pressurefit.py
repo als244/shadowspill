@@ -16,7 +16,7 @@ from shadowspill.ir import (
     shared_residency_footprint,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._capi import load_simulator_library
+from shadowspill.simulator._capi import simulator_api
 from shadowspill.simulator._indexed import (
     IndexedSimulationTemplate,
     index_simulation_template,
@@ -24,11 +24,11 @@ from shadowspill.simulator._indexed import (
 )
 
 from ._admission import (
-    IndexedAdmissionTopology,
+    IndexedAdmissionFacts,
     evaluate_schedule_admission,
-    index_admission_topology,
+    index_admission_facts,
 )
-from ._capi import load_planner_library
+from ._capi import planner_api
 from ._portfolio import (
     CCandidateDiagnostic,
     CContextResult,
@@ -39,7 +39,7 @@ from ._portfolio import (
     validate_program_context,
 )
 from ._recomputation import build_recomputation_portfolio
-from .admission import AdmissionTopology
+from .admission import AdmissionFacts
 from .diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
@@ -81,7 +81,7 @@ class _SelectionContext:
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
     indexed_template: IndexedSimulationTemplate
-    indexed_admission: IndexedAdmissionTopology | None
+    indexed_admission: IndexedAdmissionFacts | None
 
 
 def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
@@ -95,7 +95,7 @@ def _validate_pressurefit_inputs(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    admission: AdmissionTopology | None,
+    admission: AdmissionFacts | None,
 ) -> None:
     """Validate public types and the logical/physical capacity relationship."""
 
@@ -109,8 +109,8 @@ def _validate_pressurefit_inputs(
         raise TypeError("config must be a SimulationConfig")
     if admission is None:
         return
-    if not isinstance(admission, AdmissionTopology):
-        raise TypeError("admission must be an AdmissionTopology")
+    if not isinstance(admission, AdmissionFacts):
+        raise TypeError("admission must be an AdmissionFacts")
     admission.validate(program)
     configured = {item.device_id: item for item in config.devices}
     shared = shared_residency_footprint(program)
@@ -126,7 +126,7 @@ def _validate_pressurefit_inputs(
     ):
         raise ValueError(
             "feasibility capacity after shared residency must equal "
-            "AdmissionTopology object capacity"
+            "AdmissionFacts object capacity"
         )
 
 
@@ -136,7 +136,7 @@ def validate_schedule_feasibility(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
 ) -> None:
     """Reject irreducible capacity failures using the planner."""
 
@@ -147,8 +147,8 @@ def validate_schedule_feasibility(
         config,
         admission,
     )
-    load_simulator_library()
-    load_planner_library()
+    simulator_api()
+    planner_api()
     contexts = _build_contexts(
         program,
         initial_residency,
@@ -166,7 +166,7 @@ def _build_contexts(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    admission: AdmissionTopology | None,
+    admission: AdmissionFacts | None,
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
@@ -191,7 +191,7 @@ def _build_contexts(
                 selection_id=_selection_id(selections),
                 indexed_template=indexed_template,
                 indexed_admission=(
-                    index_admission_topology(admission, indexed_template)
+                    index_admission_facts(admission, indexed_template)
                     if admission is not None
                     else None
                 ),
@@ -402,7 +402,7 @@ def _finish_pressurefit(
     options: PressureFitOptions,
     contexts: tuple[_SelectionContext, ...],
     results: tuple[CContextResult, ...],
-    admission: AdmissionTopology | None,
+    admission: AdmissionFacts | None,
 ) -> PressureFitResult:
     """Decode the globally best compiled result and its diagnostics."""
 
@@ -542,7 +542,7 @@ def _finish_pressurefit(
         selections=context.selections,
         simulation=simulation,
         diagnostics=diagnostics,
-        admission_topology=admission,
+        admission_facts=admission,
     )
 
 
@@ -553,7 +553,7 @@ def _pressurefit_once(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Evaluate every selection through the planner."""
@@ -565,8 +565,8 @@ def _pressurefit_once(
         config,
         admission,
     )
-    load_simulator_library()
-    load_planner_library()
+    simulator_api()
+    planner_api()
 
     selected_options = options or PressureFitOptions()
     portfolio = build_recomputation_portfolio(program)
@@ -627,11 +627,11 @@ def _round_up_admission_reserve(value: int) -> int:
 
 def _with_object_capacity(
     config: SimulationConfig,
-    admission: AdmissionTopology,
+    admission: AdmissionFacts,
     capacity_bytes: int,
     *,
     shared_execution_bytes: int,
-) -> tuple[SimulationConfig, AdmissionTopology]:
+) -> tuple[SimulationConfig, AdmissionFacts]:
     devices = tuple(
         replace(
             device,
@@ -658,7 +658,7 @@ def pressurefit(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Select a schedule and refine dynamic-slab headroom."""
@@ -691,7 +691,7 @@ def pressurefit(
                     admission_refinements=tuple(refinements),
                     effective_object_capacity_bytes=effective_capacity,
                 ),
-                admission_topology=admission,
+                admission_facts=admission,
             )
         except PressureFitInfeasibleError as error:
             if (

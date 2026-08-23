@@ -81,7 +81,7 @@ from .admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
     SelectedAdmission,
-    build_admission_topology,
+    build_admission_facts,
     build_fixed_selected_admission,
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
@@ -418,7 +418,7 @@ def build_forward_program(
             lowered.entrypoints,
             {item.object_id: item.alias_group_id for item in lowered.program.objects},
         )
-        admission = build_admission_topology(
+        admission = build_admission_facts(
             lowered.program,
             execution_pool_bytes=execution_pool_bytes,
             object_capacity_bytes=simulation_config.devices[0].capacity_bytes,

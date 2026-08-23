@@ -25,9 +25,9 @@ selector](recomputation-selection.md).
 | Boundary conditions | `initial_residency` and `final_residency` tuples of `ResidencySpec` values. |
 | Machine input | `SimulationConfig`: execution capacities, spill capacity, directional transfer bandwidths, and latencies. |
 | Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, and worker count. |
-| Optional physical input | `AdmissionTopology`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
+| Optional physical input | `AdmissionFacts`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
 | Output | `PressureFitResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
-| Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionTopology` is supplied. |
+| Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionFacts` is supplied. |
 | Optimization scope | Minimum simulated makespan among the finite candidates actually generated and repaired, not a global optimum over all possible schedules. |
 
 `validate_schedule_feasibility()` performs a necessary-condition preflight on
@@ -67,9 +67,9 @@ Workspace is task-local. PressureFit subtracts task $i$'s workspace only at
 the boundary where that task's inputs, fresh outputs, and workspace must
 coexist. It does not subtract a global maximum workspace from every boundary.
 
-When physical admission is enabled, `AdmissionTopology.pool_capacity_bytes`
+When physical admission is enabled, `AdmissionFacts.pool_capacity_bytes`
 is the complete execution-pool capacity, while
-`AdmissionTopology.object_capacity_bytes` is the current logical capacity
+`AdmissionFacts.object_capacity_bytes` is the current logical capacity
 offered to PressureFit. Physical refinement may reduce the latter without
 changing the former.
 
@@ -93,7 +93,7 @@ decision:
 - full `simulation`, including makespan, task/transfer intervals, and peaks;
 - `diagnostics`, including every context and candidate outcome, repair counts,
   component work, schedule digests, and physical-refinement history;
-- the original `admission_topology`, when supplied.
+- the original `admission_facts`, when supplied.
 
 The Python API uses `prefetch`/`offload` as serialized action names. In
 explanatory text, these are fetch and evict, respectively.
