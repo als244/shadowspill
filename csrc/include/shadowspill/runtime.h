@@ -8,12 +8,6 @@
 #include <shadowspill/backend.h>
 #include <shadowspill/profiler.h>
 
-#if defined(_WIN32)
-#define SHADOWSPILL_RUNTIME_API __declspec(dllexport)
-#else
-#define SHADOWSPILL_RUNTIME_API __attribute__((visibility("default")))
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -153,14 +147,14 @@ typedef enum ShadowSpillObjectConsistency {
  * contains no pool role or framework metadata and remains valid across object
  * generation and residency changes.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_object_handle_acquire(
     ShadowSpillRuntime *runtime,
     uint64_t runtime_object_id,
     ShadowSpillObjectHandle **output
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_object_handle_release(
     ShadowSpillObjectHandle *handle
 );
@@ -171,7 +165,7 @@ shadowspill_object_handle_release(
  * of the prior value has released its handle.  Plan bindings remain valid and
  * a later task may publish a new generation into the same logical object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_object_release_generation(
     const ShadowSpillObjectHandle *handle,
     uint64_t expected_generation
@@ -182,7 +176,7 @@ shadowspill_object_release_generation(
  * plan-local IDs in different plans have no relationship unless both bindings
  * use handles for the same runtime object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_plan_bind_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_bind_object(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
     const ShadowSpillObjectHandle *object,
@@ -581,7 +575,7 @@ typedef struct ShadowSpillObjectLocationSnapshot {
  * IDs must equal their contiguous registry indices. On failure, output is set to
  * NULL and successfully created resources are reclaimed in reverse order.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_create(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **runtime
 );
@@ -592,7 +586,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_create(
  * the first call, steady execution never falls back to process allocation when
  * the pool is full.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_reserve_event_leases(
     ShadowSpillRuntime *runtime,
     uint64_t minimum_free_leases
@@ -603,7 +597,7 @@ shadowspill_runtime_reserve_event_leases(
  * Once reserved, queue publication fails closed instead of allocating process
  * memory when the inventory is exhausted.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_reserve_retirement_records(
     ShadowSpillRuntime *runtime,
     uint64_t minimum_free_records
@@ -614,31 +608,31 @@ shadowspill_runtime_reserve_retirement_records(
  * The first call seals hot acquisition: later exhaustion fails closed instead
  * of allocating process-heap metadata from an allocator callback.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_reserve_memory_lease_records(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
     uint64_t minimum_free_records
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_plan_create(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_create(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlanDescription *description,
     ShadowSpillPlan **plan
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_plan_close(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_close(
     ShadowSpillPlan *plan
 );
 
-SHADOWSPILL_RUNTIME_API void shadowspill_plan_destroy(ShadowSpillPlan *plan);
+SHADOWSPILL_API void shadowspill_plan_destroy(ShadowSpillPlan *plan);
 
 /*
  * Rejects new work, drains queued work, synchronizes both transfer streams,
  * joins the worker, and releases owned resources. This call is explicitly
  * synchronizing and idempotent. It returns the first latched failure.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_close(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_close(
     ShadowSpillRuntime *runtime
 );
 
@@ -650,7 +644,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_close(
  * independent processes after establishing their own barriers. A successful
  * call atomically publishes one new matrix generation.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_calibrate_transfer_capabilities(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTransferCalibrationConfig *config,
@@ -662,7 +656,7 @@ shadowspill_runtime_calibrate_transfer_capabilities(
  * Copies the complete row-major N-by-N profile matrix. ``capacity`` must be at
  * least N*N. The caller receives a lock-consistent generation and count.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_transfer_profiles(
     ShadowSpillRuntime *runtime,
     ShadowSpillTransferProfile *profiles,
@@ -672,7 +666,7 @@ shadowspill_runtime_transfer_profiles(
 );
 
 /* Calls close if needed and releases the runtime record. NULL is accepted. */
-SHADOWSPILL_RUNTIME_API void shadowspill_runtime_destroy(
+SHADOWSPILL_API void shadowspill_runtime_destroy(
     ShadowSpillRuntime *runtime
 );
 
@@ -683,7 +677,7 @@ SHADOWSPILL_RUNTIME_API void shadowspill_runtime_destroy(
  * pending work can make a suitable range available. Otherwise it returns and
  * latches NO_PROGRESS.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_allocate(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
@@ -698,7 +692,7 @@ shadowspill_memory_pool_allocate(
  * generation. This read-only lookup exists for framework allocator callbacks
  * whose free/record-stream protocols carry an address rather than an ID.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_allocation_for_pointer(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
@@ -713,7 +707,7 @@ shadowspill_memory_pool_allocation_for_pointer(
  * recorded stream to retire. Plan-owned allocations ignore framework logical
  * free until a plan action releases or offloads the owning object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_memory_pool_free(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_free(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
     uint64_t allocation_id,
@@ -721,7 +715,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_memory_pool_free(
 );
 
 /* Adds a borrowed stream token to an allocation's retirement set. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_record_stream(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
@@ -733,7 +727,7 @@ shadowspill_memory_pool_record_stream(
  * Registers one logical alias group. The description is borrowed for this
  * call. Requested initial spill storage is leased from the configured spill pool.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_register_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectDescription *description
 );
@@ -743,7 +737,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_register_object(
  * action, reclaiming retained spill storage. Intended for deterministic plan
  * teardown after final writeback.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_unregister_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_unregister_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id
 );
@@ -755,7 +749,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_unregister_object(
  * execution plan. No task record or queued action may reference the
  * object while it is rekeyed.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_rekey_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_rekey_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     uint64_t replacement_object_id
@@ -766,7 +760,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_rekey_object(
  * location must be the object's current authoritative generation. Source is
  * borrowed for the call and may be NULL only for a zero-size object.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_write_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_write_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     uint32_t pool_id,
@@ -780,7 +774,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_write_object(
  * wait_idle or an equivalent lifecycle boundary. Destination may be NULL only
  * for zero size.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_read_object(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_read_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     uint32_t pool_id,
@@ -789,7 +783,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_read_object(
 );
 
 /* Admit one immutable task and return its direct repeated-path handle. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_admit_task(
     ShadowSpillPlan *plan,
     const ShadowSpillTaskDescription *description,
@@ -797,16 +791,16 @@ shadowspill_plan_admit_task(
 );
 
 /* Borrow immutable identity already resolved by task admission. */
-SHADOWSPILL_RUNTIME_API uint64_t shadowspill_task_id(
+SHADOWSPILL_API uint64_t shadowspill_task_id(
     const ShadowSpillTaskHandle *handle
 );
 
-SHADOWSPILL_RUNTIME_API const char *shadowspill_task_trace_label(
+SHADOWSPILL_API const char *shadowspill_task_trace_label(
     const ShadowSpillTaskHandle *handle
 );
 
 /* Cold-path initial publication through one plan-local object binding. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_publish_initial_allocation(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
@@ -819,7 +813,7 @@ shadowspill_plan_publish_initial_allocation(
  * The logical object is stable; REPLACE changes only its physical lease and
  * generation. This call is valid only inside the matching active task scope.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_task_publish_allocation(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -829,7 +823,7 @@ shadowspill_task_publish_allocation(
 );
 
 /* Validate a current or just-retired view through the same direct record. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_task_validate_replacement_binding(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -838,14 +832,14 @@ shadowspill_task_validate_replacement_binding(
     const void *successor_pointer
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_clear_tasks(ShadowSpillPlan *plan);
 
 /*
  * Actively wait until only this plan has no claimed task scope, queued action,
  * or task-owned retirement. Work admitted by other plans does not participate.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_wait_idle(ShadowSpillPlan *plan);
 
 /*
@@ -853,13 +847,13 @@ shadowspill_plan_wait_idle(ShadowSpillPlan *plan);
  * its single parent slice. Task and action identities are resolved when
  * shadowspill_plan_seal_fixed_layout() is called after task admission.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_admit_fixed_layout(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
 
 /*
@@ -868,7 +862,7 @@ shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
  * expanded from one retained snapshot and one readiness wait. The borrowed
  * handle remains valid until the plan is cleared or destroyed.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_admit_object_acquisition(
     ShadowSpillPlan *plan,
     const uint64_t *object_ids,
@@ -877,7 +871,7 @@ shadowspill_plan_admit_object_acquisition(
 );
 
 /* Hand one acquired ordinal to caller ownership through its direct object. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_transfer_acquired_object_to_caller(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
@@ -890,7 +884,7 @@ shadowspill_transfer_acquired_object_to_caller(
 );
 
 /* Admit an immutable action-only trigger batch without creating a task. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_admit_action_batch(
     ShadowSpillPlan *plan,
     uint64_t batch_id,
@@ -900,7 +894,7 @@ shadowspill_plan_admit_action_batch(
 );
 
 /* Publish an admitted batch and wait only for worker submission acknowledgement. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_submit_action_batch_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillActionBatchHandle *handle,
@@ -911,7 +905,7 @@ shadowspill_submit_action_batch_handle(
  * Snapshot an admitted object set and insert any published readiness-event
  * waits on consumer_stream. This does not open an allocation or task scope.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_acquire_objects_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
@@ -921,7 +915,7 @@ shadowspill_acquire_objects_handle(
 );
 
 /* Repeated hot path over the task handle returned by plan admission. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_before_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -930,7 +924,7 @@ shadowspill_before_task_handle(
     uint32_t *binding_count
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_after_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -941,7 +935,7 @@ shadowspill_after_task_handle(
  * Clears the calling thread's active task scope after frontend execution
  * aborts before after_task. This does not cancel already submitted device work.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_abort_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle
@@ -953,21 +947,21 @@ shadowspill_abort_task_handle(
  * retirement fences without pretending to execute an admitted task. The end
  * call records a completion event only when the scope retired allocations.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_scope_begin(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
     uint64_t scope_id
 );
 
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_scope_end(
     ShadowSpillRuntime *runtime,
     uint64_t scope_id,
     ShadowSpillBackendStream stream
 );
 
-SHADOWSPILL_RUNTIME_API void shadowspill_allocation_scope_abort(
+SHADOWSPILL_API void shadowspill_allocation_scope_abort(
     ShadowSpillRuntime *runtime
 );
 
@@ -976,21 +970,21 @@ SHADOWSPILL_RUNTIME_API void shadowspill_allocation_scope_abort(
  * capture begins, so allocator callbacks only append fixed-size records. A
  * full buffer latches ALLOCATION_FAILURE rather than silently losing evidence.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_telemetry_start(
     ShadowSpillRuntime *runtime,
     uint64_t capacity
 );
 
 /* Stops capture. Previously recorded events remain readable until restart. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_telemetry_stop(ShadowSpillRuntime *runtime);
 
 /*
  * Copies the complete ordered event stream. Pass events=NULL and capacity=0
  * to query count. Caller owns the destination and no runtime pointer escapes.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_telemetry_read(
     ShadowSpillRuntime *runtime,
     ShadowSpillAllocationEvent *events,
@@ -1003,13 +997,13 @@ shadowspill_allocation_telemetry_read(
  * enable tracing. Growth is rejected while a trace or allocation-profile
  * session is active; no trace buffer grows from a runtime hot path.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_prepare(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_prepare(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTraceConfig *config
 );
 
 /* Begins one prepared trace and its allocation-lifetime capture. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_begin(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id
 );
@@ -1018,7 +1012,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_begin(
  * Stops appending without synchronizing a stream or worker. Callers establish
  * their required completion boundary before ending the trace.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_end(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_end(
     ShadowSpillRuntime *runtime
 );
 
@@ -1027,7 +1021,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_end(
  * capacities query the required counts through summary. No runtime pointer or
  * backend handle escapes.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_read(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_read(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceSummary *summary,
     ShadowSpillTraceEvent *events,
@@ -1037,7 +1031,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_trace_read(
 );
 
 /* Explicitly synchronizing test/checkpoint helper; returns first failure. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_wait_idle(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 );
 
@@ -1048,7 +1042,7 @@ SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_wait_idle(
  * worker to drain already-owned actions so objects and pool leases can be
  * reclaimed. Every other failure remains permanently latched.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
 
 /*
@@ -1058,7 +1052,7 @@ shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
  * both arenas briefly, so callers must include that transient in host-budget
  * admission. It is forbidden after frontend physical admission is sealed.
  */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_grow(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
@@ -1066,26 +1060,26 @@ shadowspill_memory_pool_grow(
 );
 
 /* Copies a lock-consistent telemetry snapshot into caller-owned storage. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_statistics(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_statistics(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatistics *statistics
 );
 
 /* Copies the immutable first-failure snapshot; status is OK before failure. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_runtime_failure(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeFailure *failure
 );
 
 /* Copies one object's current logical state into caller-owned storage. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus shadowspill_object_snapshot(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_object_snapshot(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
 );
 
 /* Copies one object's current location in an explicitly selected pool. */
-SHADOWSPILL_RUNTIME_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_object_location_snapshot(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -1094,7 +1088,7 @@ shadowspill_object_location_snapshot(
 );
 
 /* One sentence naming the condition behind a status. */
-SHADOWSPILL_RUNTIME_API const char *shadowspill_failure_reason_string(
+SHADOWSPILL_API const char *shadowspill_failure_reason_string(
     ShadowSpillFailureReason reason
 );
 

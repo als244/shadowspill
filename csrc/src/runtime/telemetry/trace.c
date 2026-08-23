@@ -1,18 +1,10 @@
 
 #include "../internal.h"
+#include "../../common/platform.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-static uint64_t monotonic_nanoseconds(void) {
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0U;
-    }
-    return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
-}
 
 void shadowspill_trace_append_enabled(
     ShadowSpillRuntime *runtime,
@@ -48,7 +40,7 @@ void shadowspill_trace_append_enabled(
         );
         return;
     }
-    const uint64_t timestamp = monotonic_nanoseconds();
+    const uint64_t timestamp = shadowspill_monotonic_ns();
     runtime->trace_events[slot] =
         (ShadowSpillTraceEvent){
             .sequence = slot,

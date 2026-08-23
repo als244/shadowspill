@@ -5,12 +5,6 @@
 #include <stdint.h>
 #include <shadowspill/shadowspill.h>
 
-#if defined(_WIN32)
-#define SHADOWSPILL_SIMULATOR_API __declspec(dllexport)
-#else
-#define SHADOWSPILL_SIMULATOR_API __attribute__((visibility("default")))
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -163,7 +157,7 @@ typedef struct ShadowSpillSimulationResult {
  * distinct result buffers. On failure, `status` and diagnostic fields are
  * populated and all caller-owned buffers remain caller-owned.
  */
-SHADOWSPILL_SIMULATOR_API ShadowSpillStatus shadowspill_simulate(
+SHADOWSPILL_API ShadowSpillStatus shadowspill_simulate(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationResult *result
 );

@@ -3,11 +3,7 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32)
-#define SHADOWSPILL_STATUS_API __declspec(dllexport)
-#else
-#define SHADOWSPILL_STATUS_API __attribute__((visibility("default")))
-#endif
+#include <shadowspill/shadowspill.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,7 +68,7 @@ typedef enum ShadowSpillStatus {
 } ShadowSpillStatus;
 
 /* One sentence for any status, from any component. */
-SHADOWSPILL_STATUS_API const char *shadowspill_status_string(
+SHADOWSPILL_API const char *shadowspill_status_string(
     ShadowSpillStatus status
 );
 

@@ -3,13 +3,22 @@
 
 #include <stdint.h>
 
-#include <shadowspill/status.h>
-
+/*
+ * Windows needs the declaration to differ between building the DLL and using
+ * it, so the build defines SHADOWSPILL_BUILDING and nothing else has to know.
+ * Elsewhere one attribute covers both.
+ */
 #if defined(_WIN32)
+#if defined(SHADOWSPILL_BUILDING)
 #define SHADOWSPILL_API __declspec(dllexport)
+#else
+#define SHADOWSPILL_API __declspec(dllimport)
+#endif
 #else
 #define SHADOWSPILL_API __attribute__((visibility("default")))
 #endif
+
+#include <shadowspill/status.h>
 
 #ifdef __cplusplus
 extern "C" {

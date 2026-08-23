@@ -7,23 +7,14 @@
 
 
 #include "internal.h"
+#include "../../common/platform.h"
 #include "../portfolio_internal.h"
 
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
-
-static uint64_t monotonic_time_ns(void) {
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0U;
-    }
-    return (uint64_t)value.tv_sec * UINT64_C(1000000000) +
-        (uint64_t)value.tv_nsec;
-}
 
 static int add_delta(int64_t *target, int64_t delta) {
     if ((delta > 0 && *target > INT64_MAX - delta) ||
@@ -173,7 +164,7 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
         shadowspill_admission_reserve_buffers(problem, schedule, workspace) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    const uint64_t started = monotonic_time_ns();
+    const uint64_t started = shadowspill_monotonic_ns();
     OperationTally tally = {0};
     if (shadowspill_admission_build_operations(problem, schedule, workspace, &tally) != 0) {
         return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
@@ -201,7 +192,7 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
             &replay_program, replay_result, workspace->replay
         );
     ++workspace->calls;
-    workspace->time_ns += monotonic_time_ns() - started;
+    workspace->time_ns += shadowspill_monotonic_ns() - started;
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }

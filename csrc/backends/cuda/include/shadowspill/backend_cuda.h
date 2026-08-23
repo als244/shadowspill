@@ -7,7 +7,11 @@
 #include <shadowspill/profiler.h>
 
 #if defined(_WIN32)
+#if defined(SHADOWSPILL_BACKEND_CUDA_BUILDING)
 #define SHADOWSPILL_BACKEND_CUDA_API __declspec(dllexport)
+#else
+#define SHADOWSPILL_BACKEND_CUDA_API __declspec(dllimport)
+#endif
 #else
 #define SHADOWSPILL_BACKEND_CUDA_API __attribute__((visibility("default")))
 #endif

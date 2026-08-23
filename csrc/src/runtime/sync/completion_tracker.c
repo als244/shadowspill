@@ -1,25 +1,16 @@
 
 #include "../internal.h"
+#include "../../common/platform.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 static int stream_equal(
     ShadowSpillBackendStream left,
     ShadowSpillBackendStream right
 ) {
     return memcmp(&left, &right, sizeof(left)) == 0;
-}
-
-static uint64_t monotonic_nanoseconds(void) {
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0U;
-    }
-    return (uint64_t)value.tv_sec * UINT64_C(1000000000) +
-        (uint64_t)value.tv_nsec;
 }
 
 int shadowspill_completion_tracker_initialize(
@@ -118,7 +109,7 @@ int shadowspill_completion_poll(
     *failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     *failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     int changed = 0;
-    const uint64_t now = monotonic_nanoseconds();
+    const uint64_t now = shadowspill_monotonic_ns();
     ShadowSpillCompletionTracker *tracker = &runtime->completions;
 
     pthread_mutex_lock(&tracker->lock);

@@ -57,6 +57,23 @@ diagnostics.
 - Distinct simulator results and admission-replay workspaces may be used by
   different threads; one workspace is not shared concurrently.
 
+## Platforms
+
+The public headers are POSIX-free: no pthreads, no `<stdatomic.h>`, no
+platform types. A consumer needs `<stdint.h>` and nothing else, and the export
+declaration follows the platform - `__declspec(dllimport)` on Windows unless
+the translation unit is building the library itself, which the build says with
+`SHADOWSPILL_BUILDING`.
+
+The implementation is a different matter. It uses pthreads and C11 atomics
+directly, and reaches the operating system for exactly three things - a
+monotonic clock, a thread yield, and a thread name - which
+`csrc/src/common/platform.h` supplies for both platforms. So a Windows build
+needs a toolchain that provides pthreads and `<stdatomic.h>`: MinGW-w64 or
+clang does, MSVC needs `/experimental:c11atomics` and a pthreads shim. Linux
+is what CI builds and what every gate here runs on; Windows is portable by
+construction rather than by test.
+
 ## Build boundaries
 
 `libshadowspill` and the mock backend build without PyTorch or a

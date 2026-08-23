@@ -38,6 +38,12 @@ separate because it links libtorch, which planning-only callers must not be
 made to carry. All three keep their own ABI versions, since they are genuinely
 compiled elsewhere.
 
+`src/common/platform.h` holds the three things the library asks of the
+operating system that POSIX and Windows spell differently: a monotonic clock,
+a thread yield, and a thread name. Everything else it needs - threads,
+mutexes, atomics - comes from pthreads and `<stdatomic.h>`, which a Windows
+build gets from its toolchain rather than from a shim here.
+
 Public headers live in `include/shadowspill/`. A private header named
 `internal.h` belongs to the directory holding it, and is included by path from
 anywhere else, so `"internal.h"` always means this directory's.
