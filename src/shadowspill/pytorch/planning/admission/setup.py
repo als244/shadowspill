@@ -16,12 +16,12 @@ from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection
 from shadowspill.planner import AdmissionFacts
-from shadowspill.planner._admission import (
+from shadowspill.planner.library.admission import (
     IndexedAdmissionFacts,
     index_admission_facts,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._indexed import (
+from shadowspill.simulator.indexed import (
     IndexedSimulationTemplate,
     index_simulation_template,
 )

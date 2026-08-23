@@ -7,7 +7,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from reference.python.simulator import simulate_python
-from shadowspill._libraries import shadowspill_library_path
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -24,8 +23,9 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
-from shadowspill.simulator._indexed import simulate_program
+from shadowspill.simulator.indexed import simulate_program
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
     representative_program,
@@ -262,8 +262,8 @@ def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
     import pickle
     from dataclasses import asdict
 
-    from shadowspill.simulator._capi import CTaskInterval, CTransferInterval
-    from shadowspill.simulator._indexed import IntervalArrays
+    from shadowspill.simulator.capi import CTaskInterval, CTransferInterval
+    from shadowspill.simulator.indexed import IntervalArrays
     from shadowspill.simulator.model import SimulationResult
 
     result = SimulationResult(

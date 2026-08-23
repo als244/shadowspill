@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from reference.python.pressurefit.selection import SelectionCandidate, select_compiled
-from shadowspill._libraries import shadowspill_library_path
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner import PressureFitOptions, pressurefit
 
 from ._examples import (

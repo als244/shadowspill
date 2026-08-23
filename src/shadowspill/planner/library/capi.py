@@ -5,10 +5,10 @@ from __future__ import annotations
 import ctypes
 from functools import cache
 
-from shadowspill._libraries import (
+from shadowspill.libraries import (
     load_shadowspill_library,
 )
-from shadowspill.simulator._capi import (
+from shadowspill.simulator.capi import (
     CProgram,
     CTaskInterval,
     CTransferInterval,

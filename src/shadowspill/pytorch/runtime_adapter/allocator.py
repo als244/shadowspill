@@ -9,7 +9,6 @@ from typing import Any
 
 import torch
 
-from shadowspill._status import ABI_VERSION
 from shadowspill.pytorch.runtime_adapter.abi import (
     ADAPTER_ABI_VERSION,
     AdapterCapabilities,
@@ -21,6 +20,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RouteConfig,
     configure_adapter_library,
 )
+from shadowspill.status import ABI_VERSION
 
 _REQUIRED_STORAGE_OPERATIONS = (
     "_import_cpu_storages",

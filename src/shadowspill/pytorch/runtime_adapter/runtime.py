@@ -14,8 +14,7 @@ from typing import Any
 
 import torch
 
-from shadowspill._libraries import resolve_library
-from shadowspill._status import ABI_VERSION, Status
+from shadowspill.libraries import resolve_library
 from shadowspill.memory import (
     DevicePool,
     MemoryPoolConfig,
@@ -44,6 +43,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     read_allocator_failure,
 )
 from shadowspill.runtime import ObjectRef
+from shadowspill.status import ABI_VERSION, Status
 
 _INITIALIZATION_PROVENANCE = 0
 _RECALIBRATION_PROVENANCE = 1

@@ -7,7 +7,6 @@ from array import array
 from dataclasses import dataclass
 from typing import Protocol
 
-from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule
 from shadowspill.simulator import (
     ActionPhysicalDelta,
@@ -15,19 +14,20 @@ from shadowspill.simulator import (
     SimulationAdmission,
     TaskPhysicalDelta,
 )
-from shadowspill.simulator._capi import NO_INDEX
-from shadowspill.simulator._indexed import IndexedSimulationTemplate
+from shadowspill.simulator.capi import NO_INDEX
+from shadowspill.simulator.indexed import IndexedSimulationTemplate
+from shadowspill.status import ABI_VERSION, Status
 
-from ._capi import (
+from ..admission import (
+    AdmissionFacts,
+    TaskAdmissionSpec,
+    TaskAllocationStepKind,
+)
+from .capi import (
     CAdmissionFacts,
     CIndexedSchedule,
     CScheduleAdmissionResult,
     planner_api,
-)
-from .admission import (
-    AdmissionFacts,
-    TaskAdmissionSpec,
-    TaskAllocationStepKind,
 )
 
 

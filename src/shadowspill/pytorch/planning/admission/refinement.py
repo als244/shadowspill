@@ -13,7 +13,7 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitResult,
 )
-from shadowspill.planner._cache import CachedPressureFitResult
+from shadowspill.planner.cache import CachedPressureFitResult
 from shadowspill.simulator import SimulationConfig
 
 from .layout import (

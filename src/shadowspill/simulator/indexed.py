@@ -6,7 +6,6 @@ import ctypes
 from array import array
 from dataclasses import dataclass
 
-from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
@@ -18,8 +17,9 @@ from shadowspill.ir import (
     TaskSpec,
     shared_residency_footprint,
 )
+from shadowspill.status import ABI_VERSION, Status
 
-from ._capi import (
+from .capi import (
     NO_INDEX,
     CDevice,
     CDevicePeak,
@@ -29,7 +29,7 @@ from ._capi import (
     CTransferInterval,
     simulator_api,
 )
-from ._diagnostics import simulation_failure_detail, simulation_status_kind
+from .diagnostics import simulation_failure_detail, simulation_status_kind
 from .model import (
     DeviceMemoryPeak,
     SimulationAdmission,

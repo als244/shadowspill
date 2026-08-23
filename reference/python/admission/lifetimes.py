@@ -24,7 +24,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryActionKind, MemorySchedule
-from shadowspill.planner._operations import AdmissionOperations
+from shadowspill.planner.library.operations import AdmissionOperations
 from shadowspill.pytorch.planning.admission.admission_replay import (
     AdmissionReplayPurpose,
 )

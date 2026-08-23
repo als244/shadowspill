@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ._serialization import JsonValue, canonical_json, digest_json, parse_json
-from ._validation import (
+from .program import Program, RecomputationSelection, TaskSpec
+from .serialization import JsonValue, canonical_json, digest_json, parse_json
+from .validation import (
     expect_list,
     expect_mapping,
     expect_string,
@@ -17,7 +18,6 @@ from ._validation import (
     require_identifier,
     require_tuple,
 )
-from .program import Program, RecomputationSelection, TaskSpec
 
 SCHEDULE_SCHEMA = "shadowspill.memory_schedule/v1"
 

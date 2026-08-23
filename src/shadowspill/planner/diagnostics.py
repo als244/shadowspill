@@ -56,9 +56,7 @@ class PressureFitRepairDiagnostics:
             "pressure_boundary_attempts": self.pressure_boundary_attempts,
             "unclassified_attempts": self.unclassified_attempts,
             "admission_failure": {
-                "prefetch_advance_attempts": (
-                    self.admission_prefetch_advance_attempts
-                ),
+                "prefetch_advance_attempts": (self.admission_prefetch_advance_attempts),
                 "prefetch_delay_attempts": self.admission_prefetch_delay_attempts,
                 "pressure_boundary_attempts": (
                     self.admission_pressure_boundary_attempts
@@ -113,9 +111,11 @@ class PressureFitRepairDiagnostics:
         ):
             raise ValueError(f"{path}.total_attempts does not reconcile")
         declared_pressure = data.get("pressure_boundary_attempts")
-        if declared_pressure is not None and _integer(
-            declared_pressure, f"{path}.pressure_boundary_attempts"
-        ) != result.pressure_boundary_attempts:
+        if (
+            declared_pressure is not None
+            and _integer(declared_pressure, f"{path}.pressure_boundary_attempts")
+            != result.pressure_boundary_attempts
+        ):
             raise ValueError(f"{path}.pressure_boundary_attempts does not reconcile")
         return result
 
@@ -164,9 +164,7 @@ class PressureFitWorkDiagnostics:
     def total_admission_calls(self) -> int:
         return self.admission_calls + self.result_admission_calls
 
-    def __add__(
-        self, other: PressureFitWorkDiagnostics
-    ) -> PressureFitWorkDiagnostics:
+    def __add__(self, other: PressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
         if not isinstance(other, PressureFitWorkDiagnostics):
             return NotImplemented
         return PressureFitWorkDiagnostics(
@@ -196,9 +194,7 @@ class PressureFitWorkDiagnostics:
                 "result_materialization_calls": self.result_simulation_calls,
                 "total_calls": self.total_simulation_calls,
                 "summed_work_time_ns": self.simulation_time_ns,
-                "result_materialization_time_ns": (
-                    self.result_simulation_time_ns
-                ),
+                "result_materialization_time_ns": (self.result_simulation_time_ns),
             },
             "admission": {
                 "search_calls": self.admission_calls,
@@ -292,14 +288,17 @@ class PressureFitWorkDiagnostics:
         }
         for name, expected_value in expected.items():
             declared = simulation.get(name)
-            if declared is not None and _integer(
-                declared, f"{path}.simulation.{name}"
-            ) != expected_value:
+            if (
+                declared is not None
+                and _integer(declared, f"{path}.simulation.{name}") != expected_value
+            ):
                 raise ValueError(f"{path}.simulation.{name} does not reconcile")
         declared_admission_calls = admission.get("total_calls")
-        if declared_admission_calls is not None and _integer(
-            declared_admission_calls, f"{path}.admission.total_calls"
-        ) != result.total_admission_calls:
+        if (
+            declared_admission_calls is not None
+            and _integer(declared_admission_calls, f"{path}.admission.total_calls")
+            != result.total_admission_calls
+        ):
             raise ValueError(f"{path}.admission.total_calls does not reconcile")
         return result
 
@@ -436,9 +435,7 @@ class RecomputationChoiceDiagnostic:
         return {"group_id": self.group_id, "option_id": self.option_id}
 
     @classmethod
-    def from_value(
-        cls, value: object, path: str
-    ) -> RecomputationChoiceDiagnostic:
+    def from_value(cls, value: object, path: str) -> RecomputationChoiceDiagnostic:
         data = _mapping(value, path)
         return cls(
             group_id=_string(data.get("group_id"), f"{path}.group_id"),
@@ -530,9 +527,7 @@ class RecomputationProblemDiagnostics:
             },
             "summary": {
                 "candidate_policy_count": self.candidate_policy_count,
-                "valid_candidate_policy_count": (
-                    self.valid_candidate_policy_count
-                ),
+                "valid_candidate_policy_count": (self.valid_candidate_policy_count),
                 "candidate_status_counts": self.candidate_status_counts,
             },
             "work": self.work.to_dict(),
@@ -543,9 +538,7 @@ class RecomputationProblemDiagnostics:
         }
 
     @classmethod
-    def from_value(
-        cls, value: object, path: str
-    ) -> RecomputationProblemDiagnostics:
+    def from_value(cls, value: object, path: str) -> RecomputationProblemDiagnostics:
         data = _mapping(value, path)
         selection = _mapping(
             data.get("recomputation_selection"),
@@ -606,9 +599,12 @@ class RecomputationProblemDiagnostics:
         for name, expected in expected_summary.items():
             if summary.get(name) != expected:
                 raise ValueError(f"{path}.summary.{name} does not reconcile")
-        if PressureFitRepairDiagnostics.from_value(
-            data.get("repairs"), f"{path}.repairs"
-        ) != result.repairs:
+        if (
+            PressureFitRepairDiagnostics.from_value(
+                data.get("repairs"), f"{path}.repairs"
+            )
+            != result.repairs
+        ):
             raise ValueError(f"{path}.repairs does not reconcile")
         return result
 
@@ -676,9 +672,7 @@ class PressureFitDiagnostics:
 
     @property
     def valid_candidate_evaluation_count(self) -> int:
-        return sum(
-            item.status == "valid" for item in self._candidate_evaluations()
-        )
+        return sum(item.status == "valid" for item in self._candidate_evaluations())
 
     @property
     def valid_recomputation_problem_count(self) -> int:
@@ -698,9 +692,7 @@ class PressureFitDiagnostics:
     def candidate_status_counts(self) -> dict[str, int]:
         return dict(
             sorted(
-                Counter(
-                    item.status for item in self._candidate_evaluations()
-                ).items()
+                Counter(item.status for item in self._candidate_evaluations()).items()
             )
         )
 
@@ -876,6 +868,7 @@ class PressureFitDiagnostics:
             if summary.get(name) != expected:
                 raise ValueError(f"{path}.summary.{name} does not reconcile")
         return result
+
 
 def _parse_candidate_id(value: str) -> tuple[str, str, bool]:
     coalesced = value.endswith("-coalesced")

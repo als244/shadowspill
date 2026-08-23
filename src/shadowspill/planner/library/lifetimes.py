@@ -15,19 +15,19 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from shadowspill._status import ABI_VERSION
 from shadowspill.simulator import SimulationResult
-from shadowspill.simulator._indexed import IntervalArrays
+from shadowspill.simulator.indexed import IntervalArrays
+from shadowspill.status import ABI_VERSION
 
-from ._admission import IndexedAdmissionFacts
-from ._capi import (
+from .admission import IndexedAdmissionFacts
+from .capi import (
     CLeaseIdentity,
     CLeaseLifetime,
     CLeaseLifetimeProblem,
     CLeaseLifetimeResult,
     planner_api,
 )
-from ._operations import AdmissionOperations
+from .operations import AdmissionOperations
 
 
 @dataclass(frozen=True, slots=True)

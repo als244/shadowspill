@@ -6,8 +6,8 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
-from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+from shadowspill.status import Status
 
 _NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = Status.OUT_OF_MEMORY

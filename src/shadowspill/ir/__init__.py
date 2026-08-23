@@ -1,6 +1,5 @@
 """Framework-neutral logical programs and resolved execution plans."""
 
-from ._validation import ValidationError
 from .execution import (
     EntrypointSpec,
     ExecutionPlan,
@@ -40,6 +39,7 @@ from .schedule import (
     ResidencySpec,
 )
 from .sharing import SharedResidencyFootprint, shared_residency_footprint
+from .validation import ValidationError
 
 __all__ = [
     "AliasGroupSpec",

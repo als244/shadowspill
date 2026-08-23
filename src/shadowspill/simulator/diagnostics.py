@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shadowspill._status import Status
+from shadowspill.status import Status
 
 _STATUS_KIND: dict[int, str] = {
     Status.INVALID_ARGUMENT: "invalid-argument",

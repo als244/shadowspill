@@ -14,7 +14,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner._recomputation import build_recomputation_portfolio
+from shadowspill.planner.pressurefit.recomputation import build_recomputation_portfolio
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)

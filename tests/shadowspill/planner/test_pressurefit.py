@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import importlib
 from dataclasses import replace
-
-import pytest
 
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -22,10 +19,14 @@ from shadowspill.ir import (
 from shadowspill.planner import (
     AdmissionFacts,
     InitialPlacement,
-    PressureFitInfeasibleError,
     PressureFitOptions,
     TaskAdmissionSpec,
     pressurefit,
+)
+from shadowspill.planner.pressurefit.refinement import (
+    round_up_admission_reserve,
+    scheduled_admission_refinement,
+    with_object_capacity,
 )
 
 from ._examples import (
@@ -262,53 +263,12 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.prediction.device_peak_bytes == 122
 
 
-def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    program = exact_capacity_program()
-    initial, final = exact_capacity_residency()
-    baseline = pressurefit(
-        program,
-        initial_residency=initial,
-        final_residency=final,
-        config=config(),
-        options=SMALL_PORTFOLIO,
-    )
-    one_gib = 1 << 30
-    eight_gib = 8 << 30
-    facts = AdmissionFacts(
-        "cuda_0",
-        9 * one_gib,
-        eight_gib,
-        1,
-        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
-    )
-    capacities: list[int] = []
+def test_admission_refinement_doubles_to_a_gibibyte_then_grows_by_512_mib() -> None:
+    """The ladder is a pure function of the attempt, so ask it directly."""
 
-    def fake_once(*args: object, **kwargs: object):
-        admission = kwargs["admission"]
-        assert isinstance(admission, AdmissionFacts)
-        capacities.append(admission.object_capacity_bytes)
-        if len(capacities) <= 6:
-            raise PressureFitInfeasibleError(
-                "synthetic physical admission failure",
-                kind="physical_admission",
-                required_bytes=1,
-            )
-        return baseline
+    increments = tuple(scheduled_admission_refinement(attempt) for attempt in range(6))
 
-    module = importlib.import_module("shadowspill.planner.pressurefit")
-    monkeypatch.setattr(module, "_pressurefit_once", fake_once)
-    result = pressurefit(
-        program,
-        initial_residency=initial,
-        final_residency=final,
-        config=config(eight_gib),
-        options=SMALL_PORTFOLIO,
-        admission=facts,
-    )
-
-    increments = (
+    assert increments == (
         128 << 20,
         256 << 20,
         512 << 20,
@@ -316,14 +276,34 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
         1536 << 20,
         2 << 30,
     )
-    cumulative = 0
-    expected_capacities = [eight_gib]
-    for increment in increments:
-        cumulative += increment
-        expected_capacities.append(eight_gib - cumulative)
-    assert capacities == expected_capacities
-    assert tuple(
-        item.reserve_increment_bytes
-        for item in result.diagnostics.admission_refinements
-    ) == increments
-    assert result.diagnostics.effective_object_capacity_bytes == eight_gib - cumulative
+
+
+def test_admission_reserve_rounds_up_to_its_granularity() -> None:
+    granularity = 2 << 20
+
+    assert round_up_admission_reserve(0) == 0
+    assert round_up_admission_reserve(1) == granularity
+    assert round_up_admission_reserve(granularity) == granularity
+    assert round_up_admission_reserve(granularity + 1) == 2 * granularity
+
+
+def test_object_capacity_is_reduced_on_every_device_and_in_the_facts() -> None:
+    program = exact_capacity_program()
+    one_gib = 1 << 30
+    facts = AdmissionFacts(
+        "cuda_0",
+        9 * one_gib,
+        8 * one_gib,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+    )
+
+    reduced_config, reduced_facts = with_object_capacity(
+        config(8 * one_gib),
+        facts,
+        4 * one_gib,
+        shared_execution_bytes=0,
+    )
+
+    assert reduced_facts.object_capacity_bytes == 4 * one_gib
+    assert {device.capacity_bytes for device in reduced_config.devices} == {4 * one_gib}

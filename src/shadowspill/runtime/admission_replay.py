@@ -6,9 +6,10 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill._status import ABI_VERSION, Status
+from shadowspill.status import ABI_VERSION, Status
 
-from ._admission_capi import (
+from .admission import AdmissionError
+from .admission_capi import (
     NO_ID,
     CAdmissionReplayDecision,
     CAdmissionReplayLiveLease,
@@ -18,7 +19,6 @@ from ._admission_capi import (
     CAdmissionReuseDependency,
     admission_replay_api,
 )
-from .admission import AdmissionError
 
 
 class AdmissionReplayOperationKind(IntEnum):

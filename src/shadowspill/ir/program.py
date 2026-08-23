@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from ._serialization import (
+from .serialization import (
     JsonValue,
     canonical_json,
     digest_json,
     parse_json,
     string_list,
 )
-from ._validation import (
+from .validation import (
     ValidationError,
     expect_boolean,
     expect_integer,

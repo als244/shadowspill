@@ -22,7 +22,6 @@ from shadowspill.pytorch.runtime_adapter.trace import (
 )
 from shadowspill.simulator import TransferInterval
 
-from ._mapping import FrozenMapping
 from .execution import (
     AllocatorTrace,
     ExecutionTiming,
@@ -35,6 +34,7 @@ from .execution import (
     TaskExecutionTiming,
     TransferTrace,
 )
+from .mapping import FrozenMapping
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from shadowspill._libraries import shadowspill_library_path
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.planner.model import InitialPlacement
 

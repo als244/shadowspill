@@ -5,8 +5,8 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from ._admission import EncodedIndexedSchedule, IndexedAdmissionFacts
-from ._capi import (
+from .admission import EncodedIndexedSchedule, IndexedAdmissionFacts
+from .capi import (
     CAdmissionOperations,
     CIndexedSchedule,
     planner_api,
@@ -159,8 +159,7 @@ def build_admission_operations(
         ),
         lease_starts=tuple(lease_starts[:live]),
         lease_retires=tuple(
-            None if value == _NO_OPERATION else value
-            for value in lease_retires[:live]
+            None if value == _NO_OPERATION else value for value in lease_retires[:live]
         ),
         dependency_count=int(result.dependency_count),
         fetch_bytes=int(result.fetch_bytes),

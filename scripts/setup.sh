@@ -120,13 +120,13 @@ import ctypes
 
 import torch
 
-from shadowspill._libraries import resolve_library
-from shadowspill._libraries import shadowspill_library_path
-from shadowspill.planner._capi import planner_api
+from shadowspill.libraries import resolve_library
+from shadowspill.libraries import shadowspill_library_path
+from shadowspill.planner.library.capi import planner_api
 from shadowspill.pytorch.runtime_adapter.allocator import (
     _REQUIRED_STORAGE_OPERATIONS,
 )
-from shadowspill.simulator._capi import simulator_api
+from shadowspill.simulator.capi import simulator_api
 
 libraries = (
     "libshadowspill.so",

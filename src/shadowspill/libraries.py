@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import Final
 
-from shadowspill._status import ABI_VERSION
+from shadowspill.status import ABI_VERSION
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 

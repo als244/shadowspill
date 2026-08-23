@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill._libraries import (
+from shadowspill.libraries import (
     LIBRARY_DIRECTORY_ENVIRONMENT,
     library_candidates,
     shadowspill_library_path,
