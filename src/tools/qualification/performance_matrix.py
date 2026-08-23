@@ -184,7 +184,7 @@ def _cell_result_details(
                 ("physical_budget_passed", "PHYSICAL BUDGETS"),
                 ("strict_runtime_passed", "STRICT RUNTIME"),
                 ("simulator_gate_passed", "SIMULATOR"),
-                ("historical_gate_passed", "HISTORICAL"),
+                ("regression_gate_passed", "REGRESSION"),
             )
             for key, label in gates:
                 value = artifact_payload.get(key)
@@ -203,9 +203,12 @@ def _cell_result_details(
                     f"PREDICTED STEP: {predicted:.4f} seconds "
                     f"(simulator error {error:+.2%})"
                 )
-            ratio = artifact_payload.get("historical_throughput_ratio")
+            ratio = artifact_payload.get("regression_throughput_ratio")
             if isinstance(ratio, float):
-                details.append(f"HISTORICAL RATIO: {ratio:.2%}")
+                details.append(f"REGRESSION RATIO: {ratio:.2%}")
+            ratio = artifact_payload.get("predecessor_throughput_ratio")
+            if isinstance(ratio, float):
+                details.append(f"PREDECESSOR RATIO: {ratio:.2%}")
         planning = artifact_payload.get("planning_seconds")
         if isinstance(planning, float):
             details.append(f"PLANNING: {planning:.3f} seconds")
