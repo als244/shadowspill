@@ -68,6 +68,7 @@ def _require_adapter() -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> None:
     _require_adapter()
     torch.manual_seed(41)
@@ -223,6 +224,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     _require_adapter()
     torch.manual_seed(73)
@@ -306,6 +308,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_training_profiles_bounded_opaque_optimizer(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -352,6 +355,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_training_partitions_cuda_only_optimizer_and_replays(
     tmp_path: object,
 ) -> None:

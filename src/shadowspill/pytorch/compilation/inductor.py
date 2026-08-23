@@ -12,7 +12,6 @@ allocator telemetry.
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import threading
@@ -48,6 +47,7 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
     capture_task_storage_contract,
 )
+from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.pytorch.compilation.inductor_manifest import (
     CachedTaskManifest,
     load_task_manifest,
@@ -461,13 +461,13 @@ def compile_inductor_task(
 
     manifests: list[ExecutableTaskManifest] = []
     compilation_started = time.perf_counter_ns()
-    source_graph = copy.deepcopy(graph_module)
+    source_graph = copy_graph_module(graph_module)
     inner_compile = _manifest_inner_compile(semantic_contract, manifests)
 
     def invoke_compiler() -> Any:
         compiler: Any = compile_fx
         return compiler(
-            copy.deepcopy(source_graph),
+            copy_graph_module(source_graph),
             list(example_inputs),
             inner_compile=inner_compile,
         )

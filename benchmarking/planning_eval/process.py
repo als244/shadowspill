@@ -94,6 +94,7 @@ def execute_case_worker(
         finally:
             return_code = process.wait()
             reader.join(timeout=5.0)
+            _close_output(process)
             while True:
                 try:
                     remaining = lines.get_nowait()
@@ -111,6 +112,13 @@ def execute_case_worker(
         final_active,
         None if final_active is None else time.perf_counter() - active_started,
     )
+
+
+def _close_output(process: subprocess.Popen[str]) -> None:
+    """Close the pipe Popen opened; wait() leaves it to the garbage collector."""
+
+    if process.stdout is not None:
+        process.stdout.close()
 
 
 def _next_line(lines: queue.Queue[str | None]) -> str | None:

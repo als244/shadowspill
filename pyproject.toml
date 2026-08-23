@@ -29,11 +29,12 @@ build-dir = "build/{wheel_tag}"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not fresh_process'"
 pythonpath = ["src", "."]
 markers = [
   "cuda: requires the qualified CUDA backend and accelerator",
   "qualification: long-running numerical or performance gate",
+  "fresh_process: needs a process where no test has touched the device yet; run one per process, which CTest does",
 ]
 
 [tool.ruff]

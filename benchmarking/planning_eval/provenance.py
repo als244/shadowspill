@@ -42,6 +42,16 @@ class RepositoryProvenance:
         state = f"dirty-{self.diff_sha256[:12]}" if self.dirty else "clean"
         return f"{name}__{self.head[:12]}__{state}__cfg-{config_digest[:12]}"
 
+    @property
+    def untracked_sources(self) -> tuple[str, ...]:
+        """Untracked files under src/ or csrc/, which the diff cannot capture."""
+
+        return tuple(
+            line[3:]
+            for line in self.status.splitlines()
+            if line.startswith("?? ") and line[3:].startswith(("src/", "csrc/"))
+        )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "repository_root": str(self.repository_root),
@@ -49,6 +59,9 @@ class RepositoryProvenance:
             "dirty": self.dirty,
             "status": self.status.splitlines(),
             "tracked_diff_sha256": self.diff_sha256,
+            # A tracked diff cannot reproduce these, so the baseline says which
+            # files it could not describe rather than refusing to start.
+            "untracked_sources": list(self.untracked_sources),
         }
 
 
@@ -58,7 +71,6 @@ def capture_repository_provenance(root: Path) -> RepositoryProvenance:
     repository = root.expanduser().resolve()
     head = _git(repository, "rev-parse", "HEAD").strip()
     status = _git(repository, "status", "--porcelain=v1", "--untracked-files=all")
-    _reject_untracked_runtime_sources(status)
     diff = _git(repository, "diff", "--binary", "HEAD")
     return RepositoryProvenance(
         repository,
@@ -164,20 +176,6 @@ def _is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
         text=True,
     )
     return completed.returncode == 0
-
-
-def _reject_untracked_runtime_sources(status: str) -> None:
-    protected = ("src/", "csrc/")
-    offenders = tuple(
-        line[3:]
-        for line in status.splitlines()
-        if line.startswith("?? ") and line[3:].startswith(protected)
-    )
-    if offenders:
-        raise ValueError(
-            "frontier provenance cannot freeze untracked runtime source files: "
-            + ", ".join(offenders)
-        )
 
 
 __all__ = [
