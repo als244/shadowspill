@@ -49,8 +49,8 @@ typedef struct ConcurrentTaskInvocation {
     ShadowSpillStatus after_status;
 } ConcurrentTaskInvocation;
 
-static void *run_concurrent_task(void *context) {
-    ConcurrentTaskInvocation *invocation = context;
+static void *run_concurrent_task(void *state) {
+    ConcurrentTaskInvocation *invocation = state;
     invocation->before_status = canary_before_task(
         invocation->runtime,
         invocation->handle,

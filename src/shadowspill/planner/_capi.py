@@ -231,7 +231,7 @@ class CPlacementResult(ctypes.Structure):
     ]
 
 
-class CPressureFitContext(ctypes.Structure):
+class CPressureFitProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("residency", ctypes.POINTER(CResidencyProblem)),
@@ -244,7 +244,7 @@ class CPressureFitContext(ctypes.Structure):
     ]
 
 
-class CPressureFitContextOptions(ctypes.Structure):
+class CPressureFitProblemOptions(ctypes.Structure):
     _fields_ = [
         ("residency_strategies", ctypes.POINTER(ctypes.c_uint8)),
         ("residency_strategy_count", ctypes.c_uint32),
@@ -256,7 +256,7 @@ class CPressureFitContextOptions(ctypes.Structure):
     ]
 
 
-class CPressureFitProgramContext(ctypes.Structure):
+class CPressureFitProgramProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("simulation", ctypes.POINTER(CProgram)),
@@ -331,7 +331,7 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
     ]
 
 
-class CPressureFitContextResult(ctypes.Structure):
+class CPressureFitProblemResult(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
         ("selected_candidate_index", ctypes.c_uint32),
@@ -387,23 +387,23 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CResidencyResult),
     ]
     library.shadowspill_reduce_residency.restype = ctypes.c_uint32
-    library.shadowspill_evaluate_pressurefit_context.argtypes = [
-        ctypes.POINTER(CPressureFitContext),
-        ctypes.POINTER(CPressureFitContextOptions),
-        ctypes.POINTER(CPressureFitContextResult),
+    library.shadowspill_evaluate_pressurefit_problem.argtypes = [
+        ctypes.POINTER(CPressureFitProblem),
+        ctypes.POINTER(CPressureFitProblemOptions),
+        ctypes.POINTER(CPressureFitProblemResult),
     ]
-    library.shadowspill_evaluate_pressurefit_context.restype = ctypes.c_uint32
-    library.shadowspill_evaluate_pressurefit_program_context.argtypes = [
-        ctypes.POINTER(CPressureFitProgramContext),
-        ctypes.POINTER(CPressureFitContextOptions),
-        ctypes.POINTER(CPressureFitContextResult),
+    library.shadowspill_evaluate_pressurefit_problem.restype = ctypes.c_uint32
+    library.shadowspill_evaluate_pressurefit_program_problem.argtypes = [
+        ctypes.POINTER(CPressureFitProgramProblem),
+        ctypes.POINTER(CPressureFitProblemOptions),
+        ctypes.POINTER(CPressureFitProblemResult),
     ]
-    library.shadowspill_evaluate_pressurefit_program_context.restype = ctypes.c_uint32
-    library.shadowspill_validate_pressurefit_program_context.argtypes = [
-        ctypes.POINTER(CPressureFitProgramContext),
+    library.shadowspill_evaluate_pressurefit_program_problem.restype = ctypes.c_uint32
+    library.shadowspill_validate_pressurefit_program_problem.argtypes = [
+        ctypes.POINTER(CPressureFitProgramProblem),
         ctypes.POINTER(CPressureFitPreflightResult),
     ]
-    library.shadowspill_validate_pressurefit_program_context.restype = ctypes.c_uint32
+    library.shadowspill_validate_pressurefit_program_problem.restype = ctypes.c_uint32
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),
@@ -411,10 +411,10 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CScheduleAdmissionResult),
     ]
     library.shadowspill_evaluate_schedule_admission.restype = ctypes.c_uint32
-    library.shadowspill_pressurefit_context_result_destroy.argtypes = [
-        ctypes.POINTER(CPressureFitContextResult),
+    library.shadowspill_pressurefit_problem_result_destroy.argtypes = [
+        ctypes.POINTER(CPressureFitProblemResult),
     ]
-    library.shadowspill_pressurefit_context_result_destroy.restype = None
+    library.shadowspill_pressurefit_problem_result_destroy.restype = None
     library.shadowspill_admission_operation_bounds.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),
@@ -459,11 +459,11 @@ __all__ = [
     "CPlacementResult",
     "CPlanCandidate",
     "CPressureFitCandidateDiagnostic",
-    "CPressureFitContext",
-    "CPressureFitContextOptions",
-    "CPressureFitContextResult",
     "CPressureFitPreflightResult",
-    "CPressureFitProgramContext",
+    "CPressureFitProblem",
+    "CPressureFitProblemOptions",
+    "CPressureFitProblemResult",
+    "CPressureFitProgramProblem",
     "CPressureFitRepairDiagnostics",
     "CPressureFitWorkDiagnostics",
     "CResidencyOptions",

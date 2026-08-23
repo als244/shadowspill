@@ -22,7 +22,7 @@ static int submit_transfer_copy(
         action->trace_label == NULL ? fallback : action->trace_label
     );
     const int status = route->copy_async(
-        route->context, destination, source, bytes, stream
+        route->state, destination, source, bytes, stream
     );
     shadowspill_profiler_range_end(&runtime->profiler, range);
     return status;
@@ -277,7 +277,7 @@ static int acquire_reserved_destination(
     if (dependency_event != NULL) {
         ShadowSpillRouteState *route = route_for_action(action);
         if (route == NULL || runtime->synchronization.wait_event(
-                runtime->synchronization.context,
+                runtime->synchronization.state,
                 route->lane,
                 dependency_event->event
             ) != 0) {
@@ -374,7 +374,7 @@ static int dispatch_offload_locked(
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
     if (!backend_failed && runtime->synchronization.wait_event(
-            runtime->synchronization.context,
+            runtime->synchronization.state,
             route->lane,
             trigger_event->event
         ) != 0) {
@@ -389,7 +389,7 @@ static int dispatch_offload_locked(
             bytes,
             route->lane
         ) != 0 || runtime->synchronization.record_event(
-                runtime->synchronization.context,
+                runtime->synchronization.state,
                 completion_event->event,
                 route->lane
             ) != 0 || shadowspill_completion_submit(
@@ -525,7 +525,7 @@ static int dispatch_prefetch_locked(
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
     if (!backend_failed && runtime->synchronization.wait_event(
-            runtime->synchronization.context,
+            runtime->synchronization.state,
             route->lane,
             trigger_event->event
         ) != 0) {
@@ -540,7 +540,7 @@ static int dispatch_prefetch_locked(
             bytes,
             route->lane
         ) != 0 || runtime->synchronization.record_event(
-                runtime->synchronization.context,
+                runtime->synchronization.state,
                 completion_event->event,
                 route->lane
             ) != 0 || shadowspill_completion_submit(

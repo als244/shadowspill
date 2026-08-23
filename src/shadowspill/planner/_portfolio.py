@@ -1,4 +1,4 @@
-"""One-call indexed C evaluation for a resolved recomputation context."""
+"""One-call indexed C evaluation for a resolved recomputation problem."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ from shadowspill.simulator._indexed import IndexedSimulationTemplate
 from ._admission import IndexedAdmissionFacts
 from ._capi import (
     NO_INDEX,
-    CPressureFitContextOptions,
-    CPressureFitContextResult,
     CPressureFitPreflightResult,
-    CPressureFitProgramContext,
+    CPressureFitProblemOptions,
+    CPressureFitProblemResult,
+    CPressureFitProgramProblem,
     CPressureFitRepairDiagnostics,
     CPressureFitWorkDiagnostics,
     planner_api,
@@ -95,11 +95,11 @@ class CCandidateDiagnostic:
 
 @dataclass(frozen=True, slots=True)
 class CompiledIndexedSchedule:
-    """Copied contiguous indices for one context winner.
+    """Copied contiguous indices for one problem winner.
 
-    Keeping the context-local winner indexed avoids constructing and validating
+    Keeping the problem-local winner indexed avoids constructing and validating
     thousands of Python IR records that will be discarded when a different
-    recomputation context wins the global portfolio.
+    recomputation problem wins the global portfolio.
     """
 
     action_trigger_tasks: tuple[int, ...]
@@ -112,7 +112,7 @@ class CompiledIndexedSchedule:
 
 
 @dataclass(frozen=True, slots=True)
-class CContextResult:
+class CProblemResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
     selected_schedule: CompiledIndexedSchedule | None
@@ -128,17 +128,17 @@ class CContextResult:
             candidate_work += candidate.work
         if repairs != self.repairs:
             raise RuntimeError(
-                "PressureFit context repair counters do not reconcile"
+                "PressureFit problem repair counters do not reconcile"
             )
         for name in candidate_work.__dataclass_fields__:
             if getattr(candidate_work, name) > getattr(self.work, name):
                 raise RuntimeError(
-                    f"PressureFit candidate work exceeds context work: {name}"
+                    f"PressureFit candidate work exceeds problem work: {name}"
                 )
 
 
-class ContextPreparationError(RuntimeError):
-    """The topology could not be normalized into planner facts."""
+class ProblemPreparationError(RuntimeError):
+    """The facts could not be normalized into planner facts."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,10 +329,10 @@ def _name_arrays(
     return alias_names, task_names
 
 
-def _program_context(
+def _program_problem(
     simulation: IndexedSimulationTemplate,
     admission: IndexedAdmissionFacts | None,
-) -> tuple[CPressureFitProgramContext, tuple[object, ...]]:
+) -> tuple[CPressureFitProgramProblem, tuple[object, ...]]:
     alias_names, task_names = _name_arrays(simulation)
     device_ranks = {
         device_id: rank for rank, device_id in enumerate(sorted(simulation.device_ids))
@@ -340,7 +340,7 @@ def _program_context(
     priorities = (ctypes.c_uint32 * max(1, len(simulation.device_ids)))(
         *(device_ranks[value] for value in simulation.device_ids)
     )
-    context = CPressureFitProgramContext(
+    problem = CPressureFitProgramProblem(
         abi_version=ABI_VERSION,
         simulation=ctypes.pointer(simulation.program),
         device_priority=priorities,
@@ -348,13 +348,13 @@ def _program_context(
         alias_json_names=alias_names,
         task_json_names=task_names,
     )
-    return context, (alias_names, task_names, priorities)
+    return problem, (alias_names, task_names, priorities)
 
 
-def _context_options(
+def _problem_options(
     options: PressureFitOptions,
 ) -> tuple[
-    CPressureFitContextOptions,
+    CPressureFitProblemOptions,
     tuple[str, ...],
     tuple[str, ...],
     tuple[object, ...],
@@ -367,7 +367,7 @@ def _context_options(
     rules = (ctypes.c_uint8 * len(rule_names))(
         *(_RULE_CODE[value] for value in rule_names)
     )
-    compiled = CPressureFitContextOptions(
+    compiled = CPressureFitProblemOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
         prefetch_rules=rules,
@@ -379,19 +379,19 @@ def _context_options(
     return compiled, strategy_names, rule_names, (strategies, rules)
 
 
-def validate_program_context(
+def validate_program_problem(
     simulation: IndexedSimulationTemplate,
     *,
     admission: IndexedAdmissionFacts | None = None,
 ) -> CPreflightResult:
-    """Validate one selected topology using the planner authority."""
+    """Validate one selected facts using the planner authority."""
 
-    context, _buffers = _program_context(simulation, admission)
+    problem, _buffers = _program_problem(simulation, admission)
     result = CPressureFitPreflightResult()
     library = planner_api()
     status = int(
-        library.shadowspill_validate_pressurefit_program_context(
-            ctypes.byref(context),
+        library.shadowspill_validate_pressurefit_program_problem(
+            ctypes.byref(problem),
             ctypes.byref(result),
         )
     )
@@ -409,7 +409,7 @@ def validate_program_context(
     }:
         encoded = library.shadowspill_status_string(status)
         message = encoded.decode("utf-8") if encoded else f"planner status {status}"
-        raise ContextPreparationError(message)
+        raise ProblemPreparationError(message)
     failure_names = {
         _PREFLIGHT_WORKSPACE_CAPACITY: "workspace_capacity",
         _PREFLIGHT_REQUIRED_CAPACITY: "required_capacity",
@@ -433,7 +433,7 @@ def validate_program_context(
     )
 
 
-def _copy_schedule(result: CPressureFitContextResult) -> CompiledIndexedSchedule:
+def _copy_schedule(result: CPressureFitProblemResult) -> CompiledIndexedSchedule:
     value = result.selected_schedule
     return CompiledIndexedSchedule(
         action_trigger_tasks=tuple(
@@ -506,41 +506,41 @@ def decode_schedule(
     )
 
 
-def _evaluate_context(
+def _evaluate_problem(
     simulation: IndexedSimulationTemplate,
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None,
-) -> CContextResult | None:
-    """Invoke and decode one compiled program-context evaluation."""
+) -> CProblemResult | None:
+    """Invoke and decode one compiled program-problem evaluation."""
 
-    context_options, strategy_names, rule_names, _option_buffers = (
-        _context_options(options)
+    problem_options, strategy_names, rule_names, _option_buffers = (
+        _problem_options(options)
     )
-    context_result = CPressureFitContextResult()
+    problem_result = CPressureFitProblemResult()
     library = planner_api()
-    context, _context_buffers = _program_context(simulation, admission)
+    problem, _problem_buffers = _program_problem(simulation, admission)
     status = int(
-        library.shadowspill_evaluate_pressurefit_program_context(
-            ctypes.byref(context),
-            ctypes.byref(context_options),
-            ctypes.byref(context_result),
+        library.shadowspill_evaluate_pressurefit_program_problem(
+            ctypes.byref(problem),
+            ctypes.byref(problem_options),
+            ctypes.byref(problem_result),
         )
     )
     try:
         if status == Status.ANALYTIC_INFEASIBLE:
             return None
         if status == Status.INVALID_ARGUMENT:
-            raise ContextPreparationError(
-                "PressureFit context rejected the selected topology"
+            raise ProblemPreparationError(
+                "PressureFit problem rejected the selected facts"
             )
         if status not in (Status.OK, Status.NO_FEASIBLE_CANDIDATE):
             encoded = library.shadowspill_status_string(status)
             message = encoded.decode("utf-8") if encoded else f"planner status {status}"
             raise RuntimeError(message)
         candidates: list[CCandidateDiagnostic] = []
-        for index in range(int(context_result.candidate_count)):
-            value = context_result.candidates[index]
+        for index in range(int(problem_result.candidate_count)):
+            value = problem_result.candidates[index]
             variants_per_rule = 2 if options.evaluate_coalesced else 1
             strategy = strategy_names[index // (len(rule_names) * variants_per_rule)]
             within_strategy = index % (
@@ -574,46 +574,46 @@ def _evaluate_context(
                     error_required_bytes=int(value.error_required_bytes),
                 )
             )
-        selected = int(context_result.selected_candidate_index)
-        return CContextResult(
+        selected = int(problem_result.selected_candidate_index)
+        return CProblemResult(
             selected_candidate_index=None if selected == NO_INDEX else selected,
             selected_makespan_ns=(
                 None
                 if selected == NO_INDEX
-                else int(context_result.selected_makespan_ns)
+                else int(problem_result.selected_makespan_ns)
             ),
             selected_schedule=(
-                None if selected == NO_INDEX else _copy_schedule(context_result)
+                None if selected == NO_INDEX else _copy_schedule(problem_result)
             ),
             candidates=tuple(candidates),
-            repairs=_decode_repairs(context_result.repairs),
-            work=_decode_work(context_result.work),
+            repairs=_decode_repairs(problem_result.repairs),
+            work=_decode_work(problem_result.work),
         )
     finally:
-        library.shadowspill_pressurefit_context_result_destroy(
-            ctypes.byref(context_result)
+        library.shadowspill_pressurefit_problem_result_destroy(
+            ctypes.byref(problem_result)
         )
 
 
-def evaluate_program_context(
+def evaluate_program_problem(
     simulation: IndexedSimulationTemplate,
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None = None,
-) -> CContextResult | None:
+) -> CProblemResult | None:
     """Derive indexed planning facts and evaluate the portfolio entirely in C."""
 
-    return _evaluate_context(simulation, options, admission=admission)
+    return _evaluate_problem(simulation, options, admission=admission)
 
 
 __all__ = [
     "CCandidateDiagnostic",
-    "CContextResult",
     "CPreflightResult",
+    "CProblemResult",
     "CompiledIndexedSchedule",
-    "ContextPreparationError",
+    "ProblemPreparationError",
     "decode_candidate_diagnostic",
     "decode_schedule",
-    "evaluate_program_context",
-    "validate_program_context",
+    "evaluate_program_problem",
+    "validate_program_problem",
 ]

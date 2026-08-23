@@ -16,7 +16,7 @@ pinned-host slabs. Host memory is obtained with ordinary allocation followed
 by provider registration, and is unregistered before it is freed.
 
 The execution pool's `physical_capacity` is the complete process-attributable
-device cap. Provider/context headroom lies inside that cap. Planning budgets
+device cap. Provider/problem headroom lies inside that cap. Planning budgets
 may reduce configured capacities but cannot exceed them.
 
 Runtime construction precedes workload-state construction. The runtime first
@@ -89,7 +89,7 @@ Two cases remain dynamic by design:
 
 The scratch reserve is derived from profiling. A user may raise it with
 `dynamic_scratch_reserve_bytes`, but cannot reduce the measured requirement.
-Runtime fixed-service headroom, provider/context headroom, task workspace, and
+Runtime fixed-service headroom, provider/problem headroom, task workspace, and
 dynamic scratch are distinct accounting categories.
 
 The full admission formulation, placement algorithm, offset coordinate

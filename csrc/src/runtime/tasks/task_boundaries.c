@@ -327,7 +327,7 @@ static ShadowSpillStatus record_task_completion_event(
     );
     if (status != SHADOWSPILL_STATUS_OK ||
         runtime->synchronization.record_event(
-            runtime->synchronization.context, event->event, compute_stream
+            runtime->synchronization.state, event->event, compute_stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             compute_stream,

@@ -88,7 +88,7 @@ class FixedLayoutMeasurement:
 
 def measure_fixed_layout(
     selected: PressureFitResult,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
@@ -114,7 +114,7 @@ def measure_fixed_layout(
             selected.program,
             selected.selections,
             selected.simulation_config,
-            topology,
+            facts,
         )
     encoded = encode_schedule(selected.schedule, setup.template)
     setup = replace(setup, action_trigger_tasks=encoded.action_trigger_tasks)
@@ -133,7 +133,7 @@ def measure_fixed_layout(
         required_bytes=(
             fixed_slice_bytes + dynamic_reserve_bytes + scratch_reserve_bytes
         ),
-        pool_capacity_bytes=topology.pool_capacity_bytes,
+        pool_capacity_bytes=facts.pool_capacity_bytes,
         fixed_slice_bytes=fixed_slice_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
         scratch_reserve_bytes=scratch_reserve_bytes,
@@ -146,7 +146,7 @@ def measure_fixed_layout(
 
 def certify_fixed_layout(
     selected: PressureFitResult,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     measurement: FixedLayoutMeasurement,
 ) -> FixedLayoutAdmission:
     """Prove a measured layout is safe to run, and re-simulate against it.
@@ -167,7 +167,7 @@ def certify_fixed_layout(
     layout = FixedPhysicalLayout(
         program_digest=selected.program.digest,
         schedule_digest=selected.schedule.digest,
-        facts_digest=topology.digest,
+        facts_digest=facts.digest,
         pool_capacity_bytes=measurement.pool_capacity_bytes,
         fixed_slice_bytes=measurement.fixed_slice_bytes,
         dynamic_reserve_bytes=measurement.dynamic_reserve_bytes,
@@ -207,7 +207,7 @@ def certify_fixed_layout(
 
 def build_fixed_layout_admission(
     selected: PressureFitResult,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
     scratch_reserve_bytes: int = 0,
@@ -217,10 +217,10 @@ def build_fixed_layout_admission(
 
     return certify_fixed_layout(
         selected,
-        topology,
+        facts,
         measure_fixed_layout(
             selected,
-            topology,
+            facts,
             dynamic_alias_group_ids=dynamic_alias_group_ids,
             scratch_reserve_bytes=scratch_reserve_bytes,
             setup=setup,

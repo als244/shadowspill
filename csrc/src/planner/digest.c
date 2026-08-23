@@ -171,7 +171,7 @@ static void append_json_string(Sha256 *hash, const char *escaped_payload) {
 
 static void append_residency(
     Sha256 *hash,
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const uint32_t *aliases,
     const uint8_t *locations,
     uint32_t count
@@ -182,7 +182,7 @@ static void append_residency(
             sha256_text(hash, ",");
         }
         sha256_text(hash, "{\"alias_group_id\":");
-        append_json_string(hash, context->alias_json_names[aliases[index]]);
+        append_json_string(hash, problem->alias_json_names[aliases[index]]);
         sha256_text(hash, ",\"location\":\"");
         sha256_text(hash, location_name(locations[index]));
         sha256_text(hash, "\"}");
@@ -191,7 +191,7 @@ static void append_residency(
 }
 
 void shadowspill_schedule_digest(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES]
 ) {
@@ -205,21 +205,21 @@ void shadowspill_schedule_digest(
         sha256_text(&hash, "{\"alias_group_id\":");
         append_json_string(
             &hash,
-            context->alias_json_names[schedule->action_aliases[index]]
+            problem->alias_json_names[schedule->action_aliases[index]]
         );
         sha256_text(&hash, ",\"kind\":\"");
         sha256_text(&hash, action_name(schedule->action_kinds[index]));
         sha256_text(&hash, "\",\"trigger_task_id\":");
         append_json_string(
             &hash,
-            context->task_json_names[schedule->action_trigger_tasks[index]]
+            problem->task_json_names[schedule->action_trigger_tasks[index]]
         );
         sha256_text(&hash, "}");
     }
     sha256_text(&hash, "],\"final_residency\":");
     append_residency(
         &hash,
-        context,
+        problem,
         schedule->final_aliases,
         schedule->final_locations,
         schedule->final_count
@@ -227,7 +227,7 @@ void shadowspill_schedule_digest(
     sha256_text(&hash, ",\"initial_residency\":");
     append_residency(
         &hash,
-        context,
+        problem,
         schedule->initial_aliases,
         schedule->initial_locations,
         schedule->initial_count

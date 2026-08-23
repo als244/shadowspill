@@ -248,12 +248,12 @@ class PressureFitProgram:
             ),
             spill_budget,
         )
-        topology = replace(
+        facts = replace(
             self.admission_facts,
             pool_capacity_bytes=pool_capacity,
             object_capacity_bytes=object_capacity,
         )
-        return config, topology
+        return config, facts
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -276,7 +276,7 @@ class PressureFitProgram:
                 "dynamic_scratch_reserve_bytes": (self.dynamic_scratch_reserve_bytes),
             },
             "simulation_config": _simulation_config_to_dict(self.simulation_config),
-            # Schema v1 spells these facts a "topology"; every stored corpus
+            # Schema v1 spells these facts a "facts"; every stored corpus
             # case is verified against digests taken over that name.
             "admission_topology": self.admission_facts.to_dict(),
             "pressurefit_options": _options_to_dict(self.options),

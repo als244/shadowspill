@@ -6,9 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct PreparedContext {
+typedef struct PreparedProblem {
     ShadowSpillResidencyProblem residency;
-    ShadowSpillPressureFitContext context;
+    ShadowSpillPressureFitProblem problem;
 
     int8_t *initial_location;
     int8_t *final_location;
@@ -38,7 +38,7 @@ typedef struct PreparedContext {
     int32_t error_boundary;
     uint64_t failure_required_bytes;
     uint64_t failure_capacity_bytes;
-} PreparedContext;
+} PreparedProblem;
 
 typedef struct ColdAlias {
     uint32_t alias;
@@ -160,7 +160,7 @@ static int compare_cold_placement(
     return result == 0 ? compare_u32(left->alias, right->alias) : result;
 }
 
-static void prepared_context_destroy(PreparedContext *prepared) {
+static void prepared_problem_destroy(PreparedProblem *prepared) {
     free(prepared->initial_location);
     free(prepared->final_location);
     free(prepared->anchors);
@@ -184,21 +184,21 @@ static void prepared_context_destroy(PreparedContext *prepared) {
     memset(prepared, 0, sizeof(*prepared));
 }
 
-static int program_context_valid(
-    const ShadowSpillPressureFitProgramContext *context,
-    const ShadowSpillPressureFitContextOptions *options
+static int program_problem_valid(
+    const ShadowSpillPressureFitProgramProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options
 ) {
-    if (context == NULL || options == NULL || context->simulation == NULL ||
-        context->device_priority == NULL || context->alias_json_names == NULL ||
-        context->task_json_names == NULL ||
-        context->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->simulation->device_count == 0U ||
-        context->simulation->task_count == 0U ||
+    if (problem == NULL || options == NULL || problem->simulation == NULL ||
+        problem->device_priority == NULL || problem->alias_json_names == NULL ||
+        problem->task_json_names == NULL ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->simulation->device_count == 0U ||
+        problem->simulation->task_count == 0U ||
         options->initial_placement > SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = context->simulation;
+    const ShadowSpillSimulationProgram *program = problem->simulation;
     if (program->devices == NULL || program->alias_device == NULL ||
         program->alias_size_bytes == NULL ||
         program->alias_retain_spill_copy == NULL ||
@@ -216,12 +216,12 @@ static int program_context_valid(
         return 0;
     }
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
-        if (context->alias_json_names[alias] == NULL) {
+        if (problem->alias_json_names[alias] == NULL) {
             return 0;
         }
     }
     for (uint32_t task = 0U; task < program->task_count; ++task) {
-        if (context->task_json_names[task] == NULL) {
+        if (problem->task_json_names[task] == NULL) {
             return 0;
         }
     }
@@ -230,7 +230,7 @@ static int program_context_valid(
 
 static int allocate_prepared_buffers(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     size_t cells = 0U;
     size_t pressure_cells = 0U;
@@ -390,7 +390,7 @@ static int validate_offsets(
 }
 
 static void record_access(
-    PreparedContext *prepared,
+    PreparedProblem *prepared,
     uint32_t alias,
     uint32_t position,
     uint32_t task,
@@ -410,7 +410,7 @@ static void record_access(
 
 static ShadowSpillStatus derive_task_facts(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
     if (validate_offsets(program->input_offsets, program->task_count,
@@ -516,7 +516,7 @@ static ShadowSpillStatus derive_task_facts(
 
 static ShadowSpillStatus finalize_boundary_capacities(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     const uint32_t boundary_count = program->task_count + 1U;
     for (uint32_t device = 0U; device < program->device_count; ++device) {
@@ -543,7 +543,7 @@ static ShadowSpillStatus finalize_boundary_capacities(
 
 static ShadowSpillStatus finalize_alias_facts(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -597,7 +597,7 @@ static ShadowSpillStatus finalize_alias_facts(
 
 static ShadowSpillStatus validate_required_floor(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -667,7 +667,7 @@ static ShadowSpillStatus validate_required_floor(
 
 static void build_anchor_seed(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -695,7 +695,7 @@ static void build_anchor_seed(
 
 static ShadowSpillStatus greedily_place_initial_aliases(
     const ShadowSpillSimulationProgram *program,
-    PreparedContext *prepared
+    PreparedProblem *prepared
 ) {
     uint32_t cold_count = 0U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
@@ -811,10 +811,10 @@ static ShadowSpillStatus greedily_place_initial_aliases(
     return SHADOWSPILL_STATUS_OK;
 }
 
-static ShadowSpillStatus prepare_context(
-    const ShadowSpillPressureFitProgramContext *source,
-    const ShadowSpillPressureFitContextOptions *options,
-    PreparedContext *prepared
+static ShadowSpillStatus prepare_problem(
+    const ShadowSpillPressureFitProgramProblem *source,
+    const ShadowSpillPressureFitProblemOptions *options,
+    PreparedProblem *prepared
 ) {
     memset(prepared, 0, sizeof(*prepared));
     prepared->error_device = UINT32_MAX;
@@ -889,7 +889,7 @@ static ShadowSpillStatus prepare_context(
         .boundary_capacity_bytes = prepared->boundary_capacity_bytes,
         .device_priority = source->device_priority,
     };
-    prepared->context = (ShadowSpillPressureFitContext){
+    prepared->problem = (ShadowSpillPressureFitProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .residency = &prepared->residency,
         .simulation = program,
@@ -902,10 +902,10 @@ static ShadowSpillStatus prepare_context(
     return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillStatus shadowspill_evaluate_pressurefit_program_context(
-    const ShadowSpillPressureFitProgramContext *context,
-    const ShadowSpillPressureFitContextOptions *options,
-    ShadowSpillPressureFitContextResult *result
+ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problem(
+    const ShadowSpillPressureFitProgramProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options,
+    ShadowSpillPressureFitProblemResult *result
 ) {
     if (result == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -913,26 +913,26 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_context(
     memset(result, 0, sizeof(*result));
     result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
     result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    if (!program_context_valid(context, options)) {
+    if (!program_problem_valid(problem, options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    PreparedContext prepared = {0};
-    ShadowSpillStatus status = prepare_context(context, options, &prepared);
+    PreparedProblem prepared = {0};
+    ShadowSpillStatus status = prepare_problem(problem, options, &prepared);
     if (status == SHADOWSPILL_STATUS_OK) {
-        status = shadowspill_evaluate_pressurefit_context(
-            &prepared.context,
+        status = shadowspill_evaluate_pressurefit_problem(
+            &prepared.problem,
             options,
             result
         );
     } else {
         result->status = status;
     }
-    prepared_context_destroy(&prepared);
+    prepared_problem_destroy(&prepared);
     return status;
 }
 
-ShadowSpillStatus shadowspill_validate_pressurefit_program_context(
-    const ShadowSpillPressureFitProgramContext *context,
+ShadowSpillStatus shadowspill_validate_pressurefit_program_problem(
+    const ShadowSpillPressureFitProgramProblem *problem,
     ShadowSpillPressureFitPreflightResult *result
 ) {
     if (result == NULL) {
@@ -943,15 +943,15 @@ ShadowSpillStatus shadowspill_validate_pressurefit_program_context(
     result->error_device = UINT32_MAX;
     result->error_alias = UINT32_MAX;
     result->error_boundary = INT32_MIN;
-    const ShadowSpillPressureFitContextOptions options = {
+    const ShadowSpillPressureFitProblemOptions options = {
         .initial_placement = SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED,
     };
-    if (!program_context_valid(context, &options)) {
+    if (!program_problem_valid(problem, &options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
-    PreparedContext prepared = {0};
-    ShadowSpillStatus status = prepare_context(context, &options, &prepared);
+    PreparedProblem prepared = {0};
+    ShadowSpillStatus status = prepare_problem(problem, &options, &prepared);
     result->status = status;
     result->failure_kind = prepared.failure_kind;
     result->error_device = prepared.error_device;
@@ -959,6 +959,6 @@ ShadowSpillStatus shadowspill_validate_pressurefit_program_context(
     result->error_boundary = prepared.error_boundary;
     result->required_bytes = prepared.failure_required_bytes;
     result->capacity_bytes = prepared.failure_capacity_bytes;
-    prepared_context_destroy(&prepared);
+    prepared_problem_destroy(&prepared);
     return status;
 }

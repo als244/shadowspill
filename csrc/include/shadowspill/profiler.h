@@ -23,19 +23,19 @@ typedef uint64_t ShadowSpillProfilerRange;
  */
 typedef struct ShadowSpillProfiler {
     uint32_t abi_version;
-    void *context;
-    void (*name_current_thread)(void *context, const char *name);
+    void *state;
+    void (*name_current_thread)(void *state, const char *name);
     void (*name_stream)(
-        void *context,
+        void *state,
         ShadowSpillBackendStream stream,
         const char *name
     );
-    void (*set_enabled)(void *context, uint8_t enabled);
+    void (*set_enabled)(void *state, uint8_t enabled);
     ShadowSpillProfilerRange (*range_begin)(
-        void *context,
+        void *state,
         const char *name
     );
-    void (*range_end)(void *context, ShadowSpillProfilerRange range);
+    void (*range_end)(void *state, ShadowSpillProfilerRange range);
 } ShadowSpillProfiler;
 
 #ifdef __cplusplus

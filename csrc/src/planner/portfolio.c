@@ -419,18 +419,18 @@ static int rule_valid(uint8_t rule) {
     return rule <= SHADOWSPILL_PREFETCH_DEMAND;
 }
 
-static int context_valid(
-    const ShadowSpillPressureFitContext *context,
-    const ShadowSpillPressureFitContextOptions *options
+static int problem_valid(
+    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options
 ) {
-    if (context == NULL || options == NULL || context->residency == NULL ||
-        context->simulation == NULL || context->seed_resident == NULL ||
-        context->seed_breaks == NULL || context->alias_json_names == NULL ||
-        context->task_json_names == NULL ||
-        context->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->simulation->task_count == 0U ||
+    if (problem == NULL || options == NULL || problem->residency == NULL ||
+        problem->simulation == NULL || problem->seed_resident == NULL ||
+        problem->seed_breaks == NULL || problem->alias_json_names == NULL ||
+        problem->task_json_names == NULL ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->simulation->task_count == 0U ||
         options->residency_strategies == NULL ||
         options->residency_strategy_count == 0U ||
         options->prefetch_rules == NULL || options->prefetch_rule_count == 0U) {
@@ -447,13 +447,13 @@ static int context_valid(
             return 0;
         }
     }
-    for (uint32_t alias = 0U; alias < context->residency->alias_count; ++alias) {
-        if (context->alias_json_names[alias] == NULL) {
+    for (uint32_t alias = 0U; alias < problem->residency->alias_count; ++alias) {
+        if (problem->alias_json_names[alias] == NULL) {
             return 0;
         }
     }
-    for (uint32_t task = 0U; task < context->simulation->task_count; ++task) {
-        if (context->task_json_names[task] == NULL) {
+    for (uint32_t task = 0U; task < problem->simulation->task_count; ++task) {
+        if (problem->task_json_names[task] == NULL) {
             return 0;
         }
     }
@@ -461,12 +461,12 @@ static int context_valid(
 }
 
 static int simulation_workspace_create(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     SimulationWorkspace *workspace
 ) {
     memset(workspace, 0, sizeof(*workspace));
-    workspace->task_capacity = context->simulation->task_count;
-    workspace->device_capacity = context->simulation->device_count;
+    workspace->task_capacity = problem->simulation->task_count;
+    workspace->device_capacity = problem->simulation->device_count;
     workspace->tasks = calloc(
         workspace->task_capacity == 0U ? 1U : workspace->task_capacity,
         sizeof(*workspace->tasks)
@@ -527,7 +527,7 @@ static void simulation_workspace_destroy(SimulationWorkspace *workspace) {
 }
 
 static int simulate_schedule(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     SimulationWorkspace *workspace,
     ShadowSpillCandidateAdmissionWorkspace *admission_workspace,
@@ -544,11 +544,11 @@ static int simulate_schedule(
     ShadowSpillSimulationProgram program;
     *admission_status = SHADOWSPILL_STATUS_OK;
     memset(admission_result, 0, sizeof(*admission_result));
-    if (context->admission == NULL) {
-        shadowspill_bind_indexed_schedule(context->simulation, schedule, &program);
+    if (problem->admission == NULL) {
+        shadowspill_bind_indexed_schedule(problem->simulation, schedule, &program);
     } else {
         *admission_status = shadowspill_admit_indexed_schedule(
-            context,
+            problem,
             schedule,
             admission_workspace,
             &program,
@@ -575,14 +575,14 @@ static int simulate_schedule(
 }
 
 static int candidate_workspace_create(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace
 ) {
     memset(workspace, 0, sizeof(*workspace));
-    uint64_t cell_count = (uint64_t)context->residency->alias_count *
-        context->residency->boundary_count;
-    uint64_t pressure_count = (uint64_t)context->residency->device_count *
-        context->residency->boundary_count;
+    uint64_t cell_count = (uint64_t)problem->residency->alias_count *
+        problem->residency->boundary_count;
+    uint64_t pressure_count = (uint64_t)problem->residency->device_count *
+        problem->residency->boundary_count;
     if (cell_count > SIZE_MAX || pressure_count > SIZE_MAX) {
         return -1;
     }
@@ -598,9 +598,9 @@ static int candidate_workspace_create(
     workspace->repair_resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->repair_breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->removable_aliases = calloc(
-        context->residency->alias_count == 0U
+        problem->residency->alias_count == 0U
             ? 1U
-            : context->residency->alias_count,
+            : problem->residency->alias_count,
         1U
     );
     workspace->extra_pressure = calloc(
@@ -614,23 +614,23 @@ static int candidate_workspace_create(
         workspace->removable_aliases == NULL ||
         workspace->extra_pressure == NULL ||
         shadowspill_schedule_storage_create(
-            context->residency->alias_count,
+            problem->residency->alias_count,
             &workspace->schedule
         ) != 0 ||
         shadowspill_schedule_storage_create(
-            context->residency->alias_count,
+            problem->residency->alias_count,
             &workspace->selected
         ) != 0 ||
         simulation_workspace_create(
-            context,
+            problem,
             &workspace->simulation
         ) != 0 ||
-        (context->admission != NULL &&
+        (problem->admission != NULL &&
          shadowspill_candidate_admission_workspace_create(
-             context, &workspace->admission
+             problem, &workspace->admission
          ) != 0) ||
         shadowspill_residency_workspace_create(
-            context->residency,
+            problem->residency,
             &workspace->residency_workspace
         ) != 0) {
         return -1;
@@ -741,7 +741,7 @@ static int record_prefetch_constraint(
 
 
 static void residency_options(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     uint8_t strategy,
     ShadowSpillResidencyOptions *options
@@ -757,22 +757,22 @@ static void residency_options(
                 strategy == SHADOWSPILL_RESIDENCY_HEADROOM_TRANSFER
             ? 1U
             : 0U,
-        .seed_resident = context->seed_resident,
-        .seed_breaks = context->seed_breaks,
+        .seed_resident = problem->seed_resident,
+        .seed_breaks = problem->seed_breaks,
         .extra_pressure_bytes = workspace->extra_pressure,
     };
 }
 
 static ShadowSpillStatus reduce(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint8_t *resident,
     uint8_t *breaks,
     ShadowSpillResidencyResult *result
 ) {
-    uint64_t cells = (uint64_t)context->residency->alias_count *
-        context->residency->boundary_count;
+    uint64_t cells = (uint64_t)problem->residency->alias_count *
+        problem->residency->boundary_count;
     *result = (ShadowSpillResidencyResult){
         .resident = resident,
         .resident_capacity = cells,
@@ -780,7 +780,7 @@ static ShadowSpillStatus reduce(
         .break_capacity = cells,
     };
     return shadowspill_reduce_residency_reusing(
-        context->residency,
+        problem->residency,
         options,
         result,
         workspace->residency_workspace
@@ -896,7 +896,7 @@ static ResidencyCacheEntry *append_residency_cache(
 }
 
 static ShadowSpillStatus reduce_cached(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint8_t strategy,
@@ -913,7 +913,7 @@ static ShadowSpillStatus reduce_cached(
         ++workspace->residency_cache_misses;
         ShadowSpillResidencyResult computed;
         ShadowSpillStatus status = reduce(
-            context,
+            problem,
             workspace,
             options,
             resident,
@@ -1184,7 +1184,7 @@ static SimulationCacheEntry *append_simulation_cache(
 }
 
 static int simulate_cached(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     ShadowSpillSimulationResult *result,
     ShadowSpillStatus *admission_status,
@@ -1216,7 +1216,7 @@ static int simulate_cached(
         slot = hash_index_next(&cache->index, slot);
     }
     if (simulate_schedule(
-            context,
+            problem,
             &workspace->schedule.value,
             &workspace->simulation,
             &workspace->admission,
@@ -1391,7 +1391,7 @@ static void copy_analytic_error(
 }
 
 static int add_repair_pressure(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *failure
 ) {
@@ -1401,7 +1401,7 @@ static int add_repair_pressure(
         return 0;
     }
     if (failure->error_device == SHADOWSPILL_SIMULATOR_NO_INDEX ||
-        failure->error_device >= context->residency->device_count) {
+        failure->error_device >= problem->residency->device_count) {
         return 0;
     }
     int32_t boundary = -1;
@@ -1420,7 +1420,7 @@ static int add_repair_pressure(
     uint64_t capacity = failure->error_capacity_bytes != 0U
         ? failure->error_capacity_bytes
         : shadowspill_boundary_capacity(
-            context->residency,
+            problem->residency,
             failure->error_device,
             (uint32_t)(boundary + 1)
         );
@@ -1433,7 +1433,7 @@ static int add_repair_pressure(
     uint64_t excess = total > capacity ? total - capacity : 1U;
     uint32_t index = (uint32_t)(boundary + 1);
     uint64_t position =
-        (uint64_t)failure->error_device * context->residency->boundary_count +
+        (uint64_t)failure->error_device * problem->residency->boundary_count +
         index;
     if (workspace->extra_pressure[position] > UINT64_MAX - excess) {
         workspace->extra_pressure[position] = UINT64_MAX;
@@ -1452,7 +1452,7 @@ static int simulation_failure_may_be_repairable(
 }
 
 static int admission_failure_boundary(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillAdmissionAnnotation annotation,
     uint32_t *task,
@@ -1468,14 +1468,14 @@ static int admission_failure_boundary(
             *pressure_index = 0U;
             return 1;
         case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_START:
-            if (annotation.index >= context->simulation->task_count) {
+            if (annotation.index >= problem->simulation->task_count) {
                 return -1;
             }
             *task = annotation.index;
             *pressure_index = annotation.index;
             return 1;
         case SHADOWSPILL_ADMISSION_BOUNDARY_TASK_COMPLETION:
-            if (annotation.index >= context->simulation->task_count) {
+            if (annotation.index >= problem->simulation->task_count) {
                 return -1;
             }
             *task = annotation.index;
@@ -1488,7 +1488,7 @@ static int admission_failure_boundary(
             }
             *task = schedule->action_trigger_tasks[annotation.index];
             *alias = schedule->action_aliases[annotation.index];
-            if (*task >= context->simulation->task_count) {
+            if (*task >= problem->simulation->task_count) {
                 return -1;
             }
             *pressure_index = *task + 1U;
@@ -1508,9 +1508,9 @@ static int delay_admission_prefetch(
     ShadowSpillSimulationResult projected = {
         .error_alias = SHADOWSPILL_SIMULATOR_NO_INDEX,
         .error_device = 0U,
-        .error_capacity_bytes = facts->context->admission->pool_capacity_bytes,
+        .error_capacity_bytes = facts->problem->admission->pool_capacity_bytes,
         .error_used_bytes =
-            facts->context->admission->pool_capacity_bytes -
+            facts->problem->admission->pool_capacity_bytes -
             failure->error_free_bytes,
         .error_requested_bytes = failure->error_requested_bytes,
     };
@@ -1558,7 +1558,7 @@ static int advance_admission_prefetch(
 }
 
 static int add_admission_repair_pressure(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     const ShadowSpillAdmissionReplayResult *failure,
@@ -1569,7 +1569,7 @@ static int add_admission_repair_pressure(
     uint32_t pressure_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
     uint32_t alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
     const int boundary = admission_failure_boundary(
-        context,
+        problem,
         schedule,
         annotation,
         &task,
@@ -1579,7 +1579,7 @@ static int add_admission_repair_pressure(
     (void)task;
     (void)alias;
     if (boundary <= 0 ||
-        pressure_index >= context->residency->boundary_count) {
+        pressure_index >= problem->residency->boundary_count) {
         return boundary;
     }
     uint64_t required_reduction = failure->error_requested_bytes >
@@ -1590,7 +1590,7 @@ static int add_admission_repair_pressure(
     const uint64_t position = pressure_index;
     uint64_t resident_pressure = 0U;
     if (shadowspill_residency_pressure_at(
-            context->residency,
+            problem->residency,
             options,
             workspace->resident,
             workspace->breaks,
@@ -1609,7 +1609,7 @@ static int add_admission_repair_pressure(
         current_pressure += workspace->extra_pressure[position];
     }
     const uint64_t capacity = shadowspill_boundary_capacity(
-        context->residency,
+        problem->residency,
         0U,
         pressure_index
     );
@@ -1633,7 +1633,7 @@ static int add_admission_repair_pressure(
 
 
 static void copy_admission_error(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     const ShadowSpillAdmissionReplayResult *failure,
     ShadowSpillAdmissionAnnotation annotation,
@@ -1643,7 +1643,7 @@ static void copy_admission_error(
     uint32_t pressure_index = SHADOWSPILL_SIMULATOR_NO_INDEX;
     uint32_t alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
     (void)admission_failure_boundary(
-        context,
+        problem,
         schedule,
         annotation,
         &task,
@@ -1658,9 +1658,9 @@ static void copy_admission_error(
             SHADOWSPILL_SIMULATOR_NO_INDEX
         ? INT32_MIN
         : (int32_t)pressure_index - 1;
-    diagnostic->error_capacity_bytes = context->admission->pool_capacity_bytes;
+    diagnostic->error_capacity_bytes = problem->admission->pool_capacity_bytes;
     diagnostic->error_used_bytes =
-        context->admission->pool_capacity_bytes - failure->error_free_bytes;
+        problem->admission->pool_capacity_bytes - failure->error_free_bytes;
     diagnostic->error_requested_bytes = failure->error_requested_bytes;
     diagnostic->error_required_bytes = failure->error_requested_bytes >
             failure->error_largest_free_range_bytes
@@ -1670,7 +1670,7 @@ static void copy_admission_error(
 }
 
 static int reduce_repaired_candidate(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint8_t strategy,
@@ -1679,7 +1679,7 @@ static int reduce_repaired_candidate(
     ShadowSpillResidencyResult residency;
     const uint64_t started = monotonic_time_ns();
     const ShadowSpillStatus status = reduce_cached(
-        context,
+        problem,
         workspace,
         options,
         strategy,
@@ -1714,9 +1714,9 @@ static void initialize_diagnostic(
 }
 
 static int evaluate_candidate(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillScheduleFacts *facts,
-    const ShadowSpillPressureFitContextOptions *portfolio_options,
+    const ShadowSpillPressureFitProblemOptions *portfolio_options,
     CandidateWorkspace *workspace,
     uint8_t strategy,
     uint8_t rule,
@@ -1724,10 +1724,10 @@ static int evaluate_candidate(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
     initialize_diagnostic(diagnostic, strategy, rule, coalesced);
-    uint64_t cells = (uint64_t)context->residency->alias_count *
-        context->residency->boundary_count;
-    uint64_t pressure_cells = (uint64_t)context->residency->device_count *
-        context->residency->boundary_count;
+    uint64_t cells = (uint64_t)problem->residency->alias_count *
+        problem->residency->boundary_count;
+    uint64_t pressure_cells = (uint64_t)problem->residency->device_count *
+        problem->residency->boundary_count;
     memset(
         workspace->extra_pressure,
         0,
@@ -1739,7 +1739,7 @@ static int evaluate_candidate(
     workspace->current_residency_key = workspace->base_residency_key;
 
     ShadowSpillResidencyOptions reduce_options;
-    residency_options(context, workspace, strategy, &reduce_options);
+    residency_options(problem, workspace, strategy, &reduce_options);
     int need_emit = 1;
     while (1) {
         if (need_emit != 0) {
@@ -1793,7 +1793,7 @@ static int evaluate_candidate(
         const uint64_t admission_before = workspace->admission.time_ns;
         uint64_t simulation_started = monotonic_time_ns();
         if (simulate_cached(
-                context,
+                problem,
                 workspace,
                 &simulation,
                 &admission_status,
@@ -1835,7 +1835,7 @@ static int evaluate_candidate(
                     }
                     if (recorded > 0) {
                         copy_admission_error(
-                            context,
+                            problem,
                             &workspace->schedule.value,
                             &admission_result,
                             admission_error_annotation,
@@ -1865,7 +1865,7 @@ static int evaluate_candidate(
                     }
                     if (recorded > 0) {
                         copy_admission_error(
-                            context,
+                            problem,
                             &workspace->schedule.value,
                             &admission_result,
                             admission_error_annotation,
@@ -1877,7 +1877,7 @@ static int evaluate_candidate(
                     continue;
                 }
                 int pressure_added = add_admission_repair_pressure(
-                    context,
+                    problem,
                     workspace,
                     &reduce_options,
                     &admission_result,
@@ -1890,7 +1890,7 @@ static int evaluate_candidate(
                 if (pressure_added > 0) {
                     ++diagnostic->repairs.admission_pressure_boundary_attempts;
                     int reduced = reduce_repaired_candidate(
-                        context,
+                        problem,
                         workspace,
                         &reduce_options,
                         strategy,
@@ -1907,7 +1907,7 @@ static int evaluate_candidate(
                 }
             }
             copy_admission_error(
-                context,
+                problem,
                 &workspace->schedule.value,
                 &admission_result,
                 admission_error_annotation,
@@ -1925,7 +1925,7 @@ static int evaluate_candidate(
             if (simulation_entry->digest_valid == 0U) {
                 uint64_t digest_started = monotonic_time_ns();
                 shadowspill_schedule_digest(
-                    context,
+                    problem,
                     &workspace->schedule.value,
                     simulation_entry->digest
                 );
@@ -1997,10 +1997,10 @@ static int evaluate_candidate(
                 ++diagnostic->repairs.simulation_prefetch_delay_attempts;
                 continue;
             }
-            if (add_repair_pressure(context, workspace, &simulation) != 0) {
+            if (add_repair_pressure(problem, workspace, &simulation) != 0) {
                 ++diagnostic->repairs.simulation_pressure_boundary_attempts;
                 int reduced = reduce_repaired_candidate(
-                    context,
+                    problem,
                     workspace,
                     &reduce_options,
                     strategy,
@@ -2028,7 +2028,7 @@ static int evaluate_candidate(
 }
 
 static int adopt_selected_schedule(
-    ShadowSpillPressureFitContextResult *result,
+    ShadowSpillPressureFitProblemResult *result,
     CandidateWorkspace *workspace
 ) {
     ShadowSpillIndexedSchedule *source = &workspace->selected.value;
@@ -2041,8 +2041,8 @@ static int adopt_selected_schedule(
     return 0;
 }
 
-void shadowspill_pressurefit_context_result_destroy(
-    ShadowSpillPressureFitContextResult *result
+void shadowspill_pressurefit_problem_result_destroy(
+    ShadowSpillPressureFitProblemResult *result
 ) {
     if (result == NULL) {
         return;
@@ -2058,10 +2058,10 @@ void shadowspill_pressurefit_context_result_destroy(
     memset(result, 0, sizeof(*result));
 }
 
-ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
-    const ShadowSpillPressureFitContext *context,
-    const ShadowSpillPressureFitContextOptions *options,
-    ShadowSpillPressureFitContextResult *result
+ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
+    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options,
+    ShadowSpillPressureFitProblemResult *result
 ) {
     if (result == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -2069,7 +2069,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
     memset(result, 0, sizeof(*result));
     result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
     result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    if (!context_valid(context, options)) {
+    if (!problem_valid(problem, options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const uint64_t evaluation_started = monotonic_time_ns();
@@ -2093,17 +2093,17 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
 
     ShadowSpillScheduleFacts facts = {0};
     CandidateWorkspace workspace = {0};
-    if (shadowspill_schedule_facts_create(context, &facts) != 0 ||
-        candidate_workspace_create(context, &workspace) != 0) {
+    if (shadowspill_schedule_facts_create(problem, &facts) != 0 ||
+        candidate_workspace_create(problem, &workspace) != 0) {
         shadowspill_schedule_facts_destroy(&facts);
         candidate_workspace_destroy(&workspace);
-        shadowspill_pressurefit_context_result_destroy(result);
+        shadowspill_pressurefit_problem_result_destroy(result);
         result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
-    uint64_t pressure_cells = (uint64_t)context->residency->device_count *
-        context->residency->boundary_count;
+    uint64_t pressure_cells = (uint64_t)problem->residency->device_count *
+        problem->residency->boundary_count;
     uint32_t candidate_index = 0U;
     for (uint32_t strategy_index = 0U;
          strategy_index < options->residency_strategy_count;
@@ -2115,11 +2115,11 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
             (size_t)pressure_cells * sizeof(*workspace.extra_pressure)
         );
         ShadowSpillResidencyOptions reduce_options;
-        residency_options(context, &workspace, strategy, &reduce_options);
+        residency_options(problem, &workspace, strategy, &reduce_options);
         ShadowSpillResidencyResult base_result;
         uint64_t residency_started = monotonic_time_ns();
         ShadowSpillStatus base_status = reduce_cached(
-            context,
+            problem,
             &workspace,
             &reduce_options,
             strategy,
@@ -2154,7 +2154,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
                         workspace_work(&workspace);
                     const uint64_t candidate_started = monotonic_time_ns();
                     int valid = evaluate_candidate(
-                        context,
+                        problem,
                         &facts,
                         options,
                         &workspace,

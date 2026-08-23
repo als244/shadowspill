@@ -600,7 +600,7 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     assert calls == [artifact.compatibility_digest, artifact.compatibility_digest]
 
 
-def test_compiler_failure_has_structural_context_and_preserves_cause(
+def test_compiler_failure_has_structural_problem_and_preserves_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     artifact = _artifact()
@@ -623,7 +623,7 @@ def test_compiler_failure_has_structural_context_and_preserves_cause(
     assert isinstance(captured.value.__cause__, RuntimeError)
 
 
-def test_profile_failure_has_structural_context_and_preserves_cause(
+def test_profile_failure_has_structural_problem_and_preserves_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     artifact = _artifact()

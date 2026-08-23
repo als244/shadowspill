@@ -65,26 +65,26 @@ static void record_earliest(
 }
 
 int shadowspill_schedule_facts_create(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     ShadowSpillScheduleFacts *facts
 ) {
-    if (context == NULL || facts == NULL || context->residency == NULL ||
-        context->simulation == NULL ||
-        context->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
-        context->residency->alias_count != context->simulation->alias_count ||
-        context->residency->device_count != context->simulation->device_count ||
-        context->residency->boundary_count !=
-            context->simulation->task_count + 1U) {
+    if (problem == NULL || facts == NULL || problem->residency == NULL ||
+        problem->simulation == NULL ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->residency->alias_count != problem->simulation->alias_count ||
+        problem->residency->device_count != problem->simulation->device_count ||
+        problem->residency->boundary_count !=
+            problem->simulation->task_count + 1U) {
         return -1;
     }
     memset(facts, 0, sizeof(*facts));
-    facts->context = context;
-    facts->alias_count = context->residency->alias_count;
-    facts->task_count = context->simulation->task_count;
-    facts->boundary_count = context->residency->boundary_count;
-    facts->device_count = context->residency->device_count;
+    facts->problem = problem;
+    facts->alias_count = problem->residency->alias_count;
+    facts->task_count = problem->simulation->task_count;
+    facts->boundary_count = problem->residency->boundary_count;
+    facts->device_count = problem->residency->device_count;
 
     size_t cells = 0U;
     if (checked_cells(facts->alias_count, facts->boundary_count, &cells) != 0) {
@@ -105,7 +105,7 @@ int shadowspill_schedule_facts_create(
         facts->earliest_access_task[position] = UINT32_MAX;
     }
 
-    const ShadowSpillSimulationProgram *program = context->simulation;
+    const ShadowSpillSimulationProgram *program = problem->simulation;
     for (uint32_t task = 0U; task < facts->task_count; ++task) {
         for (uint32_t offset = program->input_offsets[task];
              offset < program->input_offsets[task + 1U];
@@ -358,7 +358,7 @@ static int has_future_access(
     uint32_t alias,
     const Span *span
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     int32_t end_boundary = (int32_t)span->end - 1;
     for (uint32_t index = span->start; index <= span->end; ++index) {
         uint32_t task = problem->latest_access_task[cell(
@@ -382,7 +382,7 @@ static void alias_contribution(
     uint8_t *contribution,
     Span *spans
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     memset(contribution, 0, facts->boundary_count);
     uint32_t span_count = collect_spans(
         resident,
@@ -444,7 +444,7 @@ static int build_pressure(
         free(spans);
         return -1;
     }
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         alias_contribution(
             facts,
@@ -493,7 +493,7 @@ int shadowspill_extend_interval_entries(
         free(spans);
         return -1;
     }
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         uint32_t span_count = collect_spans(
             resident,
@@ -568,7 +568,7 @@ static uint32_t event_max_task(
     uint32_t alias,
     const Span *span
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     uint32_t selected = UINT32_MAX;
     for (uint32_t index = span->start; index <= span->end; ++index) {
         uint32_t task = problem->latest_access_task[cell(
@@ -692,7 +692,7 @@ static void choose_latest_safe_triggers(
     Reload *reloads,
     uint32_t reload_count
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     for (uint32_t index = 0U; index < reload_count; ++index) {
         Reload *reload = &reloads[index];
         const uint64_t deadline = ideal_trigger_time(
@@ -715,7 +715,7 @@ static void choose_packed_triggers(
     Reload *reloads,
     uint32_t reload_count
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     qsort(reloads, reload_count, sizeof(*reloads), reload_compare_descending);
     uint64_t *packed_start = calloc(facts->device_count, sizeof(*packed_start));
     uint8_t *has_packed_start = calloc(
@@ -762,7 +762,7 @@ static int clamp_triggers_to_fit(
     uint32_t reload_count,
     int prefetch_headroom
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     size_t pressure_cells = 0U;
     size_t active_words = 0U;
     uint32_t word_count = reload_count / 64U + (reload_count % 64U != 0U);
@@ -977,7 +977,7 @@ static uint32_t next_input_consumer(
     uint32_t alias,
     uint32_t trigger
 ) {
-    const ShadowSpillSimulationProgram *program = facts->context->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
     for (uint32_t task = trigger + 1U; task < facts->task_count; ++task) {
         for (uint32_t offset = program->input_offsets[task];
              offset < program->input_offsets[task + 1U];
@@ -1078,7 +1078,7 @@ int shadowspill_delay_indexed_prefetch(
          failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY)) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = facts->context->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
     uint32_t selected = UINT32_MAX;
     uint32_t selected_target = UINT32_MAX;
     uint64_t selected_size = 0U;
@@ -1161,7 +1161,7 @@ int shadowspill_advance_indexed_prefetch_to_release(
             SHADOWSPILL_MEMORY_PREFETCH) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = facts->context->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
     const uint32_t alias = storage->value.action_aliases[action_index];
     const uint32_t current_trigger =
         storage->value.action_trigger_tasks[action_index];
@@ -1402,7 +1402,7 @@ int shadowspill_emit_indexed_schedule(
         return -1;
     }
     shadowspill_schedule_storage_clear(storage);
-    const ShadowSpillResidencyProblem *problem = facts->context->residency;
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     uint32_t reload_capacity = 0U;
     uint32_t departure_capacity = 0U;
     Reload *reloads = NULL;

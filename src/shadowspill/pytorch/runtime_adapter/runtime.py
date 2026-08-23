@@ -978,7 +978,7 @@ def _resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
 def _resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
     """Resolve the common physical-cap spelling to suballocatable bytes.
 
-    Runtime initialization subtracts the one-time accelerator context and
+    Runtime initialization subtracts the one-time accelerator problem and
     provider allowance from ``physical_capacity`` before creating the
     execution pool.  Users naturally repeat that same physical cap at the
     planning boundary.  Treating it as a raw pool size charges those fixed

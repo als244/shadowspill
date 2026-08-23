@@ -30,7 +30,7 @@ void shadowspill_event_pool_destroy(
                     &lease->references, memory_order_acquire
                 ) != 0U) {
                 (void)runtime->synchronization.destroy_event(
-                    runtime->synchronization.context, lease->event
+                    runtime->synchronization.state, lease->event
                 );
             }
         }
@@ -141,7 +141,7 @@ ShadowSpillStatus shadowspill_event_lease_create_locked(
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     if (runtime->synchronization.create_event(
-            runtime->synchronization.context, &lease->event
+            runtime->synchronization.state, &lease->event
         ) != 0) {
         release_event_record(runtime, lease);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
@@ -188,7 +188,7 @@ int shadowspill_event_lease_release(
         return 0;
     }
     const int status = runtime->synchronization.destroy_event(
-        runtime->synchronization.context, lease->event
+        runtime->synchronization.state, lease->event
     );
     if (status != 0 && lease->pool_owned) {
         atomic_store_explicit(&lease->references, 1U, memory_order_release);
@@ -219,7 +219,7 @@ int shadowspill_event_lease_query(
         return 0;
     }
     if (runtime->synchronization.query_event(
-            runtime->synchronization.context, lease->event, complete
+            runtime->synchronization.state, lease->event, complete
         ) != 0) {
         return -1;
     }

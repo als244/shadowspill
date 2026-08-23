@@ -106,7 +106,7 @@ def build_admission_facts(
 
     if len(program.devices) != 1:
         raise ValueError(
-            "one admission topology currently describes one execution pool; "
+            "one admission facts currently describes one execution pool; "
             f"Program has {len(program.devices)} devices"
         )
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
@@ -194,15 +194,15 @@ def build_admission_facts(
                 allocation_steps=allocation_steps,
             )
         )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         device_id=program.devices[0].device_id,
         pool_capacity_bytes=movable_pool_bytes,
         object_capacity_bytes=movable_object_bytes,
         minimum_alignment=alignment,
         tasks=tuple(task_specs),
     )
-    topology.validate(program)
-    return topology
+    facts.validate(program)
+    return facts
 
 
 def _task_allocation_steps(

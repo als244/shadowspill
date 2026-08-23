@@ -32,7 +32,7 @@ def select_program(
     """Select and physically admit one reusable Program."""
 
     started = time.perf_counter_ns()
-    config, topology = program.pressurefit_inputs(
+    config, facts = program.pressurefit_inputs(
         execution_budget_bytes=execution_budget_bytes,
         spill_budget_bytes=spill_budget_bytes,
         transfer_bandwidths=transfer_bandwidths,
@@ -42,7 +42,7 @@ def select_program(
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(
         config,
-        topology,
+        facts,
         lambda candidate_config: repositories.resolve_pressurefit(
             program.program,
             initial_residency=program.initial_residency,
@@ -57,7 +57,7 @@ def select_program(
     physical_result = _with_physical_prediction(
         selection.result,
         selection.admission.simulation,
-        topology=selection.topology,
+        facts=selection.facts,
     )
     selected_transfer = transfer_bandwidths or program.transfer_bandwidths
     return AnnotatedProgramPlan(
@@ -76,7 +76,7 @@ def select_program(
         ),
         transfer_bandwidths=selected_transfer,
         result=physical_result,
-        effective_facts=selection.topology,
+        effective_facts=selection.facts,
         fixed_layout=selection.admission.layout,
         simulation_admission=selection.admission.simulator_input,
         simulation=selection.admission.simulation,
@@ -90,7 +90,7 @@ def _with_physical_prediction(
     selected: PressureFitResult,
     simulation: object,
     *,
-    topology: object,
+    facts: object,
 ) -> PressureFitResult:
     """Replace logical timing with dependency-certified physical simulation."""
 
@@ -99,15 +99,15 @@ def _with_physical_prediction(
 
     if not isinstance(simulation, SimulationResult):
         raise TypeError("physical simulation has an invalid type")
-    if not isinstance(topology, AdmissionFacts):
-        raise TypeError("effective topology has an invalid type")
+    if not isinstance(facts, AdmissionFacts):
+        raise TypeError("effective facts has an invalid type")
     return replace(
         selected,
         simulation=simulation,
         diagnostics=selected.diagnostics.with_selected_makespan(
             simulation.makespan_ns
         ),
-        admission_facts=topology,
+        admission_facts=facts,
     )
 
 

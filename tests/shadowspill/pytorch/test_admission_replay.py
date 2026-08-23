@@ -132,7 +132,7 @@ def test_admission_replay_reserves_workspace_for_complete_task_interval() -> Non
     replay = replay_admission(
         program,
         schedule,
-        topology=AdmissionFacts(
+        facts=AdmissionFacts(
             "cuda_0",
             128,
             128,
@@ -185,7 +185,7 @@ def test_admission_replay_treats_shared_input_as_externally_resident() -> None:
         (),
         (ResidencySpec("output", MemoryLocation.DEVICE),),
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         32,
         32,
@@ -196,7 +196,7 @@ def test_admission_replay_treats_shared_input_as_externally_resident() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=topology,
+        facts=facts,
     )
 
     assert replay.pool.peak_allocated_bytes == 32
@@ -211,7 +211,7 @@ def test_task_local_reuse_preserves_one_physical_lease() -> None:
         workspace_bytes=32,
     )
     schedule = MemorySchedule((), (), ())
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         32,
         32,
@@ -242,7 +242,7 @@ def test_task_local_reuse_preserves_one_physical_lease() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=topology,
+        facts=facts,
     )
 
     assert replay.pool.peak_allocated_bytes == 32
@@ -288,7 +288,7 @@ def test_after_task_fetch_reserves_task_released_range_causally() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=_empty_facts(program, 64),
+        facts=_empty_facts(program, 64),
     )
 
     assert replay.pool.peak_allocated_bytes == 64
@@ -336,7 +336,7 @@ def test_admission_replay_emits_causal_eviction_to_fetch_dependency() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=_empty_facts(program, 96),
+        facts=_empty_facts(program, 96),
     )
 
     assert replay.pool.peak_allocated_bytes == 96
@@ -382,7 +382,7 @@ def test_admission_replay_replaces_mutation_without_double_charging() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=AdmissionFacts(
+        facts=AdmissionFacts(
             "cuda_0",
             144,
             144,
@@ -443,7 +443,7 @@ def test_admission_replay_handoff_changes_owner_without_allocating() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=AdmissionFacts(
+        facts=AdmissionFacts(
             "cuda_0",
             64,
             64,
@@ -481,16 +481,16 @@ def test_admission_replay_physical_decisions_ignore_task_timing() -> None:
         (ResidencySpec("state", MemoryLocation.DEVICE),),
     )
 
-    topology = _empty_facts(base, 64)
+    facts = _empty_facts(base, 64)
     first = replay_admission(
         base,
         schedule,
-        topology=topology,
+        facts=facts,
     )
     second = replay_admission(
         slower,
         schedule,
-        topology=topology,
+        facts=facts,
     )
 
     assert first.pool.decision_digest == second.pool.decision_digest

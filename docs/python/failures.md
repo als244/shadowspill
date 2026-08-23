@@ -30,7 +30,7 @@ All public exceptions below are exported by `shadowspill.pytorch`.
 | Planned execution | `RuntimeExecutionError` | The runtime, allocator, worker, or a task-specific execution contract rejected the step. |
 
 `CompilationError` and `ProfilingError` retain `structural_contract`, `task_kind`,
-and `operators` when that context is available. `PlanInfeasibleError` retains
+and `operators` when that problem is available. `PlanInfeasibleError` retains
 the failure `kind`, device, boundary task, required bytes, and capacity bytes.
 The original PyTorch exception remains the cause, so its traceback identifies
 the operator and model code that led to a capture or compilation failure.

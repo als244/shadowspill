@@ -153,7 +153,7 @@ def test_causal_reuse_preserves_peak_and_delays_wire_start() -> None:
     replay = replay_admission(
         program,
         _schedule(),
-        topology=AdmissionFacts(
+        facts=AdmissionFacts(
             "cuda_0",
             96,
             96,

@@ -276,7 +276,7 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
     )
     one_gib = 1 << 30
     eight_gib = 8 << 30
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         9 * one_gib,
         eight_gib,
@@ -305,7 +305,7 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
         final_residency=final,
         config=config(eight_gib),
         options=SMALL_PORTFOLIO,
-        admission=topology,
+        admission=facts,
     )
 
     increments = (

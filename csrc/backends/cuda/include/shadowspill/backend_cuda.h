@@ -95,7 +95,7 @@ SHADOWSPILL_BACKEND_CUDA_API void shadowspill_cuda_backend_destroy(
     ShadowSpillCudaBackend *backend
 );
 
-/* Component vtables borrow backend as their context. */
+/* Component vtables borrow the backend as their state pointer. */
 SHADOWSPILL_BACKEND_CUDA_API ShadowSpillMemoryPoolBackend
 shadowspill_cuda_device_pool_backend(ShadowSpillCudaBackend *backend);
 

@@ -1,7 +1,7 @@
 # Planner C API
 
 Include `<shadowspill/planner.h>`. The planner evaluates one
-PressureFit candidate context or a complete predecoded Program context using
+PressureFit candidate problem or a complete predecoded Program problem using
 the simulator and exact schedule admission.
 
 The framework-neutral problem formulation and complete algorithm are in the
@@ -20,8 +20,8 @@ anonymous live-set peak derived from those steps, fresh outputs,
 replacements, handoffs, and task-allocation slots. Executable admission never
 constructs allocation steps from scalar workspace or output totals.
 
-`ShadowSpillPressureFitContext` accepts an already derived residency problem.
-`ShadowSpillPressureFitProgramContext` accepts the schedule-invariant
+`ShadowSpillPressureFitProblem` accepts an already derived residency problem.
+`ShadowSpillPressureFitProgramProblem` accepts the schedule-invariant
 simulation Program and derives residency inputs internally.
 
 Candidate options select residency strategy, fetch rule, coalescing, repair
@@ -77,17 +77,17 @@ order they arrive in.
 - `shadowspill_select_plan()` selects from an explicitly supplied candidate
   set.
 - `shadowspill_reduce_residency()` solves the indexed residency problem.
-- `shadowspill_evaluate_pressurefit_context()` evaluates all policies for one
-  derived context.
-- `shadowspill_evaluate_pressurefit_program_context()` derives and evaluates a
-  complete context from schedule-invariant inputs.
-- `shadowspill_validate_pressurefit_program_context()` returns the structured
+- `shadowspill_evaluate_pressurefit_problem()` evaluates all policies for one
+  derived problem.
+- `shadowspill_evaluate_pressurefit_program_problem()` derives and evaluates a
+  complete problem from schedule-invariant inputs.
+- `shadowspill_validate_pressurefit_program_problem()` returns the structured
   workspace, required-capacity, or missing-initial-residency preflight result
   without evaluating candidate policies.
 - `shadowspill_evaluate_schedule_admission()` checks one selected schedule
   against the exact admission topology.
-- `shadowspill_pressurefit_context_result_destroy()` releases arrays owned by
-  a context result.
+- `shadowspill_pressurefit_problem_result_destroy()` releases arrays owned by
+  a problem result.
 - `shadowspill_admission_operation_bounds()` reports how many operations and
   leases a schedule will produce, so the caller can size the arrays the
   builder fills. It is pure arithmetic over the topology and schedule and
@@ -127,11 +127,11 @@ simulation, admission, and digesting.
 
 `ShadowSpillPressureFitRepairDiagnostics` categorizes each monotonic repair by
 whether it advances or delays a fetch or addresses a pressure boundary.
-Candidate, context, and aggregate Python diagnostics preserve these counts.
+Candidate, problem, and aggregate Python diagnostics preserve these counts.
 
 ## Concurrency and ownership
 
-All context input arrays are borrowed. Each context result owns its selected
+All problem input arrays are borrowed. Each problem result owns its selected
 schedule and candidate array until destroyed. Calls with distinct inputs and
 results are independent; the API performs no I/O and does not own global
 mutable planning state.

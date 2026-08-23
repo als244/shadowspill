@@ -208,7 +208,7 @@ planning role/refinement run. Each run has this hierarchy:
 
 ```text
 PressureFit invocation
-└── recomputation context (one complete graph-pair selection)
+└── recomputation problem (one complete graph-pair selection)
     └── candidate-policy evaluation
         ├── residency strategy
         ├── fetch-trigger rule
@@ -219,14 +219,14 @@ PressureFit invocation
 ```
 
 A candidate policy is the combination of residency strategy, fetch rule, and
-coalescing mode. A recomputation context is a complete selection of one option
+coalescing mode. A recomputation problem is a complete selection of one option
 from every recomputation group. One policy can therefore be evaluated in many
-contexts.
+problems.
 
 Start with the invocation's selected selection/candidate IDs and makespan,
 then inspect:
 
-- summary counts for contexts, policies, evaluations, valid evaluations, and
+- summary counts for problems, policies, evaluations, valid evaluations, and
   status categories;
 - `repairs` to see whether admission or simulation repeatedly moved fetches or
   pressure boundaries;
@@ -236,7 +236,7 @@ then inspect:
 
 Invocation-level work includes shared setup and result materialization. It
 need not equal the sum of candidate work. Component work time is summed work,
-not necessarily elapsed wall time when independent contexts run concurrently.
+not necessarily elapsed wall time when independent problems run concurrently.
 
 ## Physical-layout diagnostics
 
@@ -286,7 +286,7 @@ planning workflow.
 | Symptom | Look here first |
 |---|---|
 | Planning is slow | `diagnostics.phases`, compiler profiles, cache hits/misses, then PressureFit work counts. |
-| Predicted step is slow | Selected recomputation context, candidate policy, transfer bytes, task profiles, and simulator makespan. |
+| Predicted step is slow | Selected recomputation problem, candidate policy, transfer bytes, task profiles, and simulator makespan. |
 | One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
 | Save and recompute look identical | Graph-pair saved-value counts/bytes, active tasks, and semantic root/output contracts. |
 | Plan repeatedly refines capacity | Physical-layout attempts, required/slack bytes, dynamic/scratch reserves, and PressureFit repairs. |

@@ -425,13 +425,13 @@ class _ManifestCompiler:
 
 
 def _ensure_tracing_shape_environment() -> None:
-    context = TracingContext.try_get()
+    problem = TracingContext.try_get()
     if (
-        context is not None
-        and context.fake_mode is not None
-        and context.fake_mode.shape_env is None
+        problem is not None
+        and problem.fake_mode is not None
+        and problem.fake_mode.shape_env is None
     ):
-        context.fake_mode.shape_env = ShapeEnv()
+        problem.fake_mode.shape_env = ShapeEnv()
 
 
 def _manifest_inner_compile(

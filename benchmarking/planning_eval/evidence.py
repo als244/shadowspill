@@ -131,11 +131,11 @@ def successful_point_evidence(
                 "selected_selection_id": (
                     pressurefit_diagnostics.selected_selection_id
                 ),
-                "recomputation_context_count": (
-                    pressurefit_diagnostics.recomputation_context_count
+                "recomputation_problem_count": (
+                    pressurefit_diagnostics.recomputation_problem_count
                 ),
-                "valid_recomputation_context_count": (
-                    pressurefit_diagnostics.valid_recomputation_context_count
+                "valid_recomputation_problem_count": (
+                    pressurefit_diagnostics.valid_recomputation_problem_count
                 ),
                 "candidate_policy_count": (
                     pressurefit_diagnostics.candidate_policy_count

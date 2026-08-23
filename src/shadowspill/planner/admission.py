@@ -295,7 +295,7 @@ class TaskAdmissionSpec:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionFacts:
-    """Immutable physical topology reused by every PressureFit candidate.
+    """Immutable physical facts reused by every PressureFit candidate.
 
     ``pool_capacity_bytes`` is the complete execution-pool capacity certified
     by the production range allocator. ``object_capacity_bytes`` is the
@@ -385,7 +385,7 @@ class AdmissionFacts:
         devices = {item.device_id for item in program.devices}
         if self.device_id not in devices:
             raise ValueError(
-                f"admission topology names unknown device {self.device_id!r}"
+                f"admission facts names unknown device {self.device_id!r}"
             )
         if len(program.devices) != 1:
             raise ValueError(

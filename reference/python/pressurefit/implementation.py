@@ -22,7 +22,7 @@ from shadowspill.planner.diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
 )
 from shadowspill.planner.model import (
     AdmissionRefinement,
@@ -76,7 +76,7 @@ def _scheduled_admission_refinement(attempt: int) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class _SelectionContext:
+class _SelectionProblem:
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
     facts: PlanningFacts
@@ -152,7 +152,7 @@ class _CachedSimulationFailure:
 @dataclass(frozen=True, slots=True)
 class _CandidateSpec:
     ordinal: int
-    context: _SelectionContext
+    problem: _SelectionProblem
     strategy: str
     prefetch_rule: str
     coalesced: bool
@@ -348,7 +348,7 @@ def _failure_diagnostic(
 ) -> CandidateDiagnostic:
     return CandidateDiagnostic(
         candidate_id=spec.candidate_id,
-        selection_id=spec.context.selection_id,
+        selection_id=spec.problem.selection_id,
         status=status,
         failure_kind=kind,
         failure_detail=detail,
@@ -382,8 +382,8 @@ def _evaluate_candidate(
     config: SimulationConfig,
     options: PressureFitOptions,
 ) -> _CandidateOutcome:
-    facts = spec.context.facts
-    seed = spec.context.seed
+    facts = spec.problem.facts
+    seed = spec.problem.seed
     extra_pressure: dict[tuple[str, int], int] = {}
     candidate_started = time.perf_counter_ns()
     residency_cache_hits = 0
@@ -431,7 +431,7 @@ def _evaluate_candidate(
                 )
             )
             residency_key = (spec.strategy, pressure_key)
-            residency = spec.context.residency_plans.get(residency_key)
+            residency = spec.problem.residency_plans.get(residency_key)
             if residency is None:
                 residency_cache_misses += 1
                 residency_started = time.perf_counter_ns()
@@ -441,17 +441,17 @@ def _evaluate_candidate(
                     seed,
                     spec.strategy,
                     extra_pressure=extra_pressure,
-                    score_cache=spec.context.cut_scores,
+                    score_cache=spec.problem.cut_scores,
                 )
                 residency_time_ns += time.perf_counter_ns() - residency_started
-                spec.context.residency_plans[residency_key] = residency
+                spec.problem.residency_plans[residency_key] = residency
             else:
                 residency_cache_hits += 1
             if spec.prefetch_rule == "interval-entry":
-                extended = spec.context.interval_plans.get(residency_key)
+                extended = spec.problem.interval_plans.get(residency_key)
                 if extended is None:
                     extended = extend_interval_entries(facts, residency)
-                    spec.context.interval_plans[residency_key] = extended
+                    spec.problem.interval_plans[residency_key] = extended
                 residency = extended
             prefetch_headroom = spec.strategy.startswith("headroom")
             schedule_key = (
@@ -460,7 +460,7 @@ def _evaluate_candidate(
                 spec.coalesced,
                 prefetch_headroom,
             )
-            schedule = spec.context.schedule_cache.get(schedule_key)
+            schedule = spec.problem.schedule_cache.get(schedule_key)
             if schedule is None:
                 schedule_started = time.perf_counter_ns()
                 schedule = emit_schedule(
@@ -473,7 +473,7 @@ def _evaluate_candidate(
                 )
                 schedule_time_ns += time.perf_counter_ns() - schedule_started
                 schedule_emissions += 1
-                spec.context.schedule_cache[schedule_key] = schedule
+                spec.problem.schedule_cache[schedule_key] = schedule
             else:
                 schedule_cache_hits += 1
         except PressureFitInfeasibleError as error:
@@ -503,7 +503,7 @@ def _evaluate_candidate(
         restart_reduction = False
         while True:
             try:
-                cached_simulation = spec.context.simulation_cache.get(schedule)
+                cached_simulation = spec.problem.simulation_cache.get(schedule)
                 if isinstance(cached_simulation, _CachedSimulationFailure):
                     simulation_cache_hits += 1
                     raise cached_simulation.to_error()
@@ -521,13 +521,13 @@ def _evaluate_candidate(
                             time.perf_counter_ns() - simulation_started
                         )
                         simulation_calls += 1
-                        spec.context.simulation_cache[schedule] = (
+                        spec.problem.simulation_cache[schedule] = (
                             _CachedSimulationFailure.from_error(error)
                         )
                         raise
                     simulation_time_ns += time.perf_counter_ns() - simulation_started
                     simulation_calls += 1
-                    spec.context.simulation_cache[schedule] = cached_simulation
+                    spec.problem.simulation_cache[schedule] = cached_simulation
                 else:
                     simulation_cache_hits += 1
                 simulation = cached_simulation
@@ -585,7 +585,7 @@ def _evaluate_candidate(
             spec,
             CandidateDiagnostic(
                 candidate_id=spec.candidate_id,
-                selection_id=spec.context.selection_id,
+                selection_id=spec.problem.selection_id,
                 status="valid",
                 makespan_ns=simulation.makespan_ns,
                 schedule_digest=schedule_digest,
@@ -597,7 +597,7 @@ def _evaluate_candidate(
         )
 
 
-def _build_contexts(
+def _build_problems(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -606,8 +606,8 @@ def _build_contexts(
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
-) -> tuple[_SelectionContext, ...]:
-    contexts: list[_SelectionContext] = []
+) -> tuple[_SelectionProblem, ...]:
+    problems: list[_SelectionProblem] = []
     failures: list[PressureFitInfeasibleError] = []
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
@@ -631,8 +631,8 @@ def _build_contexts(
             # capacity, not a later strategy's speculative headroom.
             initial_capacity_by_device=facts.object_capacity_by_device,
         )
-        contexts.append(
-            _SelectionContext(
+        problems.append(
+            _SelectionProblem(
                 selections,
                 _selection_id(selections),
                 facts,
@@ -641,13 +641,13 @@ def _build_contexts(
         )
         if progress is not None:
             progress(
-                "PressureFit context "
+                "PressureFit problem "
                 f"{selection_index}/{len(portfolio)}: "
                 f"tasks={len(facts.tasks)}, aliases={len(facts.alias_ids)}, "
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
-    if contexts:
-        return tuple(contexts)
+    if problems:
+        return tuple(problems)
     if failures:
         raise failures[0]
     raise PressureFitInfeasibleError(
@@ -657,20 +657,20 @@ def _build_contexts(
 
 
 def _candidate_specs(
-    contexts: tuple[_SelectionContext, ...],
+    problems: tuple[_SelectionProblem, ...],
     options: PressureFitOptions,
 ) -> tuple[_CandidateSpec, ...]:
     specs: list[_CandidateSpec] = []
     ordinal = 0
     coalescing = (False, True) if options.evaluate_coalesced else (False,)
-    for context in contexts:
+    for problem in problems:
         for strategy in options.residency_strategies:
             for rule in options.prefetch_rules:
                 for coalesced in coalescing:
                     specs.append(
                         _CandidateSpec(
                             ordinal,
-                            context,
+                            problem,
                             strategy,
                             rule,
                             coalesced,
@@ -689,7 +689,7 @@ def _run_candidates(
         return tuple(_evaluate_candidate(spec, config, options) for spec in specs)
     batches: list[list[_CandidateSpec]] = []
     for spec in specs:
-        if not batches or batches[-1][0].context is not spec.context:
+        if not batches or batches[-1][0].problem is not spec.problem:
             batches.append([])
         batches[-1].append(spec)
 
@@ -743,8 +743,8 @@ def _pressurefit_once(
             f"groups={len(program.recomputation_groups)}, "
             f"selections={len(portfolio)}"
         )
-    contexts_started = time.perf_counter_ns()
-    contexts = _build_contexts(
+    problems_started = time.perf_counter_ns()
+    problems = _build_problems(
         program,
         initial_residency,
         final_residency,
@@ -755,29 +755,29 @@ def _pressurefit_once(
     )
     if progress is not None:
         progress(
-            "PressureFit contexts ready: "
-            f"valid={len(contexts)}/{len(portfolio)}, "
-            f"elapsed={(time.perf_counter_ns() - contexts_started) / 1e9:.3f}s"
+            "PressureFit problems ready: "
+            f"valid={len(problems)}/{len(portfolio)}, "
+            f"elapsed={(time.perf_counter_ns() - problems_started) / 1e9:.3f}s"
         )
-    specs = _candidate_specs(contexts, selected_options)
+    specs = _candidate_specs(problems, selected_options)
     if progress is not None:
         progress(
             "PressureFit candidates: "
-            f"count={len(specs)}, per_context={len(specs) // len(contexts)}"
+            f"count={len(specs)}, per_problem={len(specs) // len(problems)}"
         )
     candidates_started = time.perf_counter_ns()
     if selected_options.workers == 1 or len(specs) <= 1:
         outcomes_list: list[_CandidateOutcome] = []
-        per_context = len(specs) // len(contexts)
+        per_problem = len(specs) // len(problems)
         for index, spec in enumerate(specs, start=1):
             outcomes_list.append(_evaluate_candidate(spec, config, selected_options))
             if progress is not None and (
-                index % per_context == 0 or index == len(specs)
+                index % per_problem == 0 or index == len(specs)
             ):
-                batch = outcomes_list[-per_context:]
+                batch = outcomes_list[-per_problem:]
                 progress(
-                    "PressureFit candidate context "
-                    f"{index // per_context}/{len(contexts)}: "
+                    "PressureFit candidate problem "
+                    f"{index // per_problem}/{len(problems)}: "
                     f"valid={sum(item.schedule is not None for item in batch)}, "
                     "repairs="
                     f"{sum(item.diagnostic.repair_attempts for item in batch)}, "
@@ -822,57 +822,57 @@ def _pressurefit_once(
     assert best.schedule is not None
     assert best.simulation is not None
     final_simulation = best.simulation
-    context_diagnostics: list[RecomputationContextDiagnostics] = []
+    problem_diagnostics: list[RecomputationProblemDiagnostics] = []
     aggregate_work = PressureFitWorkDiagnostics()
-    for context in contexts:
-        context_outcomes = tuple(
-            outcome for outcome in outcomes if outcome.spec.context is context
+    for problem in problems:
+        problem_outcomes = tuple(
+            outcome for outcome in outcomes if outcome.spec.problem is problem
         )
-        context_candidates = tuple(outcome.diagnostic for outcome in context_outcomes)
-        context_valid = tuple(
+        problem_candidates = tuple(outcome.diagnostic for outcome in problem_outcomes)
+        problem_valid = tuple(
             outcome
-            for outcome in context_outcomes
+            for outcome in problem_outcomes
             if outcome.schedule is not None and outcome.simulation is not None
         )
-        context_best = (
+        problem_best = (
             None
-            if not context_valid
+            if not problem_valid
             else min(
-                context_valid,
+                problem_valid,
                 key=lambda outcome: (
                     outcome.simulation.makespan_ns,  # type: ignore[union-attr]
                     outcome.spec.ordinal,
                 ),
             )
         )
-        context_work = PressureFitWorkDiagnostics()
-        for candidate in context_candidates:
-            context_work += candidate.work
-        aggregate_work += context_work
-        context_diagnostics.append(
-            RecomputationContextDiagnostics(
-                selection_id=context.selection_id,
+        problem_work = PressureFitWorkDiagnostics()
+        for candidate in problem_candidates:
+            problem_work += candidate.work
+        aggregate_work += problem_work
+        problem_diagnostics.append(
+            RecomputationProblemDiagnostics(
+                selection_id=problem.selection_id,
                 choices=tuple(
                     RecomputationChoiceDiagnostic(item.group_id, item.option_id)
-                    for item in context.selections
+                    for item in problem.selections
                 ),
                 selected_candidate_id=(
-                    None if context_best is None else context_best.spec.candidate_id
+                    None if problem_best is None else problem_best.spec.candidate_id
                 ),
                 selected_makespan_ns=(
                     None
-                    if context_best is None
-                    else context_best.simulation.makespan_ns  # type: ignore[union-attr]
+                    if problem_best is None
+                    else problem_best.simulation.makespan_ns  # type: ignore[union-attr]
                 ),
-                candidate_evaluations=context_candidates,
-                work=context_work,
+                candidate_evaluations=problem_candidates,
+                work=problem_work,
             )
         )
     diagnostics = PressureFitDiagnostics(
         selected_candidate_id=best.spec.candidate_id,
-        selected_selection_id=best.spec.context.selection_id,
+        selected_selection_id=best.spec.problem.selection_id,
         selected_makespan_ns=final_simulation.makespan_ns,
-        recomputation_contexts=tuple(context_diagnostics),
+        recomputation_problems=tuple(problem_diagnostics),
         work=aggregate_work,
     )
     return PressureFitResult(
@@ -882,7 +882,7 @@ def _pressurefit_once(
         final_residency=final_residency,
         simulation_config=config,
         schedule=best.schedule,
-        selections=best.spec.context.selections,
+        selections=best.spec.problem.selections,
         simulation=final_simulation,
         diagnostics=diagnostics,
         admission_facts=admission,

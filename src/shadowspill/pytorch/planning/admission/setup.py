@@ -31,7 +31,7 @@ from .admission_replay import AdmissionReplayPurpose
 
 @dataclass(frozen=True, slots=True)
 class AllocationStep:
-    """One task allocation step, in the order the topology flattens them.
+    """One task allocation step, in the order the facts flattens them.
 
     `slot` is the lease it uses: a step that reallocates an earlier ordinal's
     slot shares its lease and emits no operation of its own.
@@ -68,13 +68,13 @@ def build_admission_setup(
     program: Program,
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
 ) -> AdmissionSetup:
     """Compile the parts of admission a schedule cannot change."""
 
-    topology.validate(program)
+    facts.validate(program)
     template = index_simulation_template(program, selections, config)
-    contracts = {item.task_id: item for item in topology.tasks}
+    contracts = {item.task_id: item for item in facts.tasks}
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
 
     steps: list[AllocationStep] = []
@@ -118,7 +118,7 @@ def build_admission_setup(
 
     return AdmissionSetup(
         template=template,
-        indexed_facts=index_admission_facts(topology, template),
+        indexed_facts=index_admission_facts(facts, template),
         allocation_steps=tuple(steps),
         storage_handoffs=tuple(handoffs),
     )

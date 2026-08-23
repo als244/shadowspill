@@ -9,7 +9,7 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
     TaskAdmissionSpec,
 )
 from shadowspill.planner._cache import CachedPressureFitResult
@@ -50,8 +50,8 @@ def _selection(
                 selected_candidate_id="candidate",
                 selected_selection_id="selection",
                 selected_makespan_ns=simulation.makespan_ns,
-                recomputation_contexts=(
-                    RecomputationContextDiagnostics(
+                recomputation_problems=(
+                    RecomputationProblemDiagnostics(
                         selection_id="selection",
                         choices=(),
                         selected_candidate_id="candidate",
@@ -107,7 +107,7 @@ def test_refinement_uses_pressurefit_effective_capacity() -> None:
     )
 
     assert selected.original_object_capacity_bytes == capacity
-    assert selected.topology.object_capacity_bytes == effective
+    assert selected.facts.object_capacity_bytes == effective
     assert selected.capacity_reduction_bytes == 384 << 20
     assert len(selected.attempts) == 1
     attempt = selected.attempts[0]
@@ -127,11 +127,11 @@ def test_refinement_retries_in_256_mib_steps(monkeypatch) -> None:  # type: igno
     calls: list[int] = []
     original = refinement.build_fixed_layout_admission  # type: ignore[attr-defined]
 
-    def reject_first(selected, topology, **kwargs):  # type: ignore[no-untyped-def]
-        calls.append(topology.object_capacity_bytes)
+    def reject_first(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(facts.object_capacity_bytes)
         if len(calls) == 1:
             raise FixedLayoutInfeasibleError(capacity + 1, capacity)
-        return original(selected, topology, **kwargs)
+        return original(selected, facts, **kwargs)
 
     monkeypatch.setattr(refinement, "build_fixed_layout_admission", reject_first)
 
@@ -197,11 +197,11 @@ def test_refinement_consumes_speculative_rungs_in_ladder_order(
         resolved.append(config.devices[0].capacity_bytes)
         return _selection(config)
 
-    def reject_first_three(selected, topology, **kwargs):  # type: ignore[no-untyped-def]
-        admitted.append(topology.object_capacity_bytes)
+    def reject_first_three(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+        admitted.append(facts.object_capacity_bytes)
         if len(admitted) <= 3:
             raise FixedLayoutInfeasibleError(capacity + 1, capacity)
-        return original(selected, topology, **kwargs)
+        return original(selected, facts, **kwargs)
 
     monkeypatch.setattr(
         refinement, "build_fixed_layout_admission", reject_first_three

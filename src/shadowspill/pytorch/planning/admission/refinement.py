@@ -49,7 +49,7 @@ class FixedLayoutSelection:
     """One PressureFit selection and the exact physical certificate it passed."""
 
     pressurefit: CachedPressureFitResult
-    topology: AdmissionFacts
+    facts: AdmissionFacts
     admission: FixedLayoutAdmission
     attempts: tuple[FixedLayoutAttempt, ...]
     original_object_capacity_bytes: int
@@ -66,7 +66,7 @@ class FixedLayoutSelection:
     def capacity_reduction_bytes(self) -> int:
         return (
             self.original_object_capacity_bytes
-            - self.topology.object_capacity_bytes
+            - self.facts.object_capacity_bytes
         )
 
     @property
@@ -84,7 +84,7 @@ class FixedLayoutSelection:
 
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     resolve: Callable[[SimulationConfig], CachedPressureFitResult],
     *,
     scratch_reserve_bytes: int = 0,
@@ -94,11 +94,11 @@ def resolve_fixed_layout_selection(
 
     PressureFit's object capacity is reduced monotonically while the physical
     pool itself remains unchanged.  The returned record owns the exact
-    effective topology and certificate; callers never reconstruct either from
+    effective facts and certificate; callers never reconstruct either from
     the original request.
     """
 
-    original_capacity = _single_device_capacity(config, topology.device_id)
+    original_capacity = _single_device_capacity(config, facts.device_id)
     reductions = _capacity_reductions(original_capacity)
     attempts: list[FixedLayoutAttempt] = []
     last_error: FixedLayoutInfeasibleError | None = None
@@ -118,7 +118,7 @@ def resolve_fixed_layout_selection(
     ) -> tuple[CachedPressureFitResult, int]:
         requested_config = _config_with_capacity(
             config,
-            device_id=topology.device_id,
+            device_id=facts.device_id,
             capacity_bytes=requested_capacity,
         )
         started = time.perf_counter_ns()
@@ -152,7 +152,7 @@ def resolve_fixed_layout_selection(
         )
         admission_started = time.perf_counter_ns()
         effective_facts = replace(
-            topology,
+            facts,
             object_capacity_bytes=_effective_object_capacity(
                 selected,
                 requested_capacity=requested_capacity,

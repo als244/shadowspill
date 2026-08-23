@@ -83,7 +83,7 @@ class _ForwardInventoryIndex:
 
 
 @dataclass(frozen=True, slots=True)
-class _GraphProfileContext:
+class _GraphProfileProblem:
     artifact: GraphArtifact
     direction: str
     task: TaskSpec
@@ -646,7 +646,7 @@ def _graph_profile(
     manifest: ExecutableTaskManifest,
 ) -> PlanGraphProfile:
     inputs, mutations, outputs = _task_footprints(program, task)
-    context = _GraphProfileContext(
+    problem = _GraphProfileProblem(
         artifact=artifact,
         direction=direction,
         task=task,
@@ -662,15 +662,15 @@ def _graph_profile(
         mutations=mutations,
         outputs=outputs,
     )
-    return _build_graph_profile(context)
+    return _build_graph_profile(problem)
 
 
-def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
-    artifact = context.artifact
-    contract = context.manifest.storage_contract
-    measurement = context.measurement
+def _build_graph_profile(problem: _GraphProfileProblem) -> PlanGraphProfile:
+    artifact = problem.artifact
+    contract = problem.manifest.storage_contract
+    measurement = problem.measurement
     return PlanGraphProfile(
-        direction=context.direction,
+        direction=problem.direction,
         structural_contract_key=artifact.compatibility_digest,
         semantic_contract_digest=artifact.storage_contract.compatibility_digest,
         semantic_contract_capture_ns=artifact.storage_contract_capture_ns,
@@ -678,15 +678,15 @@ def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
         semantic_output_views=_plan_output_views(artifact.storage_contract),
         semantic_mutations=_plan_mutations(artifact.storage_contract),
         executable_contract_digest=contract.compatibility_digest,
-        executable_contract_capture_ns=context.manifest.contract_capture_ns,
+        executable_contract_capture_ns=problem.manifest.contract_capture_ns,
         executable_roots=_plan_storage_roots(contract),
         executable_output_views=_plan_output_views(contract),
         executable_mutations=_plan_mutations(contract),
-        compiled_layout_digest=context.layout.compatibility_digest,
-        compiled_roots=_plan_compiled_roots(context.layout),
-        compiled_output_views=_plan_compiled_views(context.layout),
+        compiled_layout_digest=problem.layout.compatibility_digest,
+        compiled_roots=_plan_compiled_roots(problem.layout),
+        compiled_output_views=_plan_compiled_views(problem.layout),
         physical_profile_wall_time_ns=measurement.profiling_wall_time_ns,
-        representative_task_id=context.task.task_id,
+        representative_task_id=problem.task.task_id,
         runtime_ns=measurement.runtime_ns,
         samples_ns=measurement.samples_ns,
         provenance=measurement.provenance,
@@ -695,21 +695,21 @@ def _build_graph_profile(context: _GraphProfileContext) -> PlanGraphProfile:
         timing_relative_mad=measurement.timing_relative_mad,
         timing_half_drift=measurement.timing_half_drift,
         timing_unstable=measurement.timing_unstable,
-        inputs=context.inputs,
-        mutations=context.mutations,
-        outputs=context.outputs,
-        input_logical_bytes=_logical_bytes(context.inputs),
-        input_allocation_bytes=_unique_allocation_bytes(context.inputs),
-        mutation_logical_bytes=_logical_bytes(context.mutations),
-        mutation_allocation_bytes=_unique_allocation_bytes(context.mutations),
-        output_logical_bytes=_logical_bytes(context.outputs),
-        output_allocation_bytes=_unique_allocation_bytes(context.outputs),
+        inputs=problem.inputs,
+        mutations=problem.mutations,
+        outputs=problem.outputs,
+        input_logical_bytes=_logical_bytes(problem.inputs),
+        input_allocation_bytes=_unique_allocation_bytes(problem.inputs),
+        mutation_logical_bytes=_logical_bytes(problem.mutations),
+        mutation_allocation_bytes=_unique_allocation_bytes(problem.mutations),
+        output_logical_bytes=_logical_bytes(problem.outputs),
+        output_allocation_bytes=_unique_allocation_bytes(problem.outputs),
         workspace_requested_bytes=measurement.workspace_requested_bytes,
         workspace_charged_bytes=measurement.workspace_charged_bytes,
         replacement_transition_bytes=replacement_transition_bytes(
-            contract, context.layout
+            contract, problem.layout
         ),
-        task_workspace_bytes=context.profile.workspace_bytes,
+        task_workspace_bytes=problem.profile.workspace_bytes,
         workspace_extent_bytes=measurement.workspace_extent_bytes,
         persistent_extent_bytes=measurement.persistent_extent_bytes,
         allocation_contract_digest=(

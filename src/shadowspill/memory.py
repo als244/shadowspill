@@ -25,7 +25,7 @@ class DevicePool:
     """Configuration for an accelerator execution-capable memory pool.
 
     ``physical_capacity`` is the complete process-attributable accelerator
-    memory cap, including its context and provider headroom. The runtime
+    memory cap, including its problem and provider headroom. The runtime
     reports the derived suballocatable pool capacity after initialization.
     """
 

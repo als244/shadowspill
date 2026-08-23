@@ -69,13 +69,13 @@ def build_lease_lifetimes(
             "this result did not come from it"
         )
 
-    topology = admission.value
-    steps = topology.task_allocation_offsets[topology.task_count]
+    facts = admission.value
+    steps = facts.task_allocation_offsets[facts.task_count]
     count = operations.lease_count
     lifetimes = (CLeaseLifetime * max(count, 1))()
     identities = (CLeaseIdentity * max(count, 1))()
     step_leases = (ctypes.c_uint64 * max(steps, 1))()
-    alias_leases = (ctypes.c_uint64 * max(topology.alias_count, 1))()
+    alias_leases = (ctypes.c_uint64 * max(facts.alias_count, 1))()
     result = CLeaseLifetimeResult(
         lifetimes=lifetimes,
         identities=identities,

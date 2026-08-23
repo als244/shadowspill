@@ -233,7 +233,7 @@ def test_profile_identity_ignores_control_contents(
             256 if trace else 0,
             (256,) if trace else (),
             (calls,),
-            "context-test",
+            "problem-test",
             allocation_trace=trace,
             allocation_contract=TaskAllocationContract.capture(trace),
         )

@@ -244,7 +244,7 @@ an allocation that claims both policies at once. The complete partition:
 
 ```text
 device budget
-|-- context_bytes            the device context itself
+|-- context_bytes            the device problem itself
 |-- provider_headroom_bytes  provider-owned persistent allocations
 `-- slab (pool)
     |-- fixed slice          objects and task workspace, planned offsets

@@ -9,7 +9,7 @@ policy.
 
 `ShadowSpillMemoryPoolBackend` contains:
 
-- an ABI field and borrowed context;
+- an ABI field and borrowed problem;
 - `allocate_arena()` for one contiguous byte-addressable arena;
 - idempotent `close()` for the arena.
 

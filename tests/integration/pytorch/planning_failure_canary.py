@@ -255,7 +255,7 @@ def main() -> int:
             if not isinstance(error, CompilationError):
                 raise AssertionError("compiler failure lost its public error type")
             if error.structural_contract is None or not error.operators:
-                raise AssertionError("compiler failure omitted structural context")
+                raise AssertionError("compiler failure omitted structural problem")
             if error.__cause__ is None:
                 raise AssertionError("compiler failure lost its PyTorch cause")
         finally:

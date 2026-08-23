@@ -31,12 +31,12 @@ from ._admission import (
 from ._capi import planner_api
 from ._portfolio import (
     CCandidateDiagnostic,
-    CContextResult,
     CPreflightResult,
+    CProblemResult,
     decode_candidate_diagnostic,
     decode_schedule,
-    evaluate_program_context,
-    validate_program_context,
+    evaluate_program_problem,
+    validate_program_problem,
 )
 from ._recomputation import build_recomputation_portfolio
 from .admission import AdmissionFacts
@@ -44,7 +44,7 @@ from .diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
 )
 from .model import (
     AdmissionRefinement,
@@ -75,7 +75,7 @@ def _scheduled_admission_refinement(attempt: int) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class _SelectionContext:
+class _SelectionProblem:
     """One recomputation selection projected into the planner ABI."""
 
     selections: tuple[RecomputationSelection, ...]
@@ -149,7 +149,7 @@ def validate_schedule_feasibility(
     )
     simulator_api()
     planner_api()
-    contexts = _build_contexts(
+    problems = _build_problems(
         program,
         initial_residency,
         final_residency,
@@ -158,10 +158,10 @@ def validate_schedule_feasibility(
         portfolio=build_recomputation_portfolio(program),
         progress=None,
     )
-    _preflight_contexts(contexts)
+    _preflight_problems(problems)
 
 
-def _build_contexts(
+def _build_problems(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -170,10 +170,10 @@ def _build_contexts(
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
-) -> tuple[_SelectionContext, ...]:
+) -> tuple[_SelectionProblem, ...]:
     """Project each recomputation selection without Python residency matrices."""
 
-    contexts: list[_SelectionContext] = []
+    problems: list[_SelectionProblem] = []
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         tasks = program.selected_tasks(selections)
@@ -185,8 +185,8 @@ def _build_contexts(
             initial_residency=initial_residency,
             final_residency=final_residency,
         )
-        contexts.append(
-            _SelectionContext(
+        problems.append(
+            _SelectionProblem(
                 selections=selections,
                 selection_id=_selection_id(selections),
                 indexed_template=indexed_template,
@@ -199,16 +199,16 @@ def _build_contexts(
         )
         if progress is not None:
             progress(
-                "PressureFit compiled context "
+                "PressureFit compiled problem "
                 f"{selection_index}/{len(portfolio)}: "
                 f"tasks={len(tasks)}, aliases={len(program.alias_groups)}, "
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
-    return tuple(contexts)
+    return tuple(problems)
 
 
 def _preflight_error(
-    context: _SelectionContext,
+    problem: _SelectionProblem,
     result: CPreflightResult,
 ) -> ValueError:
     """Decode one compiled preflight failure into the public exception model."""
@@ -216,20 +216,20 @@ def _preflight_error(
     if result.failure_kind == "missing_initial_residency":
         if result.error_alias is None:
             raise RuntimeError("compiled preflight omitted its failing alias")
-        alias_id = context.indexed_template.alias_ids[result.error_alias]
+        alias_id = problem.indexed_template.alias_ids[result.error_alias]
         return ValueError(f"input alias {alias_id!r} has no initial residency")
 
     device_id = (
         None
         if result.error_device is None
-        else context.indexed_template.device_ids[result.error_device]
+        else problem.indexed_template.device_ids[result.error_device]
     )
     boundary_task_id = (
         None
         if result.error_boundary is None
         or result.error_boundary < 0
-        or result.error_boundary >= len(context.indexed_template.task_ids)
-        else context.indexed_template.task_ids[result.error_boundary]
+        or result.error_boundary >= len(problem.indexed_template.task_ids)
+        else problem.indexed_template.task_ids[result.error_boundary]
     )
     required = result.required_bytes
     capacity = result.capacity_bytes
@@ -258,22 +258,22 @@ def _preflight_error(
     )
 
 
-def _preflight_contexts(
-    contexts: tuple[_SelectionContext, ...],
-) -> tuple[_SelectionContext, ...]:
+def _preflight_problems(
+    problems: tuple[_SelectionProblem, ...],
+) -> tuple[_SelectionProblem, ...]:
     """Keep selections that satisfy the semantic-capacity preflight."""
 
-    valid: list[_SelectionContext] = []
+    valid: list[_SelectionProblem] = []
     failures: list[ValueError] = []
-    for context in contexts:
-        result = validate_program_context(
-            context.indexed_template,
-            admission=context.indexed_admission,
+    for problem in problems:
+        result = validate_program_problem(
+            problem.indexed_template,
+            admission=problem.indexed_admission,
         )
         if result.valid:
-            valid.append(context)
+            valid.append(problem)
         else:
-            failures.append(_preflight_error(context, result))
+            failures.append(_preflight_error(problem, result))
     if valid:
         return tuple(valid)
     if failures:
@@ -306,16 +306,16 @@ def _shared_worker_pool() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=max(os.cpu_count() or 1, 1))
 
 
-def _run_contexts(
-    contexts: tuple[_SelectionContext, ...],
+def _run_problems(
+    problems: tuple[_SelectionProblem, ...],
     options: PressureFitOptions,
-) -> tuple[CContextResult | None, ...]:
+) -> tuple[CProblemResult | None, ...]:
     """Evaluate every recomputation selection in the planner.
 
-    Each context's portfolio is split by residency strategy into one
-    compiled evaluation per (context, strategy), so parallelism scales
-    with context_count x strategy_count instead of context count
-    alone. The per-context merge restores the exact serial candidate
+    Each problem's portfolio is split by residency strategy into one
+    compiled evaluation per (problem, strategy), so parallelism scales
+    with problem_count x strategy_count instead of problem count
+    alone. The per-problem merge restores the exact serial candidate
     order and tie-breaks, so the selected schedule is identical to a
     single-call evaluation; only cross-strategy cache-hit counters can
     differ.
@@ -323,20 +323,20 @@ def _run_contexts(
 
     strategies = options.residency_strategies
     units = tuple(
-        (context_index, replace(options, residency_strategies=(strategy,)))
-        for context_index, _context in enumerate(contexts)
+        (problem_index, replace(options, residency_strategies=(strategy,)))
+        for problem_index, _problem in enumerate(problems)
         for strategy in strategies
     )
 
     def evaluate(
         unit: tuple[int, PressureFitOptions],
-    ) -> CContextResult | None:
-        context_index, unit_options = unit
-        context = contexts[context_index]
-        return evaluate_program_context(
-            context.indexed_template,
+    ) -> CProblemResult | None:
+        problem_index, unit_options = unit
+        problem = problems[problem_index]
+        return evaluate_program_problem(
+            problem.indexed_template,
             unit_options,
-            admission=context.indexed_admission,
+            admission=problem.indexed_admission,
         )
 
     workers = _worker_count(options, len(units))
@@ -347,19 +347,19 @@ def _run_contexts(
             chunk_results = list(executor.map(evaluate, units))
     else:
         chunk_results = list(_shared_worker_pool().map(evaluate, units))
-    per_context = len(strategies)
+    per_problem = len(strategies)
     return tuple(
         _merge_strategy_results(
-            chunk_results[index * per_context : (index + 1) * per_context]
+            chunk_results[index * per_problem : (index + 1) * per_problem]
         )
-        for index in range(len(contexts))
+        for index in range(len(problems))
     )
 
 
 def _merge_strategy_results(
-    chunks: list[CContextResult | None],
-) -> CContextResult | None:
-    """Concatenate per-strategy evaluations back into one context result."""
+    chunks: list[CProblemResult | None],
+) -> CProblemResult | None:
+    """Concatenate per-strategy evaluations back into one problem result."""
 
     if any(chunk is None for chunk in chunks):
         return None
@@ -384,7 +384,7 @@ def _merge_strategy_results(
             selected_index = offset + chunk.selected_candidate_index
             selected_makespan = chunk.selected_makespan_ns
             selected_schedule = chunk.selected_schedule
-    return CContextResult(
+    return CProblemResult(
         selected_candidate_index=selected_index,
         selected_makespan_ns=selected_makespan,
         selected_schedule=selected_schedule,
@@ -400,22 +400,22 @@ def _finish_pressurefit(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    contexts: tuple[_SelectionContext, ...],
-    results: tuple[CContextResult, ...],
+    problems: tuple[_SelectionProblem, ...],
+    results: tuple[CProblemResult, ...],
     admission: AdmissionFacts | None,
 ) -> PressureFitResult:
     """Decode the globally best compiled result and its diagnostics."""
 
-    recomputation_contexts: list[RecomputationContextDiagnostics] = []
-    selected: tuple[int, int, CContextResult] | None = None
-    for context_index, (context, result) in enumerate(
-        zip(contexts, results, strict=True)
+    recomputation_problems: list[RecomputationProblemDiagnostics] = []
+    selected: tuple[int, int, CProblemResult] | None = None
+    for problem_index, (problem, result) in enumerate(
+        zip(problems, results, strict=True)
     ):
         candidates = tuple(
             decode_candidate_diagnostic(
                 candidate,
-                selection_id=context.selection_id,
-                simulation=context.indexed_template,
+                selection_id=problem.selection_id,
+                simulation=problem.indexed_template,
             )
             for candidate in result.candidates
         )
@@ -424,12 +424,12 @@ def _finish_pressurefit(
             if result.selected_candidate_index is None
             else candidates[result.selected_candidate_index]
         )
-        recomputation_contexts.append(
-            RecomputationContextDiagnostics(
-                selection_id=context.selection_id,
+        recomputation_problems.append(
+            RecomputationProblemDiagnostics(
+                selection_id=problem.selection_id,
                 choices=tuple(
                     RecomputationChoiceDiagnostic(item.group_id, item.option_id)
-                    for item in context.selections
+                    for item in problem.selections
                 ),
                 selected_candidate_id=(
                     None
@@ -449,7 +449,7 @@ def _finish_pressurefit(
             continue
         assert result.selected_makespan_ns is not None
         candidate_ordinal = (
-            context_index * len(result.candidates) + result.selected_candidate_index
+            problem_index * len(result.candidates) + result.selected_candidate_index
         )
         key = (result.selected_makespan_ns, candidate_ordinal)
         if selected is None or key < (selected[0], selected[1]):
@@ -458,8 +458,8 @@ def _finish_pressurefit(
     if selected is None:
         frozen = tuple(
             candidate
-            for context in recomputation_contexts
-            for candidate in context.candidate_evaluations
+            for problem in recomputation_problems
+            for candidate in problem.candidate_evaluations
         )
         if any(item.status == "exhausted" for item in frozen):
             raise PressureFitSearchExhaustedError(
@@ -490,35 +490,35 @@ def _finish_pressurefit(
         )
 
     _makespan, ordinal, result = selected
-    per_context = len(result.candidates)
-    context_index, candidate_index = divmod(ordinal, per_context)
-    context = contexts[context_index]
+    per_problem = len(result.candidates)
+    problem_index, candidate_index = divmod(ordinal, per_problem)
+    problem = problems[problem_index]
     indexed_schedule = result.selected_schedule
     assert indexed_schedule is not None
-    schedule = decode_schedule(indexed_schedule, context.indexed_template)
+    schedule = decode_schedule(indexed_schedule, problem.indexed_template)
     result_admission_calls = 0
     result_admission_time_ns = 0
     simulation_admission = None
-    if context.indexed_admission is not None:
+    if problem.indexed_admission is not None:
         admission_started = time.perf_counter_ns()
         simulation_admission = evaluate_schedule_admission(
-            context.indexed_template,
-            context.indexed_admission,
+            problem.indexed_template,
+            problem.indexed_admission,
             indexed_schedule,
         ).simulation_admission
         result_admission_time_ns = time.perf_counter_ns() - admission_started
         result_admission_calls = 1
     simulation_started = time.perf_counter_ns()
     simulation = simulate_template(
-        context.indexed_template,
+        problem.indexed_template,
         schedule,
         admission=simulation_admission,
     )
     result_simulation_time_ns = time.perf_counter_ns() - simulation_started
     selected_diagnostic = result.candidates[candidate_index]
     aggregate_work = PressureFitWorkDiagnostics()
-    for context_result in results:
-        aggregate_work += context_result.work
+    for problem_result in results:
+        aggregate_work += problem_result.work
     aggregate_work += PressureFitWorkDiagnostics(
         result_simulation_calls=1,
         result_admission_calls=result_admission_calls,
@@ -527,9 +527,9 @@ def _finish_pressurefit(
     )
     diagnostics = PressureFitDiagnostics(
         selected_candidate_id=selected_diagnostic.candidate_id,
-        selected_selection_id=context.selection_id,
+        selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
-        recomputation_contexts=tuple(recomputation_contexts),
+        recomputation_problems=tuple(recomputation_problems),
         work=aggregate_work,
     )
     return PressureFitResult(
@@ -539,7 +539,7 @@ def _finish_pressurefit(
         final_residency=final_residency,
         simulation_config=config,
         schedule=schedule,
-        selections=context.selections,
+        selections=problem.selections,
         simulation=simulation,
         diagnostics=diagnostics,
         admission_facts=admission,
@@ -577,8 +577,8 @@ def _pressurefit_once(
             f"selections={len(portfolio)}"
         )
     started = time.perf_counter_ns()
-    contexts = _preflight_contexts(
-        _build_contexts(
+    problems = _preflight_problems(
+        _build_problems(
             program,
             initial_residency,
             final_residency,
@@ -588,19 +588,19 @@ def _pressurefit_once(
             progress=progress,
         )
     )
-    results = _run_contexts(contexts, selected_options)
+    results = _run_problems(problems, selected_options)
     valid_pairs = tuple(
-        (context, result)
-        for context, result in zip(contexts, results, strict=True)
+        (problem, result)
+        for problem, result in zip(problems, results, strict=True)
         if result is not None
     )
     if progress is not None:
         progress(
-            "PressureFit compiled contexts and candidates finished: "
-            f"valid={len(valid_pairs)}/{len(contexts)}, "
+            "PressureFit compiled problems and candidates finished: "
+            f"valid={len(valid_pairs)}/{len(problems)}, "
             "candidates="
-            f"{sum(len(result.candidates) for _context, result in valid_pairs)}, "
-            f"workers={_worker_count(selected_options, len(contexts))}, "
+            f"{sum(len(result.candidates) for _problem, result in valid_pairs)}, "
+            f"workers={_worker_count(selected_options, len(problems))}, "
             f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
         )
     if not valid_pairs:
@@ -614,8 +614,8 @@ def _pressurefit_once(
         final_residency,
         config,
         selected_options,
-        tuple(context for context, _result in valid_pairs),
-        tuple(result for _context, result in valid_pairs),
+        tuple(problem for problem, _result in valid_pairs),
+        tuple(result for _problem, result in valid_pairs),
         admission,
     )
 

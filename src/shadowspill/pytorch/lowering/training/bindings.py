@@ -289,7 +289,7 @@ def _prepare_stage_variant(
         objects.catalog,
         profiles.layout(pair.forward, metadata_digest),
         profiles.contract(pair.forward),
-        context=(
+        problem=(
             f"microbatch={position}, stage={stage_index}, "
             f"variant={option.option_id}, "
             f"artifact={pair.forward.compatibility_digest}"
@@ -398,7 +398,7 @@ def _stage_forward_outputs(
     compiled_layout: CompiledTaskLayout,
     storage_contract: TaskStorageContract,
     *,
-    context: str,
+    problem: str,
 ) -> tuple[
     tuple[TensorSlot, ...],
     tuple[str, ...],
@@ -412,7 +412,7 @@ def _stage_forward_outputs(
     slots: list[TensorSlot] = []
     saved_internal_object_ids: list[str] = []
     if compiled_layout.contract_digest != storage_contract.compatibility_digest:
-        raise CaptureError(f"{context}: compiled layout belongs to another contract")
+        raise CaptureError(f"{problem}: compiled layout belongs to another contract")
     resolver = TaskBindingResolver(
         inventory,
         pair.forward,
@@ -435,7 +435,7 @@ def _stage_forward_outputs(
             )
         except KeyError as error:
             raise CaptureError(
-                f"{context}: forward output {index} has no storage view"
+                f"{problem}: forward output {index} has no storage view"
             ) from error
         if index < public_count:
             object_id = resolver.bind_contract(

@@ -22,7 +22,7 @@ class TaskBoundaryAnnotations:
         self.enabled = enabled
 
     def range(self, name: str) -> AbstractContextManager[None]:
-        """Return a zero-work context while annotations are disabled."""
+        """Return a zero-work problem while annotations are disabled."""
 
         if not self.enabled:
             return self._disabled_range

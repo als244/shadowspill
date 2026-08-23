@@ -77,7 +77,7 @@ changing the former.
 
 The default `PressureFitOptions` evaluate five residency-strategy labels, five
 fetch-trigger rules, and ordinary/coalesced emission: 50 candidate policies
-per legal task-selection context. `workers=0` evaluates independent contexts
+per legal task-selection problem. `workers=0` evaluates independent problems
 with up to the available logical CPUs; candidate order and tie-breaking do not
 depend on completion order.
 
@@ -91,7 +91,7 @@ decision:
 - selected `schedule` with initial placement and ordered release, offload, and
   prefetch actions;
 - full `simulation`, including makespan, task/transfer intervals, and peaks;
-- `diagnostics`, including every context and candidate outcome, repair counts,
+- `diagnostics`, including every problem and candidate outcome, repair counts,
   component work, schedule digests, and physical-refinement history;
 - the original `admission_facts`, when supplied.
 
@@ -265,16 +265,16 @@ triggers.
 
 ### 1. Necessary-condition preflight
 
-For every legal task-selection context, the planner derives anchors, fresh-output
-reservations, and per-boundary capacity. At least one context must fit its
+For every legal task-selection problem, the planner derives anchors, fresh-output
+reservations, and per-boundary capacity. At least one problem must fit its
 required anchor/output floor. This catches an individual task whose required
 inputs, outputs, and workspace cannot coexist before candidate search.
 
-### 2. Build one context per legal task selection
+### 2. Build one problem per legal task selection
 
 PressureFit obtains the finite set of legal selections from the Program. The
 training-specific policy used to construct this set is documented separately
-in [Recomputation selection](recomputation-selection.md). Each context is
+in [Recomputation selection](recomputation-selection.md). Each problem is
 projected into indexed task, alias, simulation, and optional admission arrays.
 
 ### 3. Seed residency
@@ -341,7 +341,7 @@ contradiction is rejected directly.
 
 Each valid candidate has an exact simulated makespan and schedule digest. The
 planner selects the lowest `(makespan, candidate ordinal)` pair across all
-contexts, decodes that one indexed schedule, evaluates its physical admission
+problems, decodes that one indexed schedule, evaluates its physical admission
 once more, and materializes the full `SimulationResult`.
 
 If all otherwise logical candidates fail physical admission, the outer
@@ -363,13 +363,13 @@ PressureFit(program, initial, final, machine, options, admission):
     refinements = []
 
     loop:
-        contexts = compile_indexed_contexts(
+        problems = compile_indexed_problems(
             program, portfolio, initial, final,
             machine.with_capacity(object_capacity), admission
         )
 
-        outcomes = evaluate contexts independently:
-            seed = required_anchor_hulls(context)
+        outcomes = evaluate problems independently:
+            seed = required_anchor_hulls(problem)
             if options.initial_placement == GREEDY:
                 seed = preplace_fitting_spill_objects(seed)
 
@@ -502,7 +502,7 @@ infeasibility was not established.
 
 | Layer | Responsibility |
 |---|---|
-| `shadowspill.planner.pressurefit()` | Input validation, context concurrency, winner materialization, and outer physical-capacity refinement. |
+| `shadowspill.planner.pressurefit()` | Input validation, problem concurrency, winner materialization, and outer physical-capacity refinement. |
 | `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
 | `csrc/src/planner/portfolio.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |

@@ -207,7 +207,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
 
         if (readiness_event != NULL) {
             if (runtime->synchronization.wait_event(
-                    runtime->synchronization.context,
+                    runtime->synchronization.state,
                     consumer_stream,
                     readiness_event->event
                 ) != 0) {

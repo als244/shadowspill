@@ -234,8 +234,8 @@ static int measure_copy(
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         const uint64_t begin = monotonic_nanoseconds();
         if (begin == 0U || route->copy_async(
-                route->context, destination, source, bytes, lane
-            ) != 0 || route->synchronize_lane(route->context, lane) != 0) {
+                route->state, destination, source, bytes, lane
+            ) != 0 || route->synchronize_lane(route->state, lane) != 0) {
             return -1;
         }
         const uint64_t end = monotonic_nanoseconds();
@@ -263,12 +263,12 @@ static int measure_copy_batch(
     }
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         if (route->copy_async(
-                route->context, destination, source, bytes, lane
+                route->state, destination, source, bytes, lane
             ) != 0) {
             return -1;
         }
     }
-    if (route->synchronize_lane(route->context, lane) != 0) {
+    if (route->synchronize_lane(route->state, lane) != 0) {
         return -1;
     }
     const uint64_t end = monotonic_nanoseconds();
@@ -330,12 +330,12 @@ static int calibrate_route(
     int status = 0;
     for (uint32_t warmup = 0U; warmup < config->warmup_copies; ++warmup) {
         if (route->copy_async(
-                route->context,
+                route->state,
                 destination_pointer,
                 source_pointer,
                 config->large_copy_bytes,
                 *lane
-            ) != 0 || route->synchronize_lane(route->context, *lane) != 0) {
+            ) != 0 || route->synchronize_lane(route->state, *lane) != 0) {
             status = -1;
             break;
         }
@@ -496,8 +496,8 @@ typedef struct ShadowSpillCalibrationJob {
     int status;
 } ShadowSpillCalibrationJob;
 
-static void *run_calibration_job(void *context) {
-    ShadowSpillCalibrationJob *job = context;
+static void *run_calibration_job(void *state) {
+    ShadowSpillCalibrationJob *job = state;
     atomic_fetch_add_explicit(&job->gate->ready, 1U, memory_order_release);
     while (!atomic_load_explicit(&job->gate->start, memory_order_acquire)) {
         sched_yield();

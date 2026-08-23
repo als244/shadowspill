@@ -383,7 +383,7 @@ PlannedTrainStep.submit(
 ```
 
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
-`state_dict()`, `load_state_dict()`, `close()`, and context manager support.
+`state_dict()`, `load_state_dict()`, `close()`, and problem manager support.
 
 `submit()` performs the normal host dispatch and returns an
 `InvocationResult` backed by one cold-created, timing-disabled completion
@@ -421,5 +421,5 @@ Planning exceptions preserve phase-specific meaning:
 - `InputGuardError` — runtime inputs differ from the fixed template.
 
 Compiler and profiling errors retain structural contract, task kind, and operator
-context when available. Runtime exceptions retain the first native failure and
+problem when available. Runtime exceptions retain the first native failure and
 task identity.

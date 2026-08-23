@@ -10,8 +10,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-static void name_current_thread(void *context, const char *name) {
-    (void)context;
+static void name_current_thread(void *state, const char *name) {
+    (void)state;
     if (name == NULL) {
         return;
     }
@@ -19,31 +19,31 @@ static void name_current_thread(void *context, const char *name) {
 }
 
 static void name_stream(
-    void *context,
+    void *state,
     ShadowSpillBackendStream stream,
     const char *name
 ) {
-    (void)context;
+    (void)state;
     if (name != NULL) {
         nvtxNameCuStreamA((CUstream)stream.words[0], name);
     }
 }
 
-static void set_enabled(void *context, uint8_t enabled) {
-    shadowspill_cuda_backend_profiler_enable(context, enabled);
+static void set_enabled(void *state, uint8_t enabled) {
+    shadowspill_cuda_backend_profiler_enable(state, enabled);
 }
 
 static ShadowSpillProfilerRange range_begin(
-    void *context, const char *name
+    void *state, const char *name
 ) {
     return name == NULL ||
-            !shadowspill_cuda_backend_profiler_is_enabled(context)
+            !shadowspill_cuda_backend_profiler_is_enabled(state)
         ? 0U
         : (ShadowSpillProfilerRange)nvtxRangeStartA(name);
 }
 
-static void range_end(void *context, ShadowSpillProfilerRange range) {
-    (void)context;
+static void range_end(void *state, ShadowSpillProfilerRange range) {
+    (void)state;
     if (range != 0U) {
         nvtxRangeEnd((nvtxRangeId_t)range);
     }
@@ -54,7 +54,7 @@ ShadowSpillProfiler shadowspill_cuda_backend_profiler(
 ) {
     return (ShadowSpillProfiler){
         .abi_version = SHADOWSPILL_PROFILER_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .name_current_thread = name_current_thread,
         .name_stream = name_stream,
         .set_enabled = set_enabled,
