@@ -5,12 +5,12 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from .admission import EncodedIndexedSchedule, IndexedAdmissionFacts
-from .capi import (
+from ..capi import (
     CAdmissionOperations,
     CIndexedSchedule,
     planner_api,
 )
+from .indexed import EncodedIndexedSchedule, IndexedAdmissionFacts
 
 
 @dataclass(frozen=True, slots=True)

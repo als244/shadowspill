@@ -8,14 +8,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner.library.capi import (
+from shadowspill.planner.capi import (
     NO_INDEX,
     CResidencyOptions,
     CResidencyProblem,
     CResidencyResult,
     planner_api,
 )
-from shadowspill.planner.model import PressureFitInfeasibleError
+from shadowspill.planner.result import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 from shadowspill.status import ABI_VERSION, Status
 

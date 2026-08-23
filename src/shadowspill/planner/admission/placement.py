@@ -15,7 +15,7 @@ from typing import Protocol
 
 from shadowspill.status import ABI_VERSION
 
-from .capi import (
+from ..capi import (
     CLeaseLifetime,
     CPlacementProblem,
     CPlacementResult,

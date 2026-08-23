@@ -6,7 +6,7 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitOptions,
 )
-from shadowspill.planner.model import InitialPlacement
+from shadowspill.planner.request import InitialPlacement
 
 from .common import (
     _boolean,

@@ -19,14 +19,14 @@ from shadowspill.simulator import SimulationResult
 from shadowspill.simulator.indexed import IntervalArrays
 from shadowspill.status import ABI_VERSION
 
-from .admission import IndexedAdmissionFacts
-from .capi import (
+from ..capi import (
     CLeaseIdentity,
     CLeaseLifetime,
     CLeaseLifetimeProblem,
     CLeaseLifetimeResult,
     planner_api,
 )
+from .indexed import IndexedAdmissionFacts
 from .operations import AdmissionOperations
 
 

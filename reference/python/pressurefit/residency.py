@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner.model import InitialPlacement, PressureFitInfeasibleError
+from shadowspill.planner.request import InitialPlacement
+from shadowspill.planner.result import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts

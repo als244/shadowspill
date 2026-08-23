@@ -6,7 +6,7 @@ import ctypes
 from dataclasses import dataclass
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
-from shadowspill.planner.library.capi import (
+from shadowspill.planner.capi import (
     CCandidateResult,
     CPlanCandidate,
     CSelectionResult,

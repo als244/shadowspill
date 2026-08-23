@@ -16,7 +16,7 @@ from reference.python.pressurefit.residency import (
     seed_residency,
 )
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner.model import InitialPlacement
+from shadowspill.planner.request import InitialPlacement
 
 from ._examples import (
     config,

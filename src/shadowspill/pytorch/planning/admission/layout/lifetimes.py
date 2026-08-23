@@ -20,8 +20,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cached_property
 
-from shadowspill.planner.library.lifetimes import LeaseLifetimes, build_lease_lifetimes
-from shadowspill.planner.library.operations import AdmissionOperations
+from shadowspill.planner.admission.lifetimes import (
+    LeaseLifetimes,
+    build_lease_lifetimes,
+)
+from shadowspill.planner.admission.operations import AdmissionOperations
 from shadowspill.simulator import SimulationResult
 
 from ..admission_replay import AdmissionReplayPurpose

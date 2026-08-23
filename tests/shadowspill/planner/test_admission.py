@@ -28,7 +28,7 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
     pressurefit,
 )
-from shadowspill.planner.library.admission import (
+from shadowspill.planner.admission.indexed import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,

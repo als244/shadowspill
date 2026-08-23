@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection
 from shadowspill.planner import AdmissionFacts
-from shadowspill.planner.library.admission import (
+from shadowspill.planner.admission.indexed import (
     IndexedAdmissionFacts,
     index_admission_facts,
 )

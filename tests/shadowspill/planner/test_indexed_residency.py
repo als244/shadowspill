@@ -9,10 +9,8 @@ from reference.python.pressurefit.indexed_residency import (
 )
 from reference.python.pressurefit.residency import reduce_pressure, seed_residency
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner.model import (
-    InitialPlacement,
-    PressureFitInfeasibleError,
-)
+from shadowspill.planner.request import InitialPlacement
+from shadowspill.planner.result import PressureFitInfeasibleError
 
 from ._examples import (
     training_chain_config,
