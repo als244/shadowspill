@@ -32,7 +32,7 @@ from tools.qualification.runtime_evidence import (
 from workloads.full_model import FullModelManifest, build_case, manifest_for
 from workloads.providers import ModelImplementation
 
-_MINIMUM_HISTORICAL_RATIO = 0.95
+_MINIMUM_REGRESSION_RATIO = 0.95
 _MAXIMUM_SIMULATOR_ERROR = 0.05
 
 
@@ -268,7 +268,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         physical_statuses = [check_physical_budget()]
         if arguments.plan_only:
             result: dict[str, object] = {
-                "schema": "shadowspill.full_model_qualification/v1",
+                "schema": "shadowspill.full_model_qualification/v2",
                 "manifest": manifest.as_dict(),
                 "plan_only": True,
                 "passed": not any(physical_statuses),
@@ -371,10 +371,15 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             if predicted_seconds > 0.0
             else math.inf
         )
-        historical_ratio = (
+        regression_ratio = (
             None
-            if manifest.historical_tokens_per_second is None
-            else median_throughput / manifest.historical_tokens_per_second
+            if manifest.regression_tokens_per_second is None
+            else median_throughput / manifest.regression_tokens_per_second
+        )
+        predecessor_ratio = (
+            None
+            if manifest.predecessor_tokens_per_second is None
+            else median_throughput / manifest.predecessor_tokens_per_second
         )
         objectives_finite = all(
             math.isfinite(value)
@@ -403,8 +408,8 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             <= manifest.spill_budget_bytes
         )
         simulator_passed = abs(simulator_relative_error) <= _MAXIMUM_SIMULATOR_ERROR
-        historical_passed = bool(
-            historical_ratio is None or historical_ratio >= _MINIMUM_HISTORICAL_RATIO
+        regression_passed = bool(
+            regression_ratio is None or regression_ratio >= _MINIMUM_REGRESSION_RATIO
         )
         expected_logical_steps = protocol_steps + int(arguments.skip_checkpoint)
         logical_steps_passed = bool(
@@ -412,7 +417,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             and training._step == expected_logical_steps
         )
         result = {
-            "schema": "shadowspill.full_model_qualification/v1",
+            "schema": "shadowspill.full_model_qualification/v2",
             "manifest": manifest.as_dict(),
             "plan_only": False,
             "passed": bool(
@@ -422,7 +427,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 and physical_passed
                 and strict_runtime
                 and simulator_passed
-                and historical_passed
+                and regression_passed
             ),
             "protocol_complete": protocol_complete,
             "groups": arguments.groups,
@@ -453,8 +458,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "predicted_makespan_seconds": predicted_seconds,
             "simulator_relative_error": simulator_relative_error,
             "simulator_gate_passed": simulator_passed,
-            "historical_throughput_ratio": historical_ratio,
-            "historical_gate_passed": historical_passed,
+            "regression_throughput_ratio": regression_ratio,
+            "regression_gate_passed": regression_passed,
+            "predecessor_throughput_ratio": predecessor_ratio,
             "predicted_device_peak_bytes": report.predicted_device_peak_bytes,
             "predicted_spill_peak_bytes": report.predicted_spill_peak_bytes,
             "transfer_bytes_evicted": report.transfer_bytes_evicted,
@@ -549,7 +555,7 @@ def main() -> int:
             ("physical_budget_passed", "PHYSICAL BUDGETS"),
             ("strict_runtime_passed", "STRICT RUNTIME"),
             ("simulator_gate_passed", "SIMULATOR"),
-            ("historical_gate_passed", "HISTORICAL"),
+            ("regression_gate_passed", "REGRESSION"),
         )
         for key, label in gates:
             print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
@@ -561,9 +567,14 @@ def main() -> int:
             f"  PREDICTED STEP: {result['predicted_makespan_seconds']:.4f} "
             f"seconds (simulator error {result['simulator_relative_error']:+.2%})"
         )
-        ratio = result["historical_throughput_ratio"]
+        ratio = result["regression_throughput_ratio"]
         if isinstance(ratio, float):
-            print(f"  HISTORICAL RATIO: {ratio:.2%}")
+            print(f"  REGRESSION RATIO: {ratio:.2%}")
+        # Reported, never gated: how close this run is to the predecessor system
+        # ShadowSpill replaces. See workloads.full_model for the provenance.
+        ratio = result["predecessor_throughput_ratio"]
+        if isinstance(ratio, float):
+            print(f"  PREDECESSOR RATIO: {ratio:.2%}")
     print(f"  PLANNING: {result['planning_seconds']:.3f} seconds")
     print(f"  ARTIFACT: {arguments.output}", flush=True)
     if not result["passed"] and not arguments.plan_only:

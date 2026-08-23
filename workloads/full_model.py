@@ -25,6 +25,49 @@ from workloads.pytorch import Qwen35 as PyTorchQwen35
 _GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
+#: The throughput each cell sustains today, in tokens per second. The performance
+#: gate fails a cell that drops below 0.95 of its entry; a cell absent from this
+#: table carries no regression gate.
+#:
+#: Each is the median of three consecutive matrix runs on 2026-08-22 and
+#: 2026-08-23 at commit 6868613, on an idle RTX 5090 under the standard probe
+#: (no checkpoint, warm step, three groups of four steps):
+#:
+#:     mlops_llama3    3313.4   3315.2   3322.3
+#:     mlops_qwen35    2937.4   2944.5   2945.8
+#:     mlops_olmoe    13808.6  13842.0  13870.9
+#:
+#: Run-to-run spread is under 0.5%, so the 5% margin is about ten times the
+#: noise: wide enough not to fire on jitter, tight enough to catch a regression.
+#: Re-measure and update these deliberately when a change is meant to move
+#: throughput.
+_REGRESSION_TOKENS_PER_SECOND = {
+    "mlops_llama3": 3_315.2,
+    "mlops_qwen35": 2_944.5,
+    "mlops_olmoe": 13_842.0,
+}
+
+#: What the predecessor `dataflow` system measured on the same geometry, in
+#: tokens per second. ShadowSpill replaces that system, so these are a parity
+#: target rather than a regression floor: the harness reports the ratio and
+#: never fails a cell on it.
+#:
+#: Source: `dataflow` at e04b1454, qualification runs of 2026-08-08 and
+#: 2026-08-09, archived at combating_fragmentation/experiments/
+#: E004-recompute-refinement/archive_INDEX.json. The geometry matches this
+#: manifest exactly - sequence 1024, 65,536 tokens per step, 16 GiB execution
+#: budget - and the transfer bandwidths agree within 3%, so the comparison is
+#: like for like.
+#:
+#: ShadowSpill measures 88-90% of these as of 2026-08-23. That gap is the open
+#: plan-quality item, and it is the reason these are kept: re-basing them onto
+#: current numbers would erase the only standing measure of it.
+_PREDECESSOR_TOKENS_PER_SECOND = {
+    "mlops_llama3": 3_669.2969982952136,
+    "mlops_qwen35": 3_316.344617868151,
+    "mlops_olmoe": 15_654.904932252315,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FullModelManifest:
@@ -37,7 +80,8 @@ class FullModelManifest:
     accumulation_count: int
     device_physical_capacity_bytes: int
     spill_budget_bytes: int
-    historical_tokens_per_second: float | None
+    regression_tokens_per_second: float | None
+    predecessor_tokens_per_second: float | None
     model_config: Any
     head_scratch_bytes: int = _RETAINED_HEAD_SCRATCH_BYTES
 
@@ -150,17 +194,14 @@ def _manifest(
     if family == "llama3":
         config: Any = Llama3Config.throughput()
         tokens = 8_192
-        historical = 3_669.2969982952136 if implementation == "mlops" else None
     elif family == "qwen35":
         config = Qwen35Config.throughput()
         tokens = 16_384
-        historical = 3_316.344617868151 if implementation == "mlops" else None
     elif family == "olmoe":
         if implementation == "pytorch":
             raise ValueError("pure-PyTorch OLMoE full-model benchmarking is deferred")
         config = OLMoEConfig.throughput()
         tokens = 32_768
-        historical = 15_654.904932252315
     else:
         raise ValueError(f"unknown full-model family {family!r}")
     sequence_length = 1_024
@@ -172,7 +213,12 @@ def _manifest(
         accumulation_count=65_536 // tokens,
         device_physical_capacity_bytes=16 * _GIB,
         spill_budget_bytes=112 * _GIB,
-        historical_tokens_per_second=historical,
+        regression_tokens_per_second=_REGRESSION_TOKENS_PER_SECOND.get(
+            f"{implementation}_{family}"
+        ),
+        predecessor_tokens_per_second=_PREDECESSOR_TOKENS_PER_SECOND.get(
+            f"{implementation}_{family}"
+        ),
         model_config=config,
     )
 

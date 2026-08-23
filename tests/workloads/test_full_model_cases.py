@@ -25,11 +25,26 @@ def test_full_model_manifests_preserve_retained_geometries() -> None:
     }
 
 
-def test_only_mlops_cells_have_historical_throughput_authorities() -> None:
+def test_only_mlops_cells_have_throughput_authorities() -> None:
     for item in manifests():
-        assert (item.historical_tokens_per_second is not None) == (
-            item.implementation == "mlops"
-        )
+        expected = item.implementation == "mlops"
+        assert (item.regression_tokens_per_second is not None) == expected
+        assert (item.predecessor_tokens_per_second is not None) == expected
+
+
+def test_predecessor_parity_is_not_silently_declared_reached() -> None:
+    """The parity target is the predecessor's number, not ours.
+
+    Re-basing it onto a current measurement would read as parity reached while
+    the gap is open, so this pins the two authorities apart until a deliberate
+    change moves them together.
+    """
+
+    for item in manifests():
+        if item.regression_tokens_per_second is None:
+            continue
+        assert item.predecessor_tokens_per_second is not None
+        assert item.regression_tokens_per_second < item.predecessor_tokens_per_second
 
 
 def test_full_model_launcher_recovers_killed_planning_phase() -> None:
