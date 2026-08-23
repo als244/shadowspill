@@ -1,6 +1,6 @@
 # Planner C API
 
-Include `<shadowspill/planner.h>`. The compiled planner evaluates one
+Include `<shadowspill/planner.h>`. The planner evaluates one
 PressureFit candidate context or a complete predecoded Program context using
 the simulator and exact schedule admission.
 

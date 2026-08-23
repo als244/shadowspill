@@ -1,4 +1,4 @@
-"""Readable fixed-offset placement; production uses the compiled planner.
+"""Readable fixed-offset placement; production uses the planner.
 
 Leases are placed largest first, longest-lived first among equals, and each
 takes the lowest aligned offset that clears every lease it overlaps in time.

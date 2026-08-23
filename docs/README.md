@@ -17,7 +17,7 @@ statement applies to Python, C, or the framework-neutral design.
   guide](python/planning-json.md).
 - To understand the system, follow the ordered path in the [architecture
   overview](architecture/overview.md).
-- To integrate a compiled component or backend, start with the [C API
+- To integrate the C library or a backend, start with the [C API
   guide](c/README.md).
 - To modify the repository, use the [development guide](development/README.md).
 

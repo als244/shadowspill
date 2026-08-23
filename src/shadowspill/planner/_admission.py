@@ -16,7 +16,7 @@ from shadowspill.simulator import (
     TaskPhysicalDelta,
 )
 from shadowspill.simulator._capi import NO_INDEX
-from shadowspill.simulator._compiled import CompiledSimulationTemplate
+from shadowspill.simulator._indexed import IndexedSimulationTemplate
 
 from ._capi import (
     CAdmissionTopology,
@@ -58,7 +58,7 @@ def _flatten_rows(
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledAdmissionTopology:
+class IndexedAdmissionTopology:
     """Borrowed C topology plus Python owners for all indexed arrays."""
 
     value: CAdmissionTopology
@@ -67,7 +67,7 @@ class CompiledAdmissionTopology:
 
 
 class IndexedSchedule(Protocol):
-    """Structural interface shared with the compiled PressureFit winner."""
+    """Structural interface shared with the PressureFit winner."""
 
     @property
     def action_trigger_tasks(self) -> tuple[int, ...]: ...
@@ -104,7 +104,7 @@ class CompiledScheduleAdmission:
 
 @dataclass(frozen=True, slots=True)
 class EncodedIndexedSchedule:
-    """Indexed schedule projection accepted by compiled planner helpers."""
+    """Indexed schedule projection accepted by planner helpers."""
 
     action_trigger_tasks: tuple[int, ...]
     action_aliases: tuple[int, ...]
@@ -130,9 +130,9 @@ _CompiledAllocationRow = tuple[tuple[int, int, int, int], ...]
 
 def encode_schedule(
     schedule: MemorySchedule,
-    simulation: CompiledSimulationTemplate,
+    simulation: IndexedSimulationTemplate,
 ) -> EncodedIndexedSchedule:
-    """Encode one public schedule against an immutable compiled topology."""
+    """Encode one public schedule against an immutable topology."""
 
     return EncodedIndexedSchedule(
         action_trigger_tasks=tuple(
@@ -159,10 +159,10 @@ def encode_schedule(
     )
 
 
-def compile_admission_topology(
+def index_admission_topology(
     topology: AdmissionTopology,
-    simulation: CompiledSimulationTemplate,
-) -> CompiledAdmissionTopology:
+    simulation: IndexedSimulationTemplate,
+) -> IndexedAdmissionTopology:
     """Project only tasks selected by one recomputation context."""
 
     if topology.device_id not in simulation.device_ids:
@@ -256,7 +256,7 @@ def compile_admission_topology(
         task_allocation_aliases=buffers[12],
         task_allocation_kinds=buffers[13],
     )
-    return CompiledAdmissionTopology(value, buffers, topology.digest)
+    return IndexedAdmissionTopology(value, buffers, topology.digest)
 
 
 def _compile_allocation_rows(
@@ -299,8 +299,8 @@ def _compile_allocation_rows(
 
 
 def evaluate_schedule_admission(
-    simulation: CompiledSimulationTemplate,
-    admission: CompiledAdmissionTopology,
+    simulation: IndexedSimulationTemplate,
+    admission: IndexedAdmissionTopology,
     schedule: IndexedSchedule,
 ) -> CompiledScheduleAdmission:
     """Evaluate one selected schedule through compiled production-pool policy."""
@@ -373,7 +373,7 @@ def evaluate_schedule_admission(
             )
         encoded = library.shadowspill_status_string(status)
         detail = encoded.decode("utf-8") if encoded else f"planner status {status}"
-        raise RuntimeError(f"compiled schedule admission failed: {detail}")
+        raise RuntimeError(f"schedule admission failed: {detail}")
     dependencies: list[MemoryReuseDependency] = []
     for index in range(int(result.reuse_count)):
         predecessor = int(reuse_predecessors[index])
@@ -429,10 +429,10 @@ def evaluate_schedule_admission(
 
 
 __all__ = [
-    "CompiledAdmissionTopology",
     "CompiledScheduleAdmission",
     "EncodedIndexedSchedule",
-    "compile_admission_topology",
+    "IndexedAdmissionTopology",
     "encode_schedule",
     "evaluate_schedule_admission",
+    "index_admission_topology",
 ]

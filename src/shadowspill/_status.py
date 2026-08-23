@@ -1,6 +1,6 @@
 """The library's ABI version and status vocabulary, mirroring the C headers.
 
-Every compiled entry point returns one of these. The three shared codes mean
+Every entry point returns one of these. The three shared codes mean
 the same thing wherever they come from; each component's own codes occupy a
 band, so a status decodes to exactly one meaning without knowing which
 component produced it.

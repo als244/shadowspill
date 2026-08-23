@@ -62,5 +62,5 @@ diagnostics.
 `libshadowspill` and the mock backend build without PyTorch or a
 device-provider SDK. Provider code is confined to `csrc/backends/` and the
 PyTorch adapter, which stay separate libraries for that reason. See the
-[compiled component guide](../../csrc/README.md) for source layout and build
+[C tree guide](../../csrc/README.md) for source layout and build
 dependencies.

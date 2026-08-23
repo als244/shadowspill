@@ -1,4 +1,4 @@
-"""Indexed projection for the compiled PressureFit residency reducer."""
+"""Indexed projection for the PressureFit residency reducer."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class CompiledResidencyTemplate:
     seed_breaks: Any
 
 
-def compile_residency_template(
+def index_residency_template(
     facts: PlanningFacts,
     config: SimulationConfig,
     seed: ResidencyPlan,
@@ -261,7 +261,7 @@ def _decode_plan(
     return ResidencyPlan(tuple(result), anchors)
 
 
-def reduce_residency_compiled(
+def reduce_residency(
     template: CompiledResidencyTemplate,
     seed: ResidencyPlan,
     strategy: str,
@@ -271,7 +271,7 @@ def reduce_residency_compiled(
     alias_count = int(template.problem.alias_count)
     boundary_count = int(template.problem.boundary_count)
     if seed != template.seed:
-        raise ValueError("compiled residency template received a different seed")
+        raise ValueError("the residency template received a different seed")
     cell_count = alias_count * boundary_count
     extra_count = len(template.device_ids) * boundary_count
     extra_buffer = (ctypes.c_uint64 * max(1, extra_count))()
@@ -330,6 +330,6 @@ def reduce_residency_compiled(
 
 __all__ = [
     "CompiledResidencyTemplate",
-    "compile_residency_template",
-    "reduce_residency_compiled",
+    "index_residency_template",
+    "reduce_residency",
 ]

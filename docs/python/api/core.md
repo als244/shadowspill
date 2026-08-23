@@ -41,10 +41,10 @@ task-allocation topology and exact range certificate are described in
 schedule becomes leases in [from a resolved program to
 leases](../../architecture/admission-leases.md).
 
-Every step of physical admission runs in the compiled planner library:
+Every step of physical admission runs in the library:
 `pressurefit()` selects candidates there, the operations a schedule implies
 are derived there, and each lease is placed at a fixed offset there. Missing
-or ABI-incompatible compiled libraries fail immediately rather than falling
+or ABI-incompatible libraries fail immediately rather than falling
 back, and the readable Python equivalents live outside the package in
 `reference/python/`, where production never imports them.
 
@@ -67,7 +67,7 @@ Failures are `PressureFitInfeasibleError` or
 ## `shadowspill.simulator`
 
 `simulate()` replays one explicit schedule through the required compiled
-simulator. Missing or ABI-incompatible compiled libraries fail immediately.
+simulator. Missing or ABI-incompatible libraries fail immediately.
 
 Configuration and results:
 

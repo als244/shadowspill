@@ -1,4 +1,4 @@
-"""Stable integer projections for compiled component interfaces."""
+"""Stable integer projections for the C ABI."""
 
 from __future__ import annotations
 

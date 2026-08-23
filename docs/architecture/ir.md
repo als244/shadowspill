@@ -84,7 +84,7 @@ are human-readable labels; canonical IR IDs remain secondary provenance.
 ## Indexed projections
 
 `IndexedProgram`, `IndexedMemorySchedule`, and `IndexedExecutionPlan` are compact
-index-based projections used by compiled components. `index_program()`,
+index-based projections used across the C ABI. `index_program()`,
 `index_memory_schedule()`, and `index_execution_plan()` validate and
 translate the public IR without changing its semantics.
 

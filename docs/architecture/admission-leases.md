@@ -37,7 +37,7 @@ every probe beneath it:
 - the **selected task set**, with each task's runtime, workspace and object
   accesses;
 - the **compiled simulation template**, derived from that task set;
-- the **compiled admission topology**, derived from the template — per-task
+- the **admission topology**, derived from the template — per-task
   allocation steps, fresh outputs, replacements, storage handoffs, alignment;
 - the **compute floor**, the critical path through the selected tasks, which
   no schedule for this resolved program can beat.

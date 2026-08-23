@@ -1,4 +1,4 @@
-# Compiled components
+# The C tree
 
 `csrc/` builds one library, `libshadowspill`, plus the pieces that are
 genuinely pluggable: the device backends and the PyTorch adapter.

@@ -7,7 +7,7 @@ shadowspill/
 ├── src/
 │   ├── shadowspill/       installed Python package
 │   └── tools/             reusable source-tree diagnostics and qualification tools
-├── csrc/                  the compiled library, its backends, and public C headers
+├── csrc/                  the C library, its backends, and public C headers
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── benchmarking/          reusable Program datasets and planning evaluation
@@ -32,7 +32,7 @@ Programs across budgets and transfer bandwidths.
 src/shadowspill/
 ├── ir/                    framework-neutral values and indexed projections
 ├── planner/               PressureFit orchestration and compiled bindings
-├── simulator/             compiled simulator and diagnostic timeline
+├── simulator/             the simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
@@ -55,7 +55,7 @@ High-level modules expose small orchestration functions. Detailed algorithms
 live in domain-named submodules; generic `utils`, `helpers`, and `common`
 modules are avoided.
 
-## Compiled components
+## The C tree
 
 ```text
 csrc/
@@ -109,7 +109,7 @@ suite.
 ```
 
 The script creates `.venv`, installs PyTorch with the machine accelerator
-backend, builds and installs every compiled component, installs development
+backend, builds and installs the library, its backends and the adapter, installs development
 dependencies, and verifies the device backend, component libraries, ABI
 loading, and PyTorch storage adapter. To use an existing virtual or Conda
 environment:

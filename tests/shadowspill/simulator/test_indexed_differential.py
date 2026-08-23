@@ -25,7 +25,7 @@ from shadowspill.ir import (
 )
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
 from shadowspill.simulator._capi import simulator_library_path
-from shadowspill.simulator._compiled import simulate_compiled
+from shadowspill.simulator._indexed import simulate_program
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
     representative_program,
@@ -44,7 +44,7 @@ from ._examples import (
 
 pytestmark = pytest.mark.skipif(
     simulator_library_path() is None,
-    reason="compiled simulator library is not installed",
+    reason="the simulator library is not installed",
 )
 
 
@@ -76,7 +76,7 @@ def test_compiled_and_python_results_are_identical(
         selections=selections,
         config=config,
     )
-    actual = simulate_compiled(
+    actual = simulate_program(
         program,
         schedule,
         selections=selections,
@@ -96,7 +96,7 @@ def test_compiled_replay_is_deterministic_across_worker_counts(workers: int) -> 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         results = tuple(
             executor.map(
-                lambda _: simulate_compiled(program, schedule, config=config),
+                lambda _: simulate_program(program, schedule, config=config),
                 range(32),
             )
         )
@@ -116,7 +116,7 @@ def test_compiled_and_python_capacity_diagnostics_agree(capacity: int) -> None:
             config=config,
         )
     with pytest.raises(SimulationInfeasibleError) as compiled_caught:
-        simulate_compiled(
+        simulate_program(
             representative_program(),
             representative_schedule(),
             selections=SAVE_SELECTION,
@@ -172,7 +172,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
     )
 
     expected = simulate_python(program, schedule, config=config)
-    actual = simulate_compiled(program, schedule, config=config)
+    actual = simulate_program(program, schedule, config=config)
 
     assert actual == expected
     assert actual.makespan_ns == 1_000_000_000
@@ -246,14 +246,14 @@ def test_random_linear_programs_match(
     config = calibrated_config(device_capacity_bytes=capacity)
 
     expected = simulate_python(program, schedule, config=config)
-    actual = simulate_compiled(program, schedule, config=config)
+    actual = simulate_program(program, schedule, config=config)
 
     assert actual == expected
 
 
 def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
 ) -> None:
-    """The compiled simulator attaches its own interval arrays to a result so
+    """The simulator attaches its own interval arrays to a result so
     a compiled consumer can read the timings without re-encoding them. They
     address library memory, so anything that writes a result out - `asdict`,
     `pickle`, `torch.save`, `copy.deepcopy` - must not carry them along."""
@@ -263,7 +263,7 @@ def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
     from dataclasses import asdict
 
     from shadowspill.simulator._capi import CTaskInterval, CTransferInterval
-    from shadowspill.simulator._compiled import IntervalArrays
+    from shadowspill.simulator._indexed import IntervalArrays
     from shadowspill.simulator.model import SimulationResult
 
     result = SimulationResult(

@@ -166,7 +166,7 @@ typedef struct ShadowSpillPressureFitContextOptions {
 } ShadowSpillPressureFitContextOptions;
 
 /*
- * Schedule-invariant input for the high-level compiled PressureFit path.
+ * Schedule-invariant input for the high-level PressureFit path.
  * The simulation topology carries the selected tasks plus the declared
  * initial/final residency.  The planner derives the indexed analytic residency
  * problem and initial seed internally before evaluating the unchanged

@@ -1,4 +1,4 @@
-"""Readable schedule-to-lease replay; production uses the compiled planner.
+"""Readable schedule-to-lease replay; production uses the planner.
 
 Executing a schedule means acquiring a lease per object generation, retiring
 it when the object is released, evicted or replaced, and publishing the

@@ -27,7 +27,7 @@ selector](recomputation-selection.md).
 | Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, and worker count. |
 | Optional physical input | `AdmissionTopology`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
 | Output | `PressureFitResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
-| Feasibility authority | The compiled planner preflight, compiled simulator, and compiled physical admission when an `AdmissionTopology` is supplied. |
+| Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionTopology` is supplied. |
 | Optimization scope | Minimum simulated makespan among the finite candidates actually generated and repaired, not a global optimum over all possible schedules. |
 
 `validate_schedule_feasibility()` performs a necessary-condition preflight on
@@ -265,7 +265,7 @@ triggers.
 
 ### 1. Necessary-condition preflight
 
-For every legal task-selection context, the compiled planner derives anchors, fresh-output
+For every legal task-selection context, the planner derives anchors, fresh-output
 reservations, and per-boundary capacity. At least one context must fit its
 required anchor/output floor. This catches an individual task whose required
 inputs, outputs, and workspace cannot coexist before candidate search.
@@ -320,7 +320,7 @@ coalescing rule.
 
 ### 6. Admit, simulate, and repair
 
-When an admission topology is supplied, the compiled planner dry-runs the
+When an admission topology is supplied, the planner dry-runs the
 task allocation path, output ownership, transfer reservations, retirements,
 and causal reuse through the production memory-pool policy. It emits physical
 deltas and reuse dependencies consumed by simulation.
@@ -355,7 +355,7 @@ not change, and every refinement is retained in diagnostics.
 
 ```text
 PressureFit(program, initial, final, machine, options, admission):
-    require compiled planner and simulator ABIs
+    require the planner and simulator ABIs
     portfolio = legal_task_selections(program)
     require some selection's anchor/output floor to fit
 
@@ -509,10 +509,10 @@ infeasibility was not established.
 | `csrc/src/planner/admission.c` | Physical allocation and causal-reuse admission. |
 | `shadowspill.simulator` / `csrc/simulator` | Independent schedule replay and makespan authority. |
 
-The production path requires the compiled planner and simulator. Readable
+The production path requires the planner and simulator. Readable
 Python implementations live only under `reference/python/pressurefit` and
 `reference/python/simulator`; they are differential-test oracles and do not
-silently replace a missing or ABI-incompatible compiled component.
+silently replace a missing or ABI-incompatible library.
 
 Previous: [Recomputation selection](recomputation-selection.md). Next:
 [Physical admission and offset handling](physical-admission.md).

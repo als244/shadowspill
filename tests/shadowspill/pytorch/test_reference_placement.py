@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 
 from reference.python.admission import place_lifetimes as place_reference
-from shadowspill.planner._placement import place_lifetimes as place_compiled
+from shadowspill.planner._placement import place_lifetimes as place
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +51,7 @@ def _distinct_sizes(seed: int, count: int) -> list[_Lease]:
 
 
 def test_empty_placement_requires_nothing() -> None:
-    assert place_compiled([]) == ((), 0)
+    assert place([]) == ((), 0)
 
 
 def test_disjoint_lifetimes_share_one_offset() -> None:
@@ -60,7 +60,7 @@ def test_disjoint_lifetimes_share_one_offset() -> None:
         _Lease(1024, 512, 10, 20),
         _Lease(1024, 512, 20, 30),
     ]
-    offsets, required = place_compiled(items)
+    offsets, required = place(items)
 
     assert offsets == (0, 0, 0)
     assert required == 1024
@@ -71,7 +71,7 @@ def test_overlapping_lifetimes_stack() -> None:
         _Lease(1024, 512, 0, 30),
         _Lease(1024, 512, 10, 20),
     ]
-    offsets, required = place_compiled(items)
+    offsets, required = place(items)
 
     assert offsets == (0, 1024)
     assert required == 2048
@@ -82,7 +82,7 @@ def test_alignment_is_honoured() -> None:
         _Lease(100, 1, 0, 30),
         _Lease(100, 512, 0, 30),
     ]
-    offsets, required = place_compiled(items)
+    offsets, required = place(items)
 
     assert offsets[1] % 512 == 0
     assert offsets[1] >= 100
@@ -97,8 +97,8 @@ def test_result_is_independent_of_input_order() -> None:
     shuffled = list(items)
     random.Random(11).shuffle(shuffled)
 
-    _, required = place_compiled(items)
-    _, shuffled_required = place_compiled(shuffled)
+    _, required = place(items)
+    _, shuffled_required = place(shuffled)
 
     assert required == shuffled_required
 
@@ -107,7 +107,7 @@ def test_compiled_placement_matches_readable_reference() -> None:
     for seed in range(12):
         items = _lifetimes(seed=seed, count=150)
 
-        compiled_offsets, compiled_required = place_compiled(items)
+        compiled_offsets, compiled_required = place(items)
         reference_offsets, reference_required = place_reference(items)
 
         assert compiled_offsets == reference_offsets, f"offsets differ at {seed=}"
@@ -116,7 +116,7 @@ def test_compiled_placement_matches_readable_reference() -> None:
 
 def test_placed_leases_never_overlap_in_both_time_and_address() -> None:
     items = _lifetimes(seed=3, count=250)
-    offsets, required = place_compiled(items)
+    offsets, required = place(items)
 
     for left, item in enumerate(items):
         for right in range(left + 1, len(items)):

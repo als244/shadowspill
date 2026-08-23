@@ -1,4 +1,4 @@
-"""Canonical IR projection and result decoding for the compiled simulator."""
+"""Canonical IR projection and result decoding for the simulator."""
 
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ class _Projection:
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledSimulationTemplate:
+class IndexedSimulationTemplate:
     """Immutable indexed topology reused across schedule candidates."""
 
     program: CProgram
@@ -125,13 +125,13 @@ class CompiledSimulationTemplate:
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledSimulationSummary:
+class IndexedSimulationSummary:
     """Selection-only result that avoids materializing interval records."""
 
     makespan_ns: int
 
 
-def compile_simulation_template(
+def index_simulation_template(
     program: Program,
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
@@ -139,11 +139,11 @@ def compile_simulation_template(
     selected_tasks: tuple[TaskSpec, ...] | None = None,
     initial_residency: tuple[ResidencySpec, ...] = (),
     final_residency: tuple[ResidencySpec, ...] = (),
-) -> CompiledSimulationTemplate:
+) -> IndexedSimulationTemplate:
     """Project schedule-invariant program geometry exactly once.
 
     The optional residency declarations describe the planning boundary, not a
-    candidate schedule.  They let the compiled planner derive indexed planning
+    candidate schedule.  They let the planner derive indexed planning
     facts directly from this immutable topology.  Candidate binding replaces
     these arrays with the selected schedule before simulation.
     """
@@ -357,7 +357,7 @@ def compile_simulation_template(
         reuse_successor_tasks=empty_u32,
         reuse_successor_actions=empty_u32,
     )
-    return CompiledSimulationTemplate(
+    return IndexedSimulationTemplate(
         c_program,
         tuple(buffers),
         task_ids,
@@ -372,11 +372,11 @@ def compile_simulation_template(
 
 
 def _bind_schedule(
-    template: CompiledSimulationTemplate,
+    template: IndexedSimulationTemplate,
     schedule: MemorySchedule,
     admission: SimulationAdmission | None = None,
 ) -> _Projection:
-    """Bind candidate-only arrays to one immutable compiled topology."""
+    """Bind candidate-only arrays to one immutable topology."""
 
     physical_devices: ctypes.Array[CDevice] | None = None
     action_tasks = _u32_array(
@@ -599,7 +599,7 @@ def _project(
 ) -> _Projection:
     schedule.validate(program, selections)
     return _bind_schedule(
-        compile_simulation_template(program, selections, config),
+        index_simulation_template(program, selections, config),
         schedule,
         admission,
     )
@@ -655,7 +655,7 @@ def _raise_error(
     )
 
 
-def simulate_compiled(
+def simulate_program(
     program: Program,
     schedule: MemorySchedule,
     *,
@@ -669,8 +669,8 @@ def simulate_compiled(
     return _simulate_projection(projection, schedule)
 
 
-def simulate_compiled_template(
-    template: CompiledSimulationTemplate,
+def simulate_template(
+    template: IndexedSimulationTemplate,
     schedule: MemorySchedule,
     *,
     admission: SimulationAdmission | None = None,
@@ -680,10 +680,10 @@ def simulate_compiled_template(
     return _simulate_projection(_bind_schedule(template, schedule, admission), schedule)
 
 
-def simulate_compiled_template_summary(
-    template: CompiledSimulationTemplate,
+def simulate_template_summary(
+    template: IndexedSimulationTemplate,
     schedule: MemorySchedule,
-) -> CompiledSimulationSummary:
+) -> IndexedSimulationSummary:
     """Replay a candidate without decoding its detailed interval report."""
 
     projection = _bind_schedule(template, schedule)
@@ -691,7 +691,7 @@ def simulate_compiled_template_summary(
         projection,
         schedule,
     )
-    return CompiledSimulationSummary(int(result.makespan_ns))
+    return IndexedSimulationSummary(int(result.makespan_ns))
 
 
 @dataclass(frozen=True, slots=True)
@@ -826,11 +826,11 @@ def _simulate_projection(
 
 
 __all__ = [
-    "CompiledSimulationSummary",
-    "CompiledSimulationTemplate",
+    "IndexedSimulationSummary",
+    "IndexedSimulationTemplate",
     "IntervalArrays",
-    "compile_simulation_template",
-    "simulate_compiled",
-    "simulate_compiled_template",
-    "simulate_compiled_template_summary",
+    "index_simulation_template",
+    "simulate_program",
+    "simulate_template",
+    "simulate_template_summary",
 ]

@@ -1,4 +1,4 @@
-"""Names for the leases the compiled planner reported.
+"""Names for the leases the planner reported.
 
 The library resolves every lease to a lifetime and an identity, and hands both
 back as arrays of indices. This is the Python face of that: it makes the call,

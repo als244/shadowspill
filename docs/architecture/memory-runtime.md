@@ -1,6 +1,6 @@
 # Memory runtime
 
-The compiled runtime is framework-neutral. It owns bounded memory pools,
+The runtime is framework-neutral. It owns bounded memory pools,
 logical objects, physical leases, transfer lanes, completion events, tracing,
 and failure propagation. The PyTorch adapter translates allocator callbacks
 and storage operations into this contract.

@@ -42,10 +42,10 @@ def test_public_simulator_fails_closed_without_compiled_library(
     implementation = importlib.import_module("shadowspill.simulator")
 
     def missing_library() -> None:
-        raise RuntimeError("compiled simulator unavailable")
+        raise RuntimeError("the simulator unavailable")
 
     monkeypatch.setattr(implementation, "load_simulator_library", missing_library)
-    with pytest.raises(RuntimeError, match="compiled simulator unavailable"):
+    with pytest.raises(RuntimeError, match="the simulator unavailable"):
         simulate(
             overlap_program(),
             overlap_schedule(),
