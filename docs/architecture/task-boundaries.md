@@ -67,10 +67,37 @@ after_task(runtime, task, compute_stream)
 
 ### `shadowspill_abort_task_handle`
 
-The escape hatch when a frontend cannot complete a task it started. It
-finalizes the task's retirements, clears pending handoffs and leaves the scope,
-without publishing mutations or actions. It is only valid from the thread
-currently inside that task.
+The escape hatch when a frontend opened a scope and cannot reach `after_task`.
+It finalizes the task's retirements, clears pending handoffs and leaves the
+scope, without publishing mutations or actions. It is only valid from the
+thread currently inside that task.
+
+Abort exists because `before_task` and `after_task` are not adjacent: between
+them the frontend rebinds storages, assembles arguments, and runs the kernels,
+and any of that can raise. What actually calls it:
+
+| Scenario | Where |
+|---|---|
+| Rebinding a storage onto its planned lease fails | between the two boundaries |
+| Assembling the task's arguments raises | between the two boundaries |
+| The compiled callable itself raises | during the kernel launch |
+| Output classification or publication raises | inside `after_task`'s caller |
+| The dispatching thread is interrupted - `KeyboardInterrupt`, a cancelled future | anywhere in between |
+
+In each case the frontend has already claimed the invocation and opened the
+scope, so simply propagating the exception would leave the task permanently
+"active": the handle refuses a second invocation, the task's freed leases keep
+their claim with no completion event coming, and closing the plan waits for a
+scope that will never be left.
+
+What abort deliberately does **not** do is publish. A task that did not finish
+did not produce its outputs, so its mutations must not bump object versions and
+its actions must not be instantiated - a prefetch triggered by a task that
+never ran would fetch into a lease the plan expected that task to fill.
+
+Abort is not a way to recover from a *runtime* failure. A latched failure is
+not cleared by aborting; the next `before_task` still refuses. Abort only
+closes a scope the frontend opened and cannot close normally.
 
 ### `shadowspill_submit_action_batch_handle`
 
@@ -103,6 +130,39 @@ a sleep, or a scheduler yield, because the dispatcher is on the critical path
 of a step.
 
 `shadowspill_plan_wait_idle` is the only call that waits for all of it.
+
+### Who owns what
+
+The split is worth stating directly, because both threads touch the same
+objects, leases and pools.
+
+| | Dispatching thread | Worker thread |
+|---|---|---|
+| Task scope | Owns it. Enters at `before_task`, leaves at `after_task` or abort | Never enters one |
+| Object acquisition | Validates state, takes owner references, inserts stream waits | Never acquires for a task |
+| Allocation | Serves every allocation, planned or dynamic, from its own thread | Never allocates for a task |
+| Actions | Instantiates and publishes the batch; reserves each destination | Issues the copies, publishes readiness, completes and unlinks them |
+| Retirement | Links freed leases to the scope; attaches one completion event | Polls the events, returns the ranges to the pool |
+| Failure | Latches what it sees; refuses to start new work once latched | Latches what it sees; the dispatcher hears it at the next boundary |
+
+Two rules follow, and both are load-bearing:
+
+**The worker never blocks the dispatcher except at one point.** That point is
+the fetch-publication handshake at the end of `after_task`. Everything else the
+worker does - moving bytes, polling completions, returning ranges - happens
+while the dispatcher is already running the next task.
+
+**The dispatcher never does the worker's work.** It does not wait for a copy,
+poll an event, or return a range, even when that would be convenient. An
+allocation that cannot be served waits on the pool for the worker to release
+something; it does not go and retire leases itself. This is why a stalled
+worker shows up as a blocked allocator rather than as a dispatcher that
+silently took over.
+
+The handshake itself is an active atomic poll on both sides. Neither thread
+enters a condition wait, a sleep, or a scheduler yield, because both are on the
+critical path of a step and a scheduler round trip is longer than the work
+being waited for.
 
 ## How allocations find their task
 

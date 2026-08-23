@@ -132,6 +132,7 @@ def begin_attempt(
     request: ProgramRequest,
     *,
     command: Iterable[str],
+    revision: str,
 ) -> tuple[int, Path, Path]:
     """Append and persist a running attempt before spawning its worker."""
 
@@ -159,6 +160,7 @@ def begin_attempt(
         {
             "attempt": attempt,
             "status": "running",
+            "revision": revision,
             "started_at": utc_now(),
             "completed_at": None,
             "elapsed_seconds": None,

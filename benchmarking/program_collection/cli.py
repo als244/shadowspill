@@ -5,11 +5,23 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import subprocess
 from pathlib import Path
 
 from .config import load_collection_config
 from .controller import ControllerOptions, run_collection
 from .matrix import ProgramRequest, expand_program_requests
+
+
+def _head(root: Path) -> str:
+    completed = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
 
 
 def main() -> int:
@@ -42,6 +54,7 @@ def main() -> int:
     if arguments.dry_run:
         return 0
     options = ControllerOptions(
+        revision=arguments.revision or _head(Path.cwd()),
         planning_cache=arguments.planning_cache.expanduser().resolve(),
         resume=arguments.resume,
         timeout_seconds=timeout,
@@ -82,6 +95,14 @@ def _parser() -> argparse.ArgumentParser:
         "--resume",
         action="store_true",
         help="validate and skip completed Programs, then retry incomplete cases",
+    )
+    parser.add_argument(
+        "--revision",
+        help=(
+            "record this revision on every case this run produces; defaults "
+            "to the current HEAD. It labels the run - it does not check "
+            "anything out"
+        ),
     )
     parser.add_argument(
         "--case",

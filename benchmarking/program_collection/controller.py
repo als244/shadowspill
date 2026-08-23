@@ -27,6 +27,8 @@ from .state import (
 class ControllerOptions:
     """Invocation-level controls that do not affect Program identity."""
 
+    #: The revision every case this run produces records.
+    revision: str
     planning_cache: Path
     resume: bool
     timeout_seconds: int
@@ -69,7 +71,9 @@ def run_collection(
                 _recover_worker_result(paths, request)
                 artifact = completed_artifact(paths, request)
             except BaseException as error:
-                _record_controller_failure(paths, request, prefix, error)
+                _record_controller_failure(
+                    paths, request, prefix, error, options.revision
+                )
                 write_summary(
                     paths,
                     requests,
@@ -96,7 +100,9 @@ def run_collection(
             except KeyboardInterrupt:
                 raise
             except BaseException as error:
-                _record_controller_failure(paths, request, prefix, error)
+                _record_controller_failure(
+                    paths, request, prefix, error, options.revision
+                )
                 write_summary(
                     paths,
                     requests,
@@ -155,6 +161,7 @@ def _run_one(
         paths,
         request,
         command=command,
+        revision=options.revision,
     )
     if attempt != next_attempt or actual_result_path != result_path:
         raise RuntimeError("case attempt changed while preparing its worker")
@@ -238,6 +245,7 @@ def _record_controller_failure(
     request: ProgramRequest,
     prefix: str,
     error: BaseException,
+    revision: str,
 ) -> None:
     next_attempt = attempt_count(paths, request) + 1
     command = ["controller-validation"]
@@ -245,6 +253,7 @@ def _record_controller_failure(
         paths,
         request,
         command=command,
+        revision=revision,
     )
     if attempt != next_attempt:
         raise RuntimeError("controller failure attempt changed")
