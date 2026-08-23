@@ -45,6 +45,7 @@ ShadowSpillStatus shadowspill_allocation_scope_end(
         shadowspill_latch_task_failure(
             runtime,
             retirement_status,
+            SHADOWSPILL_FAILURE_REASON_RETIREMENT_PUBLICATION_REJECTED,
             scope_id,
             SHADOWSPILL_RUNTIME_NO_ID,
             SHADOWSPILL_RUNTIME_NO_ID,

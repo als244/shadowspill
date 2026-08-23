@@ -20,6 +20,7 @@ static int release_event_requirements(
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 allocation_id,
                 0U
@@ -56,6 +57,7 @@ static void release_retirement_requirements(
                 runtime,
                 record->pool,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_USE_RECORD_RETURN_REJECTED,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 record->allocation_id,
                 0U
@@ -70,6 +72,7 @@ static void release_retirement_requirements(
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_STATUS_BACKEND_FAILURE,
+            SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED,
             SHADOWSPILL_RUNTIME_NO_ID,
             record->allocation_id,
             0U
@@ -455,6 +458,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
                     runtime,
                     pool,
                     SHADOWSPILL_STATUS_INVALID_STATE,
+                    SHADOWSPILL_FAILURE_REASON_USE_RECORD_RETURN_REJECTED,
                     SHADOWSPILL_RUNTIME_NO_ID,
                     record->allocation_id,
                     0U
