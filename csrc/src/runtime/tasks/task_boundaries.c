@@ -221,6 +221,7 @@ static ShadowSpillStatus reserve_action_destination(
             shadowspill_latch_task_failure(
                 runtime,
                 SHADOWSPILL_STATUS_NO_PROGRESS,
+                SHADOWSPILL_FAILURE_REASON_POOL_EXHAUSTED,
                 action->task_id,
                 action->object->object_id,
                 SHADOWSPILL_RUNTIME_NO_ID,
@@ -231,6 +232,7 @@ static ShadowSpillStatus reserve_action_destination(
         shadowspill_latch_task_failure(
             runtime,
             status,
+            SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED,
             action->task_id,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
@@ -272,6 +274,7 @@ static ShadowSpillStatus publish_mutations_locked(
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 *failure_object_id,
                 *failure_allocation_id,
                 0U
@@ -383,6 +386,7 @@ static void discard_action_batch_locked(
                 shadowspill_latch_task_failure(
                     runtime,
                     SHADOWSPILL_STATUS_INVALID_STATE,
+                    SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                     action->task_id,
                     object->object_id,
                     object->allocation_id,
@@ -397,6 +401,7 @@ static void discard_action_batch_locked(
             shadowspill_latch_task_failure(
                 runtime,
                 SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED,
                 task_id,
                 object_id,
                 allocation_id,
@@ -750,6 +755,7 @@ ShadowSpillStatus shadowspill_after_task_record(
         shadowspill_latch_failure_locked(
             runtime,
             status,
+            SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED,
             failure_object_id,
             failure_allocation_id,
             0U
@@ -767,6 +773,7 @@ ShadowSpillStatus shadowspill_after_task_record(
             shadowspill_latch_failure_locked(
                 runtime,
                 retirement_status,
+                SHADOWSPILL_FAILURE_REASON_RETIREMENT_PUBLICATION_REJECTED,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 0U
@@ -779,6 +786,7 @@ ShadowSpillStatus shadowspill_after_task_record(
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_STATUS_BACKEND_FAILURE,
+            SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED,
             failure_object_id,
             failure_allocation_id,
             0U

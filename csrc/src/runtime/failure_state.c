@@ -88,63 +88,9 @@ static void latch_failure(
     shadowspill_idle_notify(runtime);
 }
 
-void shadowspill_latch_failure_reason_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillStatus status,
-    ShadowSpillFailureReason reason,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    uint64_t requested_bytes
-) {
-    latch_failure(
-        runtime,
-        shadowspill_current_allocation_pool(runtime),
-        status,
-        reason,
-        shadowspill_current_task_id(runtime),
-        object_id,
-        allocation_id,
-        requested_bytes,
-        0U,
-        0U,
-        0U,
-        0U,
-        0U,
-        0U,
-        NULL
-    );
-}
-
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillStatus status,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    uint64_t requested_bytes
-) {
-    latch_failure(
-        runtime,
-        shadowspill_current_allocation_pool(runtime),
-        status,
-        SHADOWSPILL_FAILURE_REASON_UNSPECIFIED,
-        shadowspill_current_task_id(runtime),
-        object_id,
-        allocation_id,
-        requested_bytes,
-        0U,
-        0U,
-        0U,
-        0U,
-        0U,
-        0U,
-        NULL
-    );
-}
-
-void shadowspill_latch_pool_failure_reason_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillMemoryPool *pool,
-    ShadowSpillStatus status,
     ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
@@ -152,7 +98,7 @@ void shadowspill_latch_pool_failure_reason_locked(
 ) {
     latch_failure(
         runtime,
-        pool,
+        shadowspill_current_allocation_pool(runtime),
         status,
         reason,
         shadowspill_current_task_id(runtime),
@@ -173,6 +119,7 @@ void shadowspill_latch_pool_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -181,7 +128,7 @@ void shadowspill_latch_pool_failure_locked(
         runtime,
         pool,
         status,
-        SHADOWSPILL_FAILURE_REASON_UNSPECIFIED,
+        reason,
         shadowspill_current_task_id(runtime),
         object_id,
         allocation_id,
@@ -199,6 +146,7 @@ void shadowspill_latch_pool_failure_locked(
 void shadowspill_latch_task_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t task_id,
     uint64_t object_id,
     uint64_t allocation_id,
@@ -208,7 +156,7 @@ void shadowspill_latch_task_failure(
         runtime,
         shadowspill_current_allocation_pool(runtime),
         status,
-        SHADOWSPILL_FAILURE_REASON_UNSPECIFIED,
+        reason,
         task_id,
         object_id,
         allocation_id,

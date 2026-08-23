@@ -630,6 +630,7 @@ ShadowSpillStatus shadowspill_runtime_close(
         shadowspill_latch_failure_locked(
             runtime,
             SHADOWSPILL_STATUS_BACKEND_FAILURE,
+            SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
             SHADOWSPILL_RUNTIME_NO_ID,
             SHADOWSPILL_RUNTIME_NO_ID,
             0U

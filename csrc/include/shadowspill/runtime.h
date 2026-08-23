@@ -57,6 +57,24 @@ typedef enum ShadowSpillFailureReason {
     SHADOWSPILL_FAILURE_REASON_RANGE_RETURN_REJECTED = 5,
     /* No range large enough, and nothing left to release for one. */
     SHADOWSPILL_FAILURE_REASON_POOL_EXHAUSTED = 6,
+    /* A backend event could not be released back to its pool. */
+    SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED = 7,
+    /* Stream-use records could not be returned to the pool that lent them. */
+    SHADOWSPILL_FAILURE_REASON_USE_RECORD_RETURN_REJECTED = 8,
+    /* The backend refused a stream or event operation. */
+    SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED = 9,
+    /* An object was not in the residency, version or lease state the plan
+     * requires at this point in the step. */
+    SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED = 10,
+    /* A task's retirement event could not be published, so its allocations
+     * have no completion source to retire against. */
+    SHADOWSPILL_FAILURE_REASON_RETIREMENT_PUBLICATION_REJECTED = 11,
+    /* A retirement could not be queued for the worker to finish. */
+    SHADOWSPILL_FAILURE_REASON_RETIREMENT_ENQUEUE_REJECTED = 12,
+    /* A task boundary did not complete; the status says which step failed. */
+    SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED = 13,
+    /* A planned task allocation could not be placed at its fixed offset. */
+    SHADOWSPILL_FAILURE_REASON_TASK_ALLOCATION_REJECTED = 14,
 } ShadowSpillFailureReason;
 
 typedef enum ShadowSpillObjectResidency {

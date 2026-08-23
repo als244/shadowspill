@@ -154,6 +154,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 object_id,
                 allocation_id,
                 size_bytes
@@ -173,6 +174,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_STATUS_PLAN_VIOLATION,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 object_id,
                 allocation_id,
                 size_bytes
@@ -186,6 +188,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
                 shadowspill_latch_failure_locked(
                     runtime,
                     SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                    SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                     object_id,
                     allocation_id,
                     size_bytes
@@ -217,6 +220,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
                 shadowspill_latch_failure_locked(
                     runtime,
                     SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                    SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                     object_id,
                     allocation_id,
                     size_bytes

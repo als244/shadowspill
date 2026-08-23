@@ -61,6 +61,7 @@ static void latch_action_failure(
     ShadowSpillRuntime *runtime,
     const ShadowSpillQueuedAction *action,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -68,6 +69,7 @@ static void latch_action_failure(
     shadowspill_latch_task_failure(
         runtime,
         status,
+        reason,
         action->task_id,
         object_id,
         allocation_id,
@@ -90,6 +92,7 @@ static void complete_action(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object->object_id,
             object->allocation_id,
             0U
@@ -148,6 +151,7 @@ static void complete_action(
                 runtime,
                 action,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 object->object_id,
                 object->allocation_id,
                 0U
@@ -166,6 +170,7 @@ static void complete_action(
         shadowspill_latch_task_failure(
             runtime,
             SHADOWSPILL_STATUS_BACKEND_FAILURE,
+            SHADOWSPILL_FAILURE_REASON_EVENT_RELEASE_REJECTED,
             task_id,
             object_id,
             allocation_id,
@@ -311,6 +316,7 @@ static int dispatch_offload_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object->object_id,
             object->allocation_id,
             object->size_bytes
@@ -329,6 +335,7 @@ static int dispatch_offload_locked(
                 runtime,
                 action,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 object->object_id,
                 object->allocation_id,
                 object->size_bytes
@@ -340,6 +347,7 @@ static int dispatch_offload_locked(
                 runtime,
                 action,
                 SHADOWSPILL_STATUS_INVALID_STATE,
+                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                 object->object_id,
                 object->allocation_id,
                 object->size_bytes
@@ -358,6 +366,7 @@ static int dispatch_offload_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object_id,
             allocation_id,
             bytes
@@ -432,6 +441,7 @@ static int dispatch_offload_locked(
             action,
             backend_failed ? SHADOWSPILL_STATUS_BACKEND_FAILURE
                            : SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
             object_id,
             allocation_id,
             bytes
@@ -473,6 +483,7 @@ static int dispatch_prefetch_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
             action->object->size_bytes
@@ -497,6 +508,7 @@ static int dispatch_prefetch_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object_id,
             allocation->allocation_id,
             bytes
@@ -510,6 +522,7 @@ static int dispatch_prefetch_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object_id,
             allocation->allocation_id,
             bytes
@@ -578,6 +591,7 @@ static int dispatch_prefetch_locked(
             action,
             backend_failed ? SHADOWSPILL_STATUS_BACKEND_FAILURE
                            : SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
             object_id,
             allocation->allocation_id,
             bytes
@@ -601,6 +615,7 @@ static int dispatch_prefetch_locked(
             runtime,
             action,
             SHADOWSPILL_STATUS_INVALID_STATE,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object_id,
             allocation->allocation_id,
             bytes
@@ -646,6 +661,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                        SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -676,6 +692,7 @@ static int handle_action(
                             runtime,
                             action,
                             SHADOWSPILL_STATUS_INVALID_STATE,
+                            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                             object->object_id,
                             object->allocation_id,
                             0U
@@ -696,6 +713,7 @@ static int handle_action(
                                 runtime,
                                 action,
                                 SHADOWSPILL_STATUS_INVALID_STATE,
+                                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                                 object->object_id,
                                 allocation->allocation_id,
                                 allocation->requested_bytes
@@ -734,6 +752,7 @@ static int handle_action(
                             runtime,
                             action,
                             SHADOWSPILL_STATUS_INVALID_STATE,
+                            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                             object->object_id,
                             allocation->allocation_id,
                             allocation->requested_bytes
@@ -780,6 +799,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_INVALID_STATE,
+                        SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes
@@ -798,6 +818,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                        SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -845,6 +866,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_PLAN_VIOLATION,
+                        SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes
@@ -857,6 +879,7 @@ static int handle_action(
                         runtime,
                         action,
                         dependency_wait_status,
+                        SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes
@@ -886,6 +909,7 @@ static int handle_action(
                             runtime,
                             action,
                             SHADOWSPILL_STATUS_PLAN_VIOLATION,
+                            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                             object->object_id,
                             object->allocation_id,
                             object->size_bytes
@@ -946,6 +970,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_INVALID_STATE,
+                        SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                         object->object_id,
                         action->caller_handoff_lease->allocation_id,
                         object->size_bytes
@@ -979,6 +1004,7 @@ static int handle_action(
                             runtime,
                             action,
                             SHADOWSPILL_STATUS_INVALID_STATE,
+                            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                             object->object_id,
                             object->allocation_id,
                             0U
@@ -1049,6 +1075,7 @@ static int handle_action(
                                 runtime,
                                 action,
                                 SHADOWSPILL_STATUS_INTERNAL_FAILURE,
+                                SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                                 object->object_id,
                                 object->allocation_id,
                                 object->size_bytes
@@ -1086,6 +1113,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                        SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -1097,6 +1125,7 @@ static int handle_action(
                         runtime,
                         action,
                         SHADOWSPILL_STATUS_INVALID_STATE,
+                        SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -1263,6 +1292,7 @@ void *shadowspill_worker_main(void *pointer) {
             shadowspill_latch_failure_locked(
                 runtime,
                 SHADOWSPILL_STATUS_BACKEND_FAILURE,
+                SHADOWSPILL_FAILURE_REASON_BACKEND_CALL_REJECTED,
                 failure_object_id,
                 failure_allocation_id,
                 0U

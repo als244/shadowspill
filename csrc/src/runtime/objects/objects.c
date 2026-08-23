@@ -210,6 +210,7 @@ ShadowSpillStatus shadowspill_object_owner_release(
         shadowspill_latch_failure_locked(
             object->runtime,
             status,
+            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
             object->object_id,
             object->allocation_id,
             object->size_bytes

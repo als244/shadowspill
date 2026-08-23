@@ -9,28 +9,10 @@ struct ShadowSpillMemoryPool;
 
 /* Latch a failure that can say why. The status is the class a caller acts
  * on; the reason names the condition, so a report can explain itself. */
-void shadowspill_latch_failure_reason_locked(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillStatus status,
-    ShadowSpillFailureReason reason,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    uint64_t requested_bytes
-);
-
-void shadowspill_latch_pool_failure_reason_locked(
-    ShadowSpillRuntime *runtime,
-    struct ShadowSpillMemoryPool *pool,
-    ShadowSpillStatus status,
-    ShadowSpillFailureReason reason,
-    uint64_t object_id,
-    uint64_t allocation_id,
-    uint64_t requested_bytes
-);
-
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -40,6 +22,7 @@ void shadowspill_latch_pool_failure_locked(
     ShadowSpillRuntime *runtime,
     struct ShadowSpillMemoryPool *pool,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -49,6 +32,7 @@ void shadowspill_latch_pool_failure_locked(
 void shadowspill_latch_task_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillStatus status,
+    ShadowSpillFailureReason reason,
     uint64_t task_id,
     uint64_t object_id,
     uint64_t allocation_id,
