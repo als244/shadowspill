@@ -44,7 +44,7 @@ def test_public_simulator_fails_closed_without_compiled_library(
     def missing_library() -> None:
         raise RuntimeError("the simulator unavailable")
 
-    monkeypatch.setattr(implementation, "load_simulator_library", missing_library)
+    monkeypatch.setattr(implementation, "simulator_api", missing_library)
     with pytest.raises(RuntimeError, match="the simulator unavailable"):
         simulate(
             overlap_program(),

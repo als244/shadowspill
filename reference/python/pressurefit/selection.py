@@ -10,7 +10,7 @@ from shadowspill.planner._capi import (
     CCandidateResult,
     CPlanCandidate,
     CSelectionResult,
-    load_planner_library,
+    planner_api,
 )
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._indexed import _project, _Projection
@@ -66,7 +66,7 @@ def select_compiled(
         candidate_results=candidate_results,
         candidate_result_capacity=len(candidates),
     )
-    library = load_planner_library()
+    library = planner_api()
     status = int(
         library.shadowspill_select_plan(
             c_candidates,

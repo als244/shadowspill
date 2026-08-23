@@ -13,7 +13,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitOptions,
@@ -110,7 +110,7 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         64,
         64,
@@ -146,7 +146,7 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         32,
         32,
@@ -215,7 +215,7 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         8,
         8,
@@ -321,7 +321,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         16,
         16,
@@ -441,7 +441,7 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         64,
         64,

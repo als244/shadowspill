@@ -15,10 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection
-from shadowspill.planner import AdmissionTopology
+from shadowspill.planner import AdmissionFacts
 from shadowspill.planner._admission import (
-    IndexedAdmissionTopology,
-    index_admission_topology,
+    IndexedAdmissionFacts,
+    index_admission_facts,
 )
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._indexed import (
@@ -50,7 +50,7 @@ class AdmissionSetup:
     """The schedule-invariant half of measuring one resolved program."""
 
     template: IndexedSimulationTemplate
-    compiled_topology: IndexedAdmissionTopology
+    indexed_facts: IndexedAdmissionFacts
     allocation_steps: tuple[AllocationStep, ...]
     storage_handoffs: tuple[tuple[str, str], ...]
     action_trigger_tasks: tuple[int, ...] = ()
@@ -68,7 +68,7 @@ def build_admission_setup(
     program: Program,
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
 ) -> AdmissionSetup:
     """Compile the parts of admission a schedule cannot change."""
 
@@ -118,7 +118,7 @@ def build_admission_setup(
 
     return AdmissionSetup(
         template=template,
-        compiled_topology=index_admission_topology(topology, template),
+        indexed_facts=index_admission_facts(topology, template),
         allocation_steps=tuple(steps),
         storage_handoffs=tuple(handoffs),
     )

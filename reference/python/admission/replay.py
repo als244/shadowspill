@@ -28,7 +28,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     StorageHandoff,
     TaskAdmissionSpec,
     TaskAllocationStepKind,
@@ -67,7 +67,7 @@ class _AdmissionScriptBuilder:
         program: Program,
         schedule: MemorySchedule,
         selections: tuple[RecomputationSelection, ...],
-        topology: AdmissionTopology,
+        topology: AdmissionFacts,
     ) -> None:
         self.program = program
         self.schedule = schedule
@@ -538,7 +538,7 @@ def replay_admission(
     program: Program,
     schedule: MemorySchedule,
     *,
-    topology: AdmissionTopology,
+    topology: AdmissionFacts,
     selections: tuple[RecomputationSelection, ...] = (),
 ) -> AdmissionReplay:
     """Certify one schedule's exact causal allocation geometry."""
@@ -629,7 +629,7 @@ def _compatibility_digest(
     selections: tuple[RecomputationSelection, ...],
     operations: tuple[AdmissionReplayStep, ...],
     transitions: tuple[OwnershipTransition, ...],
-    topology_digest: str,
+    facts_digest: str,
     decision_digest: int,
 ) -> str:
     payload = {
@@ -663,7 +663,7 @@ def _compatibility_digest(
             }
             for item in transitions
         ],
-        "topology": topology_digest,
+        "topology": facts_digest,
         "decision_digest": decision_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))

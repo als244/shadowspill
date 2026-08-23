@@ -8,7 +8,7 @@ from reference.python.pressurefit.indexed_residency import (
     reduce_residency,
 )
 from reference.python.pressurefit.residency import reduce_pressure, seed_residency
-from shadowspill.planner._capi import planner_library_path
+from shadowspill._libraries import shadowspill_library_path
 from shadowspill.planner.model import (
     InitialPlacement,
     PressureFitInfeasibleError,
@@ -21,7 +21,7 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    planner_library_path() is None,
+    shadowspill_library_path() is None,
     reason="the library is not installed",
 )
 

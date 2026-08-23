@@ -4,8 +4,8 @@ import importlib
 
 import pytest
 
+from shadowspill._libraries import shadowspill_library_path
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner._capi import planner_library_path
 from shadowspill.planner.model import InitialPlacement
 
 from ._examples import (
@@ -15,7 +15,7 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    planner_library_path() is None,
+    shadowspill_library_path() is None,
     reason="the library is not installed",
 )
 
@@ -28,7 +28,7 @@ def test_pressurefit_fails_closed_without_compiled_planner(
     def missing_library() -> None:
         raise RuntimeError("the planner unavailable")
 
-    monkeypatch.setattr(implementation, "load_planner_library", missing_library)
+    monkeypatch.setattr(implementation, "planner_api", missing_library)
     with pytest.raises(RuntimeError, match="the planner unavailable"):
         pressurefit(
             training_chain_program(1),

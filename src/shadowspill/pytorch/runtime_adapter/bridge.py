@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
+from shadowspill._status import ABI_VERSION
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -18,7 +19,6 @@ from shadowspill.ir import (
 )
 from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.runtime_adapter.abi import (
-    FIXED_LAYOUT_ABI_VERSION,
     AdapterStatistics,
     FixedDependencyDescription,
     FixedLayoutDescription,
@@ -450,7 +450,7 @@ class RuntimeBridge:
             )
         )
         description = FixedLayoutDescription(
-            abi_version=FIXED_LAYOUT_ABI_VERSION,
+            abi_version=ABI_VERSION,
             slice_bytes=layout.slice_bytes,
             placements=placements if layout.placements else None,
             placement_count=len(layout.placements),

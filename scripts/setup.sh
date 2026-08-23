@@ -121,11 +121,12 @@ import ctypes
 import torch
 
 from shadowspill._libraries import resolve_library
-from shadowspill.planner._capi import load_planner_library, planner_library_path
+from shadowspill._libraries import shadowspill_library_path
+from shadowspill.planner._capi import planner_api
 from shadowspill.pytorch.runtime_adapter.allocator import (
     _REQUIRED_STORAGE_OPERATIONS,
 )
-from shadowspill.simulator._capi import load_simulator_library, simulator_library_path
+from shadowspill.simulator._capi import simulator_api
 
 libraries = (
     "libshadowspill.so",
@@ -140,12 +141,11 @@ if missing:
 for filename in libraries:
     print(f"{filename}: {resolve_library(filename)}")
 
-# Planning requires these libraries. Load and ABI-check them here so setup
-# cannot complete with a missing or incompatible backend.
-load_planner_library()
-load_simulator_library()
-print(f"PressureFit: {planner_library_path()}")
-print(f"Simulator: {simulator_library_path()}")
+# Load and ABI-check the library here so setup cannot complete against a
+# missing or incompatible one.
+planner_api()
+simulator_api()
+print(f"ShadowSpill library: {shadowspill_library_path()}")
 
 adapter = resolve_library("libshadowspill_pytorch.so")
 assert adapter is not None

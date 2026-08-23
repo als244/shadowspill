@@ -20,7 +20,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     InitialPlacement,
     PressureFitInfeasibleError,
     PressureFitOptions,
@@ -276,7 +276,7 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
     )
     one_gib = 1 << 30
     eight_gib = 8 << 30
-    topology = AdmissionTopology(
+    topology = AdmissionFacts(
         "cuda_0",
         9 * one_gib,
         eight_gib,
@@ -287,7 +287,7 @@ def test_physical_admission_refinement_doubles_then_grows_by_512_mib(
 
     def fake_once(*args: object, **kwargs: object):
         admission = kwargs["admission"]
-        assert isinstance(admission, AdmissionTopology)
+        assert isinstance(admission, AdmissionFacts)
         capacities.append(admission.object_capacity_bytes)
         if len(capacities) <= 6:
             raise PressureFitInfeasibleError(

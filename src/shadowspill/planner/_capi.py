@@ -7,7 +7,6 @@ from functools import cache
 
 from shadowspill._libraries import (
     load_shadowspill_library,
-    shadowspill_library_path,
 )
 from shadowspill.simulator._capi import (
     CProgram,
@@ -115,7 +114,7 @@ class CIndexedSchedule(ctypes.Structure):
     ]
 
 
-class CAdmissionTopology(ctypes.Structure):
+class CAdmissionFacts(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("task_count", ctypes.c_uint32),
@@ -194,7 +193,7 @@ class CLeaseLifetimeProblem(ctypes.Structure):
     _fields_ = [
         ("abi_version", ctypes.c_uint32),
         ("operations", ctypes.POINTER(CAdmissionOperations)),
-        ("admission", ctypes.POINTER(CAdmissionTopology)),
+        ("admission", ctypes.POINTER(CAdmissionFacts)),
         ("schedule", ctypes.POINTER(CIndexedSchedule)),
         ("task_intervals", ctypes.POINTER(CTaskInterval)),
         ("task_interval_count", ctypes.c_uint32),
@@ -239,7 +238,7 @@ class CPressureFitContext(ctypes.Structure):
         ("simulation", ctypes.POINTER(CProgram)),
         ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
         ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
-        ("admission", ctypes.POINTER(CAdmissionTopology)),
+        ("admission", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
@@ -262,7 +261,7 @@ class CPressureFitProgramContext(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("simulation", ctypes.POINTER(CProgram)),
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
-        ("admission", ctypes.POINTER(CAdmissionTopology)),
+        ("admission", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
@@ -373,11 +372,8 @@ class CScheduleAdmissionResult(ctypes.Structure):
     ]
 
 
-planner_library_path = shadowspill_library_path
-
-
 @cache
-def load_planner_library() -> ctypes.CDLL:
+def planner_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_select_plan.argtypes = [
         ctypes.POINTER(CPlanCandidate),
@@ -410,7 +406,7 @@ def load_planner_library() -> ctypes.CDLL:
     library.shadowspill_validate_pressurefit_program_context.restype = ctypes.c_uint32
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
-        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CAdmissionFacts),
         ctypes.POINTER(CIndexedSchedule),
         ctypes.POINTER(CScheduleAdmissionResult),
     ]
@@ -421,7 +417,7 @@ def load_planner_library() -> ctypes.CDLL:
     library.shadowspill_pressurefit_context_result_destroy.restype = None
     library.shadowspill_admission_operation_bounds.argtypes = [
         ctypes.POINTER(CProgram),
-        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CAdmissionFacts),
         ctypes.POINTER(CIndexedSchedule),
         ctypes.POINTER(ctypes.c_uint64),
         ctypes.POINTER(ctypes.c_uint64),
@@ -429,7 +425,7 @@ def load_planner_library() -> ctypes.CDLL:
     library.shadowspill_admission_operation_bounds.restype = ctypes.c_uint32
     library.shadowspill_build_admission_operations.argtypes = [
         ctypes.POINTER(CProgram),
-        ctypes.POINTER(CAdmissionTopology),
+        ctypes.POINTER(CAdmissionFacts),
         ctypes.POINTER(CIndexedSchedule),
         ctypes.POINTER(CAdmissionOperations),
     ]
@@ -451,8 +447,8 @@ def load_planner_library() -> ctypes.CDLL:
 
 __all__ = [
     "NO_INDEX",
+    "CAdmissionFacts",
     "CAdmissionOperations",
-    "CAdmissionTopology",
     "CCandidateResult",
     "CIndexedSchedule",
     "CLeaseIdentity",
@@ -475,6 +471,5 @@ __all__ = [
     "CResidencyResult",
     "CScheduleAdmissionResult",
     "CSelectionResult",
-    "load_planner_library",
-    "planner_library_path",
+    "planner_api",
 ]

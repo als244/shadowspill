@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from reference.python.simulator import simulate_python
+from shadowspill._libraries import shadowspill_library_path
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -24,7 +25,6 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
-from shadowspill.simulator._capi import simulator_library_path
 from shadowspill.simulator._indexed import simulate_program
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
@@ -43,7 +43,7 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    simulator_library_path() is None,
+    shadowspill_library_path() is None,
     reason="the simulator library is not installed",
 )
 

@@ -27,7 +27,7 @@ add_library(
   src/planner/admission/lifetimes.c
   src/planner/admission/operations.c
   src/planner/admission/placement.c
-  src/planner/admission/topology.c
+  src/planner/admission/facts.c
   src/planner/context.c
   src/planner/digest.c
   src/planner/portfolio.c

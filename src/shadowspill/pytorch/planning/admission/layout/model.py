@@ -109,7 +109,7 @@ class FixedPhysicalLayout:
 
     program_digest: str
     schedule_digest: str
-    topology_digest: str
+    facts_digest: str
     pool_capacity_bytes: int
     fixed_slice_bytes: int
     dynamic_reserve_bytes: int
@@ -166,7 +166,7 @@ class FixedPhysicalLayout:
                 }
                 for task, ordinal, lease in self.task_allocation_leases
             ],
-            "topology_digest": self.topology_digest,
+            "facts_digest": self.facts_digest,
         }
 
 

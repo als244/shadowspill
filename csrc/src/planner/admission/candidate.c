@@ -168,7 +168,7 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
     ShadowSpillSimulationProgram *program,
     ShadowSpillAdmissionReplayResult *replay_result
 ) {
-    if (!shadowspill_admission_topology_valid(context) || schedule == NULL || workspace == NULL ||
+    if (!shadowspill_admission_facts_valid(context) || schedule == NULL || workspace == NULL ||
         program == NULL || replay_result == NULL ||
         shadowspill_admission_reserve_buffers(context, schedule, workspace) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -235,7 +235,7 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
 
 ShadowSpillStatus shadowspill_evaluate_schedule_admission(
     const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionTopology *admission,
+    const ShadowSpillAdmissionFacts *admission,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillScheduleAdmissionResult *result
 ) {
@@ -270,7 +270,7 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
         .simulation = simulation,
         .admission = admission,
     };
-    if (!shadowspill_admission_topology_valid(&context) || schedule == NULL ||
+    if (!shadowspill_admission_facts_valid(&context) || schedule == NULL ||
         task_capacity < simulation->task_count ||
         action_capacity < schedule->action_count ||
         (simulation->task_count != 0U &&

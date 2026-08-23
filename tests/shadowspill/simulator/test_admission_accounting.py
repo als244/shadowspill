@@ -21,7 +21,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import AdmissionTopology, TaskAdmissionSpec
+from shadowspill.planner import AdmissionFacts, TaskAdmissionSpec
 from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
@@ -153,7 +153,7 @@ def test_causal_reuse_preserves_peak_and_delays_wire_start() -> None:
     replay = replay_admission(
         program,
         _schedule(),
-        topology=AdmissionTopology(
+        topology=AdmissionFacts(
             "cuda_0",
             96,
             96,

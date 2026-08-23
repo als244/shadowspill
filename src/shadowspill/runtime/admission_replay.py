@@ -16,7 +16,7 @@ from ._admission_capi import (
     CAdmissionReplayProgram,
     CAdmissionReplayResult,
     CAdmissionReuseDependency,
-    load_admission_replay_library,
+    admission_replay_api,
 )
 from .admission import AdmissionError
 
@@ -156,7 +156,7 @@ def run_admission_replay(
         live_leases=live_lease_buffer,
         live_lease_capacity=lease_count,
     )
-    library = load_admission_replay_library()
+    library = admission_replay_api()
     status = int(
         library.shadowspill_admission_replay_run(
             ctypes.byref(program), ctypes.byref(result)

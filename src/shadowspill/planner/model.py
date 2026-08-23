@@ -29,7 +29,7 @@ from .diagnostics import (
 )
 
 if TYPE_CHECKING:
-    from .admission import AdmissionTopology
+    from .admission import AdmissionFacts
 
 
 class InitialPlacement(StrEnum):
@@ -170,7 +170,7 @@ class PressureFitResult:
     selections: tuple[RecomputationSelection, ...]
     simulation: SimulationResult
     diagnostics: PressureFitDiagnostics
-    admission_topology: AdmissionTopology | None = None
+    admission_facts: AdmissionFacts | None = None
 
     def to_execution_plan(
         self,

@@ -72,7 +72,7 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
     return FixedPhysicalLayout(
         program_digest=_string(data.get("program_digest"), f"{path}.program_digest"),
         schedule_digest=_string(data.get("schedule_digest"), f"{path}.schedule_digest"),
-        topology_digest=_string(data.get("topology_digest"), f"{path}.topology_digest"),
+        facts_digest=_string(data.get("facts_digest"), f"{path}.facts_digest"),
         pool_capacity_bytes=_integer(
             data.get("pool_capacity_bytes"), f"{path}.pool_capacity_bytes"
         ),

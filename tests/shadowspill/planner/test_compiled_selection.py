@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from reference.python.pressurefit.selection import SelectionCandidate, select_compiled
+from shadowspill._libraries import shadowspill_library_path
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner._capi import planner_library_path
 
 from ._examples import (
     training_chain_config,
@@ -13,7 +13,7 @@ from ._examples import (
 )
 
 pytestmark = pytest.mark.skipif(
-    planner_library_path() is None,
+    shadowspill_library_path() is None,
     reason="the library is not installed",
 )
 

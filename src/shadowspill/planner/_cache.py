@@ -27,9 +27,9 @@ from shadowspill.simulator._indexed import (
 from ._admission import (
     encode_schedule,
     evaluate_schedule_admission,
-    index_admission_topology,
+    index_admission_facts,
 )
-from .admission import AdmissionTopology
+from .admission import AdmissionFacts
 from .model import (
     PressureFitDiagnostics,
     PressureFitOptions,
@@ -95,7 +95,7 @@ class PressureFitCache:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
-        admission: AdmissionTopology | None = None,
+        admission: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated cached selection or run unmodified PressureFit."""
@@ -144,7 +144,7 @@ class PressureFitCache:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         options: PressureFitOptions,
-        admission: AdmissionTopology | None,
+        admission: AdmissionFacts | None,
     ) -> PressureFitResult | None:
         path = self.path(key)
         try:
@@ -195,7 +195,7 @@ class PressureFitCache:
             )
         else:
             template = index_simulation_template(program, selections, config)
-            indexed_admission = index_admission_topology(admission, template)
+            indexed_admission = index_admission_facts(admission, template)
             physical = evaluate_schedule_admission(
                 template,
                 indexed_admission,
@@ -221,7 +221,7 @@ class PressureFitCache:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
-            admission_topology=admission,
+            admission_facts=admission,
         )
         self._record(key, program.digest, path, "read")
         return result
@@ -230,7 +230,7 @@ class PressureFitCache:
         self,
         key: str,
         result: PressureFitResult,
-        admission: AdmissionTopology | None,
+        admission: AdmissionFacts | None,
     ) -> None:
         if not self.write_enabled:
             return
@@ -316,7 +316,7 @@ def _key(
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    admission: AdmissionTopology | None,
+    admission: AdmissionFacts | None,
 ) -> str:
     payload = {
         "schema": _SCHEMA,

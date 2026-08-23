@@ -159,7 +159,7 @@ shadowspill.pressurefit_program/v1
 │   └── final
 ├── capacity_contract
 ├── simulation_config
-├── admission_topology
+├── admission_facts
 └── pressurefit_options
 ```
 
@@ -170,7 +170,7 @@ shadowspill.pressurefit_program/v1
 | `residency.initial`, `residency.final` | Required alias-group location/version at the phase boundaries. |
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
-| `admission_topology` | Current-schema (`shadowspill.admission_topology/v3`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
+| `admission_facts` | Current-schema (`shadowspill.admission_facts/v3`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
 | `pressurefit_options` | Bounded search controls and repair limits. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`,
@@ -319,7 +319,7 @@ trigger/completion deltas, and cross-lane memory-reuse dependencies.
 
 | Key | Meaning |
 |---|---|
-| `effective_topology` | Capacity-adjusted topology used by the accepted attempt. |
+| `effective_facts` | Capacity-adjusted topology used by the accepted attempt. |
 | `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v3` certificate. |
 | `fixed_layout_digest` | Integrity identity of that certificate. |
 | `attempts` | Ordered capacity-refinement trials and optional PressureFit diagnostics. |

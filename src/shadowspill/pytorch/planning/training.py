@@ -14,7 +14,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
-    AdmissionTopology,
+    AdmissionFacts,
     PressureFitInfeasibleError,
     PressureFitResult,
     PressureFitSearchExhaustedError,
@@ -96,7 +96,7 @@ from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
 from .admission import (
     FixedLayoutInfeasibleError,
     SelectedAdmission,
-    build_admission_topology,
+    build_admission_facts,
     build_fixed_selected_admission,
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
@@ -552,8 +552,8 @@ def build_training_programs(
             memory, profiled.profiles
         )
 
-        def admission_for(lowered: LoweredTrainingProgram) -> AdmissionTopology:
-            return build_admission_topology(
+        def admission_for(lowered: LoweredTrainingProgram) -> AdmissionFacts:
+            return build_admission_facts(
                 lowered.program,
                 execution_pool_bytes=execution_pool_bytes,
                 object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
@@ -1344,7 +1344,7 @@ def _public_step_program(
 def _pressurefit_program_artifact(
     role: Literal["initial", "recurrent"],
     lowered: LoweredTrainingProgram,
-    admission: AdmissionTopology,
+    admission: AdmissionFacts,
     simulation_config: SimulationConfig,
     *,
     source_execution_budget_bytes: int,
@@ -1361,7 +1361,7 @@ def _pressurefit_program_artifact(
         initial_residency=lowered.initial_residency,
         final_residency=lowered.final_residency,
         simulation_config=simulation_config,
-        admission_topology=admission,
+        admission_facts=admission,
         source_execution_budget_bytes=source_execution_budget_bytes,
         maximum_execution_budget_bytes=maximum_execution_budget_bytes,
         maximum_spill_budget_bytes=maximum_spill_budget_bytes,

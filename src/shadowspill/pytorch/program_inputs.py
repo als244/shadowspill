@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field, replace
 
 from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
-from shadowspill.planner import AdmissionTopology, PressureFitOptions
+from shadowspill.planner import AdmissionFacts, PressureFitOptions
 from shadowspill.simulator import SimulationConfig
 
 from .program_serialization import (
@@ -125,7 +125,7 @@ class PressureFitProgram:
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     simulation_config: SimulationConfig
-    admission_topology: AdmissionTopology
+    admission_facts: AdmissionFacts
     source_execution_budget_bytes: int
     maximum_execution_budget_bytes: int
     maximum_spill_budget_bytes: int
@@ -140,7 +140,7 @@ class PressureFitProgram:
         if len(self.simulation_config.devices) != 1:
             raise ValueError("PressureFitProgram currently requires one device")
         device = self.simulation_config.devices[0]
-        if device.device_id != self.admission_topology.device_id:
+        if device.device_id != self.admission_facts.device_id:
             raise ValueError("simulation and admission devices differ")
         if self.source_execution_budget_bytes <= 0:
             raise ValueError("source execution budget must be positive")
@@ -160,19 +160,19 @@ class PressureFitProgram:
             - self.fixed_execution_bytes
             - shared_execution
         )
-        if self.admission_topology.pool_capacity_bytes != expected_pool:
+        if self.admission_facts.pool_capacity_bytes != expected_pool:
             raise ValueError(
                 "source execution budget does not reconcile with admission pool"
             )
         expected_object = expected_pool - self.object_reserve_bytes
         if (
             device.capacity_bytes - shared_execution != expected_object
-            or self.admission_topology.object_capacity_bytes != expected_object
+            or self.admission_facts.object_capacity_bytes != expected_object
         ):
             raise ValueError(
                 "object reserve does not reconcile with simulation/admission capacity"
             )
-        self.admission_topology.validate(self.program)
+        self.admission_facts.validate(self.program)
 
     @property
     def digest(self) -> str:
@@ -192,7 +192,7 @@ class PressureFitProgram:
         execution_budget_bytes: int | None = None,
         spill_budget_bytes: int | None = None,
         transfer_bandwidths: TransferBandwidths | None = None,
-    ) -> tuple[SimulationConfig, AdmissionTopology]:
+    ) -> tuple[SimulationConfig, AdmissionFacts]:
         """Rebase budget-dependent inputs without changing the Program."""
 
         execution_budget = (
@@ -221,7 +221,7 @@ class PressureFitProgram:
                 f"requested={spill_budget}, maximum={self.maximum_spill_budget_bytes}"
             )
         shared = shared_residency_footprint(self.program)
-        shared_execution = shared.for_device(self.admission_topology.device_id)
+        shared_execution = shared.for_device(self.admission_facts.device_id)
         pool_capacity = execution_budget - self.fixed_execution_bytes - shared_execution
         object_capacity = pool_capacity - self.object_reserve_bytes
         if pool_capacity <= 0 or object_capacity <= 0:
@@ -249,7 +249,7 @@ class PressureFitProgram:
             spill_budget,
         )
         topology = replace(
-            self.admission_topology,
+            self.admission_facts,
             pool_capacity_bytes=pool_capacity,
             object_capacity_bytes=object_capacity,
         )
@@ -276,7 +276,9 @@ class PressureFitProgram:
                 "dynamic_scratch_reserve_bytes": (self.dynamic_scratch_reserve_bytes),
             },
             "simulation_config": _simulation_config_to_dict(self.simulation_config),
-            "admission_topology": self.admission_topology.to_dict(),
+            # Schema v1 spells these facts a "topology"; every stored corpus
+            # case is verified against digests taken over that name.
+            "admission_topology": self.admission_facts.to_dict(),
             "pressurefit_options": _options_to_dict(self.options),
         }
 
@@ -311,7 +313,7 @@ class PressureFitProgram:
             simulation_config=_simulation_config_from_value(
                 data.get("simulation_config"), f"{path}.simulation_config"
             ),
-            admission_topology=AdmissionTopology.from_dict(
+            admission_facts=AdmissionFacts.from_dict(
                 data.get("admission_topology")
             ),
             source_execution_budget_bytes=_integer(

@@ -21,7 +21,7 @@ from shadowspill.simulator._diagnostics import (
 )
 from shadowspill.simulator._indexed import IndexedSimulationTemplate
 
-from ._admission import IndexedAdmissionTopology
+from ._admission import IndexedAdmissionFacts
 from ._capi import (
     NO_INDEX,
     CPressureFitContextOptions,
@@ -30,7 +30,7 @@ from ._capi import (
     CPressureFitProgramContext,
     CPressureFitRepairDiagnostics,
     CPressureFitWorkDiagnostics,
-    load_planner_library,
+    planner_api,
 )
 from .diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
 from .model import CandidateDiagnostic, PressureFitOptions
@@ -331,7 +331,7 @@ def _name_arrays(
 
 def _program_context(
     simulation: IndexedSimulationTemplate,
-    admission: IndexedAdmissionTopology | None,
+    admission: IndexedAdmissionFacts | None,
 ) -> tuple[CPressureFitProgramContext, tuple[object, ...]]:
     alias_names, task_names = _name_arrays(simulation)
     device_ranks = {
@@ -382,13 +382,13 @@ def _context_options(
 def validate_program_context(
     simulation: IndexedSimulationTemplate,
     *,
-    admission: IndexedAdmissionTopology | None = None,
+    admission: IndexedAdmissionFacts | None = None,
 ) -> CPreflightResult:
     """Validate one selected topology using the planner authority."""
 
     context, _buffers = _program_context(simulation, admission)
     result = CPressureFitPreflightResult()
-    library = load_planner_library()
+    library = planner_api()
     status = int(
         library.shadowspill_validate_pressurefit_program_context(
             ctypes.byref(context),
@@ -510,7 +510,7 @@ def _evaluate_context(
     simulation: IndexedSimulationTemplate,
     options: PressureFitOptions,
     *,
-    admission: IndexedAdmissionTopology | None,
+    admission: IndexedAdmissionFacts | None,
 ) -> CContextResult | None:
     """Invoke and decode one compiled program-context evaluation."""
 
@@ -518,7 +518,7 @@ def _evaluate_context(
         _context_options(options)
     )
     context_result = CPressureFitContextResult()
-    library = load_planner_library()
+    library = planner_api()
     context, _context_buffers = _program_context(simulation, admission)
     status = int(
         library.shadowspill_evaluate_pressurefit_program_context(
@@ -599,7 +599,7 @@ def evaluate_program_context(
     simulation: IndexedSimulationTemplate,
     options: PressureFitOptions,
     *,
-    admission: IndexedAdmissionTopology | None = None,
+    admission: IndexedAdmissionFacts | None = None,
 ) -> CContextResult | None:
     """Derive indexed planning facts and evaluate the portfolio entirely in C."""
 

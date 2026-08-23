@@ -19,13 +19,13 @@ from shadowspill.simulator._capi import NO_INDEX
 from shadowspill.simulator._indexed import IndexedSimulationTemplate
 
 from ._capi import (
-    CAdmissionTopology,
+    CAdmissionFacts,
     CIndexedSchedule,
     CScheduleAdmissionResult,
-    load_planner_library,
+    planner_api,
 )
 from .admission import (
-    AdmissionTopology,
+    AdmissionFacts,
     TaskAdmissionSpec,
     TaskAllocationStepKind,
 )
@@ -58,10 +58,10 @@ def _flatten_rows(
 
 
 @dataclass(frozen=True, slots=True)
-class IndexedAdmissionTopology:
+class IndexedAdmissionFacts:
     """Borrowed C topology plus Python owners for all indexed arrays."""
 
-    value: CAdmissionTopology
+    value: CAdmissionFacts
     buffers: tuple[object, ...]
     digest: str
 
@@ -159,10 +159,10 @@ def encode_schedule(
     )
 
 
-def index_admission_topology(
-    topology: AdmissionTopology,
+def index_admission_facts(
+    topology: AdmissionFacts,
     simulation: IndexedSimulationTemplate,
-) -> IndexedAdmissionTopology:
+) -> IndexedAdmissionFacts:
     """Project only tasks selected by one recomputation context."""
 
     if topology.device_id not in simulation.device_ids:
@@ -233,7 +233,7 @@ def index_admission_topology(
         _u32(allocation_aliases),
         _u8(allocation_kinds),
     )
-    value = CAdmissionTopology(
+    value = CAdmissionFacts(
         abi_version=ABI_VERSION,
         task_count=len(tasks),
         alias_count=len(simulation.alias_ids),
@@ -256,7 +256,7 @@ def index_admission_topology(
         task_allocation_aliases=buffers[12],
         task_allocation_kinds=buffers[13],
     )
-    return IndexedAdmissionTopology(value, buffers, topology.digest)
+    return IndexedAdmissionFacts(value, buffers, topology.digest)
 
 
 def _compile_allocation_rows(
@@ -300,7 +300,7 @@ def _compile_allocation_rows(
 
 def evaluate_schedule_admission(
     simulation: IndexedSimulationTemplate,
-    admission: IndexedAdmissionTopology,
+    admission: IndexedAdmissionFacts,
     schedule: IndexedSchedule,
 ) -> CompiledScheduleAdmission:
     """Evaluate one selected schedule through compiled production-pool policy."""
@@ -352,7 +352,7 @@ def evaluate_schedule_admission(
         reuse_successor_actions=reuse_actions,
         reuse_capacity=reuse_capacity,
     )
-    library = load_planner_library()
+    library = planner_api()
     status = int(
         library.shadowspill_evaluate_schedule_admission(
             ctypes.byref(simulation.program),
@@ -431,8 +431,8 @@ def evaluate_schedule_admission(
 __all__ = [
     "CompiledScheduleAdmission",
     "EncodedIndexedSchedule",
-    "IndexedAdmissionTopology",
+    "IndexedAdmissionFacts",
     "encode_schedule",
     "evaluate_schedule_admission",
-    "index_admission_topology",
+    "index_admission_facts",
 ]

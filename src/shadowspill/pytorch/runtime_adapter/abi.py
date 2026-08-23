@@ -5,13 +5,7 @@ from __future__ import annotations
 import ctypes
 from typing import Any, Final
 
-from shadowspill._status import ABI_VERSION as _ABI_VERSION
-
 ADAPTER_ABI_VERSION: Final = 56
-RUNTIME_ABI_VERSION: Final = _ABI_VERSION
-FIXED_LAYOUT_ABI_VERSION: Final = _ABI_VERSION
-TRACE_ABI_VERSION: Final = _ABI_VERSION
-TRANSFER_PROFILE_ABI_VERSION: Final = _ABI_VERSION
 
 
 class PoolConfig(ctypes.Structure):

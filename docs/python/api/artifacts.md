@@ -44,7 +44,7 @@ loaded = StepProgram.from_json(Path("program.json").read_text())
 
 `PressureFitProgram` is a self-contained input to `pressurefit_program()`. It
 contains the canonical `Program`, initial and final residency, simulation
-configuration, `AdmissionTopology`, capacity contract, dynamic scratch
+configuration, `AdmissionFacts`, capacity contract, dynamic scratch
 reserve, and `PressureFitOptions`.
 
 `PressureFitProgram.pressurefit_inputs()` rebases execution budget, spill

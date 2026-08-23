@@ -76,7 +76,7 @@ def select_program(
         ),
         transfer_bandwidths=selected_transfer,
         result=physical_result,
-        effective_topology=selection.topology,
+        effective_facts=selection.topology,
         fixed_layout=selection.admission.layout,
         simulation_admission=selection.admission.simulator_input,
         simulation=selection.admission.simulation,
@@ -94,12 +94,12 @@ def _with_physical_prediction(
 ) -> PressureFitResult:
     """Replace logical timing with dependency-certified physical simulation."""
 
-    from shadowspill.planner import AdmissionTopology
+    from shadowspill.planner import AdmissionFacts
     from shadowspill.simulator import SimulationResult
 
     if not isinstance(simulation, SimulationResult):
         raise TypeError("physical simulation has an invalid type")
-    if not isinstance(topology, AdmissionTopology):
+    if not isinstance(topology, AdmissionFacts):
         raise TypeError("effective topology has an invalid type")
     return replace(
         selected,
@@ -107,7 +107,7 @@ def _with_physical_prediction(
         diagnostics=selected.diagnostics.with_selected_makespan(
             simulation.makespan_ns
         ),
-        admission_topology=topology,
+        admission_facts=topology,
     )
 
 

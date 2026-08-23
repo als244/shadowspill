@@ -602,7 +602,7 @@ class PlanPhysicalLayout:
     layout_digest: str
     program_digest: str
     schedule_digest: str
-    topology_digest: str
+    facts_digest: str
     pool_capacity_bytes: int
     original_object_capacity_bytes: int
     effective_object_capacity_bytes: int
@@ -626,7 +626,7 @@ class PlanPhysicalLayout:
             "layout_digest": self.layout_digest,
             "program_digest": self.program_digest,
             "schedule_digest": self.schedule_digest,
-            "topology_digest": self.topology_digest,
+            "facts_digest": self.facts_digest,
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "original_object_capacity_bytes": self.original_object_capacity_bytes,
             "effective_object_capacity_bytes": self.effective_object_capacity_bytes,

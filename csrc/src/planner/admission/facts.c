@@ -1,7 +1,7 @@
 /* Validating an admission topology and sizing the buffers it requires.
  *
  * Every other file here assumes a topology that has already passed
- * `shadowspill_admission_topology_valid`, and a workspace big enough for the
+ * `shadowspill_admission_facts_valid`, and a workspace big enough for the
  * operations the schedule will produce. Both are established once, here.
  */
 
@@ -24,14 +24,14 @@ static int checked_add(uint64_t left, uint64_t right, uint64_t *result) {
     return 0;
 }
 
-int shadowspill_admission_topology_valid(
+int shadowspill_admission_facts_valid(
     const ShadowSpillPressureFitContext *context
 ) {
     if (context == NULL || context->admission == NULL ||
         context->simulation == NULL) {
         return 0;
     }
-    const ShadowSpillAdmissionTopology *topology = context->admission;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     if (topology->abi_version != SHADOWSPILL_ABI_VERSION ||
         program->device_count != 1U || topology->task_count != program->task_count ||
@@ -131,7 +131,7 @@ int shadowspill_admission_topology_valid(
 static uint64_t invariant_lease_count(
     const ShadowSpillPressureFitContext *context
 ) {
-    const ShadowSpillAdmissionTopology *topology = context->admission;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = program->alias_count;
     count += topology->allocation_slot_count;
@@ -141,7 +141,7 @@ static uint64_t invariant_lease_count(
 static uint64_t invariant_operation_count(
     const ShadowSpillPressureFitContext *context
 ) {
-    const ShadowSpillAdmissionTopology *topology = context->admission;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = (uint64_t)program->alias_count * 2U;
     const uint32_t allocation_count =
@@ -419,7 +419,7 @@ int shadowspill_candidate_admission_workspace_create(
     const ShadowSpillPressureFitContext *context,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 ) {
-    if (workspace == NULL || !shadowspill_admission_topology_valid(context)) {
+    if (workspace == NULL || !shadowspill_admission_facts_valid(context)) {
         return -1;
     }
     memset(workspace, 0, sizeof(*workspace));

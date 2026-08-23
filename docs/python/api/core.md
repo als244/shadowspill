@@ -52,7 +52,7 @@ Configuration and results:
 
 - `PressureFitOptions`, `PressureFitResult`, `PressureFitDiagnostics`
 - `InitialPlacement`, `AdmissionRefinement`
-- `AdmissionTopology`, `StorageHandoff`, `TaskAdmissionSpec`
+- `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
 - `TaskAllocationStep`, `TaskAllocationStepKind`
 
 Search diagnostics:

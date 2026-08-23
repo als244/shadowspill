@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
-from shadowspill.planner import AdmissionTopology, PressureFitResult
+from shadowspill.planner import AdmissionFacts, PressureFitResult
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
 from .program_inputs import MemoryBudgets, PressureFitProgram, TransferBandwidths
@@ -41,7 +41,7 @@ class AnnotatedProgramPlan:
     memory_budgets: MemoryBudgets
     transfer_bandwidths: TransferBandwidths
     result: PressureFitResult
-    effective_topology: AdmissionTopology
+    effective_facts: AdmissionFacts
     fixed_layout: FixedPhysicalLayout
     simulation_admission: SimulationAdmission
     simulation: SimulationResult
@@ -116,7 +116,7 @@ class AnnotatedProgramPlan:
                 "admission": asdict(self.simulation_admission),
             },
             "physical_admission": {
-                "effective_topology": self.effective_topology.to_dict(),
+                "effective_facts": self.effective_facts.to_dict(),
                 "fixed_layout": self.fixed_layout.to_dict(),
                 "fixed_layout_digest": self.fixed_layout.digest,
                 "attempts": [
@@ -198,7 +198,7 @@ class AnnotatedProgramPlan:
                 )
             )
         )
-        topology = AdmissionTopology.from_dict(physical.get("effective_topology"))
+        topology = AdmissionFacts.from_dict(physical.get("effective_facts"))
         layout = _fixed_layout_from_value(
             physical.get("fixed_layout"),
             "annotated_program_plan.physical_admission.fixed_layout",
@@ -260,7 +260,7 @@ class AnnotatedProgramPlan:
             raise ValueError("annotated initial residency differs from source Program")
         if final_residency != program.final_residency:
             raise ValueError("annotated final residency differs from source Program")
-        config, _requested_topology = program.pressurefit_inputs(
+        config, _requested_facts = program.pressurefit_inputs(
             execution_budget_bytes=budgets.execution_bytes,
             spill_budget_bytes=budgets.spill_bytes,
             transfer_bandwidths=TransferBandwidths.from_value(
@@ -272,7 +272,7 @@ class AnnotatedProgramPlan:
             raise ValueError("annotated layout names a different Program")
         if layout.schedule_digest != schedule.digest:
             raise ValueError("annotated layout names a different schedule")
-        if layout.topology_digest != topology.digest:
+        if layout.facts_digest != topology.digest:
             raise ValueError("annotated layout names a different topology")
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
             raise ValueError("annotated diagnostics and simulation makespans differ")
@@ -297,7 +297,7 @@ class AnnotatedProgramPlan:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
-            admission_topology=topology,
+            admission_facts=topology,
         )
         attempts_value = _list(
             physical.get("attempts"),
@@ -408,7 +408,7 @@ class AnnotatedProgramPlan:
             memory_budgets=budgets,
             transfer_bandwidths=transfer,
             result=result,
-            effective_topology=topology,
+            effective_facts=topology,
             fixed_layout=layout,
             simulation_admission=simulation_admission,
             simulation=simulation,

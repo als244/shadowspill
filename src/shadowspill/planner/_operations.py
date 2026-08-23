@@ -5,11 +5,11 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from ._admission import EncodedIndexedSchedule, IndexedAdmissionTopology
+from ._admission import EncodedIndexedSchedule, IndexedAdmissionFacts
 from ._capi import (
     CAdmissionOperations,
     CIndexedSchedule,
-    load_planner_library,
+    planner_api,
 )
 
 
@@ -65,12 +65,12 @@ _NO_OPERATION = (1 << 64) - 1
 
 def build_admission_operations(
     simulation: object,
-    admission: IndexedAdmissionTopology,
+    admission: IndexedAdmissionFacts,
     schedule: EncodedIndexedSchedule,
 ) -> AdmissionOperations:
     """Derive the operations `schedule` implies for this resolved program."""
 
-    library = load_planner_library()
+    library = planner_api()
     action_count = len(schedule.action_kinds)
     indexed = CIndexedSchedule(
         action_count=action_count,

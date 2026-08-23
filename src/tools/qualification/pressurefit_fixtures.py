@@ -41,8 +41,8 @@ def pressurefit_fixture(
         "options": asdict(result.options),
         "admission": (
             None
-            if result.admission_topology is None
-            else result.admission_topology.to_dict()
+            if result.admission_facts is None
+            else result.admission_facts.to_dict()
         ),
     }
     expected = {

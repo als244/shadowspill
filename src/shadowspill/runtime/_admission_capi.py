@@ -99,7 +99,7 @@ class CAdmissionReplayResult(ctypes.Structure):
 
 
 @cache
-def load_admission_replay_library() -> ctypes.CDLL:
+def admission_replay_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_admission_replay_run.argtypes = [
         ctypes.POINTER(CAdmissionReplayProgram),
@@ -119,5 +119,5 @@ __all__ = [
     "CAdmissionReplayProgram",
     "CAdmissionReplayResult",
     "CAdmissionReuseDependency",
-    "load_admission_replay_library",
+    "admission_replay_api",
 ]

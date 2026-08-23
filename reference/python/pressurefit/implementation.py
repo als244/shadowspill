@@ -17,7 +17,7 @@ from shadowspill.ir import (
 )
 from shadowspill.ir._validation import ValidationError
 from shadowspill.planner._recomputation import build_recomputation_portfolio
-from shadowspill.planner.admission import AdmissionTopology
+from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
@@ -183,7 +183,7 @@ def validate_schedule_feasibility(
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
 ) -> None:
     """Reject irreducible capacity failures before schedule search.
 
@@ -202,8 +202,8 @@ def validate_schedule_feasibility(
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
     if admission is not None:
-        if not isinstance(admission, AdmissionTopology):
-            raise TypeError("admission must be an AdmissionTopology")
+        if not isinstance(admission, AdmissionFacts):
+            raise TypeError("admission must be an AdmissionFacts")
         admission.validate(program)
         configured = {item.device_id: item for item in config.devices}
         if (
@@ -212,7 +212,7 @@ def validate_schedule_feasibility(
             != admission.object_capacity_bytes
         ):
             raise ValueError(
-                "feasibility capacity must equal AdmissionTopology object capacity"
+                "feasibility capacity must equal AdmissionFacts object capacity"
             )
 
     failures: list[PressureFitInfeasibleError] = []
@@ -713,7 +713,7 @@ def _pressurefit_once(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Plan residency, movement, and recomputation for a validated program.
@@ -732,8 +732,8 @@ def _pressurefit_once(
     if not isinstance(config, SimulationConfig):
         raise TypeError("config must be a SimulationConfig")
     if admission is not None:
-        if not isinstance(admission, AdmissionTopology):
-            raise TypeError("admission must be an AdmissionTopology")
+        if not isinstance(admission, AdmissionFacts):
+            raise TypeError("admission must be an AdmissionFacts")
         admission.validate(program)
     selected_options = options or PressureFitOptions()
     portfolio = build_recomputation_portfolio(program)
@@ -885,7 +885,7 @@ def _pressurefit_once(
         selections=best.spec.context.selections,
         simulation=final_simulation,
         diagnostics=diagnostics,
-        admission_topology=admission,
+        admission_facts=admission,
     )
 
 
@@ -896,9 +896,9 @@ def _round_up_admission_reserve(value: int) -> int:
 
 def _with_object_capacity(
     config: SimulationConfig,
-    admission: AdmissionTopology,
+    admission: AdmissionFacts,
     capacity_bytes: int,
-) -> tuple[SimulationConfig, AdmissionTopology]:
+) -> tuple[SimulationConfig, AdmissionFacts]:
     devices = tuple(
         replace(device, capacity_bytes=capacity_bytes)
         if device.device_id == admission.device_id
@@ -922,7 +922,7 @@ def pressurefit(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
-    admission: AdmissionTopology | None = None,
+    admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Select a schedule and monotonically refine dynamic-slab headroom.
@@ -970,14 +970,14 @@ def pressurefit(
                 result,
                 # Preserve the public call boundary for cache identity.  The
                 # exact effective capacity is recorded below, while physical
-                # simulation uses AdmissionTopology.pool_capacity_bytes.
+                # simulation uses AdmissionFacts.pool_capacity_bytes.
                 simulation_config=original_config,
                 diagnostics=replace(
                     result.diagnostics,
                     admission_refinements=tuple(refinements),
                     effective_object_capacity_bytes=effective_capacity,
                 ),
-                admission_topology=admission,
+                admission_facts=admission,
             )
         except PressureFitInfeasibleError as error:
             if (

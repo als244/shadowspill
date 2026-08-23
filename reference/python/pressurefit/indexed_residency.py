@@ -14,7 +14,7 @@ from shadowspill.planner._capi import (
     CResidencyOptions,
     CResidencyProblem,
     CResidencyResult,
-    load_planner_library,
+    planner_api,
 )
 from shadowspill.planner.model import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
@@ -296,7 +296,7 @@ def reduce_residency(
         break_capacity=cell_count,
     )
     status = int(
-        load_planner_library().shadowspill_reduce_residency(
+        planner_api().shadowspill_reduce_residency(
             ctypes.byref(template.problem),
             ctypes.byref(options),
             ctypes.byref(result),
@@ -322,7 +322,7 @@ def reduce_residency(
             capacity_bytes=int(result.capacity_bytes),
         )
     if status != 0:
-        encoded = load_planner_library().shadowspill_planner_status_string(status)
+        encoded = planner_api().shadowspill_planner_status_string(status)
         message = encoded.decode("utf-8") if encoded else f"planner status {status}"
         raise RuntimeError(message)
     return _decode_plan(template, seed.anchors, output_resident, output_breaks)
