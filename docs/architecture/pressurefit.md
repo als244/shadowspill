@@ -356,7 +356,7 @@ not change, and every refinement is retained in diagnostics.
 ```text
 PressureFit(program, initial, final, machine, options, admission):
     require the planner and simulator ABIs
-    portfolio = legal_task_selections(program)
+    graph pairs = legal_task_selections(program)
     require some selection's anchor/output floor to fit
 
     object_capacity = machine.device_capacity
@@ -364,7 +364,7 @@ PressureFit(program, initial, final, machine, options, admission):
 
     loop:
         problems = compile_indexed_problems(
-            program, portfolio, initial, final,
+            program, graph pairs, initial, final,
             machine.with_capacity(object_capacity), admission
         )
 
@@ -492,10 +492,10 @@ It does not guarantee:
   contract.
 
 `PressureFitInfeasibleError` means a necessary-condition preflight failed or
-every candidate in the bounded evaluated portfolio was rejected without a
+every candidate in the bounded evaluated graph pairs was rejected without a
 remaining repair path. It does not prove that no schedule outside that
-portfolio exists. `PressureFitSearchExhaustedError` means at least one
-repairable path reached its configured repair ceiling, so even portfolio-level
+graph pairs exists. `PressureFitSearchExhaustedError` means at least one
+repairable path reached its configured repair ceiling, so even graph pairs-level
 infeasibility was not established.
 
 ## Implementation map
@@ -505,7 +505,7 @@ infeasibility was not established.
 | `shadowspill.planner.pressurefit()` | Input validation, problem concurrency, winner materialization, and outer physical-capacity refinement. |
 | `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/src/planner/portfolio.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |
+| `csrc/src/planner/graph pairs.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |
 | `csrc/src/planner/admission.c` | Physical allocation and causal-reuse admission. |
 | `shadowspill.simulator` / `csrc/simulator` | Independent schedule replay and makespan authority. |
 

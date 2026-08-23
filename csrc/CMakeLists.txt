@@ -31,7 +31,7 @@ add_library(
   src/planner/admission/facts.c
   src/planner/problem.c
   src/planner/digest.c
-  src/planner/portfolio.c
+  src/planner/candidates.c
   src/planner/residency.c
   src/planner/schedule.c
   src/planner/selector.c

@@ -41,13 +41,14 @@ from ..diagnostics import (
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
+from ..recomputation import Resolution
 from ..request import PressureFitOptions
 from ..result import (
     PressureFitInfeasibleError,
     PressureFitResult,
     PressureFitSearchExhaustedError,
 )
-from .portfolio import (
+from .candidates import (
     CCandidateDiagnostic,
     CPreflightResult,
     CProblemResult,
@@ -81,14 +82,14 @@ def build_problems(
     config: SimulationConfig,
     admission: AdmissionFacts | None,
     *,
-    portfolio: tuple[tuple[RecomputationSelection, ...], ...],
+    resolutions: tuple[Resolution, ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[SelectionProblem, ...]:
     """Project each recomputation selection without Python residency matrices."""
 
     problems: list[SelectionProblem] = []
     started = time.perf_counter_ns()
-    for selection_index, selections in enumerate(portfolio, start=1):
+    for selection_index, selections in enumerate(resolutions, start=1):
         tasks = program.selected_tasks(selections)
         indexed_template = index_simulation_template(
             program,
@@ -113,7 +114,7 @@ def build_problems(
         if progress is not None:
             progress(
                 "PressureFit compiled problem "
-                f"{selection_index}/{len(portfolio)}: "
+                f"{selection_index}/{len(resolutions)}: "
                 f"tasks={len(tasks)}, aliases={len(program.alias_groups)}, "
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
@@ -225,7 +226,7 @@ def run_problems(
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every recomputation selection in the planner.
 
-    Each problem's portfolio is split by residency strategy into one
+    Each problem's candidates are split by residency strategy into one
     compiled evaluation per (problem, strategy), so parallelism scales
     with problem_count x strategy_count instead of problem count
     alone. The per-problem merge restores the exact serial candidate

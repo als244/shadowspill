@@ -10,7 +10,7 @@ The three layers have deliberately different outputs:
 
 | Layer | Unit of work | Output |
 |---|---|---|
-| Graph-pair construction | One structural stage contract | A `GraphPairPortfolio` containing named forward/backward variants |
+| Graph-pair construction | One structural stage contract | A `TaskGraphPairs` containing named forward/backward variants |
 | Recomputation selection | All occurrence-level `RecomputationGroup` values in one Program | A bounded tuple of complete `RecomputationSelection` assignments |
 | PressureFit | One complete assignment plus the Program and machine model | A residency/action schedule with simulated cost |
 
@@ -26,13 +26,13 @@ runtime contracts.
 | Structural contract | The deterministic graph/input/storage identity shared by equivalent stage occurrences. |
 | Graph pair | One mutually compatible AOTAutograd forward graph and backward graph. |
 | Variant | A named graph pair produced by one partitioning policy, such as `save` or `recompute`. |
-| Portfolio | Every configured legal variant for one structural contract. |
+| Task graph pairs | Every configured legal variant for one structural contract. |
 | Recomputation group | The occurrence-level Program choice whose options activate one variant's forward and backward tasks. |
 
 A graph pair is not a pair of chronological execution IDs. Construction
 happens before execution tasks receive their final Program identities. During
 lowering, each stage occurrence gets one alternative forward task and one
-alternative backward task per portfolio variant.
+alternative backward task per variant.
 
 ## Inputs and output
 
@@ -46,10 +46,10 @@ Construction consumes:
 - whether terminal unit cotangents may be specialized away;
 - the configured graph-pair variant builders.
 
-It returns an immutable `GraphPairPortfolio`:
+It returns an immutable `TaskGraphPairs`:
 
 ```text
-GraphPairPortfolio
+TaskGraphPairs
 ├── structural_contract
 ├── root_output_indices
 ├── reference_option_id
@@ -58,7 +58,7 @@ GraphPairPortfolio
     └── GraphPairVariant("recompute", memory_budget=0.0, pair=...)
 ```
 
-The portfolio type supports any positive number of uniquely named variants.
+The record supports any positive number of uniquely named variants.
 The current default builder emits exactly two. “Every legal variant” therefore
 means every option configured by the builder, not every mathematically
 possible cut of the AOT joint graph.
@@ -85,13 +85,13 @@ Before AOT capture, ShadowSpill computes the stage structural contract from:
 - input roles and provenance;
 - alias and storage contracts.
 
-`GraphPairRepository` keys a portfolio by:
+`GraphPairRepository` keys one task's graph pairs by:
 
 ```text
 (structural_contract, differentiable_root_positions, specialize_unit_tangents)
 ```
 
-The first occurrence constructs or restores the portfolio. Equivalent later
+The first occurrence constructs or restores them. Equivalent later
 occurrences reuse its graph code and contracts while rebinding authentic
 occurrence-local inputs and input provenance. This makes graph construction
 scale with unique structural contracts rather than model positions.
@@ -116,9 +116,9 @@ The current endpoint sets `activation_memory_budget=0.0`, the full-recompute
 endpoint. The budget is bound inside the lazy partition callback so ambient
 Functorch configuration cannot change the generated pair.
 
-The portfolio representation also supports intermediate budgets strictly
+The representation also supports intermediate budgets strictly
 between zero and one. Adding such variants changes the configured construction
-portfolio, not the downstream type system. Budget `1.0` reproduces the
+inventory, not the downstream type system. Budget `1.0` reproduces the
 save-everything endpoint and is not exposed as a recomputation alternative by
 the current builder. The current default emits no intermediate choices.
 
@@ -232,8 +232,8 @@ ConstructGraphPairs(partitioned_export):
         terminal = occurrence is final stage
         key = structural_contract(occurrence, roots, terminal)
 
-        portfolio = repository.lookup(key)
-        if portfolio is absent:
+        graph_pairs = repository.lookup(key)
+        if graph_pairs is absent:
             variants = []
             for policy in configured_variant_policies:
                 pair = AOTAutograd(
@@ -244,25 +244,25 @@ ConstructGraphPairs(partitioned_export):
                 validate_public_boundary(pair)
                 classify_saved_storage_roots(pair)
                 variants.append(named_variant(policy, pair))
-            portfolio = GraphPairPortfolio(key, roots, variants)
-            repository.store(portfolio)
+            graph_pairs = TaskGraphPairs(key, roots, variants)
+            repository.store(graph_pairs)
         else:
-            portfolio = rebind_occurrence_values(portfolio, occurrence)
+            graph_pairs = rebind_occurrence_values(graph_pairs, occurrence)
 
-        stages.append(DifferentiatedStage(occurrence, portfolio))
+        stages.append(DifferentiatedStage(occurrence, graph_pairs))
 
     return stages
 
 CompileAndProfileGraphPairs(stages):
     artifacts = stable_unique(
         pair.forward and pair.backward
-        for every structural portfolio variant
+        for every structural variant
     )
     return compile_and_profile_each_unique_artifact(artifacts)
 
 LowerOccurrence(stage, profiles):
     options = []
-    for variant in stage.portfolio:
+    for variant in stage.graph_pairs:
         forward = bind_and_emit_forward_task(variant, profiles)
         backward = bind_and_emit_backward_task(variant, profiles)
         retained = fresh_internal_saved_aliases(variant)
@@ -279,7 +279,7 @@ Construction rejects a stage when:
 - a variant changes the public stage-boundary arity or incompatible storage
   semantics;
 - alias or mutation relationships cannot be normalized;
-- a cached portfolio's structural key or serialized artifact is invalid;
+- a cached task's structural key or serialized artifact is invalid;
 - one variant cannot compile or produce a valid physical profile.
 
 There is no model-family branch and no fallback that infers semantic identity
@@ -290,9 +290,9 @@ from allocator pointers or FakeTensor storage identity.
 | Module | Responsibility |
 |---|---|
 | `shadowspill.pytorch.partition` | Produce ordered stages and authentic examples. |
-| `shadowspill.pytorch.graph_pairs.capture` | Choose differentiation roots and bind occurrences to portfolios. |
+| `shadowspill.pytorch.graph_pairs.capture` | Choose differentiation roots and bind occurrences to their graph pairs. |
 | `shadowspill.pytorch.graph_pairs.build` | Define the configured variant set and invoke AOT capture. |
-| `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, portfolio, and differentiated-stage records. |
+| `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, task-graph-pairs, and differentiated-stage records. |
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
 | `shadowspill.pytorch.graph_pairs.repository` | Structural cache identity, persistence, and occurrence rebinding. |
 | `shadowspill.pytorch.profiling` | Compile and measure each unique forward/backward artifact. |

@@ -103,7 +103,7 @@ class CompiledIndexedSchedule:
 
     Keeping the problem-local winner indexed avoids constructing and validating
     thousands of Python IR records that will be discarded when a different
-    recomputation problem wins the global portfolio.
+    recomputation problem wins overall.
     """
 
     action_trigger_tasks: tuple[int, ...]
@@ -601,7 +601,7 @@ def evaluate_program_problem(
     *,
     admission: IndexedAdmissionFacts | None = None,
 ) -> CProblemResult | None:
-    """Derive indexed planning facts and evaluate the portfolio entirely in C."""
+    """Derive indexed planning facts and evaluate every candidate entirely in C."""
 
     return _evaluate_problem(simulation, options, admission=admission)
 

@@ -267,7 +267,7 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     assert all(task.phase == "optimizer" for task in selected[4:])
 
 
-def test_training_lowering_accepts_arbitrary_graph_pair_portfolios() -> None:
+def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
     lowered = _lowered(include_intermediate_variant=True)
     assert len(lowered.program.recomputation_groups) == 2
     assert all(

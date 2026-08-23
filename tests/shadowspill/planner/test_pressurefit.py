@@ -37,7 +37,7 @@ from ._examples import (
     recomputation_program,
 )
 
-SMALL_PORTFOLIO = PressureFitOptions(
+FEW_CANDIDATES = PressureFitOptions(
     residency_strategies=("relaxed-stall",),
     prefetch_rules=("latest-safe",),
     evaluate_coalesced=False,
@@ -58,7 +58,7 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
 
     assert tuple(
@@ -183,7 +183,7 @@ def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:
         initial_residency=(ResidencySpec("later", MemoryLocation.DEVICE),),
         final_residency=(ResidencySpec("retained", MemoryLocation.DEVICE),),
         config=config(122),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
 
     assert all(
@@ -201,7 +201,7 @@ def test_dirty_mutation_requires_writeback_before_reuse() -> None:
         mutation_program(),
         initial_residency=(ResidencySpec("weight_storage", MemoryLocation.DEVICE),),
         config=config(61),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
 
     weight_actions = tuple(
@@ -216,12 +216,12 @@ def test_dirty_mutation_requires_writeback_before_reuse() -> None:
     )
 
 
-def test_recomputation_competes_with_offload_in_the_same_portfolio() -> None:
+def test_recomputation_competes_with_offload_among_the_same_candidates() -> None:
     result = pressurefit(
         recomputation_program(),
         initial_residency=(ResidencySpec("input_storage", MemoryLocation.DEVICE),),
         config=config(110),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
 
     assert tuple((item.group_id, item.option_id) for item in result.selections) == (
@@ -238,7 +238,7 @@ def test_result_builds_the_canonical_execution_plan() -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
     entrypoints = tuple(
         EntrypointSpec(

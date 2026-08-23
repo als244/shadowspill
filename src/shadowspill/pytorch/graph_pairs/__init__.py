@@ -2,9 +2,9 @@
 
 from .artifacts import (
     DifferentiatedStage,
-    GraphPairPortfolio,
     GraphPairVariant,
     PartitionedTrainingCapture,
+    TaskGraphPairs,
 )
 from .capture import capture_training_stages
 from .controls import resolve_partitioned_saved_controls
@@ -14,11 +14,11 @@ from .training import partition_training_capture
 
 __all__ = [
     "DifferentiatedStage",
-    "GraphPairPortfolio",
     "GraphPairRepository",
     "GraphPairVariant",
     "PartitionedTrainingCapture",
     "SavedValueFootprint",
+    "TaskGraphPairs",
     "capture_training_stages",
     "partition_training_capture",
     "resolve_partitioned_saved_controls",

@@ -26,7 +26,7 @@ from shadowspill.planner.diagnostics import (
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
-from shadowspill.planner.recomputation import build_recomputation_portfolio
+from shadowspill.planner.recomputation import resolutions
 from shadowspill.planner.request import PressureFitOptions
 from shadowspill.planner.result import (
     PressureFitInfeasibleError,
@@ -216,7 +216,7 @@ def validate_schedule_feasibility(
             )
 
     failures: list[PressureFitInfeasibleError] = []
-    for selections in build_recomputation_portfolio(program):
+    for selections in resolutions(program):
         try:
             facts = build_facts(
                 program,
@@ -604,13 +604,13 @@ def _build_problems(
     config: SimulationConfig,
     options: PressureFitOptions,
     *,
-    portfolio: tuple[tuple[RecomputationSelection, ...], ...],
+    resolved: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[_SelectionProblem, ...]:
     problems: list[_SelectionProblem] = []
     failures: list[PressureFitInfeasibleError] = []
     started = time.perf_counter_ns()
-    for selection_index, selections in enumerate(portfolio, start=1):
+    for selection_index, selections in enumerate(resolved, start=1):
         try:
             facts = build_facts(
                 program,
@@ -642,7 +642,7 @@ def _build_problems(
         if progress is not None:
             progress(
                 "PressureFit problem "
-                f"{selection_index}/{len(portfolio)}: "
+                f"{selection_index}/{len(resolved)}: "
                 f"tasks={len(facts.tasks)}, aliases={len(facts.alias_ids)}, "
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
@@ -736,12 +736,12 @@ def _pressurefit_once(
             raise TypeError("admission must be an AdmissionFacts")
         admission.validate(program)
     selected_options = options or PressureFitOptions()
-    portfolio = build_recomputation_portfolio(program)
+    resolved = resolutions(program)
     if progress is not None:
         progress(
-            "PressureFit portfolio: "
+            "PressureFit resolved: "
             f"groups={len(program.recomputation_groups)}, "
-            f"selections={len(portfolio)}"
+            f"selections={len(resolved)}"
         )
     problems_started = time.perf_counter_ns()
     problems = _build_problems(
@@ -750,13 +750,13 @@ def _pressurefit_once(
         final_residency,
         config,
         selected_options,
-        portfolio=portfolio,
+        resolved=resolved,
         progress=progress,
     )
     if progress is not None:
         progress(
             "PressureFit problems ready: "
-            f"valid={len(problems)}/{len(portfolio)}, "
+            f"valid={len(problems)}/{len(resolved)}, "
             f"elapsed={(time.perf_counter_ns() - problems_started) / 1e9:.3f}s"
         )
     specs = _candidate_specs(problems, selected_options)

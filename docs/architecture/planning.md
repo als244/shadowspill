@@ -12,7 +12,7 @@ capture/export and stage partitioning
         -> canonical Program lowering
         -> StepProgram
         -> PressureFitProgram
-        -> complete recomputation-selection portfolio
+        -> complete recomputation-selection graph pairs
         -> pressurefit()
         -> fixed physical layout and admission
         -> AnnotatedProgramPlan

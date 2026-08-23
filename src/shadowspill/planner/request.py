@@ -19,7 +19,7 @@ class InitialPlacement(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PressureFitOptions:
-    """Bounded heuristic portfolio configuration.
+    """Bounded heuristic candidate configuration.
 
     Worker count changes only evaluation concurrency. It never enters candidate
     identity or tie-breaking. Zero selects all available logical CPUs; one
@@ -30,7 +30,7 @@ class PressureFitOptions:
     # relaxed-stall (byte-identical to tight-stall) and interval-entry
     # never carry a winner: a 435-point regression replay reproduced
     # every schedule digest exactly without them at ~1.25x less
-    # portfolio work. Both remain valid explicit options.
+    # candidate set work. Both remain valid explicit options.
     residency_strategies: tuple[str, ...] = (
         "headroom-stall",
         "headroom-transfer",

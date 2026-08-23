@@ -1,4 +1,4 @@
-"""Construct graph-pair portfolios for one structural stage contract."""
+"""Construct graph pairs for one structural stage contract."""
 
 from __future__ import annotations
 
@@ -6,18 +6,18 @@ from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 from ..partition.artifacts import StageExample
-from .artifacts import GraphPairPortfolio, GraphPairVariant
+from .artifacts import GraphPairVariant, TaskGraphPairs
 
 
-def build_default_portfolio(
+def build_default_graph_pairs(
     example: StageExample,
     roots: tuple[int, ...],
     *,
     specialize_unit_tangents: bool,
-) -> GraphPairPortfolio:
+) -> TaskGraphPairs:
     """Capture the established default and runtime-optimized min-cut choices.
 
-    The returned portfolio and every downstream consumer support an arbitrary
+    The returned record and every downstream consumer support an arbitrary
     ordered number of variants. Intermediate min-cut budgets can therefore be
     added here without changing partitioning, caching, lowering, diagnostics,
     or the canonical Program representation.
@@ -66,7 +66,7 @@ def build_default_portfolio(
             ),
         ),
     )
-    return GraphPairPortfolio(structural_contract, roots, variants)
+    return TaskGraphPairs(structural_contract, roots, variants)
 
 
-__all__ = ["build_default_portfolio"]
+__all__ = ["build_default_graph_pairs"]

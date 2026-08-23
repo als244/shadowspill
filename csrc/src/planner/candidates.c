@@ -2,7 +2,7 @@
 #include "admission/internal.h"
 #include "../common/platform.h"
 #include "internal.h"
-#include "portfolio_internal.h"
+#include "candidates_internal.h"
 #include "residency_internal.h"
 
 #include <stdint.h>
@@ -1707,7 +1707,7 @@ static void initialize_diagnostic(
 static int evaluate_candidate(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillScheduleFacts *facts,
-    const ShadowSpillPressureFitProblemOptions *portfolio_options,
+    const ShadowSpillPressureFitProblemOptions *candidate_options,
     CandidateWorkspace *workspace,
     uint8_t strategy,
     uint8_t rule,
@@ -1806,7 +1806,7 @@ static int evaluate_candidate(
             (ShadowSpillStatus)simulation.status;
         if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
             if (repair_total(&diagnostic->repairs) <
-                portfolio_options->max_repair_attempts) {
+                candidate_options->max_repair_attempts) {
                 ShadowSpillPrefetchTriggerConstraint constraint = {0};
                 int advanced = advance_admission_prefetch(
                     facts,
@@ -1905,7 +1905,7 @@ static int evaluate_candidate(
                 diagnostic
             );
             if (repair_total(&diagnostic->repairs) >=
-                portfolio_options->max_repair_attempts) {
+                candidate_options->max_repair_attempts) {
                 diagnostic->status = SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
             }
             return 0;
@@ -1961,7 +1961,7 @@ static int evaluate_candidate(
         }
 
         if (repair_total(&diagnostic->repairs) <
-            portfolio_options->max_repair_attempts) {
+            candidate_options->max_repair_attempts) {
             ShadowSpillPrefetchTriggerConstraint constraint = {0};
             int delayed = shadowspill_delay_indexed_prefetch(
                 facts,
@@ -2009,7 +2009,7 @@ static int evaluate_candidate(
         }
         diagnostic->status =
             repair_total(&diagnostic->repairs) >=
-                portfolio_options->max_repair_attempts &&
+                candidate_options->max_repair_attempts &&
             simulation_failure_may_be_repairable(simulation_status)
             ? SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED
             : SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;

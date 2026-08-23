@@ -14,7 +14,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner.recomputation import build_recomputation_portfolio
+from shadowspill.planner.recomputation import resolutions
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
@@ -22,8 +22,7 @@ COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 def _binary_program(group_count: int) -> Program:
     aliases = tuple(
-        AliasGroupSpec(f"saved_{index}", "cuda_0", 10)
-        for index in range(group_count)
+        AliasGroupSpec(f"saved_{index}", "cuda_0", 10) for index in range(group_count)
     )
     objects = tuple(
         ObjectSpec(f"saved_object_{index}", f"saved_{index}", 0, 10)
@@ -70,11 +69,11 @@ def _binary_program(group_count: int) -> Program:
 def _option_ids(program: Program) -> tuple[tuple[str, ...], ...]:
     return tuple(
         tuple(selection.option_id for selection in selections)
-        for selections in build_recomputation_portfolio(program)
+        for selections in resolutions(program)
     )
 
 
-def test_small_recomputation_portfolio_remains_exhaustive() -> None:
+def test_a_small_inventory_is_resolved_exhaustively() -> None:
     options = _option_ids(_binary_program(6))
 
     assert len(options) == 64
@@ -82,7 +81,7 @@ def test_small_recomputation_portfolio_remains_exhaustive() -> None:
     assert options[-1] == ("recompute",) * 6
 
 
-def test_large_binary_portfolio_uses_even_group_quarters() -> None:
+def test_a_large_binary_inventory_uses_even_group_quarters() -> None:
     options = _option_ids(_binary_program(8))
 
     assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 6, 8)
@@ -110,7 +109,7 @@ def test_large_binary_portfolio_uses_even_group_quarters() -> None:
     assert options[-1] == ("recompute",) * 8
 
 
-def test_large_portfolio_is_bounded() -> None:
+def test_a_large_inventory_is_bounded() -> None:
     options = _option_ids(_binary_program(64))
 
     assert len(options) == 5

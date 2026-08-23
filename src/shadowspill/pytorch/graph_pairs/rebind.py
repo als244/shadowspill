@@ -1,4 +1,4 @@
-"""Bind one structural graph-pair portfolio to a stage occurrence."""
+"""Bind one structural graph-pair graph_pairs to a stage occurrence."""
 
 from __future__ import annotations
 
@@ -9,18 +9,18 @@ from shadowspill.pytorch.capture.artifacts import AotGraphPair
 
 from ..contracts import CaptureError
 from ..partition.artifacts import StageExample
-from .artifacts import GraphPairPortfolio, GraphPairVariant
+from .artifacts import GraphPairVariant, TaskGraphPairs
 
 
-def rebind_graph_pair_portfolio(
-    portfolio: GraphPairPortfolio,
+def rebind_task_graph_pairs(
+    graph_pairs: TaskGraphPairs,
     example: StageExample,
-) -> GraphPairPortfolio:
+) -> TaskGraphPairs:
     """Replace occurrence-local values while preserving structural graph code."""
 
-    return GraphPairPortfolio(
-        structural_contract=portfolio.structural_contract,
-        root_output_indices=portfolio.root_output_indices,
+    return TaskGraphPairs(
+        structural_contract=graph_pairs.structural_contract,
+        root_output_indices=graph_pairs.root_output_indices,
         variants=tuple(
             GraphPairVariant(
                 item.option_id,
@@ -28,12 +28,12 @@ def rebind_graph_pair_portfolio(
                 _rebind_graph_pair(
                     item.pair,
                     example,
-                    portfolio.root_output_indices,
+                    graph_pairs.root_output_indices,
                 ),
             )
-            for item in portfolio.variants
+            for item in graph_pairs.variants
         ),
-        reference_option_id=portfolio.reference_option_id,
+        reference_option_id=graph_pairs.reference_option_id,
     )
 
 
@@ -78,4 +78,4 @@ def _rebind_graph_pair(
     )
 
 
-__all__ = ["rebind_graph_pair_portfolio"]
+__all__ = ["rebind_task_graph_pairs"]

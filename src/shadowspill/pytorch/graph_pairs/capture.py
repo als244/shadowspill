@@ -16,7 +16,7 @@ def capture_training_stages(
     *,
     graph_pair_repository: GraphPairRepository | None = None,
 ) -> tuple[DifferentiatedStage, ...]:
-    """Bind every stage occurrence to its structural graph-pair portfolio."""
+    """Bind every stage occurrence to its structural graph pairs."""
 
     cache = graph_pair_repository or GraphPairRepository()
     return tuple(

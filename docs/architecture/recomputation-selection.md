@@ -16,7 +16,7 @@ framework-neutral IR is more general: a `RecomputationGroup` may expose any
 finite set of mutually exclusive `RecomputationOption` values, and Programs
 may contain no groups at all.
 
-For example, two occurrences can share one structural portfolio while still
+For example, two occurrences can share one set of structural graph pairs while still
 producing independent Program groups:
 
 ```text
@@ -51,7 +51,7 @@ problem in PressureFit diagnostics.
 
 The recomputation selector does not consider execution capacity, spill
 capacity, transfer bandwidth, residency, or simulated makespan. PressureFit
-evaluates those consequences after the portfolio has been built.
+evaluates those consequences after the resolutions have been built.
 
 ## Cost summaries
 
@@ -74,7 +74,7 @@ These summaries order non-binary fallback choices. They are not standalone
 makespan estimates because they omit transfer overlap, residency interaction,
 and contention; PressureFit's simulator evaluates those jointly.
 
-## Current portfolio algorithm
+## The current selection policy
 
 ### No groups
 
@@ -106,7 +106,7 @@ target chooses $K$, position $j\in\{0,\ldots,K-1\}$ is
 \]
 
 This distributes recomputation through the graph rather than taking one
-contiguous prefix. It is a deterministic coarse portfolio, not an adaptive
+contiguous prefix. It is a deterministic coarse policy, not an adaptive
 search over arbitrary subsets.
 
 ### Large non-binary products
@@ -128,9 +128,9 @@ deduplication.
 
 Every recomputation group whose forward tasks are sinks of the selected
 forward dependency graph is required to expose exactly one option named
-`save`. That option is pinned in every portfolio selection. Terminal forward
+`save`. That option is pinned in every resolution. Terminal forward
 groups are therefore not treated as recomputation degrees of freedom by the
-current portfolio.
+current policy.
 
 The rule is graph-derived: it uses task phase and dependency edges, not model
 family, module name, stage number, or operator identity.
@@ -138,7 +138,7 @@ family, module name, stage number, or operator identity.
 ## Pseudocode
 
 ```text
-BuildRecomputationPortfolio(program):
+Resolutions(program):
     groups = program.recomputation_groups
     if groups is empty:
         return [empty selection]
@@ -150,12 +150,12 @@ BuildRecomputationPortfolio(program):
         return exhaustive_cartesian_product(legal_indices)
 
     if every group is exactly {save, recompute}:
-        portfolio = []
+        resolutions = []
         for fraction in [0%, 25%, 50%, 75%, 100%]:
             flexible = groups not fixed by required
             chosen = centered_evenly_spaced_subset(flexible, fraction)
-            portfolio.append(save_or_recompute_each_group(chosen, required))
-        return portfolio
+            resolutions.append(save_or_recompute_each_group(chosen, required))
+        return resolutions
 
     costs = retained_bytes_and_profiled_runtime(program, groups)
     raw = [
@@ -177,11 +177,11 @@ BuildRecomputationPortfolio(program):
 The current algorithm is intentionally bounded and fast. For large binary
 products it does not search mixed subsets beyond the five evenly distributed
 fractions, and it does not use PressureFit feedback to refine a selection.
-Consequently, the best schedule in the emitted portfolio may be worse than a
+Consequently, the best schedule among the emitted resolutions may be worse than a
 legal selection that was not emitted.
 
 That limitation belongs here, not inside PressureFit. A richer recomputation
-planner can generate a different finite portfolio without changing the
+planner can generate a different finite family of resolutions without changing the
 PressureFit Program, residency, action, simulation, or runtime contracts.
 
 Graph-pair construction and profiling are described in the dedicated
