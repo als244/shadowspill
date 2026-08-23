@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "portfolio_internal.h"
+#include "candidates_internal.h"
 
 #include <limits.h>
 #include <stdint.h>

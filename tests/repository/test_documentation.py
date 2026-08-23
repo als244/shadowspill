@@ -545,7 +545,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
     recomputation = (DOCS / "architecture" / "recomputation-selection.md").read_text()
     for required in (
         "## Inputs and output",
-        "## Current portfolio algorithm",
+        "## The current selection policy",
         "## Pseudocode",
         "RecomputationGroup",
         "RecomputationOption",
@@ -559,7 +559,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Saved-value accounting",
         "## Compilation and profiling",
         "## Lowering into Program alternatives",
-        "GraphPairPortfolio",
+        "TaskGraphPairs",
         "GraphPairVariant",
         "RecomputationOption",
     ):

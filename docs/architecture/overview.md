@@ -90,7 +90,7 @@ serialized, or passed to a lower-level API:
 ```mermaid
 flowchart TD
     capture["Export/AOT graph"]
-    pairs["GraphPairPortfolio values"]
+    pairs["TaskGraphPairs values"]
     profile["Compiled task profiles"]
     program["Program"]
     step["StepProgram"]
@@ -231,7 +231,7 @@ causal completion fence before a successor can reuse its bytes.
 |---|---|
 | Stage | One ordered partition of the captured model graph. |
 | Structural contract | Shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
-| Graph-pair portfolio | Every configured forward/backward alternative for one differentiated structural contract. |
+| Graph-pair graph pairs | Every configured forward/backward alternative for one differentiated structural contract. |
 | Recomputation selection | One complete choice of graph-pair option for every occurrence-level group. |
 | Storage root | One semantic allocation identity shared by all of its views. |
 | Program object | One logical alias bundle with size, role, persistence, and task dependencies. |

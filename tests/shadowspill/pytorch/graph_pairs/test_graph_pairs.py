@@ -126,7 +126,7 @@ def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
     )
 
 
-def test_repeated_stage_occurrences_share_one_structural_portfolio() -> None:
+def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     mode, partitioned = _capture()
     repository = GraphPairRepository()
     with mode:
@@ -159,7 +159,7 @@ def test_repeated_stage_occurrences_share_one_structural_portfolio() -> None:
     assert first_storages != second_storages
 
 
-def test_graph_pair_repository_persists_structural_portfolios(tmp_path: Path) -> None:
+def test_graph_pair_repository_persists_structural_inventories(tmp_path: Path) -> None:
     mode, partitioned = _capture()
     with mode:
         first = GraphPairRepository(tmp_path)

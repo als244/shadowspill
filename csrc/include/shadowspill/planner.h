@@ -164,7 +164,7 @@ typedef struct ShadowSpillPressureFitProblemOptions {
  * The simulation topology carries the selected tasks plus the declared
  * initial/final residency.  The planner derives the indexed analytic residency
  * problem and initial seed internally before evaluating the unchanged
- * candidate portfolio.
+ * candidate set.
  */
 typedef struct ShadowSpillPressureFitProgramProblem {
     uint32_t abi_version;
@@ -353,7 +353,7 @@ shadowspill_reduce_residency(
 );
 
 /*
- * Evaluate the complete deterministic candidate portfolio for one already
+ * Evaluate the complete deterministic candidate set for one already
  * resolved recomputation selection. The function performs no Python calls and
  * retains indexed residency and schedule records throughout evaluation. Result
  * storage is owned by the caller after success or a no-feasible result and
@@ -368,7 +368,7 @@ shadowspill_evaluate_pressurefit_problem(
 
 /*
  * Derive one indexed residency problem from a selected simulation program and
- * evaluate the complete deterministic PressureFit candidate portfolio.
+ * evaluate the complete deterministic PressureFit candidate set.
  * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
  * explicitly, but avoids materializing alias-by-boundary matrices in Python.
  */

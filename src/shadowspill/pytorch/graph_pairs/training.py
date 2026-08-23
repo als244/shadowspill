@@ -1,4 +1,4 @@
-"""Compose partitioned stages with structural AOT graph-pair portfolios."""
+"""Compose partitioned stages with structural AOT graph pairs."""
 
 from __future__ import annotations
 

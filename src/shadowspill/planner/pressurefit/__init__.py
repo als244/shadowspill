@@ -25,7 +25,7 @@ from shadowspill.simulator.capi import simulator_api
 from ..admission import AdmissionFacts
 from ..capi import planner_api
 from ..diagnostics import AdmissionRefinement
-from ..recomputation import build_recomputation_portfolio
+from ..recomputation import resolutions
 from ..request import PressureFitOptions
 from ..result import PressureFitInfeasibleError, PressureFitResult
 from .refinement import (
@@ -107,7 +107,7 @@ def validate_schedule_feasibility(
         final_residency,
         config,
         admission,
-        portfolio=build_recomputation_portfolio(program),
+        resolutions=resolutions(program),
         progress=None,
     )
     preflight_problems(problems)
@@ -136,12 +136,12 @@ def pressurefit_once(
     planner_api()
 
     selected_options = options or PressureFitOptions()
-    portfolio = build_recomputation_portfolio(program)
+    resolved = resolutions(program)
     if progress is not None:
         progress(
-            "PressureFit portfolio: "
+            "PressureFit resolutions: "
             f"groups={len(program.recomputation_groups)}, "
-            f"selections={len(portfolio)}"
+            f"selections={len(resolved)}"
         )
     started = time.perf_counter_ns()
     problems = preflight_problems(
@@ -151,7 +151,7 @@ def pressurefit_once(
             final_residency,
             config,
             admission,
-            portfolio=portfolio,
+            resolutions=resolved,
             progress=progress,
         )
     )

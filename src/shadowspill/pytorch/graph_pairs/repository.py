@@ -1,4 +1,4 @@
-"""Persistent repository of structural AOT graph-pair portfolios."""
+"""Persistent repository of structural AOT graph pairs."""
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 
 from ..contracts import CaptureError
 from ..partition.artifacts import StageExample
-from .artifacts import GraphPairPortfolio
-from .build import build_default_portfolio
-from .rebind import rebind_graph_pair_portfolio
+from .artifacts import TaskGraphPairs
+from .build import build_default_graph_pairs
+from .rebind import rebind_task_graph_pairs
 from .serialization import (
     CachedAotGraphPair,
     atomic_json,
@@ -31,7 +31,7 @@ _GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v7"
 
 
 class GraphPairRepository:
-    """Reuse AOT portfolios while rebinding occurrence-specific values."""
+    """Reuse AOT graph pairs while rebinding occurrence-specific values."""
 
     def __init__(
         self,
@@ -42,7 +42,7 @@ class GraphPairRepository:
         overwrite: bool = False,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
-        self._pairs: dict[tuple[str, tuple[int, ...], bool], GraphPairPortfolio] = {}
+        self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
         self._root = None if root is None else Path(root).expanduser()
         self._read_enabled = read_enabled
         self._write_enabled = write_enabled
@@ -62,7 +62,7 @@ class GraphPairRepository:
         roots: tuple[int, ...],
         *,
         specialize_unit_tangents: bool,
-    ) -> GraphPairPortfolio:
+    ) -> TaskGraphPairs:
         stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
@@ -77,8 +77,8 @@ class GraphPairRepository:
             if existing is not None:
                 self._pairs[key] = existing
                 self.hits += 1
-                return rebind_graph_pair_portfolio(existing, example)
-            existing = build_default_portfolio(
+                return rebind_task_graph_pairs(existing, example)
+            existing = build_default_graph_pairs(
                 example,
                 roots,
                 specialize_unit_tangents=specialize_unit_tangents,
@@ -88,7 +88,7 @@ class GraphPairRepository:
             self.misses += 1
             return existing
         self.hits += 1
-        return rebind_graph_pair_portfolio(existing, example)
+        return rebind_task_graph_pairs(existing, example)
 
     def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         if self._root is None:
@@ -109,7 +109,7 @@ class GraphPairRepository:
 
     def _read(
         self, key: tuple[str, tuple[int, ...], bool]
-    ) -> GraphPairPortfolio | None:
+    ) -> TaskGraphPairs | None:
         path = self._path(key)
         if path is None or not self._read_enabled:
             return None
@@ -143,7 +143,7 @@ class GraphPairRepository:
             or any(not valid_cached_variant(item) for item in variants)
         ):
             raise CaptureError(f"AOT graph-pair cache entry {path} has invalid data")
-        result = GraphPairPortfolio(
+        result = TaskGraphPairs(
             structural_contract=key[0],
             root_output_indices=key[1],
             variants=tuple(restore_cached_variant(item) for item in variants),
@@ -158,7 +158,7 @@ class GraphPairRepository:
     def _write(
         self,
         key: tuple[str, tuple[int, ...], bool],
-        pairs: GraphPairPortfolio,
+        pairs: TaskGraphPairs,
     ) -> None:
         path = self._path(key)
         if path is None or not self._write_enabled:
@@ -228,7 +228,7 @@ class GraphPairRepository:
         key: tuple[str, tuple[int, ...], bool],
         path: Path,
         access: str,
-        pairs: GraphPairPortfolio,
+        pairs: TaskGraphPairs,
         *,
         kind: str = "aot_graph_pairs",
     ) -> None:

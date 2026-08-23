@@ -1,4 +1,4 @@
-"""Which combinations of graph-pair options are worth evaluating.
+"""Which resolutions of the graph-pair options are worth planning.
 
 `options` says what each graph pair offers and what each alternative costs.
 This decides which combinations of those alternatives PressureFit should
@@ -23,26 +23,25 @@ from shadowspill.ir import Program, RecomputationSelection
 
 from .options import GraphPairOptions
 
+#: One option chosen per graph pair - what makes a Program concrete.
+Resolution = tuple[RecomputationSelection, ...]
+
 _EXHAUSTIVE_COMBINATION_LIMIT = 64
 _QUARTER_DENOMINATOR = 4
 _GROUP_RECOMPUTE_QUARTERS = (0, 1, 2, 3, 4)
 _WITHIN_GROUP_MEMORY_QUANTILES = (0, 1, 2, 3, 4)
 
 
-def build_recomputation_portfolio(
-    program: Program,
-) -> tuple[tuple[RecomputationSelection, ...], ...]:
-    """Return a small deterministic family of legal graph-pair selections."""
+def resolutions(program: Program) -> tuple[Resolution, ...]:
+    """Return a small deterministic family of legal resolutions."""
 
     if not program.recomputation_groups:
         return ((),)
     return select(GraphPairOptions.from_program(program))
 
 
-def select(
-    options: GraphPairOptions,
-) -> tuple[tuple[RecomputationSelection, ...], ...]:
-    """Choose which combinations of the inventory to plan."""
+def select(options: GraphPairOptions) -> tuple[Resolution, ...]:
+    """Choose which resolutions of the inventory to plan."""
 
     if not options.groups:
         return ((),)
@@ -53,16 +52,16 @@ def select(
             (pinned[index],) if index in pinned else tuple(range(len(group.options)))
             for index, group in enumerate(options.groups)
         )
-        return tuple(_selections(options, item) for item in product(*per_group))
+        return tuple(_resolution(options, item) for item in product(*per_group))
 
     endpoints = options.binary_endpoints
     if endpoints is not None:
         return tuple(
-            _selections(options, indices)
+            _resolution(options, indices)
             for indices in _group_fractions(endpoints, pinned)
         )
     return tuple(
-        _selections(options, item) for item in _within_group_quantiles(options)
+        _resolution(options, item) for item in _within_group_quantiles(options)
     )
 
 
@@ -136,10 +135,10 @@ def _evenly_spaced_indices(total: int, count: int) -> frozenset[int]:
     )
 
 
-def _selections(
+def _resolution(
     options: GraphPairOptions,
     indices: tuple[int, ...],
-) -> tuple[RecomputationSelection, ...]:
+) -> Resolution:
     return tuple(
         RecomputationSelection(group.group_id, group.options[index].option_id)
         for group, index in zip(options.groups, indices, strict=True)
@@ -156,4 +155,4 @@ def _unique(values: list[tuple[int, ...]]) -> tuple[tuple[int, ...], ...]:
     return tuple(result)
 
 
-__all__ = ["build_recomputation_portfolio", "select"]
+__all__ = ["Resolution", "resolutions", "select"]

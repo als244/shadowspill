@@ -45,7 +45,7 @@ def test_pressurefit_fails_closed_without_the_library(
     "placement",
     (InitialPlacement.REQUIRED, InitialPlacement.GREEDY),
 )
-def test_portfolio_is_deterministic(
+def test_candidate_evaluation_is_deterministic(
     layers: int,
     capacity: int,
     placement: InitialPlacement,

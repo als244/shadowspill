@@ -1,4 +1,4 @@
-"""Value-free serialization for structural AOT graph-pair portfolios."""
+"""Value-free serialization for structural AOT graph pairs."""
 
 from __future__ import annotations
 

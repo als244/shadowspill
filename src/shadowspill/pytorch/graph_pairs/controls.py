@@ -9,9 +9,9 @@ from shadowspill.pytorch.capture.artifacts import AotGraphPair
 
 from .artifacts import (
     DifferentiatedStage,
-    GraphPairPortfolio,
     GraphPairVariant,
     PartitionedTrainingCapture,
+    TaskGraphPairs,
 )
 
 
@@ -47,21 +47,21 @@ def _resolve_stage(
     resolve_pair: Callable[[AotGraphPair, str | None], AotGraphPair],
     metadata_digest: str | None,
 ) -> DifferentiatedStage:
-    portfolio = stage.graph_pairs
+    graph_pairs = stage.graph_pairs
     return replace(
         stage,
-        graph_pairs=GraphPairPortfolio(
-            structural_contract=portfolio.structural_contract,
-            root_output_indices=portfolio.root_output_indices,
+        graph_pairs=TaskGraphPairs(
+            structural_contract=graph_pairs.structural_contract,
+            root_output_indices=graph_pairs.root_output_indices,
             variants=tuple(
                 GraphPairVariant(
                     variant.option_id,
                     variant.memory_budget,
                     resolve_pair(variant.pair, metadata_digest),
                 )
-                for variant in portfolio.variants
+                for variant in graph_pairs.variants
             ),
-            reference_option_id=portfolio.reference_option_id,
+            reference_option_id=graph_pairs.reference_option_id,
         ),
     )
 

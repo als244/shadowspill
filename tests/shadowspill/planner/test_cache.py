@@ -10,7 +10,7 @@ from shadowspill.planner.cache import PressureFitCache
 
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 
-SMALL_PORTFOLIO = PressureFitOptions(
+FEW_CANDIDATES = PressureFitOptions(
     residency_strategies=("relaxed-stall",),
     prefetch_rules=("latest-safe",),
     evaluate_coalesced=False,
@@ -25,7 +25,7 @@ def test_pressurefit_cache_preserves_the_complete_selection(tmp_path: Path) -> N
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
     second = cache.resolve(
         exact_capacity_program(),
@@ -33,8 +33,8 @@ def test_pressurefit_cache_preserves_the_complete_selection(tmp_path: Path) -> N
         final_residency=final,
         config=config(),
         options=PressureFitOptions(
-            residency_strategies=SMALL_PORTFOLIO.residency_strategies,
-            prefetch_rules=SMALL_PORTFOLIO.prefetch_rules,
+            residency_strategies=FEW_CANDIDATES.residency_strategies,
+            prefetch_rules=FEW_CANDIDATES.prefetch_rules,
             evaluate_coalesced=False,
             workers=8,
         ),
@@ -55,14 +55,14 @@ def test_pressurefit_cache_ignores_only_fresh_work_timings(tmp_path: Path) -> No
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
     fresh = PressureFitCache(tmp_path, read_enabled=False).resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
 
     assert not first.cache_hit
@@ -81,7 +81,7 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
@@ -94,7 +94,7 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
             initial_residency=initial,
             final_residency=final,
             config=config(),
-            options=SMALL_PORTFOLIO,
+            options=FEW_CANDIDATES,
         )
 
 
@@ -106,7 +106,7 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=SMALL_PORTFOLIO,
+        options=FEW_CANDIDATES,
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
@@ -119,5 +119,5 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
             initial_residency=initial,
             final_residency=final,
             config=config(),
-            options=SMALL_PORTFOLIO,
+            options=FEW_CANDIDATES,
         )

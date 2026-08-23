@@ -30,7 +30,7 @@ class GraphPairVariant:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphPairPortfolio:
+class TaskGraphPairs:
     """All legal differentiated variants for one structural task contract."""
 
     structural_contract: str
@@ -40,12 +40,12 @@ class GraphPairPortfolio:
 
     def __post_init__(self) -> None:
         if not self.structural_contract:
-            raise ValueError("graph-pair portfolio requires a structural contract")
+            raise ValueError("graph pairs requires a structural contract")
         if not self.root_output_indices:
-            raise ValueError("graph-pair portfolio requires differentiable roots")
+            raise ValueError("graph pairs requires differentiable roots")
         option_ids = tuple(item.option_id for item in self.variants)
         if not option_ids or len(set(option_ids)) != len(option_ids):
-            raise ValueError("graph-pair portfolio option IDs must be unique")
+            raise ValueError("graph pairs option IDs must be unique")
         if self.reference_option_id not in option_ids:
             raise ValueError("graph-pair reference option is absent")
 
@@ -66,10 +66,10 @@ class GraphPairPortfolio:
 
 @dataclass(frozen=True, slots=True)
 class DifferentiatedStage:
-    """Bind one partition occurrence to its structural graph-pair portfolio."""
+    """Bind one partition occurrence to its structural graph pairs."""
 
     example: StageExample
-    graph_pairs: GraphPairPortfolio
+    graph_pairs: TaskGraphPairs
 
     @property
     def differentiable_output_indices(self) -> tuple[int, ...]:
@@ -87,7 +87,7 @@ class PartitionedTrainingCapture:
 
 __all__ = [
     "DifferentiatedStage",
-    "GraphPairPortfolio",
     "GraphPairVariant",
     "PartitionedTrainingCapture",
+    "TaskGraphPairs",
 ]

@@ -56,6 +56,9 @@ function(shadowspill_add_public_api_test file name timeout)
       LABELS "cuda;pytorch"
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR}"
       TIMEOUT ${timeout}
+      # Each of these plans and runs a real model, so two at once contend for
+      # the device and one of them loses.
+      RESOURCE_LOCK shadowspill_device
   )
 endfunction()
 

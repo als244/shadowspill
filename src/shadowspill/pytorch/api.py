@@ -243,7 +243,7 @@ def plan_step(
     Cache policy arguments have the same meaning as :func:`plan_forward`.
     ``partition`` uses the same stage-only policy contract as forward
     planning. A later graph-pair phase independently shares differentiation
-    portfolios across structurally equivalent stage occurrences.
+    graph pairs across structurally equivalent stage occurrences.
 
     ``dynamic_scratch_reserve_bytes`` has the same minimum-reserve semantics
     as :func:`plan_forward`.

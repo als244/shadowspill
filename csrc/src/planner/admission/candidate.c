@@ -8,7 +8,7 @@
 
 #include "internal.h"
 #include "../../common/platform.h"
-#include "../portfolio_internal.h"
+#include "../candidates_internal.h"
 
 #include <limits.h>
 #include <stddef.h>

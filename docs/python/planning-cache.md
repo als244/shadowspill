@@ -9,7 +9,7 @@ planning_cachedir/
 ├── pytorch/
 │   ├── exports/          normalized Export archives and manifests
 │   └── inductor/         PyTorch Inductor and Triton caches
-├── graphpairs/           structural graph-pair portfolios
+├── graphpairs/           structural graph-pair graph pairs
 ├── profiling/
 │   ├── compiled_manifests/
 │   └── measurements/
