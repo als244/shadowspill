@@ -67,7 +67,7 @@ registered state and caller inputs retain authentic values; integer and
 boolean control values come from callers or their producing tasks when
 available.
 
-The resulting `TaskAllocationContract` contains a strict core allocation path and a
+The resulting `TaskAllocationContract` contains a strict invariant allocation path and a
 bounded optional path:
 
 - required outputs and mutations must match their expected ordinal, size,

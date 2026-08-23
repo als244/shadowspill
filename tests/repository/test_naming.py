@@ -1,4 +1,4 @@
-"""The neutral core and public vocabulary stay provider-independent."""
+"""The neutral library and public vocabulary stay provider-independent."""
 
 from tools.check_naming import main
 

@@ -71,7 +71,7 @@ class _Runtime:
 def test_forward_failure_attempts_every_cleanup_without_masking_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original = RuntimeError("compiled task failed")
+    original = RuntimeError("indexed task failed")
     executor = _FailingExecutor(original)
     state = _State(fail=True)
     runtime = _Runtime(fail_release=True)

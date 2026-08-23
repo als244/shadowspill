@@ -590,9 +590,9 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     profiler = CudaTaskProfiler(
         library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
     )
-    compiled = profiler.take_compiled_tasks((artifact, artifact))
-    assert tuple(compiled.functions) == (artifact.compatibility_digest,)
-    assert tuple(compiled.manifests) == (artifact.compatibility_digest,)
+    indexed = profiler.take_compiled_tasks((artifact, artifact))
+    assert tuple(indexed.functions) == (artifact.compatibility_digest,)
+    assert tuple(indexed.manifests) == (artifact.compatibility_digest,)
     assert calls == [artifact.compatibility_digest]
 
     profiler._compiled(artifact)

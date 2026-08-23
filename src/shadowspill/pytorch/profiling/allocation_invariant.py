@@ -1,4 +1,4 @@
-"""Evidence-derived fixed core for one structural task allocation path."""
+"""The invariant part of one structural task allocation path, from evidence."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .allocation_contract import (
 
 @dataclass(frozen=True, slots=True)
 class AllocationPathProbe:
-    """One complete seed/repetition allocation path supplied to core derivation."""
+    """One complete seed/repetition allocation path supplied to invariant derivation."""
 
     probe_index: int
     repetition: int
@@ -29,7 +29,7 @@ class AllocationPathProbe:
 
 
 @dataclass(frozen=True, slots=True)
-class DerivedAllocationCore:
+class DerivedAllocationInvariant:
     """Deterministic medoid path and every probe's reconciliation evidence."""
 
     allocation_contract: TaskAllocationContract
@@ -40,16 +40,16 @@ class DerivedAllocationCore:
 
 
 class AmbiguousAllocationPathError(ValueError):
-    """A complete observed path has multiple minimum-edit core mappings."""
+    """A complete observed path has multiple minimum-edit invariant mappings."""
 
 
-def derive_core_allocation_path(
+def derive_invariant_allocation_path(
     warmed_reference: TaskAllocationContract,
     probes: Sequence[AllocationPathProbe],
     *,
     warmed_reference_repetitions: int = 3,
-) -> DerivedAllocationCore:
-    """Choose and reconcile one fixed core from complete observed paths.
+) -> DerivedAllocationInvariant:
+    """Choose and reconcile one invariant from complete observed paths.
 
     The medoid minimizes total insertion/deletion distance across the warmed
     reference and the seed/repetition matrix. Repeated identical paths carry
@@ -83,28 +83,28 @@ def derive_core_allocation_path(
             for observed_digest, count in weights.items()
         )
         ranked.append((score, len(candidate.steps), digest, candidate))
-    score, _length, digest, core = min(ranked)
+    score, _length, digest, invariant = min(ranked)
 
-    core_tokens = tokenized[digest]
+    invariant_tokens = tokenized[digest]
     observations: list[TaskAllocationPathObservation] = []
     for probe in probes:
         observed_tokens = _operation_tokens(probe.allocation_contract)
-        probe_distance = _myers_edit_distance(core_tokens, observed_tokens)
+        probe_distance = _myers_edit_distance(invariant_tokens, observed_tokens)
         alignment = _unique_minimum_alignment(
-            core_tokens,
+            invariant_tokens,
             observed_tokens,
             probe_distance,
         )
         if alignment is None:
             raise AmbiguousAllocationPathError(
-                "allocation path has multiple minimum-edit core/scratch "
+                "allocation path has multiple minimum-edit invariant/scratch "
                 "interpretations: "
                 f"probe={probe.probe_index}, repetition={probe.repetition}, "
                 f"edit_distance={probe_distance}"
             )
         observations.append(
             compare_allocation_path(
-                core,
+                invariant,
                 probe.allocation_contract,
                 probe_index=probe.probe_index,
                 repetition=probe.repetition,
@@ -116,24 +116,24 @@ def derive_core_allocation_path(
     reference_tokens = _operation_tokens(warmed_reference)
     reference_distance = distance(digest, warmed_reference.compatibility_digest)
     reference_alignment = _unique_minimum_alignment(
-        core_tokens,
+        invariant_tokens,
         reference_tokens,
         reference_distance,
     )
     if reference_alignment is None:
         raise AmbiguousAllocationPathError(
-            "warmed allocation path has multiple minimum-edit core/scratch "
+            "warmed allocation path has multiple minimum-edit invariant/scratch "
             f"interpretations: edit_distance={reference_distance}"
         )
     compare_allocation_path(
-        core,
+        invariant,
         warmed_reference,
         probe_index=0,
         repetition=warmed_reference_repetitions,
         operation_alignment=reference_alignment,
     )
-    return DerivedAllocationCore(
-        allocation_contract=core,
+    return DerivedAllocationInvariant(
+        allocation_contract=invariant,
         source_digest=digest,
         weighted_edit_distance=score,
         reference_edit_distance=reference_distance,
@@ -251,7 +251,7 @@ def _unique_minimum_alignment(
 
     Forward and backward banded edit costs identify every equal-token pair
     that can participate in a minimum insertion/deletion alignment. If one
-    token can pair with two positions, the physical core interpretation is
+    token can pair with two positions, the physical invariant interpretation is
     ambiguous even when either choice would happen to execute successfully.
     """
 
@@ -262,7 +262,7 @@ def _unique_minimum_alignment(
     cells = (left_count + right_count + 2) * (2 * distance + 1)
     if cells > 20_000_000:
         raise ValueError(
-            "allocation paths diverge too far for bounded core alignment: "
+            "allocation paths diverge too far for bounded invariant alignment: "
             f"left={left_count}, right={right_count}, distance={distance}"
         )
     forward: list[dict[int, int]] = [dict() for _ in range(left_count + 1)]
@@ -342,6 +342,6 @@ def _unique_minimum_alignment(
 __all__ = [
     "AllocationPathProbe",
     "AmbiguousAllocationPathError",
-    "DerivedAllocationCore",
-    "derive_core_allocation_path",
+    "DerivedAllocationInvariant",
+    "derive_invariant_allocation_path",
 ]

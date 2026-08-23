@@ -985,7 +985,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
     }
     const uint64_t task_id = shadowspill_current_task_id(runtime);
     const uint64_t allocation_ordinal =
-        shadowspill_current_task_core_allocation_ordinal(runtime);
+        shadowspill_current_task_invariant_allocation_ordinal(runtime);
     const int allocation_is_scratch =
         shadowspill_current_task_allocation_is_scratch(runtime);
     const uint64_t task_invocation =

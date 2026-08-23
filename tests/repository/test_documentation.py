@@ -168,10 +168,10 @@ def _python_page_expectations() -> dict[Path, set[str]]:
         PYTHON_API / "frontend.md": set(_all_exports(_MEMORY_MODULE)),
         PYTHON_API / "artifacts.md": set(),
         PYTHON_API / "diagnostics.md": set(),
-        PYTHON_API / "core.md": set(),
+        PYTHON_API / "neutral.md": set(),
     }
     for path in _CORE_PYTHON_MODULES:
-        expectations[PYTHON_API / "core.md"].update(_all_exports(path))
+        expectations[PYTHON_API / "neutral.md"].update(_all_exports(path))
 
     exports = set(_all_exports(_PYTORCH_MODULE))
     tree = ast.parse(_PYTORCH_MODULE.read_text(), filename=str(_PYTORCH_MODULE))

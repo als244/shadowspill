@@ -254,7 +254,7 @@ def test_random_linear_programs_match(
 def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
 ) -> None:
     """The simulator attaches its own interval arrays to a result so
-    a compiled consumer can read the timings without re-encoding them. They
+    a indexed consumer can read the timings without re-encoding them. They
     address library memory, so anything that writes a result out - `asdict`,
     `pickle`, `torch.save`, `copy.deepcopy` - must not carry them along."""
 

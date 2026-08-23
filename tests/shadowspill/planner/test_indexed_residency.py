@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     ["tight-stall", "tight-transfer", "headroom-stall", "headroom-transfer"],
 )
 @pytest.mark.parametrize("with_repair_pressure", [False, True])
-def test_compiled_reducer_matches_python_reference(
+def test_reducer_matches_the_reference(
     layers: int,
     capacity: int,
     strategy: str,
@@ -69,7 +69,7 @@ def test_compiled_reducer_matches_python_reference(
             extra_pressure=extra,
         )
 
-    def reduce_compiled() -> object:
+    def reduce_indexed() -> object:
         return reduce_residency(
             index_residency_template(facts, selected_config, seed),
             seed,
@@ -80,12 +80,12 @@ def test_compiled_reducer_matches_python_reference(
     try:
         reference = reduce_python()
     except PressureFitInfeasibleError as reference_error:
-        with pytest.raises(PressureFitInfeasibleError) as compiled:
-            reduce_compiled()
-        assert compiled.value.kind == reference_error.kind
-        assert compiled.value.device_id == reference_error.device_id
-        assert compiled.value.boundary_task_id == reference_error.boundary_task_id
-        assert compiled.value.required_bytes == reference_error.required_bytes
-        assert compiled.value.capacity_bytes == reference_error.capacity_bytes
+        with pytest.raises(PressureFitInfeasibleError) as indexed:
+            reduce_indexed()
+        assert indexed.value.kind == reference_error.kind
+        assert indexed.value.device_id == reference_error.device_id
+        assert indexed.value.boundary_task_id == reference_error.boundary_task_id
+        assert indexed.value.required_bytes == reference_error.required_bytes
+        assert indexed.value.capacity_bytes == reference_error.capacity_bytes
     else:
-        assert reduce_compiled() == reference
+        assert reduce_indexed() == reference

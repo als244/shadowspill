@@ -235,7 +235,7 @@ typedef struct ShadowSpillTaskAllocationContractStep {
     uint8_t operation;
     /*
      * Required allocations publish framework-visible output or mutation
-     * storage. Anonymous/provider operations are optional core observations:
+     * storage. Anonymous/provider operations are optional invariant observations:
      * runtime insertions use bounded dynamic scratch and omissions are
      * reconciled in order.
      */
@@ -336,7 +336,7 @@ typedef struct ShadowSpillTaskDescription {
     uint64_t live_charged_allocation_limit_bytes;
     /*
      * Bounded dynamic storage for allocator operations absent from the fixed
-     * core contract. Zero preserves strict exact-contract behavior.
+     * invariant contract. Zero preserves strict exact-contract behavior.
      */
     uint64_t dynamic_scratch_maximum_allocation_bytes;
     uint64_t dynamic_scratch_live_limit_bytes;

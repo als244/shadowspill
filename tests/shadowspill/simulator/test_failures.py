@@ -36,7 +36,7 @@ from tests.shadowspill.ir._examples import (
 from ._examples import calibrated_config, overlap_program, overlap_schedule
 
 
-def test_public_simulator_fails_closed_without_compiled_library(
+def test_public_simulator_fails_closed_without_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     implementation = importlib.import_module("shadowspill.simulator")

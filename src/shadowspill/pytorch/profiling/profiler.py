@@ -41,7 +41,7 @@ from .allocation_contract import (
     TaskAllocationContract,
     TaskAllocationPathObservation,
 )
-from .allocation_core import AllocationPathProbe, derive_core_allocation_path
+from .allocation_invariant import AllocationPathProbe, derive_invariant_allocation_path
 from .executables import ProfileExecutable, ProfileExecutableStore
 from .records import TaskMeasurement, TaskOutputInputBinding
 from .runner import ProfilableArtifact
@@ -593,7 +593,7 @@ class CudaTaskProfiler:
         TaskAllocationContract,
         tuple[TaskAllocationPathObservation, ...],
     ]:
-        """Derive one core from stable warm traces and the probe matrix."""
+        """Derive one invariant from stable warm traces and the probe matrix."""
 
         contract = (
             executable.artifact.storage_contract
@@ -630,7 +630,7 @@ class CudaTaskProfiler:
                     f"(probe={probe.probe_index}, repetition={probe.repetition})"
                 )
         try:
-            derived = derive_core_allocation_path(
+            derived = derive_invariant_allocation_path(
                 expected,
                 tuple(
                     AllocationPathProbe(
@@ -644,10 +644,10 @@ class CudaTaskProfiler:
             )
         except ValueError as error:
             raise AllocationTelemetryError(
-                f"compiled task allocation paths cannot derive one fixed core: {error}"
+                f"compiled task allocation paths cannot derive one invariant: {error}"
             ) from error
         candidates = (*warm_workspaces, *(item.workspace for item in path_probes))
-        core_workspace = next(
+        invariant_workspace = next(
             (
                 item
                 for item in candidates
@@ -659,10 +659,10 @@ class CudaTaskProfiler:
             ),
             None,
         )
-        if core_workspace is None:
-            raise AssertionError("derived allocation core has no source workspace")
+        if invariant_workspace is None:
+            raise AssertionError("the derived invariant has no source workspace")
         return (
-            _conservative_core_workspace(core_workspace, candidates),
+            _conservative_invariant_workspace(invariant_workspace, candidates),
             derived.allocation_contract,
             derived.observations,
         )
@@ -1361,11 +1361,11 @@ def _persistent_profile_extents(
     return workspace.persistent_extent_bytes
 
 
-def _conservative_core_workspace(
-    core: TaskWorkspaceProfile,
+def _conservative_invariant_workspace(
+    invariant: TaskWorkspaceProfile,
     observations: Sequence[TaskWorkspaceProfile],
 ) -> TaskWorkspaceProfile:
-    """Keep core ordering while charging the largest observed live-set peak."""
+    """Keep invariant ordering while charging the largest observed live-set peak."""
 
     peak_source = max(
         observations,
@@ -1377,13 +1377,13 @@ def _conservative_core_workspace(
     )
     peak_requested = max(item.peak_requested_bytes for item in observations)
     if (
-        core.peak_requested_bytes == peak_requested
-        and core.peak_charged_bytes == peak_source.peak_charged_bytes
-        and core.peak_extent_bytes == peak_source.peak_extent_bytes
+        invariant.peak_requested_bytes == peak_requested
+        and invariant.peak_charged_bytes == peak_source.peak_charged_bytes
+        and invariant.peak_extent_bytes == peak_source.peak_extent_bytes
     ):
-        return core
+        return invariant
     return replace(
-        core,
+        invariant,
         peak_requested_bytes=peak_requested,
         peak_charged_bytes=peak_source.peak_charged_bytes,
         peak_extent_bytes=peak_source.peak_extent_bytes,

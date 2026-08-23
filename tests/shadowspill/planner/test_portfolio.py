@@ -20,7 +20,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_pressurefit_fails_closed_without_compiled_planner(
+def test_pressurefit_fails_closed_without_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     implementation = importlib.import_module("shadowspill.planner.pressurefit")
@@ -55,7 +55,7 @@ def test_portfolio_is_deterministic(
     config = training_chain_config(capacity)
     options = PressureFitOptions(initial_placement=placement, workers=1)
 
-    compiled = pressurefit(
+    indexed = pressurefit(
         program,
         initial_residency=initial,
         config=config,
@@ -69,21 +69,21 @@ def test_portfolio_is_deterministic(
         options=options,
     )
 
-    assert compiled.schedule == repeated.schedule
-    assert compiled.selections == repeated.selections
-    assert compiled.simulation == repeated.simulation
-    assert compiled.diagnostics.selected_candidate_id == (
+    assert indexed.schedule == repeated.schedule
+    assert indexed.selections == repeated.selections
+    assert indexed.simulation == repeated.simulation
+    assert indexed.diagnostics.selected_candidate_id == (
         repeated.diagnostics.selected_candidate_id
     )
-    assert compiled.diagnostics.selected_selection_id == (
+    assert indexed.diagnostics.selected_selection_id == (
         repeated.diagnostics.selected_selection_id
     )
-    assert compiled.diagnostics.selected_makespan_ns == (
+    assert indexed.diagnostics.selected_makespan_ns == (
         repeated.diagnostics.selected_makespan_ns
     )
     assert tuple(
         candidate.candidate_id
-        for problem in compiled.diagnostics.recomputation_problems
+        for problem in indexed.diagnostics.recomputation_problems
         for candidate in problem.candidate_evaluations
     ) == tuple(
         candidate.candidate_id

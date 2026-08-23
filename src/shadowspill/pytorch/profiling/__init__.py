@@ -6,11 +6,11 @@ from .allocation_contract import (
     TaskAllocationPathObservation,
     compare_allocation_path,
 )
-from .allocation_core import (
+from .allocation_invariant import (
     AllocationPathProbe,
     AmbiguousAllocationPathError,
-    DerivedAllocationCore,
-    derive_core_allocation_path,
+    DerivedAllocationInvariant,
+    derive_invariant_allocation_path,
 )
 from .environment import profile_environment
 from .inputs import (
@@ -47,7 +47,7 @@ __all__ = [
     "REPRESENTATIVE_VALUE_POLICY",
     "AllocationPathProbe",
     "AmbiguousAllocationPathError",
-    "DerivedAllocationCore",
+    "DerivedAllocationInvariant",
     "PlanningArtifactRecorder",
     "ProfilableArtifact",
     "ProfileEnvironment",
@@ -67,7 +67,7 @@ __all__ = [
     "TaskOutputInputBinding",
     "canonicalize_profiling_metadata",
     "compare_allocation_path",
-    "derive_core_allocation_path",
+    "derive_invariant_allocation_path",
     "materialize_representative_inputs",
     "profile_environment",
     "profile_unique_artifacts",

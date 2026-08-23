@@ -12,7 +12,7 @@ typedef struct ShadowSpillTaskScope {
     uint64_t invocation;
     uint64_t operation_index;
     uint64_t allocation_sequence;
-    uint64_t pending_core_ordinal;
+    uint64_t pending_invariant_ordinal;
     uint8_t pending_is_scratch;
     uint8_t pending_allocation;
     uint8_t *allocation_states;
@@ -59,12 +59,12 @@ uint64_t shadowspill_current_task_allocation_ordinal(
         : SHADOWSPILL_RUNTIME_NO_ID;
 }
 
-uint64_t shadowspill_current_task_core_allocation_ordinal(
+uint64_t shadowspill_current_task_invariant_allocation_ordinal(
     ShadowSpillRuntime *runtime
 ) {
     return task_scope.runtime == runtime && task_scope.task != NULL &&
             task_scope.pending_allocation && !task_scope.pending_is_scratch
-        ? task_scope.pending_core_ordinal
+        ? task_scope.pending_invariant_ordinal
         : SHADOWSPILL_RUNTIME_NO_ID;
 }
 
@@ -137,7 +137,7 @@ int shadowspill_enter_allocation_scope(
     task_scope.invocation = 0U;
     task_scope.operation_index = 0U;
     task_scope.allocation_sequence = 0U;
-    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    task_scope.pending_invariant_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     task_scope.pending_is_scratch = 0U;
     task_scope.pending_allocation = 0U;
     task_scope.allocation_states = NULL;
@@ -343,7 +343,7 @@ static void classify_task_allocation(
 ) {
     task_scope.pending_allocation = 1U;
     task_scope.pending_is_scratch = 1U;
-    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    task_scope.pending_invariant_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     skip_omitted_free_operations();
     const uint64_t start = task_scope.operation_index;
     uint64_t scan = start;
@@ -371,7 +371,7 @@ static void classify_task_allocation(
                 }
                 task_scope.operation_index = scan;
                 task_scope.pending_is_scratch = 0U;
-                task_scope.pending_core_ordinal = step->allocation_ordinal;
+                task_scope.pending_invariant_ordinal = step->allocation_ordinal;
                 return;
             }
             if (step->required) {
@@ -494,9 +494,9 @@ uint64_t shadowspill_commit_task_allocation(
         }
         ++task_scope.scratch_allocation_count;
     } else if (task_scope.pending_allocation) {
-        if (task_scope.pending_core_ordinal <
+        if (task_scope.pending_invariant_ordinal <
             task_scope.allocation_state_count) {
-            task_scope.allocation_states[task_scope.pending_core_ordinal] =
+            task_scope.allocation_states[task_scope.pending_invariant_ordinal] =
                 SHADOWSPILL_TASK_ALLOCATION_MATCHED;
         }
         ++task_scope.operation_index;
@@ -512,7 +512,7 @@ uint64_t shadowspill_commit_task_allocation(
     ++task_scope.allocation_count;
     task_scope.pending_allocation = 0U;
     task_scope.pending_is_scratch = 0U;
-    task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+    task_scope.pending_invariant_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     return allocation_sequence;
 }
 
@@ -644,7 +644,7 @@ void shadowspill_leave_task_scope(ShadowSpillRuntime *runtime) {
         task_scope.invocation = 0U;
         task_scope.operation_index = 0U;
         task_scope.allocation_sequence = 0U;
-        task_scope.pending_core_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
+        task_scope.pending_invariant_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
         task_scope.pending_is_scratch = 0U;
         task_scope.pending_allocation = 0U;
         task_scope.allocation_states = NULL;

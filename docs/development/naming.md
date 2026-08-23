@@ -34,6 +34,11 @@ provider spelling required by the framework hook.
 - `backing` for the secondary pool role; use `spill`.
 - `progress` for the runtime thread; use `worker`.
 - `native` as a synonym for the C library.
+- `core` for the invariant part of something; say what makes it invariant.
+- `compiled` for the C library. It means what torch.compile produced.
+- `context` unless it is a driver context; the PressureFit one is a
+  problem, a backend's opaque handle is its state.
+- `topology` for something that is not one; admission takes facts.
 - `host` for the secondary pool, which is generic; use `spill`. Keep it only
   where it means the CPU a backend runs on - `pinned_host()` names a pool
   that really is host memory, and a driver call that synchronizes the host

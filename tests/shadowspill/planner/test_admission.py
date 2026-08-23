@@ -117,7 +117,7 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
     facts = _causal_facts()
     template = index_simulation_template(program, (), causal_config())
 
-    compiled = evaluate_schedule_admission(
+    indexed = evaluate_schedule_admission(
         template,
         index_admission_facts(facts, template),
         encode_schedule(schedule, template),
@@ -134,11 +134,11 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
         device_capacity_bytes=96,
     )
 
-    assert compiled.simulation_admission == reference
-    assert compiled.decision_digest == replay.pool.decision_digest
-    assert compiled.peak_allocated_bytes == replay.pool.peak_allocated_bytes
-    assert compiled.peak_reserved_bytes == replay.pool.peak_reserved_bytes
-    assert compiled.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
+    assert indexed.simulation_admission == reference
+    assert indexed.decision_digest == replay.pool.decision_digest
+    assert indexed.peak_allocated_bytes == replay.pool.peak_allocated_bytes
+    assert indexed.peak_reserved_bytes == replay.pool.peak_reserved_bytes
+    assert indexed.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
 
 
 def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
@@ -190,7 +190,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         (TaskAdmissionSpec("boundary"),),
     )
 
-    compiled = evaluate_schedule_admission(
+    indexed = evaluate_schedule_admission(
         template,
         index_admission_facts(facts, template),
         encode_schedule(schedule, template),
@@ -207,10 +207,10 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         device_capacity_bytes=64,
     )
 
-    assert compiled.decision_digest == replay.pool.decision_digest
-    assert compiled.simulation_admission == reference
-    assert compiled.peak_allocated_bytes == replay.pool.peak_allocated_bytes
-    assert compiled.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
+    assert indexed.decision_digest == replay.pool.decision_digest
+    assert indexed.simulation_admission == reference
+    assert indexed.peak_allocated_bytes == replay.pool.peak_allocated_bytes
+    assert indexed.peak_fragmentation_bytes == replay.pool.peak_fragmentation_bytes
 
 
 def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> None:
@@ -379,7 +379,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     )
     template = index_simulation_template(program, (), config)
 
-    compiled = evaluate_schedule_admission(
+    indexed = evaluate_schedule_admission(
         template,
         index_admission_facts(facts, template),
         encode_schedule(schedule, template),
@@ -391,8 +391,8 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     )
 
     assert len(replay.pool.dependencies) == 3
-    assert compiled.decision_digest == replay.pool.decision_digest
-    assert compiled.peak_allocated_bytes == 24
+    assert indexed.decision_digest == replay.pool.decision_digest
+    assert indexed.peak_allocated_bytes == 24
 
 
 def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:

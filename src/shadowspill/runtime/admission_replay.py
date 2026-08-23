@@ -110,7 +110,7 @@ def run_admission_replay(
     minimum_alignment: int = 256,
     large_request_threshold_bytes: int = 0,
 ) -> AdmissionReplayResult:
-    """Replay an ordered script through the exact production MemoryPool core."""
+    """Replay an ordered script through the exact production MemoryPool policy."""
 
     if (
         capacity_bytes < 0

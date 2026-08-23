@@ -35,7 +35,7 @@ Physical admission consumes:
 |---|---|
 | `PressureFitResult` | Selected tasks, residency, ordered actions, and logical simulation. |
 | `AdmissionFacts` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
-| `TaskAllocationContract` values | Stable task-local core allocation/free identities and geometry. |
+| `TaskAllocationContract` values | Stable task-local invariant allocation/free identities and geometry. |
 | Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the strict core. |
 | Terminal caller-owned aliases | Final execution leases that may outlive a later callable invocation. |
 
