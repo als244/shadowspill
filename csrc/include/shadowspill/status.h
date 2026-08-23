@@ -27,11 +27,6 @@ extern "C" {
  * The three shared codes keep the values every component already used, and
  * each component's own codes occupy a band of their own, so a status decodes
  * to exactly one meaning wherever it came from.
- *
- * Component prefixes remain as aliases below, because a planner function
- * returning a planner-named code reads better at the call site than a
- * general one, and because the compiler should not have to be told about
- * two thousand unchanged expressions to make the values disjoint.
  */
 typedef enum ShadowSpillStatus {
     SHADOWSPILL_STATUS_OK = 0,

@@ -51,7 +51,7 @@ static void append_action_locked(
     object->action_tail = action;
 }
 
-ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
+ShadowSpillStatus shadowspill_object_schedule_action_locked(
     ShadowSpillObject *object,
     ShadowSpillQueuedAction *action
 ) {
@@ -59,7 +59,7 @@ ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
         action->object != object || action->object_previous != NULL ||
         action->object_next != NULL || action == object->action_head ||
         action == object->action_tail) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
 
     const ShadowSpillProjectedObjectState before = projected_state_locked(
@@ -72,7 +72,7 @@ ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
     switch (action->kind) {
         case SHADOWSPILL_RUNTIME_PREFETCH:
             if (!before.spill_current || before.execution_current) {
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
             action->produces_current_execution = 1U;
             action->produces_current_spill =
@@ -80,22 +80,22 @@ ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
             break;
         case SHADOWSPILL_RUNTIME_RELEASE:
             if (!before.execution_current) {
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
             action->produces_current_spill = before.spill_current;
             break;
         case SHADOWSPILL_RUNTIME_OFFLOAD:
             if (!before.execution_current) {
-                return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+                return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
             action->produces_current_spill = 1U;
             break;
         default:
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     append_action_locked(object, action);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 int shadowspill_object_action_is_head_locked(

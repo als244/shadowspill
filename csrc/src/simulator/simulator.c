@@ -14,34 +14,34 @@ static int validate_result_buffers(
         result->device_peaks != NULL;
 }
 
-static ShadowSpillSimulationStatus finish_failure(
+static ShadowSpillStatus finish_failure(
     ShadowSpillSimulationWork *work,
     const ShadowSpillSimulationResult *result
 ) {
-    ShadowSpillSimulationStatus status =
-        (ShadowSpillSimulationStatus)result->status;
+    ShadowSpillStatus status =
+        (ShadowSpillStatus)result->status;
     shadowspill_free_work(work);
     return status;
 }
 
-ShadowSpillSimulationStatus shadowspill_simulate(
+ShadowSpillStatus shadowspill_simulate(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_SIMULATION_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     shadowspill_initialize_result(result);
     if (!shadowspill_validate_program(program) ||
         !validate_result_buffers(program, result)) {
-        result->status = SHADOWSPILL_SIMULATION_INVALID_ARGUMENT;
-        return SHADOWSPILL_SIMULATION_INVALID_ARGUMENT;
+        result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillSimulationWork work = {0};
     if (!shadowspill_allocate_work(program, &work)) {
         shadowspill_free_work(&work);
-        result->status = SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE;
-        return SHADOWSPILL_SIMULATION_ALLOCATION_FAILURE;
+        result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     if (!shadowspill_initialize_memory(program, &work, result)) {
         return finish_failure(&work, result);
@@ -78,7 +78,7 @@ ShadowSpillSimulationStatus shadowspill_simulate(
             .total_bytes = work.device_total_peaks[device],
         };
     }
-    result->status = SHADOWSPILL_SIMULATION_OK;
+    result->status = SHADOWSPILL_STATUS_OK;
     shadowspill_free_work(&work);
-    return SHADOWSPILL_SIMULATION_OK;
+    return SHADOWSPILL_STATUS_OK;
 }

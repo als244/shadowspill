@@ -88,7 +88,7 @@ void shadowspill_initialize_result(ShadowSpillSimulationResult *result);
 
 void shadowspill_set_error(
     ShadowSpillSimulationResult *result,
-    ShadowSpillSimulationStatus status,
+    ShadowSpillStatus status,
     const ShadowSpillSimulationWork *work,
     uint32_t task,
     uint32_t alias,
@@ -97,7 +97,7 @@ void shadowspill_set_error(
 
 void shadowspill_set_capacity_error(
     ShadowSpillSimulationResult *result,
-    ShadowSpillSimulationStatus status,
+    ShadowSpillStatus status,
     const ShadowSpillSimulationWork *work,
     uint32_t task,
     uint32_t alias,

@@ -102,12 +102,12 @@ void shadowspill_event_pool_destroy(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventPool *pool
 );
-ShadowSpillRuntimeStatus shadowspill_event_pool_reserve(
+ShadowSpillStatus shadowspill_event_pool_reserve(
     ShadowSpillEventPool *pool,
     uint64_t minimum_free_leases
 );
 
-ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
+ShadowSpillStatus shadowspill_event_lease_create_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventLease **lease
 );
@@ -130,7 +130,7 @@ void shadowspill_completion_tracker_destroy(
     ShadowSpillRuntime *runtime,
     ShadowSpillCompletionTracker *tracker
 );
-ShadowSpillRuntimeStatus shadowspill_completion_submit(
+ShadowSpillStatus shadowspill_completion_submit(
     ShadowSpillRuntime *runtime,
     ShadowSpillBackendStream stream,
     ShadowSpillEventLease *event,

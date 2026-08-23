@@ -49,7 +49,7 @@ int shadowspill_residency_mark_removable(
     uint32_t removable_capacity
 );
 
-ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
+ShadowSpillStatus shadowspill_reduce_residency_reusing(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
     ShadowSpillResidencyResult *result,

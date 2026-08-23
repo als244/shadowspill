@@ -374,7 +374,7 @@ static int partition_dynamic(
 
 /* ----------------------------------------------------------------- entry */
 
-static ShadowSpillPlannerStatus build_lifetimes(
+static ShadowSpillStatus build_lifetimes(
     const ShadowSpillLeaseLifetimeProblem *problem,
     ShadowSpillLeaseLifetimeResult *result,
     LeaseIndex *index,
@@ -407,14 +407,14 @@ static ShadowSpillPlannerStatus build_lifetimes(
             }
         } else {
             if (predicted_end(problem, index, retire, &ends) != 0) {
-                return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
             identity->causal_end = retire;
         }
 
         uint64_t begins;
         if (predicted_start(index, identity, &begins) != 0 || ends < begins) {
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         const uint64_t start = identity->causal_start;
         result->lifetimes[lease] = (ShadowSpillLeaseLifetime){
@@ -443,7 +443,7 @@ static ShadowSpillPlannerStatus build_lifetimes(
         const uint32_t alias = problem->dynamic_aliases[item];
         if (alias >= topology->alias_count ||
             result->alias_leases[alias] == NO_LEASE) {
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         dynamic[result->alias_leases[alias]] = 1U;
     }
@@ -456,10 +456,10 @@ static ShadowSpillPlannerStatus build_lifetimes(
             : NO_LEASE;
     }
     result->lifetime_count = count;
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
+ShadowSpillStatus shadowspill_build_lease_lifetimes(
     const ShadowSpillLeaseLifetimeProblem *problem,
     ShadowSpillLeaseLifetimeResult *result
 )
@@ -470,10 +470,10 @@ ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
         problem->schedule == NULL || result->lifetimes == NULL ||
         result->identities == NULL || result->allocation_step_leases == NULL ||
         result->alias_leases == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (problem->dynamic_alias_count > 0U && problem->dynamic_aliases == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     result->lifetime_count = 0U;
     result->fixed_count = 0U;
@@ -482,18 +482,18 @@ ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
     LeaseIndex index;
     memset(&index, 0, sizeof(index));
     uint8_t *dynamic = malloc(count ? count : 1U);
-    ShadowSpillPlannerStatus status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     if (dynamic == NULL || index_intervals(problem, &index) != 0 ||
         index_allocation_steps(problem, &index) != 0) {
         goto done;
     }
     status = build_lifetimes(problem, result, &index, dynamic);
-    if (status != SHADOWSPILL_PLANNER_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         goto done;
     }
     status = partition_dynamic(result, dynamic, count) == 0
-        ? SHADOWSPILL_PLANNER_OK
-        : SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
 
 done:
     free(dynamic);

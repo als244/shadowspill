@@ -125,7 +125,7 @@ typedef struct ShadowSpillPytorchAdapterFailure {
  * connector owns the runtime/backend for process lifetime because PyTorch's
  * selected allocator cannot safely be replaced after initialization.
  */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocator_bootstrap(
     const ShadowSpillPytorchAdapterConfig *config
 );
@@ -134,12 +134,12 @@ shadowspill_pytorch_allocator_bootstrap(
  * Idempotently reject new allocator work, stop and join the runtime worker,
  * close every route and pool, and release the concrete backend. PyTorch's
  * allocator shim remains installed; subsequent nonzero allocations fail with
- * SHADOWSPILL_RUNTIME_CLOSED instead of accessing released backend state.
+ * SHADOWSPILL_STATUS_CLOSED instead of accessing released backend state.
  */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocator_close(void);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_adapter_capabilities(
     ShadowSpillPytorchAdapterCapabilities *capabilities
 );
@@ -156,31 +156,31 @@ SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_profile_range_end(
 );
 
 /* Enable or disable provider annotations independently of runtime tracing. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_profiler_annotations_set(uint8_t enabled);
 
 /* Copies immutable bootstrap admission and physical-accounting evidence. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_physical_admission(
     ShadowSpillPytorchPhysicalAdmission *admission
 );
 
 /* Queries current per-process physical use for seal/diagnostic boundaries. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
 
 /*
  * Confirms the profiled provider reserve fits the bootstrap reservation and
  * seals the physical ledger. This call does not resize or weaken the budget.
  */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_seal_physical_budget(
     uint64_t required_provider_headroom_bytes,
     uint64_t runtime_record_reserve
 );
 
 /* Cold-path immutable execution admission and hot predecoded boundaries. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_create(
     uint32_t execution_pool_id,
     uint32_t spill_pool_id,
@@ -189,31 +189,31 @@ shadowspill_pytorch_plan_create(
     uintptr_t *plan_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_close(uintptr_t plan_handle);
 
 SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_plan_destroy(
     uintptr_t plan_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_object_handle_acquire(
     uint64_t runtime_object_id,
     uintptr_t *object_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_object_handle_release(
     uintptr_t object_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_object_release_generation(
     uintptr_t object_handle,
     uint64_t expected_generation
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_bind_object(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
@@ -221,14 +221,14 @@ shadowspill_pytorch_plan_bind_object(
     uint8_t consistency
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_admit_task(
     uintptr_t plan_handle,
     const ShadowSpillTaskDescription *description,
     uintptr_t *task_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_publish_initial_allocation(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
@@ -236,21 +236,21 @@ shadowspill_pytorch_plan_publish_initial_allocation(
     ShadowSpillObjectBinding *binding
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_seal_fixed_layout(uintptr_t plan_handle);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_clear_tasks(uintptr_t plan_handle);
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_wait_idle(uintptr_t plan_handle);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_admit_object_acquisition(
     uintptr_t plan_handle,
     const uint64_t *object_ids,
@@ -258,7 +258,7 @@ shadowspill_pytorch_plan_admit_object_acquisition(
     uintptr_t *acquisition_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_plan_admit_action_batch(
     uintptr_t plan_handle,
     uint64_t batch_id,
@@ -267,13 +267,13 @@ shadowspill_pytorch_plan_admit_action_batch(
     uintptr_t *action_batch_handle
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_submit_action_batch_handle(
     uintptr_t action_batch_handle,
     uintptr_t trigger_stream_address
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_acquire_objects_handle(
     uintptr_t acquisition_handle,
     uintptr_t consumer_stream_address,
@@ -281,7 +281,7 @@ shadowspill_pytorch_acquire_objects_handle(
     uint32_t binding_capacity
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_transfer_acquired_object_to_caller(
     uintptr_t acquisition_handle,
     uint32_t object_ordinal,
@@ -292,7 +292,7 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
     ShadowSpillAllocation *allocation
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
     uintptr_t compute_stream_address,
@@ -300,14 +300,14 @@ shadowspill_pytorch_before_task_handle(
     uint32_t *binding_count
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
     uintptr_t compute_stream_address
 );
 
 /* Publish one task-owned output without a runtime object-ID lookup. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_task_publish_allocation(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
@@ -316,7 +316,7 @@ shadowspill_pytorch_task_publish_allocation(
 );
 
 /* Validate one replacement's retired and successor addresses by direct record. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_validate_task_replacement_binding(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
@@ -325,15 +325,15 @@ shadowspill_pytorch_validate_task_replacement_binding(
 );
 
 /* Reconciles current process bytes against the sealed or provisional cap. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_check_physical_budget(void);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocator_statistics(
     ShadowSpillPytorchAdapterStatistics *statistics
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocator_failure(
     ShadowSpillPytorchAdapterFailure *failure
 );
@@ -342,22 +342,22 @@ shadowspill_pytorch_allocator_failure(
  * Fault-teardown helper. The frontend must first synchronize the execution
  * device. Only a latched NO_PROGRESS allocator failure can be cleared.
  */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_recover_no_progress(void);
 
 /* Explicitly synchronizing qualification/checkpoint helper. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocator_wait_idle(void);
 
 /* Public frontend bridge for runtime transfer-route calibration and snapshots. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_calibrate_transfer_capabilities(
     const ShadowSpillTransferCalibrationConfig *config,
     const ShadowSpillTransferRouteKey *routes,
     uint32_t route_count
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_transfer_profiles(
     ShadowSpillTransferProfile *profiles,
     uint32_t capacity,
@@ -366,13 +366,13 @@ shadowspill_pytorch_transfer_profiles(
 );
 
 /* Bounded task-scoped allocation telemetry used by structural profiling. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_telemetry_start(uint64_t capacity);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_telemetry_stop(void);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_telemetry_read(
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
@@ -384,16 +384,16 @@ shadowspill_pytorch_allocation_telemetry_read(
  * buffers but does not enable tracing. Begin/end are per-step operations;
  * callers establish the desired completion boundary before ending a trace.
  */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_trace_prepare(const ShadowSpillTraceConfig *config);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_trace_begin(uint64_t step_id);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_trace_end(void);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_trace_read(
     ShadowSpillTraceSummary *summary,
     ShadowSpillTraceEvent *events,
@@ -403,14 +403,14 @@ shadowspill_pytorch_trace_read(
 );
 
 /* Read-only exact pointer lookup used to classify profiled task outputs. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_for_pointer(
     uint64_t address,
     ShadowSpillAllocation *allocation
 );
 
 /* Register and populate one object in an explicitly selected pool. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_register_object(
     uint32_t pool_id,
     uint64_t object_id,
@@ -420,7 +420,7 @@ shadowspill_pytorch_register_object(
 );
 
 /* Register a logical object without allocating spill or device residency. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_register_placeholder_object(
     uint64_t object_id,
     uint64_t size_bytes,
@@ -428,7 +428,7 @@ shadowspill_pytorch_register_placeholder_object(
 );
 
 /* Replace one existing object's current payload in an explicit pool. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_write_object(
     uint32_t pool_id,
     uint64_t object_id,
@@ -437,7 +437,7 @@ shadowspill_pytorch_write_object(
 );
 
 /* Copy one current pool payload into borrowed caller memory. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_read_object(
     uint32_t pool_id,
     uint64_t object_id,
@@ -446,25 +446,25 @@ shadowspill_pytorch_read_object(
 );
 
 /* Remove one terminal object and reclaim any retained spill range. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_unregister_object(uint64_t object_id);
 
 /* Retarget one idle spill-resident object without moving its lease. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_rekey_object(
     uint64_t object_id,
     uint64_t replacement_object_id
 );
 
 /* Release one caller-owned allocation from the private owning DataPtr. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_release_caller_allocation(
     uint64_t allocation_id,
     uintptr_t stream
 );
 
 /* Validate one CPU-addressable pool lease before rebinding CPU storage. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_validate_object_binding(
     uint32_t pool_id,
     uint64_t object_id,
@@ -473,10 +473,10 @@ shadowspill_pytorch_validate_object_binding(
 );
 
 /* Attribute isolated profiling allocations without opening a fake task. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_scope_begin(uint64_t scope_id);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_scope_end(
     uint64_t scope_id,
     uintptr_t compute_stream_address
@@ -485,13 +485,13 @@ shadowspill_pytorch_allocation_scope_end(
 SHADOWSPILL_PYTORCH_API void
 shadowspill_pytorch_allocation_scope_abort(void);
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_object_location_snapshot(
     uint64_t object_id,
     uint32_t pool_id,
@@ -499,11 +499,11 @@ shadowspill_pytorch_object_location_snapshot(
 );
 
 /* Allocate/reset pre-sized callback records before a measured invocation. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_debug_task_timing_enable(uint32_t task_capacity);
 
 /* Read completed records after synchronizing the measured compute stream. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_debug_task_timing_read(
     ShadowSpillPytorchTaskDispatchTiming *records,
     uint32_t record_capacity,
@@ -511,11 +511,11 @@ shadowspill_pytorch_debug_task_timing_read(
 );
 
 /* Disable and release records; rejected while a callback remains in flight. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_debug_task_timing_disable(void);
 
 /* Closes a task NVTX range when frontend execution raises before after_task. */
-SHADOWSPILL_PYTORCH_API ShadowSpillRuntimeStatus
+SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_abort_task_handle(
     uintptr_t task_handle
 );

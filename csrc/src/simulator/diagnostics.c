@@ -24,7 +24,7 @@ void shadowspill_initialize_result(ShadowSpillSimulationResult *result) {
 
 void shadowspill_set_error(
     ShadowSpillSimulationResult *result,
-    ShadowSpillSimulationStatus status,
+    ShadowSpillStatus status,
     const ShadowSpillSimulationWork *work,
     uint32_t task,
     uint32_t alias,
@@ -39,7 +39,7 @@ void shadowspill_set_error(
 
 void shadowspill_set_capacity_error(
     ShadowSpillSimulationResult *result,
-    ShadowSpillSimulationStatus status,
+    ShadowSpillStatus status,
     const ShadowSpillSimulationWork *work,
     uint32_t task,
     uint32_t alias,
@@ -80,7 +80,7 @@ int shadowspill_report_deadlock(
                 ) || total > program->devices[device].capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                    SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
                     work,
                     transfer->trigger_task,
                     alias,
@@ -103,7 +103,7 @@ int shadowspill_report_deadlock(
                 ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_SIMULATION_OFFLOAD_SPILL_CAPACITY,
+                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
                     work,
                     transfer->trigger_task,
                     alias,
@@ -137,7 +137,7 @@ int shadowspill_report_deadlock(
                 work->aliases[alias].evict_pending != 0U) {
                 shadowspill_set_error(
                     result,
-                    SHADOWSPILL_SIMULATION_TASK_INPUT_DEADLOCK,
+                    SHADOWSPILL_STATUS_TASK_INPUT_DEADLOCK,
                     work,
                     task,
                     alias,
@@ -174,7 +174,7 @@ int shadowspill_report_deadlock(
             )) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -190,7 +190,7 @@ int shadowspill_report_deadlock(
         if (requested > capacity - admitted_used) {
             shadowspill_set_capacity_error(
                 result,
-                SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY,
+                SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY,
                 work,
                 task,
                 output_begin < output_end
@@ -207,7 +207,7 @@ int shadowspill_report_deadlock(
     }
     shadowspill_set_error(
         result,
-        SHADOWSPILL_SIMULATION_TRANSFER_DEADLOCK,
+        SHADOWSPILL_STATUS_TRANSFER_DEADLOCK,
         work,
         SHADOWSPILL_SIMULATOR_NO_INDEX,
         SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -230,7 +230,7 @@ int shadowspill_check_final_residency(
         if (!ready) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_FINAL_RESIDENCY,
+                SHADOWSPILL_STATUS_FINAL_RESIDENCY,
                 work,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
                 alias,

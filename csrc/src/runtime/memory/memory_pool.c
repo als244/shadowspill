@@ -217,12 +217,12 @@ static void free_unowned_use_records(ShadowSpillLeaseUseRecord *records) {
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
+ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
     ShadowSpillMemoryPool *pool,
     uint64_t minimum_free_records
 ) {
     if (pool == NULL || !pool->initialized || minimum_free_records == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&pool->lock);
     const uint64_t additional_leases = pool->lease_record_available <
@@ -235,20 +235,20 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         : 0U;
     if (additional_leases > UINT64_MAX - pool->lease_record_capacity) {
         pthread_mutex_unlock(&pool->lock);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     const uint64_t target_lease_capacity =
         pool->lease_record_capacity + additional_leases;
     if (target_lease_capacity > (UINT64_MAX - 2U) / 2U) {
         pthread_mutex_unlock(&pool->lock);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     const uint64_t target_range_capacity =
         2U * target_lease_capacity + 2U;
     if (target_lease_capacity > SIZE_MAX / sizeof(ShadowSpillMemoryLease *) ||
         target_range_capacity > SIZE_MAX / sizeof(ShadowSpillRange)) {
         pthread_mutex_unlock(&pool->lock);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     const int grow_frontier = pool->release_frontier_capacity <
         target_lease_capacity;
@@ -259,7 +259,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         pool->lease_records_sealed = 1U;
         pool->use_records_sealed = 1U;
         pthread_mutex_unlock(&pool->lock);
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     pthread_mutex_unlock(&pool->lock);
 
@@ -269,7 +269,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         ShadowSpillMemoryLease *record = calloc(1U, sizeof(*record));
         if (record == NULL) {
             free_unowned_lease_records(created_leases);
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         record->free_record_next = created_leases;
         created_leases = record;
@@ -282,7 +282,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         if (record == NULL) {
             free_unowned_use_records(created_uses);
             free_unowned_lease_records(created_leases);
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         record->free_next = created_uses;
         created_uses = record;
@@ -301,7 +301,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
         free(frontier);
         free_unowned_use_records(created_uses);
         free_unowned_lease_records(created_leases);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
     pthread_mutex_lock(&pool->lock);
@@ -344,7 +344,7 @@ ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
     pthread_mutex_unlock(&pool->lock);
     free(old_ranges);
     free(old_frontier);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 ShadowSpillLeaseUseRecord *shadowspill_memory_pool_acquire_use_record_locked(

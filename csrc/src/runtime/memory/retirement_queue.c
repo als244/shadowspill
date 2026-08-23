@@ -19,7 +19,7 @@ static int release_event_requirements(
             ) != 0) {
             shadowspill_latch_failure_locked(
                 runtime,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                SHADOWSPILL_STATUS_BACKEND_FAILURE,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 allocation_id,
                 0U
@@ -55,7 +55,7 @@ static void release_retirement_requirements(
             shadowspill_latch_pool_failure_locked(
                 runtime,
                 record->pool,
-                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_STATUS_INVALID_STATE,
                 SHADOWSPILL_RUNTIME_NO_ID,
                 record->allocation_id,
                 0U
@@ -69,7 +69,7 @@ static void release_retirement_requirements(
         ) != 0) {
         shadowspill_latch_failure_locked(
             runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_STATUS_BACKEND_FAILURE,
             SHADOWSPILL_RUNTIME_NO_ID,
             record->allocation_id,
             0U
@@ -182,25 +182,25 @@ int shadowspill_retirement_queue_initialize(
     return 0;
 }
 
-ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
+ShadowSpillStatus shadowspill_retirement_queue_reserve(
     ShadowSpillRetirementQueue *queue,
     uint64_t minimum_free_records
 ) {
     if (queue == NULL || !queue->lock_initialized ||
         minimum_free_records == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&queue->lock);
     if (queue->available >= minimum_free_records) {
         queue->sealed = 1U;
         pthread_mutex_unlock(&queue->lock);
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     const uint64_t additional = minimum_free_records - queue->available;
     pthread_mutex_unlock(&queue->lock);
 
     if (additional > SIZE_MAX / sizeof(ShadowSpillRetirementRecord)) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     ShadowSpillRetirementRecordBlock *block = calloc(1U, sizeof(*block));
     ShadowSpillRetirementRecord *records = calloc(
@@ -209,7 +209,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
     if (block == NULL || records == NULL) {
         free(records);
         free(block);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     block->records = records;
     block->count = additional;
@@ -226,7 +226,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
     queue->available += additional;
     queue->sealed = 1U;
     pthread_mutex_unlock(&queue->lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 void shadowspill_retirement_queue_destroy(
@@ -270,7 +270,7 @@ void shadowspill_retirement_queue_destroy(
     queue->lock_initialized = 0U;
 }
 
-ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
+ShadowSpillStatus shadowspill_retirement_enqueue_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 ) {
@@ -278,17 +278,17 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         !allocation->logical_freed || allocation->pointer == NULL ||
         (allocation->retirement_requirements == NULL &&
          allocation->retirement_event == NULL)) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (allocation->retirement_enqueued_generation == allocation->generation) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
 
     ShadowSpillRetirementRecord *record = acquire_retirement_record(
         &runtime->retirements
     );
     if (record == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     record->allocation = allocation;
     record->plan_owner = shadowspill_current_plan(runtime);
@@ -319,7 +319,7 @@ ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
         &queue->count, 1U, memory_order_release
     );
     pthread_mutex_unlock(&queue->lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 static int retirement_complete(const ShadowSpillRetirementRecord *record) {
@@ -454,7 +454,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
                 shadowspill_latch_pool_failure_locked(
                     runtime,
                     pool,
-                    SHADOWSPILL_RUNTIME_INVALID_STATE,
+                    SHADOWSPILL_STATUS_INVALID_STATE,
                     SHADOWSPILL_RUNTIME_NO_ID,
                     record->allocation_id,
                     0U

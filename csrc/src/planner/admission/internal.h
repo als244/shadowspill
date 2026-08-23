@@ -100,7 +100,7 @@ void shadowspill_candidate_admission_workspace_destroy(
     ShadowSpillCandidateAdmissionWorkspace *workspace
 );
 
-ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
+ShadowSpillStatus shadowspill_admit_indexed_schedule(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,

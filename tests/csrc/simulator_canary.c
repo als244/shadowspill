@@ -76,7 +76,7 @@ int main(void) {
         SHADOWSPILL_ABI_VERSION) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_simulate(&program, &result) != SHADOWSPILL_SIMULATION_OK) {
+    if (shadowspill_simulate(&program, &result) != SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     if (result.makespan_ns != 100U || result.task_interval_count != 1U ||
@@ -137,7 +137,7 @@ int main(void) {
     result.task_interval_count = 0U;
     result.transfer_interval_count = 0U;
     if (shadowspill_simulate(&stale_spill_program, &result) !=
-        SHADOWSPILL_SIMULATION_FINAL_RESIDENCY) {
+        SHADOWSPILL_STATUS_FINAL_RESIDENCY) {
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

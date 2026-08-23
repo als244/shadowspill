@@ -52,14 +52,14 @@ void import_cpu_storages(
         static_cast<uint64_t>(tensor.storage().nbytes()) ==
             static_cast<uint64_t>(sizes[index]),
         "CPU storage size differs from its runtime lease");
-    const ShadowSpillRuntimeStatus status =
+    const ShadowSpillStatus status =
         shadowspill_pytorch_validate_object_binding(
             static_cast<uint32_t>(pool_ids[index]),
             static_cast<uint64_t>(object_ids[index]),
             static_cast<uint64_t>(target_addresses[index]),
             static_cast<uint64_t>(sizes[index]));
     TORCH_CHECK(
-        status == SHADOWSPILL_RUNTIME_OK,
+        status == SHADOWSPILL_STATUS_OK,
         "CPU storage import does not name a current runtime lease: ",
         shadowspill_status_string(status));
     current_addresses.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
@@ -92,14 +92,14 @@ at::Tensor make_runtime_cpu_storage(
   TORCH_CHECK(target_address > 0, "runtime address must be positive");
   TORCH_CHECK(object_id >= 0, "object ID must be nonnegative");
   TORCH_CHECK(size_bytes > 0, "spill storage size must be positive");
-  const ShadowSpillRuntimeStatus status =
+  const ShadowSpillStatus status =
       shadowspill_pytorch_validate_object_binding(
           static_cast<uint32_t>(pool_id),
           static_cast<uint64_t>(object_id),
           static_cast<uint64_t>(target_address),
           static_cast<uint64_t>(size_bytes));
   TORCH_CHECK(
-      status == SHADOWSPILL_RUNTIME_OK,
+      status == SHADOWSPILL_STATUS_OK,
       "CPU runtime storage does not name a current pool lease: ",
       shadowspill_status_string(status));
   return at::from_blob(
@@ -211,14 +211,14 @@ void before_task_storages(
   uint32_t binding_count = 0U;
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
-  const ShadowSpillRuntimeStatus status =
+  const ShadowSpillStatus status =
       shadowspill_pytorch_before_task_handle(
           static_cast<uintptr_t>(task_handle),
           reinterpret_cast<uintptr_t>(stream.stream()),
           &bindings,
           &binding_count);
   TORCH_CHECK(
-      status == SHADOWSPILL_RUNTIME_OK,
+      status == SHADOWSPILL_STATUS_OK,
       "task acquisition failed: ",
       shadowspill_status_string(status));
   TORCH_CHECK(
@@ -315,14 +315,14 @@ void adopt_storages(
     const uint64_t address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
         tensors[index].storage().data_ptr().get()));
     ShadowSpillObjectBinding binding = {};
-    const ShadowSpillRuntimeStatus status =
+    const ShadowSpillStatus status =
         shadowspill_pytorch_task_publish_allocation(
             static_cast<uintptr_t>(task_handle),
             static_cast<uint32_t>(publication_ordinals[index]),
             address,
             &binding);
     TORCH_CHECK(
-        status == SHADOWSPILL_RUNTIME_OK,
+        status == SHADOWSPILL_STATUS_OK,
         "storage adoption failed at batch index ",
         index,
         ", publication ordinal ",
@@ -392,14 +392,14 @@ void rebind_replacement_views(
     const uint64_t current = static_cast<uint64_t>(
         reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
     if (current != target) {
-      const ShadowSpillRuntimeStatus status =
+      const ShadowSpillStatus status =
           shadowspill_pytorch_validate_task_replacement_binding(
               static_cast<uintptr_t>(task_handle),
               static_cast<uint32_t>(publication_ordinals[target_index]),
               current,
               target);
       TORCH_CHECK(
-          status == SHADOWSPILL_RUNTIME_OK,
+          status == SHADOWSPILL_STATUS_OK,
           "existing storage does not match the retired object generation: ",
           shadowspill_status_string(status));
     }
@@ -443,12 +443,12 @@ void after_task_storages(
   dematerialize_storages(dematerialized_tensors);
   const c10::cuda::CUDAStream stream =
       c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
-  const ShadowSpillRuntimeStatus status =
+  const ShadowSpillStatus status =
       shadowspill_pytorch_after_task_handle(
           static_cast<uintptr_t>(task_handle),
           reinterpret_cast<uintptr_t>(stream.stream()));
   TORCH_CHECK(
-      status == SHADOWSPILL_RUNTIME_OK,
+      status == SHADOWSPILL_STATUS_OK,
       "task publication failed: ",
       shadowspill_status_string(status));
 }
@@ -474,7 +474,7 @@ at::Tensor transfer_acquired_storage_to_caller(
   ShadowSpillAllocation allocation = {};
   const c10::cuda::CUDAStream stream = c10::cuda::getCurrentCUDAStream(
       static_cast<c10::DeviceIndex>(tensor.get_device()));
-  const ShadowSpillRuntimeStatus status =
+  const ShadowSpillStatus status =
       shadowspill_pytorch_transfer_acquired_object_to_caller(
       static_cast<uintptr_t>(acquisition_handle),
       static_cast<uint32_t>(object_ordinal),
@@ -484,7 +484,7 @@ at::Tensor transfer_acquired_storage_to_caller(
       static_cast<uint64_t>(allocation_id),
       &allocation);
   TORCH_CHECK(
-      status == SHADOWSPILL_RUNTIME_OK,
+      status == SHADOWSPILL_STATUS_OK,
       "caller output transfer failed: ",
       shadowspill_status_string(status));
   TORCH_CHECK(

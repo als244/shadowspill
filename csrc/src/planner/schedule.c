@@ -1074,8 +1074,8 @@ int shadowspill_delay_indexed_prefetch(
     ShadowSpillPrefetchTriggerConstraint *constraint
 ) {
     if (facts == NULL || failure == NULL || storage == NULL ||
-        (failure->status != SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY &&
-         failure->status != SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY)) {
+        (failure->status != SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY &&
+         failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY)) {
         return 0;
     }
     const ShadowSpillSimulationProgram *program = facts->context->simulation;
@@ -1093,12 +1093,12 @@ int shadowspill_delay_indexed_prefetch(
             alias != failure->error_alias) {
             continue;
         }
-        if (failure->status == SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY &&
+        if (failure->status == SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY &&
             failure->error_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&
             trigger != failure->error_task) {
             continue;
         }
-        if (failure->status == SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY &&
+        if (failure->status == SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY &&
             failure->error_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&
             trigger >= failure->error_task) {
             continue;
@@ -1108,7 +1108,7 @@ int shadowspill_delay_indexed_prefetch(
             ? facts->task_count - 1U
             : next_consumer - 1U;
         uint32_t target = trigger + 1U;
-        if (failure->status == SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY &&
+        if (failure->status == SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY &&
             failure->error_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&
             target < failure->error_task) {
             target = failure->error_task;

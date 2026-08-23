@@ -18,15 +18,6 @@ extern "C" {
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
 /* Replay names for the shared statuses; see <shadowspill/status.h>. */
-typedef ShadowSpillStatus ShadowSpillAdmissionReplayStatus;
-#define SHADOWSPILL_ADMISSION_REPLAY_OK SHADOWSPILL_STATUS_OK
-#define SHADOWSPILL_ADMISSION_REPLAY_INVALID_ARGUMENT \
-    SHADOWSPILL_STATUS_INVALID_ARGUMENT
-#define SHADOWSPILL_ADMISSION_REPLAY_ALLOCATION_FAILURE \
-    SHADOWSPILL_STATUS_INTERNAL_FAILURE
-#define SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE SHADOWSPILL_STATUS_REPLAY_INFEASIBLE
-#define SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS \
-    SHADOWSPILL_STATUS_INVALID_OPERATIONS
 
 /*
  * Operations describe ownership transitions, not transfer semantics. A route,
@@ -150,7 +141,7 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
  * contiguous zero-based indices bounded by their respective counts. The function
  * performs no backend operations and owns no storage after it returns.
  */
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
+SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
 shadowspill_admission_replay_run(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result
@@ -161,14 +152,14 @@ shadowspill_admission_replay_run(
  * used by repeated replay. Subsequent run_reusing calls perform no heap
  * allocation when the supplied program fits these capacities.
  */
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
+SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
 shadowspill_admission_replay_workspace_create(
     uint64_t lease_capacity,
     uint64_t dependency_capacity,
     ShadowSpillAdmissionReplayWorkspace **workspace
 );
 
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
+SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
 shadowspill_admission_replay_run_reusing(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result,

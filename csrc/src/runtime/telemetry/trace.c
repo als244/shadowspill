@@ -69,7 +69,7 @@ void shadowspill_trace_append_enabled(
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_trace_prepare(
+ShadowSpillStatus shadowspill_trace_prepare(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTraceConfig *config
 ) {
@@ -80,17 +80,17 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
         config->event_capacity > SIZE_MAX / sizeof(ShadowSpillTraceEvent) ||
         config->allocation_event_capacity >
             SIZE_MAX / sizeof(ShadowSpillAllocationEvent)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
+    if (status == SHADOWSPILL_STATUS_OK &&
         (runtime->trace_active || runtime->allocation_telemetry_active)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    const int grow_events = status == SHADOWSPILL_RUNTIME_OK &&
+    const int grow_events = status == SHADOWSPILL_STATUS_OK &&
         runtime->trace_event_capacity < config->event_capacity;
-    const int grow_allocations = status == SHADOWSPILL_RUNTIME_OK &&
+    const int grow_allocations = status == SHADOWSPILL_STATUS_OK &&
         runtime->allocation_event_capacity < config->allocation_event_capacity;
     pthread_mutex_unlock(&runtime->mutex);
 
@@ -107,16 +107,16 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
         (grow_allocations && execution_leases == NULL)) {
         free(events);
         free(execution_leases);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
     pthread_mutex_lock(&runtime->mutex);
     status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    if (status == SHADOWSPILL_STATUS_OK &&
         (runtime->trace_active || runtime->allocation_telemetry_active)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         if (events != NULL &&
             runtime->trace_event_capacity < config->event_capacity) {
             free(runtime->trace_events);
@@ -143,21 +143,21 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_trace_begin(
+ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id
 ) {
     if (runtime == NULL || step_id == SHADOWSPILL_RUNTIME_NO_ID) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
+    if (status == SHADOWSPILL_STATUS_OK &&
         (!runtime->trace_prepared || runtime->trace_active ||
          runtime->allocation_telemetry_active)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         runtime->trace_event_count = 0U;
         runtime->next_trace_event_sequence = 0U;
         runtime->trace_step_id = step_id;
@@ -184,14 +184,14 @@ ShadowSpillRuntimeStatus shadowspill_trace_begin(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_trace_end(ShadowSpillRuntime *runtime) {
+ShadowSpillStatus shadowspill_trace_end(ShadowSpillRuntime *runtime) {
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (!runtime->trace_active) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     } else {
         shadowspill_append_trace_event_locked(
             runtime,
@@ -211,7 +211,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_end(ShadowSpillRuntime *runtime) {
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_trace_read(
+ShadowSpillStatus shadowspill_trace_read(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceSummary *summary,
     ShadowSpillTraceEvent *events,
@@ -222,16 +222,16 @@ ShadowSpillRuntimeStatus shadowspill_trace_read(
     if (runtime == NULL || summary == NULL ||
         (events == NULL && event_capacity != 0U) ||
         (allocation_events == NULL && allocation_event_capacity != 0U)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (runtime->trace_active) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     } else if ((events != NULL && event_capacity < runtime->trace_event_count) ||
                (allocation_events != NULL &&
                 allocation_event_capacity < runtime->allocation_event_count)) {
-        status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *summary = (ShadowSpillTraceSummary){
         .abi_version = SHADOWSPILL_ABI_VERSION,
@@ -247,7 +247,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_read(
         .allocation_event_overflow =
             (uint8_t)(runtime->allocation_event_overflow != 0),
     };
-    if (status == SHADOWSPILL_RUNTIME_OK && events != NULL &&
+    if (status == SHADOWSPILL_STATUS_OK && events != NULL &&
         runtime->trace_event_count != 0U) {
         memcpy(
             events,
@@ -255,7 +255,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_read(
             (size_t)runtime->trace_event_count * sizeof(*events)
         );
     }
-    if (status == SHADOWSPILL_RUNTIME_OK && allocation_events != NULL &&
+    if (status == SHADOWSPILL_STATUS_OK && allocation_events != NULL &&
         runtime->allocation_event_count != 0U) {
         memcpy(
             allocation_events,

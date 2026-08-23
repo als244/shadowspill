@@ -105,7 +105,7 @@ void shadowspill_pytorch_profile_range_end(ShadowSpillProfilerRange range) {
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_profiler_annotations_set(
+ShadowSpillStatus shadowspill_pytorch_profiler_annotations_set(
     uint8_t enabled
 ) {
     pthread_mutex_lock(&adapter.mutex);
@@ -115,7 +115,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_profiler_annotations_set(
     ShadowSpillProfiler profiler = adapter.profiler;
     pthread_mutex_unlock(&adapter.mutex);
     if (!available) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     profiler.set_enabled(profiler.context, enabled != 0U);
     atomic_store_explicit(
@@ -123,7 +123,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_profiler_annotations_set(
         enabled != 0U,
         memory_order_release
     );
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 static void end_task_range(void) {
@@ -194,7 +194,7 @@ static void record_debug_dispatch_boundary(
 }
 
 static void latch_failure(
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     int32_t device_ordinal,
     const void *address,
     uint64_t requested_bytes
@@ -212,7 +212,7 @@ static void latch_failure(
         .requested_bytes = requested_bytes,
     };
     adapter.recent_valid = 1U;
-    if (adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
+    if (adapter.failure.status == SHADOWSPILL_STATUS_OK) {
         adapter.failure.status = (uint32_t)status;
         adapter.failure.device_ordinal = device_ordinal;
         adapter.failure.address = (uint64_t)(uintptr_t)address;
@@ -287,26 +287,26 @@ static void release_allocator_callback_runtime(void) {
     );
 }
 
-static ShadowSpillRuntimeStatus close_adapter_runtime(
+static ShadowSpillStatus close_adapter_runtime(
     int require_no_caller_allocations
 ) {
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.closed) {
         pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     if (atomic_load_explicit(
             &adapter.shutdown_started, memory_order_acquire
         ) != 0U) {
         pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     ShadowSpillRuntime *runtime = adapter.runtime;
     ShadowSpillCudaBackend *cuda = adapter.cuda;
     ShadowSpillDebugTaskRecord *debug_records = adapter.debug_task_records;
     if (runtime == NULL) {
         pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     atomic_store_explicit(
         &adapter.shutdown_started, 1U, memory_order_release
@@ -321,16 +321,16 @@ static ShadowSpillRuntimeStatus close_adapter_runtime(
 
     if (require_no_caller_allocations) {
         ShadowSpillRuntimeStatistics statistics = {0};
-        const ShadowSpillRuntimeStatus statistics_status =
+        const ShadowSpillStatus statistics_status =
             shadowspill_runtime_statistics(runtime, &statistics);
-        if (statistics_status != SHADOWSPILL_RUNTIME_OK ||
+        if (statistics_status != SHADOWSPILL_STATUS_OK ||
             statistics.caller_owned_allocations != 0U) {
             atomic_store_explicit(
                 &adapter.shutdown_started, 0U, memory_order_release
             );
-            return statistics_status != SHADOWSPILL_RUNTIME_OK
+            return statistics_status != SHADOWSPILL_STATUS_OK
                 ? statistics_status
-                : SHADOWSPILL_RUNTIME_INVALID_STATE;
+                : SHADOWSPILL_STATUS_INVALID_STATE;
         }
     }
 
@@ -340,7 +340,7 @@ static ShadowSpillRuntimeStatus close_adapter_runtime(
         atomic_store_explicit(
             &adapter.shutdown_started, 0U, memory_order_release
         );
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     atomic_store_explicit(
         &adapter.published_runtime, NULL, memory_order_release
@@ -367,7 +367,7 @@ static ShadowSpillRuntimeStatus close_adapter_runtime(
      * can observe. Keep the CUDA backend alive until all lanes, events, pinned
      * registrations, and pool arenas have been explicitly closed.
      */
-    const ShadowSpillRuntimeStatus status = shadowspill_runtime_close(runtime);
+    const ShadowSpillStatus status = shadowspill_runtime_close(runtime);
     shadowspill_runtime_destroy(runtime);
     shadowspill_cuda_backend_destroy(cuda);
     free(debug_records);
@@ -428,7 +428,7 @@ static int bootstrap_config_is_valid(
     return 1;
 }
 
-static ShadowSpillRuntimeStatus build_runtime_topology(
+static ShadowSpillStatus build_runtime_topology(
     const ShadowSpillPytorchAdapterConfig *config,
     ShadowSpillCudaBackend *cuda,
     const ShadowSpillCudaBackendCapabilities *capabilities,
@@ -443,7 +443,7 @@ static ShadowSpillRuntimeStatus build_runtime_topology(
     if (pools == NULL || (config->route_count != 0U && routes == NULL)) {
         free(routes);
         free(pools);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     for (uint32_t index = 0U; index < config->pool_count; ++index) {
         const ShadowSpillPytorchPoolConfig *source = &config->pools[index];
@@ -490,7 +490,7 @@ static ShadowSpillRuntimeStatus build_runtime_topology(
         .synchronization = shadowspill_cuda_synchronization_backend(cuda),
         .profiler = shadowspill_cuda_backend_profiler(cuda),
     };
-    const ShadowSpillRuntimeStatus status = shadowspill_runtime_create(
+    const ShadowSpillStatus status = shadowspill_runtime_create(
         &runtime_config, runtime
     );
     free(routes);
@@ -498,16 +498,16 @@ static ShadowSpillRuntimeStatus build_runtime_topology(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
+ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     const ShadowSpillPytorchAdapterConfig *config
 ) {
     if (!bootstrap_config_is_valid(config)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.bootstrapped) {
         pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     pthread_mutex_unlock(&adapter.mutex);
 
@@ -517,24 +517,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
     };
     ShadowSpillCudaBackend *cuda = NULL;
     if (shadowspill_cuda_backend_create(&cuda_config, &cuda) != 0) {
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     ShadowSpillCudaBackendCapabilities capabilities = {0};
     if (shadowspill_cuda_backend_capabilities(cuda, &capabilities) != 0) {
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     ShadowSpillCudaPhysicalMemory context_memory = {0};
     if (shadowspill_cuda_physical_memory(cuda, &context_memory) != 0) {
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     const uint64_t physical_granularity = 2U << 20U;
     if (config->device_budget_bytes > context_memory.device_total_bytes ||
         context_memory.process_bytes >
             config->device_budget_bytes - config->provider_headroom_bytes) {
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+        return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     uint64_t available = config->device_budget_bytes -
         context_memory.process_bytes - config->provider_headroom_bytes;
@@ -542,17 +542,17 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         available - available % physical_granularity;
     if (allocator_pool_bytes == 0U) {
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+        return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillRuntimeStatus status = build_runtime_topology(
+    ShadowSpillStatus status = build_runtime_topology(
         config,
         cuda,
         &capabilities,
         allocator_pool_bytes,
         &runtime
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_cuda_backend_destroy(cuda);
         return status;
     }
@@ -561,21 +561,21 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         bootstrap_memory.process_bytes > config->device_budget_bytes) {
         shadowspill_runtime_destroy(runtime);
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+        return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime != NULL) {
         pthread_mutex_unlock(&adapter.mutex);
         shadowspill_runtime_destroy(runtime);
         shadowspill_cuda_backend_destroy(cuda);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (!process_exit_registered) {
         if (atexit(shadowspill_pytorch_process_exit) != 0) {
             pthread_mutex_unlock(&adapter.mutex);
             shadowspill_runtime_destroy(runtime);
             shadowspill_cuda_backend_destroy(cuda);
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         process_exit_registered = 1U;
     }
@@ -629,67 +629,67 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_bootstrap(
         &adapter.published_runtime, runtime, memory_order_release
     );
     pthread_mutex_unlock(&adapter.mutex);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_close(void) {
+ShadowSpillStatus shadowspill_pytorch_allocator_close(void) {
     return close_adapter_runtime(1);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_physical_admission(
+ShadowSpillStatus shadowspill_pytorch_physical_admission(
     ShadowSpillPytorchPhysicalAdmission *admission
 ) {
     if (admission == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime == NULL) {
         pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     *admission = adapter.admission;
     pthread_mutex_unlock(&adapter.mutex);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_physical_memory(
+ShadowSpillStatus shadowspill_pytorch_physical_memory(
     ShadowSpillCudaPhysicalMemory *memory
 ) {
     if (memory == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillCudaBackend *cuda = adapter.cuda;
     pthread_mutex_unlock(&adapter.mutex);
     if (cuda == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     return shadowspill_cuda_physical_memory(cuda, memory) == 0
-        ? SHADOWSPILL_RUNTIME_OK
-        : SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_BACKEND_FAILURE;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
+ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     ShadowSpillCudaPhysicalMemory memory = {0};
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillCudaBackend *cuda = adapter.cuda;
     ShadowSpillPytorchPhysicalAdmission admission = adapter.admission;
     pthread_mutex_unlock(&adapter.mutex);
     if (cuda == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     if (shadowspill_cuda_physical_memory(cuda, &memory) != 0) {
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     uint64_t base = admission.context_bytes + admission.allocator_pool_bytes;
     uint64_t external = memory.process_bytes > base
         ? memory.process_bytes - base
         : 0U;
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         memory.process_bytes <= admission.device_budget_bytes &&
             external <= admission.provider_headroom_bytes
-        ? SHADOWSPILL_RUNTIME_OK
-        : SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_PLAN_VIOLATION;
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.physical_checks;
     if (memory.process_bytes > adapter.peak_process_physical_bytes) {
@@ -698,8 +698,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
     if (external > adapter.observed_external_high_water_bytes) {
         adapter.observed_external_high_water_bytes = external;
     }
-    if (status != SHADOWSPILL_RUNTIME_OK &&
-        adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK &&
+        adapter.failure.status == SHADOWSPILL_STATUS_OK) {
         adapter.failure.status = (uint32_t)status;
         adapter.failure.requested_bytes = memory.process_bytes;
         adapter.failure.runtime.status = (uint32_t)status;
@@ -713,7 +713,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_check_physical_budget(void) {
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
+ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
     uint64_t required_provider_headroom_bytes,
     uint64_t runtime_record_reserve
 ) {
@@ -722,17 +722,17 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
     ShadowSpillRuntime *runtime = adapter.runtime;
     pthread_mutex_unlock(&adapter.mutex);
     if (cuda == NULL || runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
-    ShadowSpillRuntimeStatus reserve_status =
+    ShadowSpillStatus reserve_status =
         shadowspill_runtime_reserve_event_leases(runtime, runtime_record_reserve);
-    if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
+    if (reserve_status != SHADOWSPILL_STATUS_OK) {
         return reserve_status;
     }
     reserve_status = shadowspill_runtime_reserve_retirement_records(
         runtime, runtime_record_reserve
     );
-    if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
+    if (reserve_status != SHADOWSPILL_STATUS_OK) {
         return reserve_status;
     }
     for (uint32_t pool_id = 0U;
@@ -741,24 +741,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
         reserve_status = shadowspill_runtime_reserve_memory_lease_records(
             runtime, pool_id, runtime_record_reserve
         );
-        if (reserve_status != SHADOWSPILL_RUNTIME_OK) {
+        if (reserve_status != SHADOWSPILL_STATUS_OK) {
             return reserve_status;
         }
     }
     if (shadowspill_cuda_backend_seal_event_pool(
             cuda, runtime_record_reserve) != 0) {
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         shadowspill_pytorch_check_physical_budget();
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     pthread_mutex_lock(&adapter.mutex);
     if (required_provider_headroom_bytes >
         adapter.admission.provider_headroom_bytes) {
-        status = SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
-        if (adapter.failure.status == SHADOWSPILL_RUNTIME_OK) {
+        status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
+        if (adapter.failure.status == SHADOWSPILL_STATUS_OK) {
             adapter.failure.status = (uint32_t)status;
             adapter.failure.requested_bytes = required_provider_headroom_bytes;
             adapter.failure.runtime.status = (uint32_t)status;
@@ -774,11 +774,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_seal_physical_budget(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(
+ShadowSpillStatus shadowspill_pytorch_adapter_capabilities(
     ShadowSpillPytorchAdapterCapabilities *capabilities
 ) {
     if (capabilities == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *capabilities = (ShadowSpillPytorchAdapterCapabilities){
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
@@ -794,14 +794,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(
         .debug_task_dispatch_timing = 1U,
         .runtime_trace = 1U,
     };
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_statistics(
+ShadowSpillStatus shadowspill_pytorch_allocator_statistics(
     ShadowSpillPytorchAdapterStatistics *statistics
 ) {
     if (statistics == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillRuntime *runtime = adapter.runtime;
@@ -822,37 +822,37 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_statistics(
     };
     pthread_mutex_unlock(&adapter.mutex);
     if (runtime == NULL || cuda == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_runtime_statistics(
+    ShadowSpillStatus status = shadowspill_runtime_statistics(
         runtime, &statistics->runtime
     );
     shadowspill_cuda_backend_statistics(cuda, &statistics->cuda);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_failure(
+ShadowSpillStatus shadowspill_pytorch_allocator_failure(
     ShadowSpillPytorchAdapterFailure *failure
 ) {
     if (failure == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     *failure = adapter.failure;
     ShadowSpillRuntime *runtime = adapter.runtime;
     int32_t device_ordinal = adapter.device_ordinal;
     pthread_mutex_unlock(&adapter.mutex);
-    if (failure->status == SHADOWSPILL_RUNTIME_OK && runtime != NULL) {
+    if (failure->status == SHADOWSPILL_STATUS_OK && runtime != NULL) {
         ShadowSpillRuntimeFailure runtime_failure = {0};
         if (shadowspill_runtime_failure(runtime, &runtime_failure) ==
-                SHADOWSPILL_RUNTIME_OK &&
-            runtime_failure.status != SHADOWSPILL_RUNTIME_OK) {
+                SHADOWSPILL_STATUS_OK &&
+            runtime_failure.status != SHADOWSPILL_STATUS_OK) {
             failure->status = runtime_failure.status;
             failure->device_ordinal = device_ordinal;
             failure->runtime = runtime_failure;
         }
     }
-    return (ShadowSpillRuntimeStatus)failure->status;
+    return (ShadowSpillStatus)failure->status;
 }
 
 static void append_failure_message(
@@ -1010,16 +1010,16 @@ static const char *allocation_operation_name(uint8_t operation) {
     return "unknown";
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
+ShadowSpillStatus shadowspill_pytorch_cuda_malloc_failure_message(
     char *destination,
     size_t destination_bytes
 ) {
     if (destination == NULL || destination_bytes == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     destination[0] = '\0';
     ShadowSpillPytorchAdapterFailure failure = {0};
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         shadowspill_pytorch_allocator_failure(&failure);
     /*
      * Describe the call that failed, not the first failure the runtime ever
@@ -1034,9 +1034,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
     int reported_first_failure = 0;
     if (have_recent) {
         reported_first_failure =
-            failure.status != SHADOWSPILL_RUNTIME_OK &&
+            failure.status != SHADOWSPILL_STATUS_OK &&
             failure.status != recent.status;
-        status = (ShadowSpillRuntimeStatus)recent.status;
+        status = (ShadowSpillStatus)recent.status;
         failure.device_ordinal = recent.device_ordinal;
         failure.requested_bytes = recent.requested_bytes;
     }
@@ -1045,7 +1045,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
         ? failure.requested_bytes
         : runtime->requested_bytes;
     size_t offset = 0U;
-    if (!have_recent && status == SHADOWSPILL_RUNTIME_OK) {
+    if (!have_recent && status == SHADOWSPILL_STATUS_OK) {
         /* Nothing recorded this call. Say so rather than inventing a status:
          * a made-up diagnosis is worse than an admitted absence. */
         append_failure_message(
@@ -1054,7 +1054,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             &offset,
             "ShadowSpill allocator returned no memory and recorded no reason\n"
         );
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     /* Name the pool: "out of memory" means very different things for the
      * device execution pool and the spill pool, and an internal failure
@@ -1063,14 +1063,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
         ? "no pool"
         : runtime->pool_id == bound_allocator_pool_id() ? "execution pool"
                                                         : "spill pool";
-    if (status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+    if (status == SHADOWSPILL_STATUS_NO_PROGRESS) {
         append_failure_message(
             destination, destination_bytes, &offset,
             "ShadowSpill out of memory in the %s (device %d), with nothing "
             "left to release\n",
             pool_name, failure.device_ordinal
         );
-    } else if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY) {
+    } else if (status == SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
         append_failure_message(
             destination, destination_bytes, &offset,
             "ShadowSpill out of memory in the %s (device %d)\n",
@@ -1100,7 +1100,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             "note: an earlier failure (%s) had already stopped this runtime; "
             "later calls fail because of it, not on their own\n",
             shadowspill_status_string(
-                (ShadowSpillRuntimeStatus)failure.status
+                (ShadowSpillStatus)failure.status
             )
         );
     }
@@ -1120,7 +1120,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
         append_bytes(destination, destination_bytes, &offset,
             "largest free range", runtime->largest_free_range_bytes);
     }
-    if (status == SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED) {
+    if (status == SHADOWSPILL_STATUS_TASK_ALLOCATION_ENVELOPE_EXCEEDED) {
         append_failure_message(
             destination,
             destination_bytes,
@@ -1141,7 +1141,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             (unsigned long long)
                 runtime->task_maximum_charged_allocation_bytes
         );
-    } else if (status == SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH) {
+    } else if (status == SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH) {
         append_failure_message(
             destination,
             destination_bytes,
@@ -1179,19 +1179,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_recover_no_progress(void) {
+ShadowSpillStatus shadowspill_pytorch_recover_no_progress(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         shadowspill_runtime_recover_no_progress(runtime);
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     pthread_mutex_lock(&adapter.mutex);
-    if (adapter.failure.status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+    if (adapter.failure.status == SHADOWSPILL_STATUS_NO_PROGRESS) {
         memset(&adapter.failure, 0, sizeof(adapter.failure));
         adapter.failure_task_label[0] = '\0';
         adapter.failure.device_ordinal = device_ordinal;
@@ -1199,24 +1199,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_recover_no_progress(void) {
         adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
         adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
         adapter.failure.runtime.pool_id = UINT32_MAX;
-    } else if (adapter.failure.status != SHADOWSPILL_RUNTIME_OK) {
-        status = (ShadowSpillRuntimeStatus)adapter.failure.status;
+    } else if (adapter.failure.status != SHADOWSPILL_STATUS_OK) {
+        status = (ShadowSpillStatus)adapter.failure.status;
     }
     pthread_mutex_unlock(&adapter.mutex);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocator_wait_idle(void) {
+ShadowSpillStatus shadowspill_pytorch_allocator_wait_idle(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     return shadowspill_runtime_wait_idle(runtime);
 }
 
-ShadowSpillRuntimeStatus
+ShadowSpillStatus
 shadowspill_pytorch_calibrate_transfer_capabilities(
     const ShadowSpillTransferCalibrationConfig *config,
     const ShadowSpillTransferRouteKey *routes,
@@ -1226,14 +1226,14 @@ shadowspill_pytorch_calibrate_transfer_capabilities(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     return shadowspill_runtime_calibrate_transfer_capabilities(
         runtime, config, routes, route_count
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_profiles(
+ShadowSpillStatus shadowspill_pytorch_transfer_profiles(
     ShadowSpillTransferProfile *profiles,
     uint32_t capacity,
     uint32_t *count,
@@ -1243,34 +1243,34 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_transfer_profiles(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     return shadowspill_runtime_transfer_profiles(
         runtime, profiles, capacity, count, generation
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_start(
+ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_start(
     uint64_t capacity
 ) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_telemetry_start(runtime, capacity);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_stop(void) {
+ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_stop(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_telemetry_stop(runtime);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_read(
+ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_read(
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
     uint64_t *count
@@ -1279,42 +1279,42 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_telemetry_read(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_telemetry_read(
               runtime, events, capacity, count
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_trace_prepare(
+ShadowSpillStatus shadowspill_pytorch_trace_prepare(
     const ShadowSpillTraceConfig *config
 ) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_trace_prepare(runtime, config);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_trace_begin(uint64_t step_id) {
+ShadowSpillStatus shadowspill_pytorch_trace_begin(uint64_t step_id) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_trace_begin(runtime, step_id);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_trace_end(void) {
+ShadowSpillStatus shadowspill_pytorch_trace_end(void) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_trace_end(runtime);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_trace_read(
+ShadowSpillStatus shadowspill_pytorch_trace_read(
     ShadowSpillTraceSummary *summary,
     ShadowSpillTraceEvent *events,
     uint64_t event_capacity,
@@ -1325,7 +1325,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_trace_read(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_trace_read(
               runtime,
               summary,
@@ -1336,18 +1336,18 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_trace_read(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_for_pointer(
+ShadowSpillStatus shadowspill_pytorch_allocation_for_pointer(
     uint64_t address,
     ShadowSpillAllocation *allocation
 ) {
     if (address == 0U || allocation == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_memory_pool_allocation_for_pointer(
               runtime,
               bound_allocator_pool_id(),
@@ -1356,7 +1356,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_for_pointer(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_register_object(
+ShadowSpillStatus shadowspill_pytorch_register_object(
     uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
@@ -1365,13 +1365,13 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_object(
 ) {
     if (retain_spill_copy > 1U ||
         (size_bytes != 0U && source_address == 0U)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     const ShadowSpillObjectDescription description = {
         .object_id = object_id,
@@ -1380,10 +1380,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_object(
         .initial_pool_id = pool_id,
         .initially_resident = 1U,
     };
-    ShadowSpillRuntimeStatus status = shadowspill_register_object(
+    ShadowSpillStatus status = shadowspill_register_object(
         runtime, &description
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     return shadowspill_write_object(
@@ -1395,19 +1395,19 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_object(
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
+ShadowSpillStatus shadowspill_pytorch_register_placeholder_object(
     uint64_t object_id,
     uint64_t size_bytes,
     uint8_t retain_spill_copy
 ) {
     if (retain_spill_copy > 1U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     const ShadowSpillObjectDescription description = {
         .object_id = object_id,
@@ -1418,7 +1418,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_register_placeholder_object(
     return shadowspill_register_object(runtime, &description);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_rekey_object(
+ShadowSpillStatus shadowspill_pytorch_rekey_object(
     uint64_t object_id,
     uint64_t replacement_object_id
 ) {
@@ -1426,24 +1426,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_rekey_object(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_rekey_object(runtime, object_id, replacement_object_id);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_write_object(
+ShadowSpillStatus shadowspill_pytorch_write_object(
     uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t source_address
 ) {
     if (size_bytes != 0U && source_address == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_write_object(
               runtime,
               object_id,
@@ -1453,20 +1453,20 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_write_object(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_read_object(
+ShadowSpillStatus shadowspill_pytorch_read_object(
     uint32_t pool_id,
     uint64_t object_id,
     uint64_t size_bytes,
     uint64_t destination_address
 ) {
     if (size_bytes != 0U && destination_address == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_read_object(
               runtime,
               object_id,
@@ -1476,18 +1476,18 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_read_object(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_unregister_object(
+ShadowSpillStatus shadowspill_pytorch_unregister_object(
     uint64_t object_id
 ) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_unregister_object(runtime, object_id);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
+ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
     uint64_t allocation_id,
     uintptr_t stream
 ) {
@@ -1495,7 +1495,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_memory_pool_free(
               runtime,
               bound_allocator_pool_id(),
@@ -1504,7 +1504,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_release_caller_allocation(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_create(
+ShadowSpillStatus shadowspill_pytorch_plan_create(
     uint32_t execution_pool_id,
     uint32_t spill_pool_id,
     uint32_t fetch_route_id,
@@ -1512,14 +1512,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_create(
     uintptr_t *plan_handle
 ) {
     if (plan_handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *plan_handle = 0U;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     ShadowSpillPlan *plan = NULL;
     const ShadowSpillPlanDescription description = {
@@ -1528,20 +1528,20 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_create(
         .fetch_route_id = fetch_route_id,
         .evict_route_id = evict_route_id,
     };
-    const ShadowSpillRuntimeStatus status = shadowspill_plan_create(
+    const ShadowSpillStatus status = shadowspill_plan_create(
         runtime, &description, &plan
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         *plan_handle = (uintptr_t)plan;
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_close(
+ShadowSpillStatus shadowspill_pytorch_plan_close(
     uintptr_t plan_handle
 ) {
     return plan_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_close((ShadowSpillPlan *)plan_handle);
 }
 
@@ -1549,31 +1549,31 @@ void shadowspill_pytorch_plan_destroy(uintptr_t plan_handle) {
     shadowspill_plan_destroy((ShadowSpillPlan *)plan_handle);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_object_handle_acquire(
+ShadowSpillStatus shadowspill_pytorch_object_handle_acquire(
     uint64_t runtime_object_id,
     uintptr_t *object_handle
 ) {
     if (object_handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *object_handle = 0U;
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     ShadowSpillObjectHandle *handle = NULL;
-    const ShadowSpillRuntimeStatus status = shadowspill_object_handle_acquire(
+    const ShadowSpillStatus status = shadowspill_object_handle_acquire(
         runtime, runtime_object_id, &handle
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         *object_handle = (uintptr_t)handle;
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_object_handle_release(
+ShadowSpillStatus shadowspill_pytorch_object_handle_release(
     uintptr_t object_handle
 ) {
     return shadowspill_object_handle_release(
@@ -1581,26 +1581,26 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_handle_release(
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_object_release_generation(
+ShadowSpillStatus shadowspill_pytorch_object_release_generation(
     uintptr_t object_handle,
     uint64_t expected_generation
 ) {
     return object_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_object_release_generation(
               (const ShadowSpillObjectHandle *)object_handle,
               expected_generation
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_bind_object(
+ShadowSpillStatus shadowspill_pytorch_plan_bind_object(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
     uintptr_t object_handle,
     uint8_t consistency
 ) {
     return plan_handle == 0U || object_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_bind_object(
               (ShadowSpillPlan *)plan_handle,
               plan_object_id,
@@ -1609,33 +1609,33 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_bind_object(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_task(
+ShadowSpillStatus shadowspill_pytorch_plan_admit_task(
     uintptr_t plan_handle,
     const ShadowSpillTaskDescription *description,
     uintptr_t *task_handle
 ) {
     if (plan_handle == 0U || task_handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *task_handle = 0U;
     const ShadowSpillTaskHandle *handle = NULL;
-    const ShadowSpillRuntimeStatus status = shadowspill_plan_admit_task(
+    const ShadowSpillStatus status = shadowspill_plan_admit_task(
         (ShadowSpillPlan *)plan_handle, description, &handle
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         *task_handle = (uintptr_t)handle;
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_publish_initial_allocation(
+ShadowSpillStatus shadowspill_pytorch_plan_publish_initial_allocation(
     uintptr_t plan_handle,
     uint64_t plan_object_id,
     uint64_t address,
     ShadowSpillObjectBinding *binding
 ) {
     return plan_handle == 0U || address == 0U || binding == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_publish_initial_allocation(
               (ShadowSpillPlan *)plan_handle,
               plan_object_id,
@@ -1644,20 +1644,20 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_publish_initial_allocation(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_task_publish_allocation(
+ShadowSpillStatus shadowspill_pytorch_task_publish_allocation(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
     uint64_t address,
     ShadowSpillObjectBinding *binding
 ) {
     if (task_handle == 0U || address == 0U || binding == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     return shadowspill_task_publish_allocation(
         runtime,
@@ -1668,7 +1668,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_task_publish_allocation(
     );
 }
 
-ShadowSpillRuntimeStatus
+ShadowSpillStatus
 shadowspill_pytorch_validate_task_replacement_binding(
     uintptr_t task_handle,
     uint32_t publication_ordinal,
@@ -1677,13 +1677,13 @@ shadowspill_pytorch_validate_task_replacement_binding(
 ) {
     if (task_handle == 0U || retired_address == 0U ||
         successor_address == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_task_validate_replacement_binding(
               runtime,
               (const ShadowSpillTaskHandle *)task_handle,
@@ -1693,68 +1693,68 @@ shadowspill_pytorch_validate_task_replacement_binding(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_fixed_layout(
+ShadowSpillStatus shadowspill_pytorch_plan_admit_fixed_layout(
     uintptr_t plan_handle,
     const ShadowSpillFixedLayoutDescription *description
 ) {
     return plan_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_admit_fixed_layout(
               (ShadowSpillPlan *)plan_handle, description
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_seal_fixed_layout(
+ShadowSpillStatus shadowspill_pytorch_plan_seal_fixed_layout(
     uintptr_t plan_handle
 ) {
     return plan_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_seal_fixed_layout(
               (ShadowSpillPlan *)plan_handle
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_clear_tasks(
+ShadowSpillStatus shadowspill_pytorch_plan_clear_tasks(
     uintptr_t plan_handle
 ) {
     return plan_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_clear_tasks((ShadowSpillPlan *)plan_handle);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_wait_idle(
+ShadowSpillStatus shadowspill_pytorch_plan_wait_idle(
     uintptr_t plan_handle
 ) {
     return plan_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_plan_wait_idle((ShadowSpillPlan *)plan_handle);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_object_acquisition(
+ShadowSpillStatus shadowspill_pytorch_plan_admit_object_acquisition(
     uintptr_t plan_handle,
     const uint64_t *object_ids,
     uint32_t object_count,
     uintptr_t *acquisition_handle
 ) {
     if (plan_handle == 0U || acquisition_handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *acquisition_handle = 0U;
     const ShadowSpillObjectAcquisitionHandle *handle = NULL;
-    const ShadowSpillRuntimeStatus status =
+    const ShadowSpillStatus status =
         shadowspill_plan_admit_object_acquisition(
             (ShadowSpillPlan *)plan_handle,
             object_ids,
             object_count,
             &handle
         );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         *acquisition_handle = (uintptr_t)handle;
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_action_batch(
+ShadowSpillStatus shadowspill_pytorch_plan_admit_action_batch(
     uintptr_t plan_handle,
     uint64_t batch_id,
     const ShadowSpillRuntimeAction *actions,
@@ -1762,24 +1762,24 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_plan_admit_action_batch(
     uintptr_t *action_batch_handle
 ) {
     if (plan_handle == 0U || action_batch_handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *action_batch_handle = 0U;
     const ShadowSpillActionBatchHandle *handle = NULL;
-    const ShadowSpillRuntimeStatus status = shadowspill_plan_admit_action_batch(
+    const ShadowSpillStatus status = shadowspill_plan_admit_action_batch(
         (ShadowSpillPlan *)plan_handle,
         batch_id,
         actions,
         action_count,
         &handle
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         *action_batch_handle = (uintptr_t)handle;
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_submit_action_batch_handle(
+ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
     uintptr_t action_batch_handle,
     uintptr_t trigger_stream_address
 ) {
@@ -1787,16 +1787,16 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_submit_action_batch_handle(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     if (action_batch_handle == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const ShadowSpillProfilerRange range =
         shadowspill_pytorch_profile_range_begin(
             "shadowspill.pytorch.initial_actions"
         );
-    const ShadowSpillRuntimeStatus status =
+    const ShadowSpillStatus status =
         shadowspill_submit_action_batch_handle(
             runtime,
             (const ShadowSpillActionBatchHandle *)action_batch_handle,
@@ -1806,7 +1806,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_submit_action_batch_handle(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_acquire_objects_handle(
+ShadowSpillStatus shadowspill_pytorch_acquire_objects_handle(
     uintptr_t acquisition_handle,
     uintptr_t consumer_stream_address,
     ShadowSpillObjectBinding *bindings,
@@ -1816,10 +1816,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_acquire_objects_handle(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     return acquisition_handle == 0U
-        ? SHADOWSPILL_RUNTIME_INVALID_ARGUMENT
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
         : shadowspill_acquire_objects_handle(
             runtime,
             (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
@@ -1829,7 +1829,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_acquire_objects_handle(
         );
 }
 
-ShadowSpillRuntimeStatus
+ShadowSpillStatus
 shadowspill_pytorch_transfer_acquired_object_to_caller(
     uintptr_t acquisition_handle,
     uint32_t object_ordinal,
@@ -1843,7 +1843,7 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_transfer_acquired_object_to_caller(
               runtime,
               (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
@@ -1856,7 +1856,7 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
+ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
     uintptr_t compute_stream_address,
     const ShadowSpillObjectBinding **bindings,
@@ -1869,7 +1869,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     if (task_range_active || task_handle == 0U ||
         task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         record_debug_dispatch_boundary(task_id, 1U);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (atomic_load_explicit(
             &adapter.profiler_annotations_enabled, memory_order_relaxed
@@ -1885,8 +1885,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    ShadowSpillRuntimeStatus status = runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+    ShadowSpillStatus status = runtime == NULL
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_before_task_handle(
             runtime,
             handle,
@@ -1894,14 +1894,14 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_before_task_handle(
             bindings,
             binding_count
         );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         end_task_range();
     }
     record_debug_dispatch_boundary(task_id, 1U);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
+ShadowSpillStatus shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
     uintptr_t compute_stream_address
 ) {
@@ -1912,9 +1912,9 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         runtime == NULL || task_handle == 0U
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_after_task_handle(
             runtime,
             handle,
@@ -1925,11 +1925,11 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_after_task_handle(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_begin(
+ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
     uint64_t scope_id
 ) {
     if (task_range_active) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     const uint64_t profiling_base = UINT64_C(1) << 62U;
     char range_name[192];
@@ -1946,26 +1946,26 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_begin(
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    const ShadowSpillRuntimeStatus status = runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+    const ShadowSpillStatus status = runtime == NULL
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_scope_begin(
               runtime, bound_allocator_pool_id(), scope_id
           );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         end_task_range();
     }
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_allocation_scope_end(
+ShadowSpillStatus shadowspill_pytorch_allocation_scope_end(
     uint64_t scope_id,
     uintptr_t compute_stream_address
 ) {
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    const ShadowSpillRuntimeStatus status = runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+    const ShadowSpillStatus status = runtime == NULL
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_scope_end(
               runtime,
               scope_id,
@@ -1983,7 +1983,7 @@ void shadowspill_pytorch_allocation_scope_abort(void) {
     end_task_range();
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
+ShadowSpillStatus shadowspill_pytorch_object_snapshot(
     uint64_t object_id,
     ShadowSpillObjectSnapshot *snapshot
 ) {
@@ -1991,12 +1991,12 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_snapshot(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     return shadowspill_object_snapshot(runtime, object_id, snapshot);
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_object_location_snapshot(
+ShadowSpillStatus shadowspill_pytorch_object_location_snapshot(
     uint64_t object_id,
     uint32_t pool_id,
     ShadowSpillObjectLocationSnapshot *snapshot
@@ -2005,40 +2005,40 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_object_location_snapshot(
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
     return runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_object_location_snapshot(
               runtime, object_id, pool_id, snapshot
           );
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_validate_object_binding(
+ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
     uint32_t pool_id,
     uint64_t object_id,
     uint64_t address,
     uint64_t size_bytes
 ) {
     if (address == 0U && size_bytes != 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillObjectLocationSnapshot snapshot = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_pytorch_object_location_snapshot(
+    ShadowSpillStatus status = shadowspill_pytorch_object_location_snapshot(
         object_id, pool_id, &snapshot
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     return snapshot.size_bytes == size_bytes && snapshot.has_lease &&
             snapshot.current &&
             snapshot.pointer == (void *)(uintptr_t)address
-        ? SHADOWSPILL_RUNTIME_OK
-        : SHADOWSPILL_RUNTIME_INVALID_STATE;
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_INVALID_STATE;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
+ShadowSpillStatus shadowspill_pytorch_debug_task_timing_enable(
     uint32_t task_capacity
 ) {
     if (task_capacity == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
     const uint32_t existing_capacity = adapter.debug_task_capacity;
@@ -2047,7 +2047,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
     if (existing_capacity < task_capacity) {
         records = calloc(task_capacity, sizeof(*records));
         if (records == NULL) {
-            return SHADOWSPILL_RUNTIME_OUT_OF_MEMORY;
+            return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
         }
     } else {
         records = adapter.debug_task_records;
@@ -2073,16 +2073,16 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_enable(
     );
     pthread_mutex_unlock(&adapter.mutex);
     free(previous);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
+ShadowSpillStatus shadowspill_pytorch_debug_task_timing_read(
     ShadowSpillPytorchTaskDispatchTiming *records,
     uint32_t record_capacity,
     uint32_t *record_count
 ) {
     if (record_count == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     uint32_t required = 0U;
     for (uint32_t index = 0U; index < adapter.debug_task_capacity; ++index) {
@@ -2127,21 +2127,21 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_read(
     }
     *record_count = required;
     if (required > record_capacity) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_debug_task_timing_disable(void) {
+ShadowSpillStatus shadowspill_pytorch_debug_task_timing_disable(void) {
     atomic_store_explicit(
         &adapter.debug_task_timing_enabled, 0U, memory_order_release
     );
     pthread_mutex_lock(&adapter.mutex);
     pthread_mutex_unlock(&adapter.mutex);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_pytorch_abort_task_handle(
+ShadowSpillStatus shadowspill_pytorch_abort_task_handle(
     uintptr_t task_handle
 ) {
     const ShadowSpillTaskHandle *handle =
@@ -2151,8 +2151,8 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_abort_task_handle(
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
-    const ShadowSpillRuntimeStatus status = runtime == NULL
-        ? SHADOWSPILL_RUNTIME_CLOSED
+    const ShadowSpillStatus status = runtime == NULL
+        ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_abort_task_handle(
               runtime, handle
           );
@@ -2188,8 +2188,8 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     }
     if (runtime == NULL || bytes < 0 || device_ordinal != expected_device) {
         latch_failure(
-            runtime == NULL ? SHADOWSPILL_RUNTIME_CLOSED
-                            : SHADOWSPILL_RUNTIME_INVALID_ARGUMENT,
+            runtime == NULL ? SHADOWSPILL_STATUS_CLOSED
+                            : SHADOWSPILL_STATUS_INVALID_ARGUMENT,
             device_ordinal,
             NULL,
             bytes < 0 ? 0U : (uint64_t)bytes
@@ -2201,7 +2201,7 @@ void *shadowspill_pytorch_cuda_malloc_impl(
         return NULL;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status = shadowspill_memory_pool_allocate(
+    ShadowSpillStatus status = shadowspill_memory_pool_allocate(
         runtime,
         bound_allocator_pool_id(),
         (uint64_t)bytes,
@@ -2209,7 +2209,7 @@ void *shadowspill_pytorch_cuda_malloc_impl(
         shadowspill_cuda_wrap_stream((uintptr_t)stream),
         &allocation
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         latch_failure(status, device_ordinal, NULL, (uint64_t)bytes);
         shadowspill_pytorch_profile_range_end(range);
         release_allocator_callback_runtime();
@@ -2241,7 +2241,7 @@ void shadowspill_pytorch_cuda_free(
     }
     if (device_ordinal != expected_device) {
         latch_failure(
-            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT,
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT,
             device_ordinal,
             address,
             (uint64_t)bytes
@@ -2250,11 +2250,11 @@ void shadowspill_pytorch_cuda_free(
         return;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         shadowspill_memory_pool_allocation_for_pointer(
             runtime, bound_allocator_pool_id(), address, &allocation
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         pthread_mutex_lock(&adapter.mutex);
         ++adapter.pointer_lookup_failures;
         pthread_mutex_unlock(&adapter.mutex);
@@ -2268,7 +2268,7 @@ void shadowspill_pytorch_cuda_free(
         allocation.allocation_id,
         shadowspill_cuda_wrap_stream((uintptr_t)stream)
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         latch_failure(status, device_ordinal, address, (uint64_t)bytes);
     }
     release_allocator_callback_runtime();
@@ -2289,11 +2289,11 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         return;
     }
     ShadowSpillAllocation allocation = {0};
-    ShadowSpillRuntimeStatus status =
+    ShadowSpillStatus status =
         shadowspill_memory_pool_allocation_for_pointer(
             runtime, bound_allocator_pool_id(), address, &allocation
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         pthread_mutex_lock(&adapter.mutex);
         ++adapter.pointer_lookup_failures;
         pthread_mutex_unlock(&adapter.mutex);
@@ -2307,7 +2307,7 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         allocation.allocation_id,
         shadowspill_cuda_wrap_stream((uintptr_t)stream)
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         latch_failure(status, device_ordinal, address, 0U);
     }
     release_allocator_callback_runtime();

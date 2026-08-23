@@ -328,7 +328,7 @@ int shadowspill_admission_reserve_buffers(
             predecessors == NULL || predecessor_tasks == NULL ||
             shadowspill_admission_replay_workspace_create(
                 lease_count, dependency_count, &replay
-            ) != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+            ) != SHADOWSPILL_STATUS_OK) {
             free(operations);
             free(decisions);
             free(annotations);

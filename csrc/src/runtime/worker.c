@@ -60,7 +60,7 @@ static void unlink_action_locked(
 static void latch_action_failure(
     ShadowSpillRuntime *runtime,
     const ShadowSpillQueuedAction *action,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -89,7 +89,7 @@ static void complete_action(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object->object_id,
             object->allocation_id,
             0U
@@ -147,7 +147,7 @@ static void complete_action(
             latch_action_failure(
                 runtime,
                 action,
-                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_STATUS_INVALID_STATE,
                 object->object_id,
                 object->allocation_id,
                 0U
@@ -165,7 +165,7 @@ static void complete_action(
         dependency_release_failed) {
         shadowspill_latch_task_failure(
             runtime,
-            SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+            SHADOWSPILL_STATUS_BACKEND_FAILURE,
             task_id,
             object_id,
             allocation_id,
@@ -310,7 +310,7 @@ static int dispatch_offload_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object->object_id,
             object->allocation_id,
             object->size_bytes
@@ -328,7 +328,7 @@ static int dispatch_offload_locked(
             latch_action_failure(
                 runtime,
                 action,
-                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_STATUS_INVALID_STATE,
                 object->object_id,
                 object->allocation_id,
                 object->size_bytes
@@ -339,7 +339,7 @@ static int dispatch_offload_locked(
             latch_action_failure(
                 runtime,
                 action,
-                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_STATUS_INVALID_STATE,
                 object->object_id,
                 object->allocation_id,
                 object->size_bytes
@@ -357,7 +357,7 @@ static int dispatch_offload_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation_id,
             bytes
@@ -369,10 +369,10 @@ static int dispatch_offload_locked(
 
     ShadowSpillEventLease *completion_event = NULL;
     ShadowSpillRouteState *route = route_for_action(action);
-    ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
+    ShadowSpillStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
-    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK || route == NULL;
+    int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
     if (!backend_failed && runtime->synchronization.wait_event(
             runtime->synchronization.context,
             route->lane,
@@ -398,7 +398,7 @@ static int dispatch_offload_locked(
                 completion_event,
                 object_id,
                 allocation_id
-            ) != SHADOWSPILL_RUNTIME_OK)) {
+            ) != SHADOWSPILL_STATUS_OK)) {
         backend_failed = 1;
     }
     if (!backend_failed) {
@@ -430,8 +430,8 @@ static int dispatch_offload_locked(
         latch_action_failure(
             runtime,
             action,
-            backend_failed ? SHADOWSPILL_RUNTIME_BACKEND_FAILURE
-                           : SHADOWSPILL_RUNTIME_INVALID_STATE,
+            backend_failed ? SHADOWSPILL_STATUS_BACKEND_FAILURE
+                           : SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation_id,
             bytes
@@ -472,7 +472,7 @@ static int dispatch_prefetch_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             action->object->object_id,
             SHADOWSPILL_RUNTIME_NO_ID,
             action->object->size_bytes
@@ -496,7 +496,7 @@ static int dispatch_prefetch_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation->allocation_id,
             bytes
@@ -509,7 +509,7 @@ static int dispatch_prefetch_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation->allocation_id,
             bytes
@@ -520,10 +520,10 @@ static int dispatch_prefetch_locked(
     pthread_mutex_unlock(&object->lock);
     ShadowSpillEventLease *completion_event = NULL;
     ShadowSpillRouteState *route = route_for_action(action);
-    ShadowSpillRuntimeStatus event_status = shadowspill_event_lease_create_locked(
+    ShadowSpillStatus event_status = shadowspill_event_lease_create_locked(
         runtime, &completion_event
     );
-    int backend_failed = event_status != SHADOWSPILL_RUNTIME_OK || route == NULL;
+    int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
     if (!backend_failed && runtime->synchronization.wait_event(
             runtime->synchronization.context,
             route->lane,
@@ -549,7 +549,7 @@ static int dispatch_prefetch_locked(
                 completion_event,
                 object_id,
                 allocation->allocation_id
-            ) != SHADOWSPILL_RUNTIME_OK)) {
+            ) != SHADOWSPILL_STATUS_OK)) {
         backend_failed = 1;
     }
     if (!backend_failed && !object->retain_spill_copy) {
@@ -576,8 +576,8 @@ static int dispatch_prefetch_locked(
         latch_action_failure(
             runtime,
             action,
-            backend_failed ? SHADOWSPILL_RUNTIME_BACKEND_FAILURE
-                           : SHADOWSPILL_RUNTIME_INVALID_STATE,
+            backend_failed ? SHADOWSPILL_STATUS_BACKEND_FAILURE
+                           : SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation->allocation_id,
             bytes
@@ -600,7 +600,7 @@ static int dispatch_prefetch_locked(
         latch_action_failure(
             runtime,
             action,
-            SHADOWSPILL_RUNTIME_INVALID_STATE,
+            SHADOWSPILL_STATUS_INVALID_STATE,
             object_id,
             allocation->allocation_id,
             bytes
@@ -645,7 +645,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                        SHADOWSPILL_STATUS_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -675,7 +675,7 @@ static int handle_action(
                         latch_action_failure(
                             runtime,
                             action,
-                            SHADOWSPILL_RUNTIME_INVALID_STATE,
+                            SHADOWSPILL_STATUS_INVALID_STATE,
                             object->object_id,
                             object->allocation_id,
                             0U
@@ -695,7 +695,7 @@ static int handle_action(
                             latch_action_failure(
                                 runtime,
                                 action,
-                                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                                SHADOWSPILL_STATUS_INVALID_STATE,
                                 object->object_id,
                                 allocation->allocation_id,
                                 allocation->requested_bytes
@@ -733,7 +733,7 @@ static int handle_action(
                         latch_action_failure(
                             runtime,
                             action,
-                            SHADOWSPILL_RUNTIME_INVALID_STATE,
+                            SHADOWSPILL_STATUS_INVALID_STATE,
                             object->object_id,
                             allocation->allocation_id,
                             allocation->requested_bytes
@@ -779,7 +779,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_INVALID_STATE,
+                        SHADOWSPILL_STATUS_INVALID_STATE,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes
@@ -797,7 +797,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                        SHADOWSPILL_STATUS_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -827,7 +827,7 @@ static int handle_action(
                  * an earlier eviction of this same object; resolving that
                  * predecessor therefore locks this exact object internally.
                  */
-                const ShadowSpillRuntimeStatus dependency_wait_status =
+                const ShadowSpillStatus dependency_wait_status =
                     dependency_ready > 0 &&
                         action->kind == SHADOWSPILL_RUNTIME_PREFETCH
                     ? shadowspill_fixed_layout_insert_dependency_waits(
@@ -838,13 +838,13 @@ static int handle_action(
                           action->activation_generation,
                           action->route->lane
                       )
-                    : SHADOWSPILL_RUNTIME_OK;
+                    : SHADOWSPILL_STATUS_OK;
                 pthread_mutex_lock(&object->lock);
                 if (dependency_ready < 0) {
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                        SHADOWSPILL_STATUS_PLAN_VIOLATION,
                         object->object_id,
                         object->allocation_id,
                         object->size_bytes
@@ -852,7 +852,7 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
-                if (dependency_wait_status != SHADOWSPILL_RUNTIME_OK) {
+                if (dependency_wait_status != SHADOWSPILL_STATUS_OK) {
                     latch_action_failure(
                         runtime,
                         action,
@@ -885,7 +885,7 @@ static int handle_action(
                         latch_action_failure(
                             runtime,
                             action,
-                            SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                            SHADOWSPILL_STATUS_PLAN_VIOLATION,
                             object->object_id,
                             object->allocation_id,
                             object->size_bytes
@@ -945,7 +945,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_INVALID_STATE,
+                        SHADOWSPILL_STATUS_INVALID_STATE,
                         object->object_id,
                         action->caller_handoff_lease->allocation_id,
                         object->size_bytes
@@ -978,7 +978,7 @@ static int handle_action(
                         latch_action_failure(
                             runtime,
                             action,
-                            SHADOWSPILL_RUNTIME_INVALID_STATE,
+                            SHADOWSPILL_STATUS_INVALID_STATE,
                             object->object_id,
                             object->allocation_id,
                             0U
@@ -1048,7 +1048,7 @@ static int handle_action(
                             latch_action_failure(
                                 runtime,
                                 action,
-                                SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE,
+                                SHADOWSPILL_STATUS_INTERNAL_FAILURE,
                                 object->object_id,
                                 object->allocation_id,
                                 object->size_bytes
@@ -1085,7 +1085,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                        SHADOWSPILL_STATUS_BACKEND_FAILURE,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -1096,7 +1096,7 @@ static int handle_action(
                     latch_action_failure(
                         runtime,
                         action,
-                        SHADOWSPILL_RUNTIME_INVALID_STATE,
+                        SHADOWSPILL_STATUS_INVALID_STATE,
                         object->object_id,
                         object->allocation_id,
                         0U
@@ -1220,7 +1220,7 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
         }
     }
     if (!fetches_published &&
-        shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK) {
+        shadowspill_failure_status(runtime) == SHADOWSPILL_STATUS_OK) {
         return changed;
     }
 
@@ -1262,7 +1262,7 @@ void *shadowspill_worker_main(void *pointer) {
         if (completion_status < 0) {
             shadowspill_latch_failure_locked(
                 runtime,
-                SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                SHADOWSPILL_STATUS_BACKEND_FAILURE,
                 failure_object_id,
                 failure_allocation_id,
                 0U
@@ -1273,11 +1273,11 @@ void *shadowspill_worker_main(void *pointer) {
             shadowspill_handle_retirements(runtime);
         /* Dispatch or complete ready release, fetch, and evict actions. */
         if (!retirement_work.pool_busy &&
-            shadowspill_failure_status(runtime) == SHADOWSPILL_RUNTIME_OK) {
+            shadowspill_failure_status(runtime) == SHADOWSPILL_STATUS_OK) {
             (void)handle_actions(runtime);
         }
         /* Failed actions remain parked while the always-active worker polls. */
-        if (shadowspill_failure_status(runtime) != SHADOWSPILL_RUNTIME_OK) {
+        if (shadowspill_failure_status(runtime) != SHADOWSPILL_STATUS_OK) {
             shadowspill_cpu_relax();
             continue;
         }

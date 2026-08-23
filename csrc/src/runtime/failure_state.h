@@ -11,7 +11,7 @@ struct ShadowSpillMemoryPool;
  * on; the reason names the condition, so a report can explain itself. */
 void shadowspill_latch_failure_reason_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
@@ -21,7 +21,7 @@ void shadowspill_latch_failure_reason_locked(
 void shadowspill_latch_pool_failure_reason_locked(
     ShadowSpillRuntime *runtime,
     struct ShadowSpillMemoryPool *pool,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     ShadowSpillFailureReason reason,
     uint64_t object_id,
     uint64_t allocation_id,
@@ -30,7 +30,7 @@ void shadowspill_latch_pool_failure_reason_locked(
 
 void shadowspill_latch_failure_locked(
     ShadowSpillRuntime *runtime,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -39,7 +39,7 @@ void shadowspill_latch_failure_locked(
 void shadowspill_latch_pool_failure_locked(
     ShadowSpillRuntime *runtime,
     struct ShadowSpillMemoryPool *pool,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     uint64_t object_id,
     uint64_t allocation_id,
     uint64_t requested_bytes
@@ -48,7 +48,7 @@ void shadowspill_latch_pool_failure_locked(
 /* Publish a failure whose causal task is carried by asynchronous work. */
 void shadowspill_latch_task_failure(
     ShadowSpillRuntime *runtime,
-    ShadowSpillRuntimeStatus status,
+    ShadowSpillStatus status,
     uint64_t task_id,
     uint64_t object_id,
     uint64_t allocation_id,
@@ -86,11 +86,11 @@ void shadowspill_latch_task_allocation_contract_failure(
     const ShadowSpillTaskAllocationMismatch *mismatch
 );
 
-ShadowSpillRuntimeStatus shadowspill_current_status_locked(
+ShadowSpillStatus shadowspill_current_status_locked(
     ShadowSpillRuntime *runtime
 );
 
-ShadowSpillRuntimeStatus shadowspill_failure_status(
+ShadowSpillStatus shadowspill_failure_status(
     const ShadowSpillRuntime *runtime
 );
 

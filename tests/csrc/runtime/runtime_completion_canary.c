@@ -40,20 +40,20 @@ int main(void) {
     );
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
         shadowspill_runtime_reserve_event_leases(runtime, 32U) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_reserve_event_leases(runtime, COMPLETION_COUNT) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_reserve_retirement_records(
             runtime, COMPLETION_COUNT
         ) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_reserve_memory_lease_records(
             runtime, 0U, COMPLETION_COUNT
         ) !=
-            SHADOWSPILL_RUNTIME_OK) {
+            SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
 
@@ -64,7 +64,7 @@ int main(void) {
                 1U,
                 compute,
                 &allocations[index]
-            ) != SHADOWSPILL_RUNTIME_OK) {
+            ) != SHADOWSPILL_STATUS_OK) {
             return EXIT_FAILURE;
         }
     }
@@ -73,11 +73,11 @@ int main(void) {
     }
     for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
         if (shadowspill_memory_pool_free(runtime, 0U, allocations[index].allocation_id, compute
-            ) != SHADOWSPILL_RUNTIME_OK) {
+            ) != SHADOWSPILL_STATUS_OK) {
             return EXIT_FAILURE;
         }
     }
-    if (shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK) {
+    if (shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     ShadowSpillMockBackendStatistics batch_statistics = {0};
@@ -99,10 +99,10 @@ int main(void) {
                 1U,
                 compute,
                 &allocation
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute
-            ) != SHADOWSPILL_RUNTIME_OK || shadowspill_runtime_wait_idle(
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute
+            ) != SHADOWSPILL_STATUS_OK || shadowspill_runtime_wait_idle(
                 runtime
-            ) != SHADOWSPILL_RUNTIME_OK) {
+            ) != SHADOWSPILL_STATUS_OK) {
             return EXIT_FAILURE;
         }
     }
@@ -118,7 +118,7 @@ int main(void) {
             (double)(COMPLETION_COUNT + WAIT_IDLE_ROUNDS)
     );
     if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         backend_statistics.events_created !=
             COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
         backend_statistics.events_destroyed !=
@@ -150,7 +150,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
         return EXIT_FAILURE;
     }

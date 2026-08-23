@@ -1081,7 +1081,7 @@ void shadowspill_residency_workspace_destroy(
     free(workspace);
 }
 
-ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
+ShadowSpillStatus shadowspill_reduce_residency_reusing(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
     ShadowSpillResidencyResult *result,
@@ -1091,7 +1091,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
         workspace->alias_count != problem->alias_count ||
         workspace->boundary_count != problem->boundary_count ||
         workspace->device_count != problem->device_count) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     uint8_t *resident_output = result->resident;
     uint64_t resident_capacity = result->resident_capacity;
@@ -1121,7 +1121,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
     int32_t *gap_end = workspace->gap_end;
     if (prepare_seed_geometry(problem, options, workspace) != 0 ||
         prepare_base_pressure(problem, options, workspace) != 0) {
-        return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+        return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
     }
     if (workspace->cut_active_capacity < workspace->cut_index.cut_count) {
         uint8_t *active = realloc(
@@ -1131,7 +1131,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 : (size_t)workspace->cut_index.cut_count
         );
         if (active == NULL) {
-            return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         workspace->cut_active = active;
         workspace->cut_active_capacity = workspace->cut_index.cut_count;
@@ -1188,7 +1188,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 device,
             };
             if (excess_heap_push(workspace, entry) != 0) {
-                return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+                return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
             }
         }
     }
@@ -1218,7 +1218,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 excess_heap_pop(workspace);
                 top.excess = excess;
                 if (excess_heap_push(workspace, top) != 0) {
-                    return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+                    return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
                 }
                 continue;
             }
@@ -1236,8 +1236,8 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                 problem->alias_count,
                 problem->boundary_count
             );
-            result->status = SHADOWSPILL_PLANNER_OK;
-            return SHADOWSPILL_PLANNER_OK;
+            result->status = SHADOWSPILL_STATUS_OK;
+            return SHADOWSPILL_STATUS_OK;
         }
 
         int32_t boundary_value = (int32_t)selected_boundary - 1;
@@ -1252,7 +1252,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
             workspace->cut_cursors,
             &chosen
         )) {
-            result->status = SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
+            result->status = SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
             result->error_device = selected_device;
             result->error_boundary = boundary_value;
             result->required_bytes = selected_used;
@@ -1262,7 +1262,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                     selected_device,
                     selected_boundary
                 );
-            return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
+            return SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
         }
         uint32_t alias = chosen.alias;
         alias_contribution(
@@ -1319,7 +1319,7 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
                         device,
                     };
                     if (excess_heap_push(workspace, entry) != 0) {
-                        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+                        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
                     }
                 }
             }
@@ -1327,19 +1327,19 @@ ShadowSpillPlannerStatus shadowspill_reduce_residency_reusing(
     }
 }
 
-ShadowSpillPlannerStatus shadowspill_reduce_residency(
+ShadowSpillStatus shadowspill_reduce_residency(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
     ShadowSpillResidencyResult *result
 ) {
     if (!valid_problem(problem, options, result)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillResidencyWorkspace *workspace = NULL;
     if (shadowspill_residency_workspace_create(problem, &workspace) != 0) {
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    ShadowSpillPlannerStatus status = shadowspill_reduce_residency_reusing(
+    ShadowSpillStatus status = shadowspill_reduce_residency_reusing(
         problem,
         options,
         result,

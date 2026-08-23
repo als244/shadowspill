@@ -101,12 +101,12 @@ ShadowSpillObject *shadowspill_plan_object_acquire(
     uint8_t *consistency
 );
 
-ShadowSpillRuntimeStatus shadowspill_fixed_layout_reserve_slice(
+ShadowSpillStatus shadowspill_fixed_layout_reserve_slice(
     ShadowSpillPlan *plan,
     uint64_t bytes
 );
 
-ShadowSpillRuntimeStatus shadowspill_fixed_layout_clear(
+ShadowSpillStatus shadowspill_fixed_layout_clear(
     ShadowSpillPlan *plan
 );
 
@@ -121,7 +121,7 @@ shadowspill_fixed_layout_find_placement(
     uint64_t object_id
 );
 
-ShadowSpillRuntimeStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
+ShadowSpillStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
     ShadowSpillPlan *plan,
     ShadowSpillMemoryLease *lease,
     uint64_t relative_offset,
@@ -137,7 +137,7 @@ int shadowspill_fixed_layout_dependencies_published(
     uint64_t invocation
 );
 
-ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
+ShadowSpillStatus shadowspill_fixed_layout_insert_dependency_waits(
     ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,
@@ -146,7 +146,7 @@ ShadowSpillRuntimeStatus shadowspill_fixed_layout_insert_dependency_waits(
     ShadowSpillBackendStream stream
 );
 
-ShadowSpillRuntimeStatus shadowspill_fixed_layout_wait_for_dependencies(
+ShadowSpillStatus shadowspill_fixed_layout_wait_for_dependencies(
     ShadowSpillPlan *plan,
     uint8_t successor_kind,
     uint64_t task_id,

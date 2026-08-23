@@ -12,13 +12,13 @@ namespace {
 
 [[noreturn]] void throw_allocator_failure() {
     char message[4096] = {0};
-    const ShadowSpillRuntimeStatus status =
+    const ShadowSpillStatus status =
         shadowspill_pytorch_cuda_malloc_failure_message(
             message, sizeof(message)
         );
 #ifdef SHADOWSPILL_PYTORCH_STORAGE_ADAPTER
-    if (status == SHADOWSPILL_RUNTIME_OUT_OF_MEMORY ||
-        status == SHADOWSPILL_RUNTIME_NO_PROGRESS) {
+    if (status == SHADOWSPILL_STATUS_OUT_OF_MEMORY ||
+        status == SHADOWSPILL_STATUS_NO_PROGRESS) {
         C10_THROW_ERROR(OutOfMemoryError, message);
     }
     C10_THROW_ERROR(Error, message);

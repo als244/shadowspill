@@ -358,7 +358,7 @@ int shadowspill_memory_pool_initialize(
 
 void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
 
-ShadowSpillRuntimeStatus shadowspill_memory_pool_reserve_lease_records(
+ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
     ShadowSpillMemoryPool *pool,
     uint64_t minimum_free_records
 );
@@ -557,7 +557,7 @@ ShadowSpillMemoryLease *shadowspill_find_execution_lease_by_pointer(
     const void *pointer
 );
 
-ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
+ShadowSpillStatus shadowspill_create_execution_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
@@ -568,7 +568,7 @@ ShadowSpillRuntimeStatus shadowspill_create_execution_lease_locked(
     ShadowSpillMemoryLease **record
 );
 
-ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
+ShadowSpillStatus shadowspill_create_fixed_execution_lease_locked(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement,
     int plan_owned,
@@ -576,7 +576,7 @@ ShadowSpillRuntimeStatus shadowspill_create_fixed_execution_lease_locked(
     ShadowSpillMemoryLease **record
 );
 
-ShadowSpillRuntimeStatus shadowspill_create_execution_successor_locked(
+ShadowSpillStatus shadowspill_create_execution_successor_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
@@ -615,7 +615,7 @@ void shadowspill_memory_pool_try_recycle_lease_record_locked(
     ShadowSpillMemoryLease *lease
 );
 
-ShadowSpillRuntimeStatus shadowspill_publish_task_retirement_event(
+ShadowSpillStatus shadowspill_publish_task_retirement_event(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream
@@ -630,7 +630,7 @@ int shadowspill_retirement_queue_initialize(
     ShadowSpillRetirementQueue *queue
 );
 
-ShadowSpillRuntimeStatus shadowspill_retirement_queue_reserve(
+ShadowSpillStatus shadowspill_retirement_queue_reserve(
     ShadowSpillRetirementQueue *queue,
     uint64_t minimum_free_records
 );
@@ -640,7 +640,7 @@ void shadowspill_retirement_queue_destroy(
     ShadowSpillRetirementQueue *queue
 );
 
-ShadowSpillRuntimeStatus shadowspill_retirement_enqueue_locked(
+ShadowSpillStatus shadowspill_retirement_enqueue_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 );

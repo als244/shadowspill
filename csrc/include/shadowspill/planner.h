@@ -23,13 +23,6 @@ extern "C" {
 #define SHADOWSPILL_ADMISSION_NO_LEASE UINT64_MAX
 
 /* Planner names for the shared statuses; see <shadowspill/status.h>. */
-typedef ShadowSpillStatus ShadowSpillPlannerStatus;
-#define SHADOWSPILL_PLANNER_OK SHADOWSPILL_STATUS_OK
-#define SHADOWSPILL_PLANNER_INVALID_ARGUMENT SHADOWSPILL_STATUS_INVALID_ARGUMENT
-#define SHADOWSPILL_PLANNER_ALLOCATION_FAILURE SHADOWSPILL_STATUS_INTERNAL_FAILURE
-#define SHADOWSPILL_PLANNER_NO_FEASIBLE_CANDIDATE SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE
-#define SHADOWSPILL_PLANNER_INTERNAL_ERROR SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR
-#define SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE
 
 typedef struct ShadowSpillResidencyProblem {
     uint32_t abi_version;
@@ -345,7 +338,7 @@ typedef struct ShadowSpillPlanSelectionResult {
  * The function has no global mutable state and is thread-safe for distinct
  * result buffers.
  */
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_select_plan(
+SHADOWSPILL_PLANNER_API ShadowSpillStatus shadowspill_select_plan(
     const ShadowSpillPlanCandidate *candidates,
     uint32_t candidate_count,
     ShadowSpillPlanSelectionResult *result
@@ -358,7 +351,7 @@ SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_select_plan(
  * logical span boundary after a resident boundary; its final column is unused.
  * The function is thread-safe for distinct output buffers.
  */
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_reduce_residency(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
@@ -372,7 +365,7 @@ shadowspill_reduce_residency(
  * storage is owned by the caller after success or a no-feasible result and
  * must be released with the matching destroy function.
  */
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_evaluate_pressurefit_context(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillPressureFitContextOptions *options,
@@ -385,20 +378,20 @@ shadowspill_evaluate_pressurefit_context(
  * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
  * explicitly, but avoids materializing alias-by-boundary matrices in Python.
  */
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_evaluate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
 );
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_validate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     ShadowSpillPressureFitPreflightResult *result
 );
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_evaluate_schedule_admission(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
@@ -461,7 +454,7 @@ typedef struct ShadowSpillAdmissionOperations {
     uint64_t evict_bytes;
 } ShadowSpillAdmissionOperations;
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_admission_operation_bounds(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
@@ -470,7 +463,7 @@ shadowspill_admission_operation_bounds(
     uint64_t *lease_capacity
 );
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus
+SHADOWSPILL_PLANNER_API ShadowSpillStatus
 shadowspill_build_admission_operations(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
@@ -555,7 +548,7 @@ typedef struct ShadowSpillLeaseLifetimeResult {
     uint64_t fixed_count;
 } ShadowSpillLeaseLifetimeResult;
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
+SHADOWSPILL_PLANNER_API ShadowSpillStatus shadowspill_build_lease_lifetimes(
     const ShadowSpillLeaseLifetimeProblem *problem,
     ShadowSpillLeaseLifetimeResult *result
 );
@@ -574,7 +567,7 @@ typedef struct ShadowSpillPlacementResult {
     uint64_t *offsets;
 } ShadowSpillPlacementResult;
 
-SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_place_lifetimes(
+SHADOWSPILL_PLANNER_API ShadowSpillStatus shadowspill_place_lifetimes(
     const ShadowSpillPlacementProblem *problem,
     ShadowSpillPlacementResult *result
 );

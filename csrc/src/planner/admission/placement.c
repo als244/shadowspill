@@ -417,27 +417,27 @@ static void placer_destroy(Placer *placer)
     memset(placer, 0, sizeof(*placer));
 }
 
-ShadowSpillPlannerStatus shadowspill_place_lifetimes(
+ShadowSpillStatus shadowspill_place_lifetimes(
     const ShadowSpillPlacementProblem *problem,
     ShadowSpillPlacementResult *result
 )
 {
     if (problem == NULL || result == NULL ||
         problem->abi_version != SHADOWSPILL_ABI_VERSION) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     result->required_bytes = 0U;
     const uint32_t count = problem->lifetime_count;
     if (count == 0U) {
-        return SHADOWSPILL_PLANNER_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     if (problem->lifetimes == NULL || result->offsets == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     Placer placer;
     memset(&placer, 0, sizeof(placer));
-    ShadowSpillPlannerStatus status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     if (time_axis_build(problem, &placer.axis) != 0 ||
         occupancy_index_create(&placer.index, placer.axis.time_count) != 0) {
         goto done;
@@ -475,7 +475,7 @@ ShadowSpillPlannerStatus shadowspill_place_lifetimes(
             goto done;
         }
     }
-    status = SHADOWSPILL_PLANNER_OK;
+    status = SHADOWSPILL_STATUS_OK;
 
 done:
     placer_destroy(&placer);

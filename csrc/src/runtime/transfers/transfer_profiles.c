@@ -632,14 +632,14 @@ static int calibrate_reverse_pair(
     return 0;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
+ShadowSpillStatus shadowspill_runtime_calibrate_transfer_capabilities(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTransferCalibrationConfig *provided_config,
     const ShadowSpillTransferRouteKey *routes,
     uint32_t route_count
 ) {
     if (runtime == NULL || (route_count != 0U && routes == NULL)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillTransferCalibrationConfig config = provided_config == NULL
         ? (ShadowSpillTransferCalibrationConfig){
@@ -656,7 +656,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
         config.large_copy_bytes < config.small_copy_bytes ||
         config.measured_copies == 0U ||
         config.provenance > SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     for (uint32_t index = 0U; index < route_count; ++index) {
         if (routes[index].source_pool_id >= runtime->pool_count ||
@@ -667,18 +667,18 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
                 routes[index].source_pool_id,
                 routes[index].destination_pool_id
             ) == NULL) {
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
     }
-    ShadowSpillRuntimeStatus idle = shadowspill_runtime_wait_idle(runtime);
-    if (idle != SHADOWSPILL_RUNTIME_OK) {
+    ShadowSpillStatus idle = shadowspill_runtime_wait_idle(runtime);
+    if (idle != SHADOWSPILL_STATUS_OK) {
         return idle;
     }
     ShadowSpillTransferProfile *next = malloc(
         (size_t)runtime->transfer_profile_count * sizeof(*next)
     );
     if (next == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     pthread_rwlock_rdlock(&runtime->transfer_profiles_lock);
     memcpy(
@@ -705,7 +705,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
                     &next[profile_index(runtime, source, destination)]
                 ) != 0) {
                 free(next);
-                return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+                return SHADOWSPILL_STATUS_BACKEND_FAILURE;
             }
         }
     }
@@ -734,7 +734,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
                     &next[profile_index(runtime, destination, source)]
                 ) != 0) {
                 free(next);
-                return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+                return SHADOWSPILL_STATUS_BACKEND_FAILURE;
             }
         }
     }
@@ -748,10 +748,10 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
     runtime->transfer_profiles = next;
     pthread_rwlock_unlock(&runtime->transfer_profiles_lock);
     free(previous);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_runtime_transfer_profiles(
+ShadowSpillStatus shadowspill_runtime_transfer_profiles(
     ShadowSpillRuntime *runtime,
     ShadowSpillTransferProfile *profiles,
     uint32_t capacity,
@@ -760,7 +760,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_transfer_profiles(
 ) {
     if (runtime == NULL || count == NULL || generation == NULL ||
         (profiles == NULL && capacity != 0U)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_rwlock_rdlock(&runtime->transfer_profiles_lock);
     *count = runtime->transfer_profile_count;
@@ -768,7 +768,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_transfer_profiles(
     if (profiles != NULL) {
         if (capacity < runtime->transfer_profile_count) {
             pthread_rwlock_unlock(&runtime->transfer_profiles_lock);
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         memcpy(
             profiles,
@@ -777,5 +777,5 @@ ShadowSpillRuntimeStatus shadowspill_runtime_transfer_profiles(
         );
     }
     pthread_rwlock_unlock(&runtime->transfer_profiles_lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }

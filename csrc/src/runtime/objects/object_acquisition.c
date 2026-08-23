@@ -31,7 +31,7 @@ void shadowspill_object_acquisitions_clear(ShadowSpillPlan *plan) {
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
+ShadowSpillStatus shadowspill_plan_admit_object_acquisition(
     ShadowSpillPlan *plan,
     const uint64_t *object_ids,
     uint32_t object_count,
@@ -39,19 +39,19 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
 ) {
     if (plan == NULL || handle == NULL ||
         (object_count != 0U && object_ids == NULL)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *handle = NULL;
     pthread_mutex_lock(&plan->lifecycle_lock);
     if (atomic_load_explicit(&plan->closing, memory_order_acquire) != 0U ||
         atomic_load_explicit(&plan->closed, memory_order_acquire) != 0U) {
         pthread_mutex_unlock(&plan->lifecycle_lock);
-        return SHADOWSPILL_RUNTIME_CLOSED;
+        return SHADOWSPILL_STATUS_CLOSED;
     }
     ShadowSpillObjectAcquisitionRecord *record = calloc(1U, sizeof(*record));
     if (record == NULL) {
         pthread_mutex_unlock(&plan->lifecycle_lock);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     record->plan_owner = plan;
     record->object_count = object_count;
@@ -73,7 +73,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
          record->unique_first_positions == NULL)) {
         destroy_acquisition(record);
         pthread_mutex_unlock(&plan->lifecycle_lock);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     for (uint32_t index = 0U; index < object_count; ++index) {
         ShadowSpillObject *object = shadowspill_plan_object_acquire(
@@ -83,7 +83,7 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
             record->object_count = index;
             destroy_acquisition(record);
             pthread_mutex_unlock(&plan->lifecycle_lock);
-            return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            return SHADOWSPILL_STATUS_INVALID_STATE;
         }
         record->objects[index] = object;
         uint32_t unique_index = record->unique_object_count;
@@ -105,10 +105,10 @@ ShadowSpillRuntimeStatus shadowspill_plan_admit_object_acquisition(
     plan->object_acquisitions = record;
     *handle = record;
     pthread_mutex_unlock(&plan->lifecycle_lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
+ShadowSpillStatus shadowspill_acquire_object_bindings(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlan *plan,
     uint64_t trace_task_id,
@@ -126,11 +126,11 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
          (unique_objects == NULL || object_unique_indices == NULL ||
           unique_first_positions == NULL || bindings == NULL)) ||
         binding_capacity < object_count) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
     for (uint32_t index = 0U;
-         status == SHADOWSPILL_RUNTIME_OK && index < unique_object_count;
+         status == SHADOWSPILL_STATUS_OK && index < unique_object_count;
          ++index) {
         ShadowSpillObject *object = unique_objects[index];
         pthread_mutex_lock(&object->lock);
@@ -153,12 +153,12 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
             );
             shadowspill_latch_failure_locked(
                 runtime,
-                SHADOWSPILL_RUNTIME_INVALID_STATE,
+                SHADOWSPILL_STATUS_INVALID_STATE,
                 object_id,
                 allocation_id,
                 size_bytes
             );
-            return SHADOWSPILL_RUNTIME_INVALID_STATE;
+            return SHADOWSPILL_STATUS_INVALID_STATE;
         }
         ShadowSpillMemoryLease *lease =
             shadowspill_plan_execution_location(plan, object)->lease;
@@ -172,12 +172,12 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
             pthread_mutex_unlock(&object->lock);
             shadowspill_latch_failure_locked(
                 runtime,
-                SHADOWSPILL_RUNTIME_PLAN_VIOLATION,
+                SHADOWSPILL_STATUS_PLAN_VIOLATION,
                 object_id,
                 allocation_id,
                 size_bytes
             );
-            return SHADOWSPILL_RUNTIME_PLAN_VIOLATION;
+            return SHADOWSPILL_STATUS_PLAN_VIOLATION;
         }
         ShadowSpillEventLease *readiness_event = NULL;
         if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
@@ -185,12 +185,12 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
                 pthread_mutex_unlock(&object->lock);
                 shadowspill_latch_failure_locked(
                     runtime,
-                    SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                    SHADOWSPILL_STATUS_BACKEND_FAILURE,
                     object_id,
                     allocation_id,
                     size_bytes
                 );
-                return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+                return SHADOWSPILL_STATUS_BACKEND_FAILURE;
             }
             readiness_event = object->readiness_event;
             shadowspill_event_lease_retain(readiness_event);
@@ -216,12 +216,12 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
                 );
                 shadowspill_latch_failure_locked(
                     runtime,
-                    SHADOWSPILL_RUNTIME_BACKEND_FAILURE,
+                    SHADOWSPILL_STATUS_BACKEND_FAILURE,
                     object_id,
                     allocation_id,
                     size_bytes
                 );
-                return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+                return SHADOWSPILL_STATUS_BACKEND_FAILURE;
             }
             const uint64_t wait_count = atomic_fetch_add_explicit(
                 &runtime->wait_events_inserted, 1U, memory_order_acq_rel
@@ -240,7 +240,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
         }
     }
     for (uint32_t position = 0U;
-         status == SHADOWSPILL_RUNTIME_OK && position < object_count;
+         status == SHADOWSPILL_STATUS_OK && position < object_count;
          ++position) {
         const uint32_t first_position = unique_first_positions[
             object_unique_indices[position]
@@ -250,7 +250,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_acquire_objects_handle(
+ShadowSpillStatus shadowspill_acquire_objects_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
     ShadowSpillBackendStream consumer_stream,
@@ -260,7 +260,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_objects_handle(
     const ShadowSpillObjectAcquisitionRecord *record = handle;
     if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     return shadowspill_acquire_object_bindings(
         runtime,
@@ -277,7 +277,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_objects_handle(
     );
 }
 
-ShadowSpillRuntimeStatus shadowspill_transfer_acquired_object_to_caller(
+ShadowSpillStatus shadowspill_transfer_acquired_object_to_caller(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
     uint32_t object_ordinal,
@@ -292,7 +292,7 @@ ShadowSpillRuntimeStatus shadowspill_transfer_acquired_object_to_caller(
         record->plan_owner->runtime != runtime || allocation == NULL ||
         object_ordinal >= record->object_count || expected_pointer == NULL ||
         expected_allocation_id == SHADOWSPILL_RUNTIME_NO_ID) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     return shadowspill_object_transfer_to_caller(
         runtime,

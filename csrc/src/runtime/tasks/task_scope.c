@@ -180,7 +180,7 @@ static const ShadowSpillTaskAllocationContractStep *expected_allocation_step(voi
     ];
 }
 
-static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
+static ShadowSpillStatus latch_allocation_contract_mismatch(
     ShadowSpillRuntime *runtime,
     uint8_t actual_operation,
     uint64_t actual_ordinal,
@@ -209,7 +209,7 @@ static ShadowSpillRuntimeStatus latch_allocation_contract_mismatch(
         .actual_operation = actual_operation,
     };
     shadowspill_latch_task_allocation_contract_failure(runtime, &mismatch);
-    return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_CONTRACT_MISMATCH;
+    return SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH;
 }
 
 int shadowspill_claim_task_invocation(
@@ -406,7 +406,7 @@ static void classify_task_allocation(
     }
 }
 
-ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
+ShadowSpillStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
@@ -414,10 +414,10 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
 ) {
     if (runtime == NULL || requested_bytes == 0U || charged_bytes == 0U ||
         alignment_bytes == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (task_scope.runtime != runtime || task_scope.task == NULL) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     const ShadowSpillTaskRecord *record = task_scope.task;
     const uint64_t projected_requested =
@@ -446,13 +446,13 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
             record->maximum_requested_allocation_bytes,
             record->maximum_charged_allocation_bytes
         );
-        return SHADOWSPILL_RUNTIME_TASK_ALLOCATION_ENVELOPE_EXCEEDED;
+        return SHADOWSPILL_STATUS_TASK_ALLOCATION_ENVELOPE_EXCEEDED;
     }
     if (!record->enforce_allocation_contract) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     if (task_scope.pending_allocation) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     classify_task_allocation(requested_bytes, charged_bytes, alignment_bytes);
     if (task_scope.pending_is_scratch &&
@@ -472,7 +472,7 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
             alignment_bytes
         );
     }
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 uint64_t shadowspill_commit_task_allocation(
@@ -516,7 +516,7 @@ uint64_t shadowspill_commit_task_allocation(
     return allocation_sequence;
 }
 
-ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
+ShadowSpillStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
     uint64_t origin_task_invocation,
@@ -529,7 +529,7 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     if (task_scope.runtime != runtime || task_scope.task == NULL ||
         task_scope.task_id != origin_task_id ||
         task_scope.invocation != origin_task_invocation) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     if (task_scope.task->enforce_allocation_contract &&
         !allocation_is_scratch) {
@@ -576,22 +576,22 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
         task_scope.live_charged_bytes = 0U;
     }
     ++task_scope.free_count;
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
+ShadowSpillStatus shadowspill_validate_task_allocation_complete(
     ShadowSpillRuntime *runtime
 ) {
     if (task_scope.runtime != runtime || task_scope.task == NULL ||
         !task_scope.task->enforce_allocation_contract) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     for (;;) {
         skip_omitted_free_operations();
         const ShadowSpillTaskAllocationContractStep *expected =
             expected_allocation_step();
         if (expected == NULL) {
-            return SHADOWSPILL_RUNTIME_OK;
+            return SHADOWSPILL_STATUS_OK;
         }
         if (expected->operation != SHADOWSPILL_TASK_ALLOCATION_ALLOCATE ||
             expected->required) {
@@ -605,7 +605,7 @@ ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
     }
     if (task_scope.operation_index ==
         task_scope.task->allocation_contract_step_count) {
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     return latch_allocation_contract_mismatch(
         runtime,
@@ -677,7 +677,7 @@ void shadowspill_abort_current_task(ShadowSpillRuntime *runtime) {
     shadowspill_leave_task_scope(runtime);
 }
 
-ShadowSpillRuntimeStatus shadowspill_abort_task_handle(
+ShadowSpillStatus shadowspill_abort_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle
 ) {
@@ -685,12 +685,12 @@ ShadowSpillRuntimeStatus shadowspill_abort_task_handle(
     if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
         record->plan_owner->runtime != runtime ||
         record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (shadowspill_current_plan(runtime) != record->plan_owner ||
         shadowspill_current_task_id(runtime) != record->task_id) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     shadowspill_abort_current_task(runtime);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }

@@ -50,7 +50,7 @@ static inline ShadowSpillTestRuntime *shadowspill_test_runtime_record(
         .evict_route_id = 1U,
     };
     if (shadowspill_plan_create(runtime, &description, &plan) !=
-            SHADOWSPILL_RUNTIME_OK) {
+            SHADOWSPILL_STATUS_OK) {
         return NULL;
     }
     empty->runtime = runtime;
@@ -59,25 +59,25 @@ static inline ShadowSpillTestRuntime *shadowspill_test_runtime_record(
     return empty;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_bind_object(
+static inline ShadowSpillStatus shadowspill_test_bind_object(
     ShadowSpillTestRuntime *record,
     uint64_t object_id
 ) {
     ShadowSpillObjectHandle *object = NULL;
-    ShadowSpillRuntimeStatus status = shadowspill_object_handle_acquire(
+    ShadowSpillStatus status = shadowspill_object_handle_acquire(
         record->runtime, object_id, &object
     );
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_plan_bind_object(
             record->plan, object_id, object, SHADOWSPILL_OBJECT_CAUSAL
         );
     }
-    const ShadowSpillRuntimeStatus release_status =
+    const ShadowSpillStatus release_status =
         shadowspill_object_handle_release(object);
-    return status == SHADOWSPILL_RUNTIME_OK ? release_status : status;
+    return status == SHADOWSPILL_STATUS_OK ? release_status : status;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_publish_initial(
+static inline ShadowSpillStatus shadowspill_test_publish_initial(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
     const void *pointer,
@@ -85,13 +85,13 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_publish_initial(
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     if (record == NULL || pointer == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+    ShadowSpillStatus status = shadowspill_test_bind_object(
         record, object_id
     );
     ShadowSpillObjectBinding ignored = {0};
-    return status == SHADOWSPILL_RUNTIME_OK
+    return status == SHADOWSPILL_STATUS_OK
         ? shadowspill_plan_publish_initial_allocation(
               record->plan,
               object_id,
@@ -101,7 +101,7 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_publish_initial(
         : status;
 }
 
-static inline ShadowSpillRuntimeStatus
+static inline ShadowSpillStatus
 shadowspill_test_transfer_object_to_caller(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -110,24 +110,24 @@ shadowspill_test_transfer_object_to_caller(
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     if (record == NULL || allocation == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+    ShadowSpillStatus status = shadowspill_test_bind_object(
         record, object_id
     );
     const ShadowSpillObjectAcquisitionHandle *handle = NULL;
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_plan_admit_object_acquisition(
             record->plan, &object_id, 1U, &handle
         );
     }
     ShadowSpillObjectBinding binding = {0};
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_acquire_objects_handle(
             runtime, handle, stream, &binding, 1U
         );
     }
-    return status == SHADOWSPILL_RUNTIME_OK
+    return status == SHADOWSPILL_STATUS_OK
         ? shadowspill_transfer_acquired_object_to_caller(
               runtime,
               handle,
@@ -141,76 +141,76 @@ shadowspill_test_transfer_object_to_caller(
         : status;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_bind_task_objects(
+static inline ShadowSpillStatus shadowspill_test_bind_task_objects(
     ShadowSpillTestRuntime *record,
     const ShadowSpillTaskDescription *description
 ) {
     for (uint32_t index = 0U; index < description->input_count; ++index) {
-        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        const ShadowSpillStatus status = shadowspill_test_bind_object(
             record, description->input_object_ids[index]
         );
-        if (status != SHADOWSPILL_RUNTIME_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
     for (uint32_t index = 0U; index < description->update_count; ++index) {
-        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        const ShadowSpillStatus status = shadowspill_test_bind_object(
             record, description->updates[index].object_id
         );
-        if (status != SHADOWSPILL_RUNTIME_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
     for (uint32_t index = 0U; index < description->publication_count; ++index) {
-        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        const ShadowSpillStatus status = shadowspill_test_bind_object(
             record, description->publications[index].object_id
         );
-        if (status != SHADOWSPILL_RUNTIME_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
     for (uint32_t index = 0U; index < description->action_count; ++index) {
-        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        const ShadowSpillStatus status = shadowspill_test_bind_object(
             record, description->actions[index].object_id
         );
-        if (status != SHADOWSPILL_RUNTIME_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_admit_task(
+static inline ShadowSpillStatus shadowspill_test_admit_task(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskDescription *description
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     if (record == NULL || description == NULL ||
         record->task_count == SHADOWSPILL_TEST_MAX_TASKS) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_test_bind_task_objects(
+    ShadowSpillStatus status = shadowspill_test_bind_task_objects(
         record, description
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     const ShadowSpillTaskHandle *handle = NULL;
     status = shadowspill_plan_admit_task(record->plan, description, &handle);
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     for (uint32_t index = 0U; index < record->task_count; ++index) {
         if (record->tasks[index].task_id == description->task_id) {
             record->tasks[index].handle = handle;
-            return SHADOWSPILL_RUNTIME_OK;
+            return SHADOWSPILL_STATUS_OK;
         }
     }
     record->tasks[record->task_count++] = (ShadowSpillTestTask){
         .task_id = description->task_id,
         .handle = handle,
     };
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 static inline const ShadowSpillTaskHandle *shadowspill_test_task_handle(
@@ -230,7 +230,7 @@ static inline const ShadowSpillTaskHandle *shadowspill_test_task_handle(
     return NULL;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_before_task(
+static inline ShadowSpillStatus shadowspill_test_before_task(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream,
@@ -241,33 +241,33 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_before_task(
         runtime, task_id
     );
     if (handle == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     const ShadowSpillObjectBinding *borrowed = NULL;
     uint32_t count = 0U;
-    ShadowSpillRuntimeStatus status = shadowspill_before_task_handle(
+    ShadowSpillStatus status = shadowspill_before_task_handle(
         runtime, handle, stream, &borrowed, &count
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     if (count > binding_capacity) {
         (void)shadowspill_abort_task_handle(runtime, handle);
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (count != 0U) {
         if (bindings == NULL || borrowed == NULL) {
             (void)shadowspill_abort_task_handle(runtime, handle);
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         for (uint32_t index = 0U; index < count; ++index) {
             bindings[index] = borrowed[index];
         }
     }
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_after_task(
+static inline ShadowSpillStatus shadowspill_test_after_task(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
     ShadowSpillBackendStream stream
@@ -276,11 +276,11 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_after_task(
         runtime, task_id
     );
     return handle == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_STATE
+        ? SHADOWSPILL_STATUS_INVALID_STATE
         : shadowspill_after_task_handle(runtime, handle, stream);
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_submit_actions(
+static inline ShadowSpillStatus shadowspill_test_submit_actions(
     ShadowSpillRuntime *runtime,
     uint64_t batch_id,
     ShadowSpillBackendStream stream,
@@ -289,52 +289,52 @@ static inline ShadowSpillRuntimeStatus shadowspill_test_submit_actions(
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     if (record == NULL || (action_count != 0U && actions == NULL)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     for (uint32_t index = 0U; index < action_count; ++index) {
-        const ShadowSpillRuntimeStatus status = shadowspill_test_bind_object(
+        const ShadowSpillStatus status = shadowspill_test_bind_object(
             record, actions[index].object_id
         );
-        if (status != SHADOWSPILL_RUNTIME_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
     const ShadowSpillActionBatchHandle *handle = NULL;
-    ShadowSpillRuntimeStatus status = shadowspill_plan_admit_action_batch(
+    ShadowSpillStatus status = shadowspill_plan_admit_action_batch(
         record->plan, batch_id, actions, action_count, &handle
     );
-    return status == SHADOWSPILL_RUNTIME_OK
+    return status == SHADOWSPILL_STATUS_OK
         ? shadowspill_submit_action_batch_handle(runtime, handle, stream)
         : status;
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_admit_fixed_layout(
+static inline ShadowSpillStatus shadowspill_test_admit_fixed_layout(
     ShadowSpillRuntime *runtime,
     const ShadowSpillFixedLayoutDescription *description
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     return record == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_STATE
+        ? SHADOWSPILL_STATUS_INVALID_STATE
         : shadowspill_plan_admit_fixed_layout(record->plan, description);
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_seal_fixed_layout(
+static inline ShadowSpillStatus shadowspill_test_seal_fixed_layout(
     ShadowSpillRuntime *runtime
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
     return record == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_STATE
+        ? SHADOWSPILL_STATUS_INVALID_STATE
         : shadowspill_plan_seal_fixed_layout(record->plan);
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_clear_plan(
+static inline ShadowSpillStatus shadowspill_test_clear_plan(
     ShadowSpillRuntime *runtime
 ) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
-    const ShadowSpillRuntimeStatus status = record == NULL
-        ? SHADOWSPILL_RUNTIME_INVALID_STATE
+    const ShadowSpillStatus status = record == NULL
+        ? SHADOWSPILL_STATUS_INVALID_STATE
         : shadowspill_plan_clear_tasks(record->plan);
-    if (status == SHADOWSPILL_RUNTIME_OK && record != NULL) {
+    if (status == SHADOWSPILL_STATUS_OK && record != NULL) {
         record->task_count = 0U;
     }
     return status;
@@ -350,7 +350,7 @@ static inline void shadowspill_test_destroy_runtime(ShadowSpillRuntime *runtime)
     shadowspill_runtime_destroy(runtime);
 }
 
-static inline ShadowSpillRuntimeStatus shadowspill_test_create_runtime(
+static inline ShadowSpillStatus shadowspill_test_create_runtime(
     ShadowSpillMockBackend *backend,
     uint64_t execution_pool_bytes,
     uint64_t spill_pool_bytes,
