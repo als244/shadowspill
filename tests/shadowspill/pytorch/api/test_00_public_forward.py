@@ -28,6 +28,7 @@ class _Network(nn.Module):
 
 
 @pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     if torch.cuda.is_initialized():
         pytest.skip("public allocator installation requires a fresh process")

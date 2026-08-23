@@ -118,7 +118,11 @@ def test_capture_rejects_invalid_templates() -> None:
     with pytest.raises(PlanningError, match="list or tuple"):
         capture_training_signatures([3])  # type: ignore[list-item]
     with pytest.raises(PlanningError, match="strided"):
-        capture_input_signature([torch.sparse_coo_tensor([[0]], [1.0], (2,))])
+        # Building a sparse tensor asks ATen to warn about invariant checking
+        # unless the caller has an opinion; this one only needs the layout.
+        with torch.sparse.check_sparse_tensor_invariants(False):
+            sparse = torch.sparse_coo_tensor([[0]], [1.0], (2,))
+        capture_input_signature([sparse])
     with pytest.raises(PlanningError, match="cannot be preserved"):
         capture_input_signature([_Uncopyable()])
     with pytest.raises(PlanningError, match="stable equality"):

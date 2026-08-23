@@ -46,6 +46,15 @@ def main() -> int:
         limit=arguments.limit,
     )
     provenance = capture_repository_provenance(repository_root)
+    if provenance.untracked_sources:
+        # A tracked diff cannot reproduce these. The baseline records them and
+        # says so once; it is not a reason to refuse to run.
+        print(
+            "note: source files not in git are part of this run and cannot be "
+            "reproduced from its recorded diff: "
+            + ", ".join(provenance.untracked_sources),
+            flush=True,
+        )
     corpus_digest = corpus_manifest_digest(cases)
     baseline_id = provenance.baseline_id(config.name, config.digest)
     resume_directory, resume_provenance = _find_resume_baseline(

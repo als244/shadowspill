@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,7 +25,6 @@ from benchmarking.planning_eval.matrix import (
 from benchmarking.planning_eval.process import execute_case_worker
 from benchmarking.planning_eval.provenance import (
     RepositoryProvenance,
-    capture_repository_provenance,
 )
 from benchmarking.planning_eval.source import (
     CorpusProgramCase,
@@ -403,6 +404,20 @@ def test_worker_output_is_streamed_to_worker_main_log_and_stdout(
     assert "\n\n[1/1] example | POINT SUCCESS point=one" in captured.out
 
 
+def _clean_provenance_at_head() -> RepositoryProvenance:
+    """This repository at HEAD, as if nothing were modified."""
+
+    head = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=_REPOSITORY,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    empty = hashlib.sha256(b"").hexdigest()
+    return RepositoryProvenance(_REPOSITORY, head, "", "", empty)
+
+
 def test_resume_continues_across_a_planner_affecting_revision(
     tmp_path: Path,
 ) -> None:
@@ -420,7 +435,7 @@ def test_resume_continues_across_a_planner_affecting_revision(
         },
     )
     atomic_json(prior / "summary.json", {"pending_points": 10})
-    provenance = capture_repository_provenance(_REPOSITORY)
+    provenance = _clean_provenance_at_head()
 
     path, relationship = _find_resume_baseline(
         output,
@@ -462,7 +477,7 @@ def test_resume_still_refuses_a_different_corpus(tmp_path: Path) -> None:
         baseline_id="frontier__new__clean__cfg-config",
         config_digest="config",
         corpus_digest="corpus",
-        provenance=capture_repository_provenance(_REPOSITORY),
+        provenance=_clean_provenance_at_head(),
         enabled=True,
     )
 

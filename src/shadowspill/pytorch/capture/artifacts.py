@@ -23,6 +23,8 @@ from shadowspill.pytorch.capture.storage import (
 )
 from shadowspill.pytorch.contracts import CaptureError, ObjectiveError, ObjectiveResult
 
+from .torch_deprecations import copy_graph_module
+
 if TYPE_CHECKING:
     from shadowspill.pytorch.partition import PartitionedExport
 
@@ -448,7 +450,7 @@ def _specialize_static_inputs(
     )
     if len(tensor_positions) == len(example_inputs):
         return graph_module, example_inputs, tensor_positions
-    specialized = copy.deepcopy(graph_module)
+    specialized = copy_graph_module(graph_module)
     specialized_placeholders = tuple(
         node for node in specialized.graph.nodes if node.op == "placeholder"
     )

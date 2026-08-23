@@ -46,7 +46,7 @@ function(shadowspill_add_public_api_test file name timeout)
       ${Python3_EXECUTABLE} -m pytest
       ${PROJECT_SOURCE_DIR}/tests/shadowspill/pytorch/api/${file}
       -k ${name}
-      -p no:randomly
+      -m fresh_process
       --no-header
       -q
   )
@@ -59,6 +59,9 @@ function(shadowspill_add_public_api_test file name timeout)
   )
 endfunction()
 
+shadowspill_add_public_api_test(
+  test_00_public_forward.py test_public_forward_executes_reloads_and_restores 300
+)
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_accumulates_replays_and_restores 300
 )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -27,6 +26,8 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
 from shadowspill.pytorch.contracts import CaptureError, ObjectiveError, ObjectiveResult
+
+from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,8 +144,9 @@ class _ObjectiveModule(nn.Module):
 
 def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     try:
-        exported = torch.export.export(module, tuple(inputs), strict=True)
-        exported = exported.run_decompositions({})
+        with quiet_leaf_spec_deprecation():
+            exported = torch.export.export(module, tuple(inputs), strict=True)
+            exported = exported.run_decompositions({})
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
     flatten = getattr(exported, "_graph_module_flat_inputs", None)
@@ -709,7 +711,7 @@ def _specialize_terminal_unit_tangents(
     if any(root.ndim != 0 for root in roots):
         raise CaptureError("terminal objective root must be a scalar tensor")
 
-    graph_module = copy.deepcopy(backward.graph_module)
+    graph_module = copy_graph_module(backward.graph_module)
     placeholders = tuple(
         node for node in graph_module.graph.nodes if node.op == "placeholder"
     )

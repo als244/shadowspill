@@ -73,6 +73,9 @@ def execute_worker(
         deadline=started + timeout_seconds,
         console_prefix=console_prefix,
     )
+    if process.stdout is not None:
+        # Popen opened this pipe; wait() leaves it to the garbage collector.
+        process.stdout.close()
     elapsed = time.perf_counter() - started
     if interrupted:
         return WorkerOutcome(
